@@ -38,11 +38,11 @@ actual object AppUpdaterPlatform {
     actual val isSupported: Boolean = currentOs != DesktopUpdaterOs.UNKNOWN
 
     actual val releaseSource: AppUpdateReleaseSource = AppUpdateReleaseSource(
-        owner = "NuvioMedia",
-        repo = "NuvioDesktop",
+        owner = "Zokaper",
+        repo = "NuvioZDesktop",
         channelBranch = null,
         includePrereleases = true,
-        userAgent = "NuvioDesktop",
+        userAgent = "NuvioZDesktop",
     )
 
     actual val assetSelector: AppUpdateAssetSelector

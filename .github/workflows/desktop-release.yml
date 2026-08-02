@@ -76,9 +76,11 @@ jobs:
             exit 1
           fi
 
+          # A narrowed target is allowed for real releases so a Windows-only
+          # release can be published without Apple signing credentials. The
+          # release is assembled from whichever artifacts were produced.
           if [[ "${RELEASE_MODE}" != "build-only" && "${RELEASE_TARGET}" != "all" ]]; then
-            echo "Release validation, draft, and publish modes require target=all." >&2
-            exit 1
+            echo "::warning::Publishing a ${RELEASE_TARGET}-only release; other platforms will not be attached."
           fi
 
           if [[ "${RELEASE_MODE}" != "build-only" ]]; then
@@ -212,13 +214,19 @@ jobs:
           required_properties=(
             NUVIO_SUPABASE_URL
             NUVIO_SUPABASE_ANON_KEY
-            TRAKT_CLIENT_ID
-            TRAKT_CLIENT_SECRET
           )
           for property_name in "${required_properties[@]}"; do
             if ! grep -Eq "^${property_name}=.+" local.properties; then
               echo "Missing required desktop property: ${property_name}" >&2
               exit 1
+            fi
+          done
+
+          # Trakt is optional for this fork: the build substitutes empty
+          # credentials and only Trakt sign-in is unavailable.
+          for property_name in TRAKT_CLIENT_ID TRAKT_CLIENT_SECRET; do
+            if ! grep -Eq "^${property_name}=.+" local.properties; then
+              echo "::warning::${property_name} is not set; Trakt will be unavailable in this build."
             fi
           done
 
@@ -294,7 +302,7 @@ jobs:
           MACOS_ARCH: ${{ matrix.arch }}
           RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
         run: |
-          dmg_path="composeApp/build/compose/release-dmgs/Nuvio-macOS-${MACOS_ARCH}-${RELEASE_VERSION}.dmg"
+          dmg_path="composeApp/build/compose/release-dmgs/Nuvio-Z-macOS-${MACOS_ARCH}-${RELEASE_VERSION}.dmg"
           if [[ ! -f "${dmg_path}" ]]; then
             echo "Expected DMG was not produced: ${dmg_path}" >&2
             exit 1
@@ -307,7 +315,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: nuvio-desktop-${{ needs.metadata.outputs.version }}-macos-${{ matrix.arch }}
-          path: composeApp/build/compose/release-dmgs/Nuvio-macOS-${{ matrix.arch }}-${{ needs.metadata.outputs.version }}.dmg
+          path: composeApp/build/compose/release-dmgs/Nuvio-Z-macOS-${{ matrix.arch }}-${{ needs.metadata.outputs.version }}.dmg
           if-no-files-found: error
           retention-days: 14
 
@@ -383,13 +391,19 @@ jobs:
           required_properties=(
             NUVIO_SUPABASE_URL
             NUVIO_SUPABASE_ANON_KEY
-            TRAKT_CLIENT_ID
-            TRAKT_CLIENT_SECRET
           )
           for property_name in "${required_properties[@]}"; do
             if ! grep -Eq "^${property_name}=.+" local.properties; then
               echo "Missing required desktop property: ${property_name}" >&2
               exit 1
+            fi
+          done
+
+          # Trakt is optional for this fork: the build substitutes empty
+          # credentials and only Trakt sign-in is unavailable.
+          for property_name in TRAKT_CLIENT_ID TRAKT_CLIENT_SECRET; do
+            if ! grep -Eq "^${property_name}=.+" local.properties; then
+              echo "::warning::${property_name} is not set; Trakt will be unavailable in this build."
             fi
           done
 
@@ -426,7 +440,7 @@ jobs:
         env:
           RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
         run: |
-          $msiRelativePath = "composeApp\build\compose\release-msis\Nuvio-Windows-x64-$env:RELEASE_VERSION.msi"
+          $msiRelativePath = "composeApp\build\compose\release-msis\Nuvio-Z-Windows-x64-$env:RELEASE_VERSION.msi"
           if (-not (Test-Path $msiRelativePath)) {
             throw "Expected MSI was not produced: $msiRelativePath"
           }
@@ -489,13 +503,13 @@ jobs:
             throw "The extracted MSI does not contain the bundled Java runtime."
           }
 
-          $manifestPath = "composeApp\build\compose\release-msis\Nuvio-Windows-x64-$env:RELEASE_VERSION-contents.txt"
+          $manifestPath = "composeApp\build\compose\release-msis\Nuvio-Z-Windows-x64-$env:RELEASE_VERSION-contents.txt"
           $extractedFiles = Get-ChildItem $extractDir -Recurse -File | Sort-Object FullName
           $nativeEntries = $jarEntries `
             | Where-Object { $_ -like "native/windows/*" } `
             | Sort-Object
           $manifest = [Collections.Generic.List[string]]::new()
-          $manifest.Add("MSI=Nuvio-Windows-x64-$env:RELEASE_VERSION.msi")
+          $manifest.Add("MSI=Nuvio-Z-Windows-x64-$env:RELEASE_VERSION.msi")
           $manifest.Add("MSI_SHA256=$((Get-FileHash $msiPath -Algorithm SHA256).Hash.ToLowerInvariant())")
           $manifest.Add("MSI_SIGNATURE_STATUS=$((Get-AuthenticodeSignature $msiPath).Status)")
           $manifest.Add("EXTRACTED_FILE_COUNT=$($extractedFiles.Count)")
@@ -522,14 +536,23 @@ jobs:
         with:
           name: nuvio-desktop-${{ needs.metadata.outputs.version }}-windows-x64
           path: |
-            composeApp/build/compose/release-msis/Nuvio-Windows-x64-${{ needs.metadata.outputs.version }}.msi
-            composeApp/build/compose/release-msis/Nuvio-Windows-x64-${{ needs.metadata.outputs.version }}-contents.txt
+            composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-${{ needs.metadata.outputs.version }}.msi
+            composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-${{ needs.metadata.outputs.version }}-contents.txt
           if-no-files-found: error
           retention-days: 14
 
   release:
     name: Create ${{ inputs.mode }} release
-    if: inputs.mode != 'build-only' && inputs.mode != 'dry-run' && inputs.target == 'all'
+    # always() so a platform job that was skipped by a narrowed target does not
+    # skip the release; the guards below still stop a failed or cancelled build
+    # from being published.
+    if: >-
+      always()
+      && inputs.mode != 'build-only'
+      && inputs.mode != 'dry-run'
+      && needs.metadata.result == 'success'
+      && needs.macos.result != 'failure' && needs.macos.result != 'cancelled'
+      && needs.windows.result != 'failure' && needs.windows.result != 'cancelled'
     needs:
       - metadata
       - macos
@@ -552,11 +575,17 @@ jobs:
 
       - name: Create checksums
         run: |
+          # Collect whatever the platform jobs produced rather than a fixed
+          # list, so a narrowed target still yields a valid release.
+          shopt -s nullglob
           release_assets=(
-            "release/Nuvio-macOS-arm64-${RELEASE_VERSION}.dmg"
-            "release/Nuvio-macOS-x86_64-${RELEASE_VERSION}.dmg"
-            "release/Nuvio-Windows-x64-${RELEASE_VERSION}.msi"
+            release/Nuvio-Z-macOS-*-"${RELEASE_VERSION}".dmg
+            release/Nuvio-Z-Windows-*-"${RELEASE_VERSION}".msi
           )
+          if (( ${#release_assets[@]} == 0 )); then
+            echo "No installers were produced for ${RELEASE_VERSION}." >&2
+            exit 1
+          fi
           if [[ ! -s release/release-notes.md ]]; then
             echo "Release notes are missing." >&2
             exit 1
@@ -564,10 +593,6 @@ jobs:
 
           : > release/SHA256SUMS.txt
           for asset in "${release_assets[@]}"; do
-            if [[ ! -f "${asset}" ]]; then
-              echo "Release asset is missing: ${asset}" >&2
-              exit 1
-            fi
             checksum="$(sha256sum "${asset}" | awk '{print $1}')"
             printf '%s  %s\n' "${checksum}" "$(basename "${asset}")" >> release/SHA256SUMS.txt
           done
@@ -576,11 +601,11 @@ jobs:
 
       - name: Create GitHub release
         run: |
+          shopt -s nullglob
           release_assets=(
-            "release/Nuvio-macOS-arm64-${RELEASE_VERSION}.dmg"
-            "release/Nuvio-macOS-x86_64-${RELEASE_VERSION}.dmg"
-            "release/Nuvio-Windows-x64-${RELEASE_VERSION}.msi"
-            "release/SHA256SUMS.txt"
+            release/Nuvio-Z-macOS-*-"${RELEASE_VERSION}".dmg
+            release/Nuvio-Z-Windows-*-"${RELEASE_VERSION}".msi
+            release/SHA256SUMS.txt
           )
           release_args=(
             "${RELEASE_TAG}"

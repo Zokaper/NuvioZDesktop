@@ -8,10 +8,13 @@ actual object AppUpdaterPlatform {
         get() = AndroidAppUpdaterPlatform.isDebugBuild()
 
     actual val releaseSource: AppUpdateReleaseSource = AppUpdateReleaseSource(
-        owner = "NuvioMedia",
-        repo = "NuvioMobile",
-        channelBranch = "cmp-rewrite",
-        userAgent = "NuvioMobile",
+        owner = "Zokaper",
+        repo = "NuvioZDesktop",
+        // Releases target an explicit commit, so a release's targetCommitish is
+        // a SHA rather than a branch name; filtering by branch rejects them all.
+        channelBranch = null,
+        includePrereleases = true,
+        userAgent = "NuvioZDesktop",
     )
 
     actual val assetSelector: AppUpdateAssetSelector

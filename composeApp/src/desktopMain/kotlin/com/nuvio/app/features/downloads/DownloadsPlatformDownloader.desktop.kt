@@ -107,6 +107,9 @@ internal actual object DownloadsPlatformDownloader {
         return DesktopDownloadsTaskHandle(job)
     }
 
+    actual fun freeStorageBytes(): Long =
+        runCatching { downloadsDir.usableSpace }.getOrDefault(-1L).takeIf { it > 0L } ?: -1L
+
     actual fun removeFile(localFileUri: String?): Boolean {
         if (localFileUri.isNullOrBlank()) return false
         val file = localFileUri.toLocalFileOrNull() ?: return false
