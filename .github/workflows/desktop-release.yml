@@ -208,7 +208,7 @@ jobs:
             exit 1
           fi
 
-          printf '%s' "${LOCAL_PROPERTIES_BASE64}" | base64 --decode > local.properties
+          printf '%s' "${LOCAL_PROPERTIES_BASE64}" | tr -d '\000\r\n \t' | base64 --decode > local.properties
           sed -i '' -E '/^[[:space:]]*(sdk\.dir|NUVIO_RELEASE_(STORE_FILE|STORE_PASSWORD|KEY_ALIAS|KEY_PASSWORD)|NUVIO_MACOS_(SIGNING_IDENTITY|NOTARY_APPLE_ID|NOTARY_TEAM_ID|NOTARY_PASSWORD|NOTARY_KEYCHAIN_PROFILE|NOTARY_KEYCHAIN_PATH))[[:space:]]*=/d' local.properties
 
           required_properties=(
@@ -236,7 +236,7 @@ jobs:
           keychain_path="${RUNNER_TEMP}/nuvio-release.keychain-db"
           keychain_password="$(openssl rand -hex 32)"
 
-          printf '%s' "${MACOS_CERTIFICATE_P12_BASE64}" | base64 --decode > "${certificate_path}"
+          printf '%s' "${MACOS_CERTIFICATE_P12_BASE64}" | tr -d '\000\r\n \t' | base64 --decode > "${certificate_path}"
           chmod 600 "${certificate_path}"
 
           actual_sha256="$(
@@ -385,7 +385,7 @@ jobs:
             exit 1
           fi
 
-          printf '%s' "${LOCAL_PROPERTIES_BASE64}" | base64 --decode > local.properties
+          printf '%s' "${LOCAL_PROPERTIES_BASE64}" | tr -d '\000\r\n \t' | base64 --decode > local.properties
           sed -i -E '/^[[:space:]]*(sdk\.dir|NUVIO_RELEASE_(STORE_FILE|STORE_PASSWORD|KEY_ALIAS|KEY_PASSWORD)|NUVIO_MACOS_(SIGNING_IDENTITY|NOTARY_APPLE_ID|NOTARY_TEAM_ID|NOTARY_PASSWORD|NOTARY_KEYCHAIN_PROFILE|NOTARY_KEYCHAIN_PATH))[[:space:]]*=/d' local.properties
 
           required_properties=(
