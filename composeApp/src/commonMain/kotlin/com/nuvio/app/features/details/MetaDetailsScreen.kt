@@ -87,7 +87,6 @@ import com.nuvio.app.core.ui.NuvioDesktopVerticalScrollbar
 import com.nuvio.app.core.ui.NuvioCardDepthSurface
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.core.ui.NuvioPosterZoomActionOverlay
-import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.core.ui.PosterZoomAnchor
 import com.nuvio.app.core.ui.PosterZoomAnchorHolder
 import com.nuvio.app.core.ui.PosterZoomOverlayAction
@@ -1166,6 +1165,7 @@ fun MetaDetailsScreen(
                                     onSeasonDownload = { season ->
                                         presetDownloadScope = DownloadScope.Season(season)
                                     },
+                                    onCurrentSeasonChanged = { currentViewedSeason = it },
                                     onOpenMeta = onOpenMeta,
                                     onCastClick = onCastClick,
                                     onCompanyClick = onCompanyClick,
@@ -1299,6 +1299,7 @@ fun MetaDetailsScreen(
                                     onSeasonDownload = { season ->
                                         presetDownloadScope = DownloadScope.Season(season)
                                     },
+                                    onCurrentSeasonChanged = { currentViewedSeason = it },
                                     onOpenMeta = onOpenMeta,
                                     onCastClick = onCastClick,
                                     onCompanyClick = onCompanyClick,
