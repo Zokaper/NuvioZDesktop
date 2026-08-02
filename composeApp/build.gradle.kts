@@ -480,7 +480,16 @@ val desktopReleaseVersionCode = (
     ?.toIntOrNull()
     ?: 1
 val desktopReleasePackageVersion = jpackageCompatibleVersion(desktopReleaseVersionName)
-val windowsMsiUpgradeUuid = "395990ee-9b8a-3548-922c-e7a23a495b8d"
+
+// Display name of the installed application. jpackage also names its default
+// output after this, so the artifact rename helpers below derive from it.
+val desktopPackageName = "Nuvio Z"
+// Basename for the published artifacts; kept separate from the display name so
+// the files have no spaces in them.
+val desktopArtifactName = "Nuvio-Z"
+// Distinct from official Nuvio's UUID so installing this fork upgrades only
+// itself instead of replacing an existing Nuvio installation.
+val windowsMsiUpgradeUuid = "7b1f2c94-53ad-4c1e-9f6a-2d8e0b45c7f1"
 val iosDistribution = (
     providers.gradleProperty("nuvio.ios.distribution").orNull
         ?: System.getenv("NUVIO_IOS_DISTRIBUTION")
@@ -1176,7 +1185,7 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-            packageName = "Nuvio"
+            packageName = desktopPackageName
             packageVersion = desktopReleasePackageVersion
             vendor = "Nuvio Media"
             if (isMacHost) {
@@ -1190,7 +1199,7 @@ compose.desktop {
                 "jdk.unsupported",
             )
             macOS {
-                bundleID = "com.nuvio.media.desktop"
+                bundleID = "com.nuvio.media.z.desktop"
                 iconFile.set(project.file("src/desktopMain/resources/icons/nuvio-app-icon.icns"))
                 infoPlist {
                     extraKeysRawXml = """
@@ -1198,7 +1207,7 @@ compose.desktop {
                         <array>
                             <dict>
                                 <key>CFBundleURLName</key>
-                                <string>com.nuvio.media.desktop</string>
+                                <string>com.nuvio.media.z.desktop</string>
                                 <key>CFBundleURLSchemes</key>
                                 <array>
                                     <string>nuvio</string>
@@ -1231,7 +1240,7 @@ compose.desktop {
                 upgradeUuid = windowsMsiUpgradeUuid
                 shortcut = true
                 menu = true
-                menuGroup = "Nuvio"
+                menuGroup = desktopPackageName
             }
             linux {
                 iconFile.set(project.file("src/desktopMain/resources/icons/nuvio-app-icon.png"))
@@ -1249,8 +1258,8 @@ fun renameMacosDmgOutput(release: Boolean) {
 
     val distributionName = if (release) "main-release" else "main"
     val outputDir = layout.buildDirectory.dir("compose/binaries/$distributionName/dmg").get().asFile
-    val finalDmg = outputDir.resolve("Nuvio-macOS-$macosDmgArchName-$desktopReleaseVersionName.dmg")
-    val defaultDmg = outputDir.resolve("Nuvio-$desktopReleasePackageVersion.dmg")
+    val finalDmg = outputDir.resolve("$desktopArtifactName-macOS-$macosDmgArchName-$desktopReleaseVersionName.dmg")
+    val defaultDmg = outputDir.resolve("$desktopPackageName-$desktopReleasePackageVersion.dmg")
     val sourceDmg = defaultDmg.takeIf { it.exists() }
         ?: finalDmg.takeIf { it.exists() }
         ?: error("Expected macOS DMG output in ${outputDir.absolutePath}")
@@ -1286,8 +1295,8 @@ fun publishWindowsMsiOutput(release: Boolean) {
 
     val distributionName = if (release) "main-release" else "main"
     val outputDir = layout.buildDirectory.dir("compose/binaries/$distributionName/msi").get().asFile
-    val finalMsi = outputDir.resolve("Nuvio-Windows-$windowsPlayerBridgeArch-$desktopReleaseVersionName.msi")
-    val defaultMsi = outputDir.resolve("Nuvio-$desktopReleasePackageVersion.msi")
+    val finalMsi = outputDir.resolve("$desktopArtifactName-Windows-$windowsPlayerBridgeArch-$desktopReleaseVersionName.msi")
+    val defaultMsi = outputDir.resolve("$desktopPackageName-$desktopReleasePackageVersion.msi")
     val sourceMsi = defaultMsi.takeIf { it.exists() }
         ?: finalMsi.takeIf { it.exists() }
         ?: error("Expected Windows MSI output in ${outputDir.absolutePath}")

@@ -40,14 +40,16 @@ internal object DesktopStorage {
         val osName = System.getProperty("os.name").orEmpty().lowercase(Locale.ROOT)
         val userHome = Paths.get(System.getProperty("user.home").orEmpty())
         return when {
-            osName.contains("mac") -> userHome.resolve("Library/Application Support/Nuvio")
+            // Kept distinct from official Nuvio so both can be installed at once
+            // without sharing, and corrupting, one another's stored state.
+            osName.contains("mac") -> userHome.resolve("Library/Application Support/Nuvio Z")
             osName.contains("win") -> {
                 val appData = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
-                (appData?.let(Paths::get) ?: userHome.resolve("AppData/Roaming")).resolve("Nuvio")
+                (appData?.let(Paths::get) ?: userHome.resolve("AppData/Roaming")).resolve("Nuvio Z")
             }
             else -> {
                 val xdgConfig = System.getenv("XDG_CONFIG_HOME")?.takeIf { it.isNotBlank() }
-                (xdgConfig?.let(Paths::get) ?: userHome.resolve(".config")).resolve("nuvio")
+                (xdgConfig?.let(Paths::get) ?: userHome.resolve(".config")).resolve("nuvio-z")
             }
         }
     }
