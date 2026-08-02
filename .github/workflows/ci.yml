@@ -56,14 +56,34 @@ jobs:
           printf '%s' "${LOCAL_PROPERTIES_BASE64}" | base64 --decode > local.properties
           sed -i -E '/^[[:space:]]*(sdk\.dir|NUVIO_RELEASE_(STORE_FILE|STORE_PASSWORD|KEY_ALIAS|KEY_PASSWORD))[[:space:]]*=/d' local.properties
 
+      # --stacktrace is deliberately omitted: on a Kotlin compilation failure it
+      # emits ~150 lines of Gradle internals that bury the actual 'e:' errors.
       - name: Run desktop tests
-        run: ./gradlew :composeApp:desktopTest --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew :composeApp:desktopTest --console=plain 2>&1 | tee build.log || {
+            echo "::error::Desktop compilation or tests failed"
+            grep -E '^e: ' build.log | head -60
+            exit 1
+          }
 
       - name: Run Android host tests
-        run: ./gradlew :composeApp:testAndroidHostTest --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew :composeApp:testAndroidHostTest --console=plain 2>&1 | tee build.log || {
+            echo "::error::Android host tests failed"
+            grep -E '^e: ' build.log | head -60
+            exit 1
+          }
 
       - name: Build debug APK
-        run: ./gradlew :androidApp:assembleFullDebug --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew :androidApp:assembleFullDebug --console=plain 2>&1 | tee build.log || {
+            echo "::error::Debug APK build failed"
+            grep -E '^e: ' build.log | head -60
+            exit 1
+          }
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
@@ -164,7 +184,12 @@ jobs:
             "-Pcompose.desktop.packaging.checkJdkVendor=false" `
             --no-configuration-cache `
             --no-daemon `
-            --stacktrace
+            --console=plain 2>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output "::error::MSI build failed"
+            Select-String -Path build.log -Pattern '^e: ' | Select-Object -First 60 | ForEach-Object { $_.Line }
+            exit 1
+          }
 
       - name: Upload MSI
         uses: actions/upload-artifact@v7
