@@ -76,9 +76,11 @@ jobs:
             exit 1
           fi
 
+          # A narrowed target is allowed for real releases so a Windows-only
+          # release can be published without Apple signing credentials. The
+          # release is assembled from whichever artifacts were produced.
           if [[ "${RELEASE_MODE}" != "build-only" && "${RELEASE_TARGET}" != "all" ]]; then
-            echo "Release validation, draft, and publish modes require target=all." >&2
-            exit 1
+            echo "::warning::Publishing a ${RELEASE_TARGET}-only release; other platforms will not be attached."
           fi
 
           if [[ "${RELEASE_MODE}" != "build-only" ]]; then
@@ -541,7 +543,16 @@ jobs:
 
   release:
     name: Create ${{ inputs.mode }} release
-    if: inputs.mode != 'build-only' && inputs.mode != 'dry-run' && inputs.target == 'all'
+    # always() so a platform job that was skipped by a narrowed target does not
+    # skip the release; the guards below still stop a failed or cancelled build
+    # from being published.
+    if: >-
+      always()
+      && inputs.mode != 'build-only'
+      && inputs.mode != 'dry-run'
+      && needs.metadata.result == 'success'
+      && needs.macos.result != 'failure' && needs.macos.result != 'cancelled'
+      && needs.windows.result != 'failure' && needs.windows.result != 'cancelled'
     needs:
       - metadata
       - macos
@@ -564,11 +575,17 @@ jobs:
 
       - name: Create checksums
         run: |
+          # Collect whatever the platform jobs produced rather than a fixed
+          # list, so a narrowed target still yields a valid release.
+          shopt -s nullglob
           release_assets=(
-            "release/Nuvio-Z-macOS-arm64-${RELEASE_VERSION}.dmg"
-            "release/Nuvio-Z-macOS-x86_64-${RELEASE_VERSION}.dmg"
-            "release/Nuvio-Z-Windows-x64-${RELEASE_VERSION}.msi"
+            release/Nuvio-Z-macOS-*-"${RELEASE_VERSION}".dmg
+            release/Nuvio-Z-Windows-*-"${RELEASE_VERSION}".msi
           )
+          if (( ${#release_assets[@]} == 0 )); then
+            echo "No installers were produced for ${RELEASE_VERSION}." >&2
+            exit 1
+          fi
           if [[ ! -s release/release-notes.md ]]; then
             echo "Release notes are missing." >&2
             exit 1
@@ -576,10 +593,6 @@ jobs:
 
           : > release/SHA256SUMS.txt
           for asset in "${release_assets[@]}"; do
-            if [[ ! -f "${asset}" ]]; then
-              echo "Release asset is missing: ${asset}" >&2
-              exit 1
-            fi
             checksum="$(sha256sum "${asset}" | awk '{print $1}')"
             printf '%s  %s\n' "${checksum}" "$(basename "${asset}")" >> release/SHA256SUMS.txt
           done
@@ -588,11 +601,11 @@ jobs:
 
       - name: Create GitHub release
         run: |
+          shopt -s nullglob
           release_assets=(
-            "release/Nuvio-Z-macOS-arm64-${RELEASE_VERSION}.dmg"
-            "release/Nuvio-Z-macOS-x86_64-${RELEASE_VERSION}.dmg"
-            "release/Nuvio-Z-Windows-x64-${RELEASE_VERSION}.msi"
-            "release/SHA256SUMS.txt"
+            release/Nuvio-Z-macOS-*-"${RELEASE_VERSION}".dmg
+            release/Nuvio-Z-Windows-*-"${RELEASE_VERSION}".msi
+            release/SHA256SUMS.txt
           )
           release_args=(
             "${RELEASE_TAG}"
