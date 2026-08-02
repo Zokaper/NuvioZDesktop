@@ -212,13 +212,19 @@ jobs:
           required_properties=(
             NUVIO_SUPABASE_URL
             NUVIO_SUPABASE_ANON_KEY
-            TRAKT_CLIENT_ID
-            TRAKT_CLIENT_SECRET
           )
           for property_name in "${required_properties[@]}"; do
             if ! grep -Eq "^${property_name}=.+" local.properties; then
               echo "Missing required desktop property: ${property_name}" >&2
               exit 1
+            fi
+          done
+
+          # Trakt is optional for this fork: the build substitutes empty
+          # credentials and only Trakt sign-in is unavailable.
+          for property_name in TRAKT_CLIENT_ID TRAKT_CLIENT_SECRET; do
+            if ! grep -Eq "^${property_name}=.+" local.properties; then
+              echo "::warning::${property_name} is not set; Trakt will be unavailable in this build."
             fi
           done
 
@@ -383,13 +389,19 @@ jobs:
           required_properties=(
             NUVIO_SUPABASE_URL
             NUVIO_SUPABASE_ANON_KEY
-            TRAKT_CLIENT_ID
-            TRAKT_CLIENT_SECRET
           )
           for property_name in "${required_properties[@]}"; do
             if ! grep -Eq "^${property_name}=.+" local.properties; then
               echo "Missing required desktop property: ${property_name}" >&2
               exit 1
+            fi
+          done
+
+          # Trakt is optional for this fork: the build substitutes empty
+          # credentials and only Trakt sign-in is unavailable.
+          for property_name in TRAKT_CLIENT_ID TRAKT_CLIENT_SECRET; do
+            if ! grep -Eq "^${property_name}=.+" local.properties; then
+              echo "::warning::${property_name} is not set; Trakt will be unavailable in this build."
             fi
           done
 
