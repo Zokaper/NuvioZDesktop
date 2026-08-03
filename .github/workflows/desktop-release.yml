@@ -14,14 +14,18 @@ on:
           - publish
         default: dry-run
       target:
-        description: Platforms to build in build-only mode
+        # macOS builds need Apple signing and notarisation credentials this
+        # repository does not hold, so every macOS job failed at "Configure
+        # desktop runtime" before compiling anything. Windows is the only
+        # target offered; the macOS job below is kept, but its guard can no
+        # longer match, so restoring macOS means adding the secrets and
+        # putting the options back.
+        description: Platforms to build
         required: true
         type: choice
         options:
-          - all
           - windows
-          - macos
-        default: all
+        default: windows
       exclude_commits:
         description: Optional comma-separated commit hashes to omit from the notes
         required: false
@@ -499,6 +503,22 @@ jobs:
             throw "WebView2Loader.dll.lib was not found at $loaderLibrary"
           }
           "WEBVIEW2_ROOT=$webView2Root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # Compiling on its own first, without --stacktrace, so a Kotlin error is
+      # reported as the handful of "e:" lines that name the file and line.
+      # Packaging with --stacktrace buries them under ~250 lines of Gradle
+      # internals, which made the last failure unreadable from the log tail.
+      - name: Compile desktop Kotlin
+        shell: pwsh
+        run: |
+          & .\gradlew.bat `
+            :composeApp:compileKotlinDesktop `
+            "-Pnuvio.webview2.dir=$env:WEBVIEW2_ROOT" `
+            "-Pcompose.desktop.packaging.checkJdkVendor=false" `
+            --no-configuration-cache `
+            --no-daemon `
+            --console=plain
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build MSI
         shell: pwsh
