@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CheckCircleOutline
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistAddCheckCircle
 import androidx.compose.material3.Button
@@ -103,6 +104,8 @@ import com.nuvio.app.features.details.components.CommentDetailSheet
 import com.nuvio.app.features.details.components.DetailAdditionalInfoSection
 import com.nuvio.app.features.details.components.DetailCastSection
 import com.nuvio.app.features.details.components.DetailCommentsSection
+import com.nuvio.app.features.details.components.DetailDownloadsSection
+import com.nuvio.app.features.details.components.DownloadManageSheet
 import com.nuvio.app.features.details.components.DetailFloatingHeader
 import com.nuvio.app.features.details.components.DetailHero
 import com.nuvio.app.features.details.components.DetailMetaInfo
@@ -114,9 +117,15 @@ import com.nuvio.app.features.details.components.DetailTrailersSection
 import com.nuvio.app.features.details.components.EpisodeWatchedActionSheet
 import com.nuvio.app.features.details.components.SeasonWatchedActionSheet
 import com.nuvio.app.features.details.components.TrailerPlayerPopup
+import com.nuvio.app.features.downloads.ContentDownloadState
 import com.nuvio.app.features.downloads.DownloadBatchEntry
+import com.nuvio.app.features.downloads.DownloadItem
+import com.nuvio.app.features.downloads.DownloadPresence
 import com.nuvio.app.features.downloads.DownloadScope
+import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.downloads.PresetDownloadDialog
+import com.nuvio.app.features.downloads.TitleDownloadState
+import com.nuvio.app.features.downloads.buildTitleDownloadState
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.library.LibraryRepository
 import com.nuvio.app.features.library.PendingTrackingMembershipRemoval
@@ -163,6 +172,13 @@ import org.jetbrains.compose.resources.stringResource
 
 private val watchedMarkerDiagnosticLog = Logger.withTag("WatchedMarkerDiag")
 
+/** One download the user asked to manage from a detail screen. */
+private data class ManageDownloadTarget(
+    val title: String,
+    val subtitle: String?,
+    val state: ContentDownloadState,
+)
+
 @Composable
 @OptIn(ExperimentalSharedTransitionApi::class)
 fun MetaDetailsScreen(
@@ -172,6 +188,7 @@ fun MetaDetailsScreen(
     onPlay: ((type: String, videoId: String, parentMetaId: String, parentMetaType: String, title: String, logo: String?, poster: String?, background: String?, seasonNumber: Int?, episodeNumber: Int?, episodeTitle: String?, episodeThumbnail: String?, pauseDescription: String?, resumePositionMs: Long?) -> Unit)? = null,
     onPlayManually: ((type: String, videoId: String, parentMetaId: String, parentMetaType: String, title: String, logo: String?, poster: String?, background: String?, seasonNumber: Int?, episodeNumber: Int?, episodeTitle: String?, episodeThumbnail: String?, pauseDescription: String?, resumePositionMs: Long?) -> Unit)? = null,
     onOpenMeta: ((MetaPreview) -> Unit)? = null,
+    onPlayDownloadedItem: ((DownloadItem) -> Unit)? = null,
     onCastClick: ((MetaPerson, String?) -> Unit)? = null,
     onCompanyClick: ((MetaCompany, String) -> Unit)? = null,
     sharedTransitionScope: SharedTransitionScope? = null,
@@ -226,6 +243,12 @@ fun MetaDetailsScreen(
     var selectedSeasonForActions by remember(type, id) { mutableStateOf<Int?>(null) }
     var currentViewedSeason by remember(type, id) { mutableStateOf<Int?>(null) }
     var presetDownloadScope by remember(type, id) { mutableStateOf<DownloadScope?>(null) }
+    val downloadsUiState by remember {
+        DownloadsRepository.ensureLoaded()
+        DownloadsRepository.uiState
+    }.collectAsStateWithLifecycle()
+    val downloadBatches by DownloadsRepository.batches.collectAsStateWithLifecycle()
+    var manageDownloadTarget by remember(type, id) { mutableStateOf<ManageDownloadTarget?>(null) }
     val commentsEnabled by remember {
         TraktCommentsSettings.ensureLoaded()
         TraktCommentsSettings.enabled
@@ -617,6 +640,13 @@ fun MetaDetailsScreen(
                     seriesActionVideo?.id?.takeIf { it.isNotBlank() } ?: action.videoId
                 }
                 val hasEpisodes = meta.videos.any { it.season != null || it.episode != null }
+                val titleDownloadState = remember(downloadsUiState.items, downloadBatches, meta.id) {
+                    buildTitleDownloadState(
+                        items = downloadsUiState.items,
+                        batches = downloadBatches,
+                        parentMetaId = meta.id,
+                    )
+                }
                 val hasProductionSection = remember(meta) {
                     meta.productionCompanies.isNotEmpty() || meta.networks.isNotEmpty()
                 }
@@ -1161,12 +1191,38 @@ fun MetaDetailsScreen(
                                             episode = video.episode ?: 0,
                                         )
                                     },
+                                    onEpisodeManageDownload = { video ->
+                                        manageDownloadTarget = ManageDownloadTarget(
+                                            title = video.title,
+                                            subtitle = localizedSeasonEpisodeCode(
+                                                seasonNumber = video.season,
+                                                episodeNumber = video.episode,
+                                            ),
+                                            state = titleDownloadState.forEpisode(video.season, video.episode),
+                                        )
+                                    },
+                                    titleDownloadState = titleDownloadState,
                                     onSeasonLongPress = { season -> selectedSeasonForActions = season },
                                     onSeasonDownload = { season ->
                                         presetDownloadScope = DownloadScope.Season(season)
                                     },
                                     onSeasonDownloadUnwatched = { season ->
                                         presetDownloadScope = DownloadScope.SeasonUnwatched(season)
+                                    },
+                                    onSeasonDeleteDownloads = { season ->
+                                        DownloadsRepository.deleteDownloadsForSeason(meta.id, season)
+                                    },
+                                    onDownloadedItemClick = { item -> onPlayDownloadedItem?.invoke(item) },
+                                    onDownloadedItemManage = { item ->
+                                        manageDownloadTarget = ManageDownloadTarget(
+                                            title = item.episodeTitle?.takeIf { it.isNotBlank() } ?: item.title,
+                                            subtitle = localizedSeasonEpisodeCode(
+                                                seasonNumber = item.seasonNumber,
+                                                episodeNumber = item.episodeNumber,
+                                            ),
+                                            state = titleDownloadState.byLogicalKey[item.logicalContentKey]
+                                                ?: ContentDownloadState.None,
+                                        )
                                     },
                                     onCurrentSeasonChanged = { currentViewedSeason = it },
                                     onOpenMeta = onOpenMeta,
@@ -1298,12 +1354,38 @@ fun MetaDetailsScreen(
                                             episode = video.episode ?: 0,
                                         )
                                     },
+                                    onEpisodeManageDownload = { video ->
+                                        manageDownloadTarget = ManageDownloadTarget(
+                                            title = video.title,
+                                            subtitle = localizedSeasonEpisodeCode(
+                                                seasonNumber = video.season,
+                                                episodeNumber = video.episode,
+                                            ),
+                                            state = titleDownloadState.forEpisode(video.season, video.episode),
+                                        )
+                                    },
+                                    titleDownloadState = titleDownloadState,
                                     onSeasonLongPress = { season -> selectedSeasonForActions = season },
                                     onSeasonDownload = { season ->
                                         presetDownloadScope = DownloadScope.Season(season)
                                     },
                                     onSeasonDownloadUnwatched = { season ->
                                         presetDownloadScope = DownloadScope.SeasonUnwatched(season)
+                                    },
+                                    onSeasonDeleteDownloads = { season ->
+                                        DownloadsRepository.deleteDownloadsForSeason(meta.id, season)
+                                    },
+                                    onDownloadedItemClick = { item -> onPlayDownloadedItem?.invoke(item) },
+                                    onDownloadedItemManage = { item ->
+                                        manageDownloadTarget = ManageDownloadTarget(
+                                            title = item.episodeTitle?.takeIf { it.isNotBlank() } ?: item.title,
+                                            subtitle = localizedSeasonEpisodeCode(
+                                                seasonNumber = item.seasonNumber,
+                                                episodeNumber = item.episodeNumber,
+                                            ),
+                                            state = titleDownloadState.byLogicalKey[item.logicalContentKey]
+                                                ?: ContentDownloadState.None,
+                                        )
                                     },
                                     onCurrentSeasonChanged = { currentViewedSeason = it },
                                     onOpenMeta = onOpenMeta,
@@ -1543,6 +1625,18 @@ fun MetaDetailsScreen(
                                 } else {
                                     null
                                 },
+                            )
+                        }
+
+                        manageDownloadTarget?.let { target ->
+                            DownloadManageSheet(
+                                state = target.state,
+                                title = target.title,
+                                subtitle = target.subtitle,
+                                onDismiss = { manageDownloadTarget = null },
+                                onPlayOffline = target.state.item
+                                    ?.takeIf { target.state.isPlayable && onPlayDownloadedItem != null }
+                                    ?.let { item -> { onPlayDownloadedItem?.invoke(item) } },
                             )
                         }
 
@@ -1986,9 +2080,14 @@ private fun LazyListScope.configuredMetaSectionItems(
     onEpisodeClick: (MetaVideo) -> Unit,
     onEpisodeLongPress: (MetaVideo) -> Unit,
     onEpisodeDownload: (MetaVideo) -> Unit,
+    onEpisodeManageDownload: (MetaVideo) -> Unit,
+    titleDownloadState: TitleDownloadState,
     onSeasonLongPress: (Int) -> Unit,
     onSeasonDownload: (Int) -> Unit,
     onSeasonDownloadUnwatched: (Int) -> Unit,
+    onSeasonDeleteDownloads: (Int) -> Unit,
+    onDownloadedItemClick: (DownloadItem) -> Unit,
+    onDownloadedItemManage: (DownloadItem) -> Unit,
     onCurrentSeasonChanged: (Int) -> Unit,
     onOpenMeta: ((MetaPreview) -> Unit)?,
     onCastClick: ((MetaPerson, String?) -> Unit)?,
@@ -2011,6 +2110,7 @@ private fun LazyListScope.configuredMetaSectionItems(
             comments = comments,
             isCommentsLoading = isCommentsLoading,
             commentsError = commentsError,
+            hasDownloads = titleDownloadState.completedCount > 0,
         )
 
     fun addSectionItem(
@@ -2067,9 +2167,14 @@ private fun LazyListScope.configuredMetaSectionItems(
                     onEpisodeClick = onEpisodeClick,
                     onEpisodeLongPress = onEpisodeLongPress,
                     onEpisodeDownload = onEpisodeDownload,
+                    onEpisodeManageDownload = onEpisodeManageDownload,
+                    titleDownloadState = titleDownloadState,
                     onSeasonLongPress = onSeasonLongPress,
                     onSeasonDownload = onSeasonDownload,
                     onSeasonDownloadUnwatched = onSeasonDownloadUnwatched,
+                    onSeasonDeleteDownloads = onSeasonDeleteDownloads,
+                    onDownloadedItemClick = onDownloadedItemClick,
+                    onDownloadedItemManage = onDownloadedItemManage,
                     onCurrentSeasonChanged = onCurrentSeasonChanged,
                     onOpenMeta = onOpenMeta,
                     onCastClick = onCastClick,
@@ -2164,10 +2269,12 @@ private fun metaSectionHasContent(
     comments: List<TraktCommentReview>,
     isCommentsLoading: Boolean,
     commentsError: String?,
+    hasDownloads: Boolean,
 ): Boolean =
     when (key) {
         MetaScreenSectionKey.ACTIONS -> true
         MetaScreenSectionKey.OVERVIEW -> true
+        MetaScreenSectionKey.DOWNLOADS -> hasDownloads
         MetaScreenSectionKey.PRODUCTION -> hasProductionSection
         MetaScreenSectionKey.CAST -> meta.cast.isNotEmpty()
         MetaScreenSectionKey.COMMENTS -> shouldShowComments && (isCommentsLoading || comments.isNotEmpty() || !commentsError.isNullOrBlank())
@@ -2221,9 +2328,14 @@ private fun ConfiguredMetaSections(
     onEpisodeClick: (MetaVideo) -> Unit,
     onEpisodeLongPress: (MetaVideo) -> Unit,
     onEpisodeDownload: (MetaVideo) -> Unit,
+    onEpisodeManageDownload: (MetaVideo) -> Unit,
+    titleDownloadState: TitleDownloadState,
     onSeasonLongPress: (Int) -> Unit,
     onSeasonDownload: (Int) -> Unit,
     onSeasonDownloadUnwatched: (Int) -> Unit,
+    onSeasonDeleteDownloads: (Int) -> Unit,
+    onDownloadedItemClick: (DownloadItem) -> Unit,
+    onDownloadedItemManage: (DownloadItem) -> Unit,
     onCurrentSeasonChanged: (Int) -> Unit,
     onOpenMeta: ((MetaPreview) -> Unit)?,
     onCastClick: ((MetaPerson, String?) -> Unit)?,
@@ -2238,6 +2350,7 @@ private fun ConfiguredMetaSections(
         when (key) {
             MetaScreenSectionKey.ACTIONS -> true
             MetaScreenSectionKey.OVERVIEW -> true
+            MetaScreenSectionKey.DOWNLOADS -> titleDownloadState.completedCount > 0
             MetaScreenSectionKey.PRODUCTION -> hasProductionSection
             MetaScreenSectionKey.CAST -> meta.cast.isNotEmpty()
             MetaScreenSectionKey.COMMENTS -> shouldShowComments && (isCommentsLoading || comments.isNotEmpty() || !commentsError.isNullOrBlank())
@@ -2256,15 +2369,39 @@ private fun ConfiguredMetaSections(
                 DetailActionButtons(
                     playLabel = playButtonLabel,
                     secondaryActions = buildList {
-                        add(DetailSecondaryAction(
-                            label = if (meta.type.lowercase() in setOf("series", "show", "tv", "tvshow") || hasEpisodes) {
-                                stringResource(Res.string.download_preset_seasons)
+                        run {
+                            val isSeriesLike = meta.type.lowercase() in setOf("series", "show", "tv", "tvshow") ||
+                                hasEpisodes
+                            val movieDownload = if (isSeriesLike) {
+                                ContentDownloadState.None
                             } else {
-                                stringResource(Res.string.download_preset_title)
-                            },
-                            icon = Icons.Default.Download,
-                            onClick = onDownloadClick,
-                        ))
+                                titleDownloadState.forMovie()
+                            }
+                            add(DetailSecondaryAction(
+                                label = when {
+                                    isSeriesLike -> stringResource(Res.string.download_preset_seasons)
+                                    movieDownload.presence == DownloadPresence.Completed ->
+                                        stringResource(Res.string.downloads_cd_state_downloaded)
+                                    movieDownload.presence.isActive ->
+                                        stringResource(Res.string.downloads_cd_state_downloading)
+                                    else -> stringResource(Res.string.download_preset_title)
+                                },
+                                icon = if (movieDownload.presence == DownloadPresence.Completed) {
+                                    Icons.Default.DownloadDone
+                                } else {
+                                    Icons.Default.Download
+                                },
+                                isActive = if (isSeriesLike) {
+                                    titleDownloadState.completedCount > 0
+                                } else {
+                                    movieDownload.presence.isEngaged
+                                },
+                                onClick = movieDownload.item
+                                    ?.takeIf { !isSeriesLike }
+                                    ?.let { item -> { onDownloadedItemManage(item) } }
+                                    ?: onDownloadClick,
+                            ))
+                        }
                         add(DetailSecondaryAction(
                             label = if (isWatched) {
                                 stringResource(Res.string.hero_mark_unwatched)
@@ -2304,6 +2441,15 @@ private fun ConfiguredMetaSections(
                 DetailMetaInfo(
                     meta = meta,
                     horizontalScrollPadding = horizontalScrollPadding,
+                )
+            }
+            MetaScreenSectionKey.DOWNLOADS -> {
+                DetailDownloadsSection(
+                    downloadState = titleDownloadState,
+                    showHeader = showHeader,
+                    horizontalScrollPadding = horizontalScrollPadding,
+                    onItemClick = onDownloadedItemClick,
+                    onItemManage = onDownloadedItemManage,
                 )
             }
             MetaScreenSectionKey.PRODUCTION -> {
@@ -2360,12 +2506,15 @@ private fun ConfiguredMetaSections(
                         watchedKeys = watchedKeys,
                         episodeRatings = episodeImdbRatings,
                         blurUnwatchedEpisodes = blurUnwatchedEpisodes,
+                        downloadState = titleDownloadState,
                         onEpisodeClick = onEpisodeClick,
                         onEpisodeLongPress = onEpisodeLongPress,
                         onEpisodeDownload = onEpisodeDownload,
+                        onEpisodeManageDownload = onEpisodeManageDownload,
                         onSeasonLongPress = onSeasonLongPress,
                         onSeasonDownload = onSeasonDownload,
                         onSeasonDownloadUnwatched = onSeasonDownloadUnwatched,
+                        onSeasonDeleteDownloads = onSeasonDeleteDownloads,
                         onCurrentSeasonChanged = onCurrentSeasonChanged,
                     )
                 }

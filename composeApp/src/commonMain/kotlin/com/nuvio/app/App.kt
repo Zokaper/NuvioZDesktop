@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CheckCircleOutline
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.filled.Info
@@ -159,8 +160,11 @@ import com.nuvio.app.features.cloud.providerPosterUrl
 import com.nuvio.app.features.debrid.DirectDebridPlayableResult
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
 import com.nuvio.app.features.debrid.toastMessage
+import com.nuvio.app.features.downloads.DownloadBatch
+import com.nuvio.app.features.downloads.DownloadBatchEntry
 import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.downloads.DownloadsScreen
+import com.nuvio.app.features.downloads.DownloadsSettingsScreen
 import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.details.MetaDetailsScreen
@@ -394,6 +398,7 @@ enum class AppScreenTab {
     Home,
     Search,
     Library,
+    Downloads,
     Settings,
     ;
 
@@ -418,6 +423,7 @@ private fun AppScreenTab.toNativeNavigationTab(): NativeNavigationTab = when (th
     AppScreenTab.Home -> NativeNavigationTab.Home
     AppScreenTab.Search -> NativeNavigationTab.Search
     AppScreenTab.Library -> NativeNavigationTab.Library
+    AppScreenTab.Downloads -> NativeNavigationTab.Downloads
     AppScreenTab.Settings -> NativeNavigationTab.Settings
 }
 
@@ -425,6 +431,7 @@ private fun NativeNavigationTab.toAppScreenTab(): AppScreenTab = when (this) {
     NativeNavigationTab.Home -> AppScreenTab.Home
     NativeNavigationTab.Search -> AppScreenTab.Search
     NativeNavigationTab.Library -> AppScreenTab.Library
+    NativeNavigationTab.Downloads -> AppScreenTab.Downloads
     NativeNavigationTab.Settings -> AppScreenTab.Settings
 }
 
@@ -498,7 +505,7 @@ fun App(
     onReplace: ((AppRoute) -> Unit)? = null,
     onActivate: ((AppScreenTab) -> Unit)? = null,
     onAppReady: ((Boolean) -> Unit)? = null,
-    onTabTitles: ((home: String, search: String, library: String, profile: String, switchProfile: String, addProfile: String) -> Unit)? = null,
+    onTabTitles: ((home: String, search: String, library: String, downloads: String, profile: String, switchProfile: String, addProfile: String) -> Unit)? = null,
     nativeProfileSwitcherController: NativeProfileSwitcherController? = null,
 ) {
     setSingletonImageLoaderFactory { context ->
@@ -856,7 +863,7 @@ private fun MainAppContent(
     onGoBack: (() -> Unit)? = null,
     onReplace: ((AppRoute) -> Unit)? = null,
     onActivate: ((AppScreenTab) -> Unit)? = null,
-    onTabTitles: ((home: String, search: String, library: String, profile: String, switchProfile: String, addProfile: String) -> Unit)? = null,
+    onTabTitles: ((home: String, search: String, library: String, downloads: String, profile: String, switchProfile: String, addProfile: String) -> Unit)? = null,
     nativeProfileSwitcherController: NativeProfileSwitcherController? = null,
     onRootContentReady: ((Boolean) -> Unit)? = null,
     onSwitchProfile: () -> Unit = {},
@@ -885,6 +892,7 @@ private fun MainAppContent(
         val homeScrollToTopRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
         val searchScrollToTopRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
         val libraryScrollToTopRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
+        val downloadsScrollToTopRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
         val settingsRootActionRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
 
         LaunchedEffect(ownsAppRuntime) {
@@ -969,6 +977,7 @@ private fun MainAppContent(
     val nativeTabHomeTitle = stringResource(Res.string.compose_nav_home)
     val nativeTabSearchTitle = stringResource(Res.string.compose_nav_search)
     val nativeTabLibraryTitle = stringResource(Res.string.compose_nav_library)
+    val nativeTabDownloadsTitle = stringResource(Res.string.compose_nav_downloads)
     val nativeTabProfileTitle = stringResource(Res.string.compose_nav_profile)
     val nativeSwitchProfileTitle = stringResource(Res.string.compose_settings_root_switch_profile_title)
     val nativeAddProfileTitle = stringResource(Res.string.compose_profile_add_profile)
@@ -976,7 +985,7 @@ private fun MainAppContent(
     val metaScreenSettingsTitle = stringResource(Res.string.compose_settings_page_meta_screen)
     val continueWatchingSettingsTitle = stringResource(Res.string.compose_settings_page_continue_watching)
     val debridSettingsTitle = stringResource(Res.string.compose_settings_page_debrid)
-    val downloadsSettingsTitle = stringResource(Res.string.compose_settings_root_downloads_title)
+    val downloadsSettingsTitle = stringResource(Res.string.downloads_settings_title)
     val addonsSettingsTitle = stringResource(Res.string.compose_settings_page_addons)
     val pluginsSettingsTitle = stringResource(Res.string.compose_settings_page_plugins)
     val accountSettingsTitle = stringResource(Res.string.compose_settings_page_account)
@@ -1015,6 +1024,7 @@ private fun MainAppContent(
                 searchScrollToTopRequests.tryEmit(Unit)
             }
             AppScreenTab.Library -> libraryScrollToTopRequests.tryEmit(Unit)
+            AppScreenTab.Downloads -> downloadsScrollToTopRequests.tryEmit(Unit)
             AppScreenTab.Settings -> settingsRootActionRequests.tryEmit(Unit)
         }
     }
@@ -1048,6 +1058,7 @@ private fun MainAppContent(
         nativeTabHomeTitle,
         nativeTabSearchTitle,
         nativeTabLibraryTitle,
+        nativeTabDownloadsTitle,
         nativeTabProfileTitle,
         nativeSwitchProfileTitle,
         nativeAddProfileTitle,
@@ -1057,12 +1068,14 @@ private fun MainAppContent(
             home = nativeTabHomeTitle,
             search = nativeTabSearchTitle,
             library = nativeTabLibraryTitle,
+            downloads = nativeTabDownloadsTitle,
             profile = nativeTabProfileTitle,
         )
         onTabTitles?.invoke(
             nativeTabHomeTitle,
             nativeTabSearchTitle,
             nativeTabLibraryTitle,
+            nativeTabDownloadsTitle,
             nativeTabProfileTitle,
             nativeSwitchProfileTitle,
             nativeAddProfileTitle,
@@ -1995,6 +2008,14 @@ private fun MainAppContent(
                                             icon = Res.drawable.sidebar_library,
                                             contentDescription = stringResource(Res.string.compose_nav_library),
                                         )
+                                        if (AppFeaturePolicy.downloadsEnabled) {
+                                            NavItem(
+                                                selected = selectedTab == AppScreenTab.Downloads,
+                                                onClick = { handleRootTabClick(AppScreenTab.Downloads) },
+                                                icon = Icons.Filled.Download,
+                                                contentDescription = stringResource(Res.string.compose_nav_downloads),
+                                            )
+                                        }
                                         NavItem(
                                             selected = selectedTab == AppScreenTab.Settings,
                                             onClick = { handleRootTabClick(AppScreenTab.Settings) },
@@ -2029,6 +2050,7 @@ private fun MainAppContent(
                                         homeScrollToTopRequests = homeScrollToTopRequests,
                                         searchScrollToTopRequests = searchScrollToTopRequests,
                                         libraryScrollToTopRequests = libraryScrollToTopRequests,
+                                        downloadsScrollToTopRequests = downloadsScrollToTopRequests,
                                         settingsRootActionRequests = settingsRootActionRequests,
                                         onCatalogClick = onCatalogClick,
                                         onPosterClick = { meta ->
@@ -2095,6 +2117,28 @@ private fun MainAppContent(
                                             if (AppFeaturePolicy.downloadsEnabled) {
                                                 navController.navigate(DownloadsSettingsRoute(downloadsSettingsTitle))
                                             }
+                                        },
+                                        onOpenDownload = ::openDownloadedItem,
+                                        onDownloadShowClick = { showId, title ->
+                                            navController.navigate(DownloadShowRoute(showId, title))
+                                        },
+                                        onChooseBatchEntryManually = { batch, entry ->
+                                            onPlayManually(
+                                                batch.parentMetaType,
+                                                entry.videoId,
+                                                batch.parentMetaId,
+                                                batch.parentMetaType,
+                                                batch.title,
+                                                batch.logo,
+                                                batch.poster,
+                                                batch.background,
+                                                entry.season,
+                                                entry.episode,
+                                                entry.title.takeIf { entry.season != null },
+                                                null,
+                                                null,
+                                                null,
+                                            )
                                         },
                                         onAddonsSettingsClick = { navController.navigate(AddonsSettingsRoute(addonsSettingsTitle)) },
                                         onPluginsSettingsClick = {
@@ -2202,6 +2246,15 @@ private fun MainAppContent(
                                             contentDescription = stringResource(Res.string.compose_nav_library),
                                             label = stringResource(Res.string.compose_nav_library),
                                         )
+                                        if (AppFeaturePolicy.downloadsEnabled) {
+                                            NavItem(
+                                                selected = selectedTab == AppScreenTab.Downloads,
+                                                onClick = { handleRootTabClick(AppScreenTab.Downloads) },
+                                                icon = Icons.Filled.Download,
+                                                contentDescription = stringResource(Res.string.compose_nav_downloads),
+                                                label = stringResource(Res.string.compose_nav_downloads),
+                                            )
+                                        }
                                         NavItem(
                                             selected = selectedTab == AppScreenTab.Settings,
                                             onClick = { handleRootTabClick(AppScreenTab.Settings) },
@@ -2232,6 +2285,7 @@ private fun MainAppContent(
                         onBack = onBack,
                         onPlay = onPlay,
                         onPlayManually = onPlayManually,
+                        onPlayDownloadedItem = ::openDownloadedItem,
                         onOpenMeta = { preview ->
                             coroutineScope.launch {
                                 val resolvedId = if (preview.id.startsWith("tmdb:")) {
@@ -3208,34 +3262,8 @@ private fun MainAppContent(
                         navController = navController,
                         route = route,
                     )
-                    DownloadsScreen(
+                    DownloadsSettingsScreen(
                         onBack = onBack,
-                        onOpenDownload = ::openDownloadedItem,
-                        onChooseBatchEntryManually = { batch, entry ->
-                            onPlayManually(
-                                batch.parentMetaType,
-                                entry.videoId,
-                                batch.parentMetaId,
-                                batch.parentMetaType,
-                                batch.title,
-                                batch.logo,
-                                batch.poster,
-                                batch.background,
-                                entry.season,
-                                entry.episode,
-                                entry.title.takeIf { entry.season != null },
-                                null,
-                                null,
-                                null,
-                            )
-                        },
-                        onNavigateToShow = if (useNativeNavigation) {
-                            { showId, title ->
-                                navController.navigate(DownloadShowRoute(showId, title))
-                            }
-                        } else {
-                            null
-                        },
                     )
                 }
                 entry<DownloadShowRoute> { route ->
@@ -3788,6 +3816,7 @@ private fun AppTabHost(
     homeScrollToTopRequests: Flow<Unit>,
     searchScrollToTopRequests: Flow<Unit>,
     libraryScrollToTopRequests: Flow<Unit>,
+    downloadsScrollToTopRequests: Flow<Unit>,
     settingsRootActionRequests: Flow<Unit>,
     onCatalogClick: ((HomeCatalogSection) -> Unit)? = null,
     onPosterClick: ((MetaPreview) -> Unit)? = null,
@@ -3804,6 +3833,9 @@ private fun AppTabHost(
     onMetaScreenSettingsClick: () -> Unit = {},
     onContinueWatchingSettingsClick: () -> Unit = {},
     onDownloadsSettingsClick: () -> Unit = {},
+    onOpenDownload: ((DownloadItem) -> Unit)? = null,
+    onDownloadShowClick: ((showId: String, title: String) -> Unit)? = null,
+    onChooseBatchEntryManually: ((DownloadBatch, DownloadBatchEntry) -> Unit)? = null,
     onAddonsSettingsClick: () -> Unit = {},
     onPluginsSettingsClick: () -> Unit = {},
     onAccountSettingsClick: () -> Unit = {},
@@ -3870,6 +3902,18 @@ private fun AppTabHost(
                                 onCloudFilePlay = onCloudFilePlay,
                                 onConnectCloudClick = onConnectCloudClick,
                             )
+                        }
+
+                        AppScreenTab.Downloads -> {
+                            if (AppFeaturePolicy.downloadsEnabled) {
+                                DownloadsScreen(
+                                    onOpenDownload = onOpenDownload ?: {},
+                                    scrollToTopRequests = downloadsScrollToTopRequests,
+                                    onNavigateToShow = onDownloadShowClick,
+                                    onOpenSettings = onDownloadsSettingsClick,
+                                    onChooseBatchEntryManually = onChooseBatchEntryManually,
+                                )
+                            }
                         }
 
                         AppScreenTab.Settings -> {
@@ -4160,6 +4204,21 @@ private fun DesktopHoverSidebar(
                         tint = color,
                     )
                 }
+                if (AppFeaturePolicy.downloadsEnabled) {
+                    DesktopSidebarItem(
+                        label = stringResource(Res.string.compose_nav_downloads),
+                        selected = selectedTab == AppScreenTab.Downloads,
+                        expanded = sidebarExpanded,
+                        onClick = { selectTab(AppScreenTab.Downloads) },
+                    ) { color ->
+                        Icon(
+                            imageVector = Icons.Filled.Download,
+                            contentDescription = stringResource(Res.string.compose_nav_downloads),
+                            modifier = Modifier.size(DesktopSidebarIconSize),
+                            tint = color,
+                        )
+                    }
+                }
                 DesktopSidebarItem(
                     label = stringResource(Res.string.compose_settings_page_root),
                     selected = selectedTab == AppScreenTab.Settings,
@@ -4373,6 +4432,25 @@ private fun TabletFloatingTopBar(
                         )
                     },
                 )
+                if (AppFeaturePolicy.downloadsEnabled) {
+                    TabletTopPillItem(
+                        label = stringResource(Res.string.compose_nav_downloads),
+                        selected = selectedTab == AppScreenTab.Downloads,
+                        onClick = { onTabSelected(AppScreenTab.Downloads) },
+                        icon = {
+                            Icon(
+                                imageVector = Icons.Filled.Download,
+                                contentDescription = stringResource(Res.string.compose_nav_downloads),
+                                modifier = Modifier.size(NuvioTokens.Space.s18),
+                                tint = if (selectedTab == AppScreenTab.Downloads) {
+                                    tokens.colors.textPrimary
+                                } else {
+                                    tokens.colors.textMuted
+                                },
+                            )
+                        },
+                    )
+                }
                 Surface(
                     color = if (selectedTab == AppScreenTab.Settings) {
                         tokens.colors.overlaySelected
