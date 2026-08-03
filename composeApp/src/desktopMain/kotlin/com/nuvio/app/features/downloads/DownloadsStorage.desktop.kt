@@ -12,4 +12,8 @@ internal actual object DownloadsStorage {
     actual fun savePayload(payload: String) {
         store.putString(ProfileScopedKey.of("downloads"), payload)
     }
+
+    actual fun saveCorruptPayload(payload: String) {
+        store.putString(ProfileScopedKey.of("downloads_corrupt"), payload)
+    }
 }
