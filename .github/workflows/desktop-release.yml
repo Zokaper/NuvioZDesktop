@@ -575,7 +575,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Could not inspect the extracted desktop application JAR."
           }
-          $requiredEntries = @(
+          $externalResourceEntries = @(
             "native/windows/player_bridge.dll",
             "native/windows/libmpv-2.dll",
             "native/windows/WebView2Loader.dll",
@@ -584,9 +584,13 @@ jobs:
             "native/windows/runtime-files.txt",
             "torrserver/windows-amd64/TorrServer.exe"
           )
-          foreach ($entry in $requiredEntries) {
-            if ($jarEntries -notcontains $entry) {
-              throw "The extracted MSI application is missing $entry"
+          foreach ($entry in $externalResourceEntries) {
+            if ($jarEntries -contains $entry) {
+              throw "The extracted MSI still embeds the external resource in the application JAR: $entry"
+            }
+            $resourcePath = Join-Path $appJar.Directory.FullName "resources/$entry"
+            if (-not (Test-Path $resourcePath -PathType Leaf)) {
+              throw "The extracted MSI application resources are missing $entry"
             }
           }
 
@@ -601,9 +605,7 @@ jobs:
 
           $manifestPath = "composeApp\build\compose\release-msis\Nuvio-Z-Windows-x64-$env:RELEASE_VERSION-contents.txt"
           $extractedFiles = Get-ChildItem $extractDir -Recurse -File | Sort-Object FullName
-          $nativeEntries = $jarEntries `
-            | Where-Object { $_ -like "native/windows/*" } `
-            | Sort-Object
+          $nativeEntries = $externalResourceEntries | Sort-Object
           $manifest = [Collections.Generic.List[string]]::new()
           $manifest.Add("MSI=Nuvio-Z-Windows-x64-$env:RELEASE_VERSION.msi")
           $manifest.Add("MSI_SHA256=$((Get-FileHash $msiPath -Algorithm SHA256).Hash.ToLowerInvariant())")
@@ -612,7 +614,7 @@ jobs:
           $manifest.Add("APP_JAR=$([IO.Path]::GetRelativePath($extractDir, $appJar.FullName).Replace('\', '/'))")
           $manifest.Add("JAVA_RUNTIME_JVM=$([IO.Path]::GetRelativePath($extractDir, $javaRuntimeJvm.FullName).Replace('\', '/'))")
           $manifest.Add("")
-          $manifest.Add("NATIVE_JAR_ENTRIES")
+          $manifest.Add("EXTERNAL_APP_RESOURCES")
           foreach ($entry in $nativeEntries) {
             $manifest.Add($entry)
           }

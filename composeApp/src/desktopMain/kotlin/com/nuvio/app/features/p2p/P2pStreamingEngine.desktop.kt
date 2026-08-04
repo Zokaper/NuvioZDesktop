@@ -465,6 +465,7 @@ actual object P2pStreamingEngine {
             }
 
             val platform = DesktopTorrServerPlatform.current()
+            packagedBinaryFile(platform)?.let { return it }
             localBinaryCandidates(platform)
                 .firstOrNull(File::exists)
                 ?.let { return it }
@@ -482,6 +483,13 @@ actual object P2pStreamingEngine {
             System.getProperty("nuvio.torrserver.binary")
                 ?.takeIf { it.isNotBlank() }
                 ?: System.getenv("NUVIO_TORRSERVER_BINARY")?.takeIf { it.isNotBlank() }
+
+        private fun packagedBinaryFile(platform: DesktopTorrServerPlatform): File? =
+            System.getProperty("compose.application.resources.dir")
+                ?.takeIf(String::isNotBlank)
+                ?.let(::File)
+                ?.resolve("torrserver/${platform.resourceDir}/${platform.binaryName}")
+                ?.takeIf(File::isFile)
 
         private fun localBinaryCandidates(platform: DesktopTorrServerPlatform): List<File> =
             listOf(

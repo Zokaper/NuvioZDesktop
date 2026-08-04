@@ -10,7 +10,6 @@ import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.Sync
 import org.gradle.api.tasks.TaskAction
-import org.gradle.jvm.tasks.Jar
 import org.gradle.language.jvm.tasks.ProcessResources
 import org.gradle.process.ExecOperations
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
@@ -619,7 +618,8 @@ if (isMacHost && isMacosDmgBuildRequested && macosPlayerBridgeArch != macosHostJ
 }
 val macosPlayerBridgeOutput = layout.buildDirectory.file("native/macos/$macosPlayerBridgeArch/libplayer_bridge.dylib")
 val macosPlayerRuntimeOutput = layout.buildDirectory.dir("native/macos-runtime/$macosPlayerBridgeArch")
-val macosPlayerAppResourcesRoot = layout.buildDirectory.dir("generated/macos-player-app-resources")
+val desktopAppResourcesRoot = layout.buildDirectory.dir("generated/desktop-app-resources")
+val macosPlayerAppResourcesRoot = desktopAppResourcesRoot
 val macosDmgArchName = macosPlayerBridgeArch
 val isMacosDmgNotarizationRequested = requestedGradleTasks.any { taskName ->
     taskName == "notarizedmg" || taskName == "notarizereleasedmg"
@@ -901,6 +901,21 @@ val generateWindowsPlayerRuntimeIndex = tasks.register<GenerateNativeRuntimeInde
     indexFile.set(windowsPlayerRuntimeOutput.map { it.file("runtime-files.txt") })
 }
 
+val prepareWindowsAppResources = tasks.register<Sync>("prepareWindowsAppResources") {
+    enabled = isWindowsHost
+    dependsOn(buildWindowsPlayerBridge, prepareWindowsPlayerRuntime, generateWindowsPlayerRuntimeIndex)
+    from(windowsPlayerBridgeOutput) {
+        into("native/windows")
+    }
+    from(windowsPlayerRuntimeOutput) {
+        into("native/windows")
+    }
+    from(layout.projectDirectory.file("src/desktopMain/resources/torrserver/windows-amd64/TorrServer.exe")) {
+        into("torrserver/windows-amd64")
+    }
+    into(desktopAppResourcesRoot.map { it.dir("windows") })
+}
+
 abstract class GenerateNativeRuntimeIndexTask : DefaultTask() {
     @get:InputDirectory
     abstract val runtimeDir: DirectoryProperty
@@ -938,28 +953,17 @@ val prepareMacosPlayerAppResources = tasks.register<Sync>("prepareMacosPlayerApp
     into(macosPlayerAppResourcesRoot.map { it.dir("macos/native/macos") })
 }
 
-tasks.withType<Jar>().configureEach {
-    if (isWindowsHost && name == "desktopJar") {
-        dependsOn(buildWindowsPlayerBridge, prepareWindowsPlayerRuntime, generateWindowsPlayerRuntimeIndex)
-        from(windowsPlayerBridgeOutput) {
-            into("native/windows")
-        }
-        from(windowsPlayerRuntimeOutput) {
-            into("native/windows")
-        }
-    }
-}
-
 tasks.matching { it.name == "prepareAppResources" }.configureEach {
+    if (isWindowsHost) {
+        dependsOn(prepareWindowsAppResources)
+    }
     if (isMacHost) {
         dependsOn(prepareMacosPlayerAppResources)
     }
 }
 
 tasks.withType<ProcessResources>().matching { it.name == "desktopProcessResources" }.configureEach {
-    if (!isWindowsHost) {
-        exclude("torrserver/windows-amd64/**")
-    }
+    exclude("torrserver/windows-amd64/**")
     if (isMacHost) {
         dependsOn(prepareMacosTorrServerResources)
         from(prepareMacosTorrServerResources.map { it.outputDir })
@@ -1188,9 +1192,7 @@ compose.desktop {
             packageName = desktopPackageName
             packageVersion = desktopReleasePackageVersion
             vendor = "Nuvio Media"
-            if (isMacHost) {
-                appResourcesRootDir.set(macosPlayerAppResourcesRoot)
-            }
+            appResourcesRootDir.set(desktopAppResourcesRoot)
             modules(
                 "java.instrument",
                 "java.management",

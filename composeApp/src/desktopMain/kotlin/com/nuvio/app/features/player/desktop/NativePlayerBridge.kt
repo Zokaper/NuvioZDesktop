@@ -348,10 +348,20 @@ internal object NativePlayerBridge {
     )
 }
 
+private val nativePlayerBridgePreloadScheduled = AtomicBoolean(false)
+
 internal fun preloadNativePlayerBridgeAsync() {
-    if (DesktopHostOs.current == DesktopHostOs.MACOS || DesktopHostOs.current == DesktopHostOs.WINDOWS) {
-        runCatching {
-            NativePlayerBridge.preloadAsync()
-        }
+    if (DesktopHostOs.current != DesktopHostOs.MACOS && DesktopHostOs.current != DesktopHostOs.WINDOWS) return
+    if (!nativePlayerBridgePreloadScheduled.compareAndSet(false, true)) return
+
+    // Referencing NativePlayerBridge initializes the object and loads its native
+    // runtime. Keep that work off the startup thread as well as the WebView warmup
+    // that preloadAsync() starts after the library is available.
+    Thread {
+        runCatching { NativePlayerBridge.preloadAsync() }
+    }.apply {
+        name = "nuvio-native-player-bootstrap"
+        isDaemon = true
+        start()
     }
 }
