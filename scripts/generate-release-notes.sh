@@ -205,7 +205,9 @@ if [[ "$repository_history" == true ]]; then
             continue
         fi
 
-        [[ "$parents" != *" "* ]] || continue
+        # A direct merge has no associated pull request for resolve_pull_request to
+        # describe. Keep its subject: in first-parent mode it is the only commit that
+        # represents the feature work carried by the merged branch.
         username="$(resolve_username "$commit" "$author_name" "$author_email")"
         emit_release_note "$short_hash" "$subject" "$username"
     done < <(
