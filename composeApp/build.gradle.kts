@@ -16,6 +16,7 @@ import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompilationTask
 import java.io.File
+import java.time.Duration
 import java.util.Properties
 import javax.inject.Inject
 
@@ -1014,7 +1015,7 @@ tasks.withType<Test>().matching { it.name == "desktopTest" }.configureEach {
     environment("APPDATA", testHome.absolutePath)
     environment("XDG_CONFIG_HOME", testHome.resolve(".config").absolutePath)
     // The download harness waits on real transfers over a local socket.
-    timeout.set(java.time.Duration.ofMinutes(20))
+    timeout.set(Duration.ofMinutes(20))
     testLogging {
         events("passed", "skipped", "failed")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
