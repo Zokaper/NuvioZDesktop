@@ -1,7 +1,12 @@
 package com.nuvio.app.features.downloads
 
 import com.nuvio.app.core.storage.DesktopStorage
+import com.nuvio.app.features.debrid.DebridProviders
+import com.nuvio.app.features.debrid.DebridSettingsRepository
+import com.nuvio.app.features.debrid.DirectDebridPlayableResult
+import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
 import com.nuvio.app.features.streams.StreamBehaviorHints
+import com.nuvio.app.features.streams.StreamClientResolve
 import com.nuvio.app.features.streams.StreamItem
 import java.io.File
 import java.net.URI
@@ -9,6 +14,10 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.Json
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -560,8 +569,9 @@ class DesktopDownloadQueueE2ETest {
      * direct media URLs - a real debrid link is the point, since the provider quirks
      * that have caused every fault so far are the one thing a local server cannot
      * imitate. Two links exercise the concurrency limit; a whole season's worth left
-     * running past the fifteen-minute link window is what exercises re-minting for
-     * real.
+     * running past the fifteen-minute link window still only exercises raw transfer
+     * behaviour: these URLs carry no durable provider/hash origin, so they cannot be
+     * re-minted. The provider-backed test below covers that path.
      *
      * Nothing here is turned down: the real stall and watchdog deadlines apply, so
      * allow it the time a real download takes.
@@ -778,6 +788,102 @@ class DesktopDownloadQueueE2ETest {
         }
     }
 
+    /**
+     * A real TorBox season run, starting from the durable source metadata the app
+     * persists rather than from already-minted download URLs.
+     *
+     * This is deliberately opt-in. [TORBOX_API_KEY_ENV] is read only into the
+     * disposable desktop-test profile and is cleared in `finally`; [TORBOX_FIXTURE_ENV]
+     * names a local JSON file whose contents are never printed. Preparing every
+     * source before enqueueing reproduces a real automatic season batch. Setting
+     * `waitAfterPrepareSeconds` above TorBox's signed-link lifetime proves that each
+     * queued transfer re-checks the provider and obtains a usable whole-file link.
+     */
+    @Test
+    fun `real TorBox season rechecks and remints every source`() {
+        val apiKey = System.getenv(TORBOX_API_KEY_ENV)?.trim().orEmpty()
+        val fixturePath = System.getenv(TORBOX_FIXTURE_ENV)?.trim().orEmpty()
+        if (apiKey.isEmpty() || fixturePath.isEmpty()) {
+            println(
+                "Skipping: set $TORBOX_API_KEY_ENV and $TORBOX_FIXTURE_ENV to run the " +
+                    "provider-backed TorBox test.",
+            )
+            return
+        }
+
+        val fixtureFile = File(fixturePath)
+        assertTrue(fixtureFile.isFile, "$TORBOX_FIXTURE_ENV must name a readable JSON file")
+        val fixture = TORBOX_FIXTURE_JSON.decodeFromString<RealTorboxFixture>(fixtureFile.readText())
+        fixture.validate()
+
+        DownloadsTiming.reset()
+        DebridSettingsRepository.setTorboxApiKey(apiKey)
+        try {
+            DebridSettingsRepository.setPreferredResolverProviderId(DebridProviders.TORBOX_ID)
+            DebridSettingsRepository.setEnabled(true)
+            assertEquals(
+                DebridProviders.TORBOX_ID,
+                DebridSettingsRepository.snapshot().activeResolverProviderId,
+                "the disposable test profile did not activate TorBox",
+            )
+
+            val providerChecks = AtomicInteger()
+            DownloadsRepository.resolvePlayableStream = { stream, season, episode ->
+                providerChecks.incrementAndGet()
+                defaultResolver(stream, season, episode)
+            }
+
+            val prepared = fixture.sources.map { source ->
+                val origin = source.toOriginStream()
+                val resolved = runBlocking {
+                    DirectDebridPlaybackResolver.resolveToPlayableStream(
+                        stream = origin,
+                        season = source.season,
+                        episode = source.episode,
+                        forceRefresh = true,
+                    )
+                }
+                val playable = (resolved as? DirectDebridPlayableResult.Success)?.stream
+                    ?: fail("TorBox could not prepare fixture episode ${source.episode}: ${resolved::class.simpleName}")
+                assertNotNull(playable.playableDirectUrl, "TorBox returned no playable URL for episode ${source.episode}")
+                PreparedTorboxSource(source, origin, playable)
+            }
+            val preparedAt = DownloadsClock.nowEpochMs()
+
+            if (fixture.waitAfterPrepareSeconds > 0L) {
+                Thread.sleep(fixture.waitAfterPrepareSeconds * 1_000L)
+            }
+
+            val watch = QueueWatch().start()
+            prepared.forEach { enqueueTorboxSource(it, preparedAt) }
+            try {
+                awaitQueueDrained(timeoutMs = fixture.queueTimeoutMinutes * 60_000L)
+            } finally {
+                watch.stop()
+            }
+
+            watch.assertNothingWasStranded()
+            assertTrue(
+                providerChecks.get() >= fixture.sources.size,
+                "every TorBox transfer must perform a fresh provider readiness check",
+            )
+            DownloadsRepository.uiState.value.items.forEach { item ->
+                assertEquals(DownloadStatus.Completed, item.status, "${item.fileName} did not complete")
+                val uri = assertNotNull(item.localFileUri, "${item.fileName} recorded no file")
+                val file = File(URI(uri))
+                assertTrue(file.exists() && file.length() > 0L, "${file.name} is missing or empty")
+                assertEquals(item.totalBytes, file.length(), "${file.name} is not the recorded whole file")
+                item.expectedSizeBytes?.let { expected ->
+                    assertEquals(expected, file.length(), "${file.name} differs from TorBox's prepared size")
+                }
+            }
+        } finally {
+            DownloadsRepository.resolvePlayableStream = defaultResolver
+            DebridSettingsRepository.setEnabled(false)
+            DebridSettingsRepository.setTorboxApiKey("")
+        }
+    }
+
     // --- Harness ------------------------------------------------------------------
 
     /**
@@ -832,6 +938,69 @@ class DesktopDownloadQueueE2ETest {
     }
 
     private class Episode(val number: Int, val path: String, val content: ByteArray)
+
+    @Serializable
+    private data class RealTorboxFixture(
+        val waitAfterPrepareSeconds: Long = 0L,
+        val queueTimeoutMinutes: Long = 180L,
+        val sources: List<RealTorboxSource>,
+    ) {
+        fun validate() {
+            assertTrue(sources.isNotEmpty(), "the TorBox fixture must contain at least one source")
+            assertTrue(waitAfterPrepareSeconds in 0L..3_600L, "waitAfterPrepareSeconds must be between 0 and 3600")
+            assertTrue(queueTimeoutMinutes in 1L..720L, "queueTimeoutMinutes must be between 1 and 720")
+            assertEquals(sources.size, sources.map { it.episode }.distinct().size, "fixture episodes must be unique")
+            sources.forEach { source ->
+                assertTrue(
+                    source.infoHash.length == 32 || source.infoHash.length == 40,
+                    "each fixture source needs a 32- or 40-character info hash",
+                )
+                assertTrue(source.infoHash.all { it.isLetterOrDigit() }, "fixture info hashes must be alphanumeric")
+                assertTrue(source.season > 0 && source.episode > 0, "fixture season and episode must be positive")
+                assertTrue(source.expectedSizeBytes == null || source.expectedSizeBytes > 0L, "expected sizes must be positive")
+            }
+        }
+    }
+
+    @Serializable
+    private data class RealTorboxSource(
+        val infoHash: String,
+        val fileIdx: Int? = null,
+        val filename: String? = null,
+        val expectedSizeBytes: Long? = null,
+        val season: Int = 1,
+        val episode: Int,
+        val trackers: List<String> = emptyList(),
+    ) {
+        fun toOriginStream(): StreamItem = StreamItem(
+            name = "TorBox E2E S%02dE%02d".format(season, episode),
+            addonName = "TorBox E2E",
+            addonId = "addon:torbox-e2e",
+            behaviorHints = StreamBehaviorHints(
+                videoSize = expectedSizeBytes,
+                filename = filename,
+            ),
+            clientResolve = StreamClientResolve(
+                type = "debrid",
+                infoHash = infoHash,
+                fileIdx = fileIdx,
+                sources = trackers.map { tracker ->
+                    if (tracker.startsWith("tracker:")) tracker else "tracker:$tracker"
+                },
+                filename = filename,
+                season = season,
+                episode = episode,
+                service = DebridProviders.TORBOX_ID,
+                isCached = true,
+            ),
+        )
+    }
+
+    private data class PreparedTorboxSource(
+        val fixture: RealTorboxSource,
+        val origin: StreamItem,
+        val resolved: StreamItem,
+    )
 
     private fun publishEpisode(number: Int): Episode {
         val path = "/media/s01e%02d.mp4".format(number)
@@ -898,6 +1067,33 @@ class DesktopDownloadQueueE2ETest {
             stream = stream,
         )
         assertEquals(DownloadEnqueueResult.Started, result, "$url was not accepted")
+    }
+
+    private fun enqueueTorboxSource(source: PreparedTorboxSource, preparedAt: Long) {
+        val fixture = source.fixture
+        val result = DownloadsRepository.enqueueFromStream(
+            contentType = "series",
+            videoId = "$META_ID:${fixture.season}:${fixture.episode}",
+            parentMetaId = META_ID,
+            parentMetaType = "series",
+            title = "TorBox E2E",
+            logo = null,
+            poster = null,
+            background = null,
+            seasonNumber = fixture.season,
+            episodeNumber = fixture.episode,
+            episodeTitle = "Episode ${fixture.episode}",
+            episodeThumbnail = null,
+            stream = source.resolved,
+            expectedSizeBytes = fixture.expectedSizeBytes ?: source.resolved.behaviorHints.videoSize,
+            sourceOrigin = DownloadSourceOrigin(
+                stream = source.origin,
+                season = fixture.season,
+                episode = fixture.episode,
+            ),
+            sourceUrlResolvedAtEpochMs = preparedAt,
+        )
+        assertEquals(DownloadEnqueueResult.Started, result, "TorBox episode ${fixture.episode} was not accepted")
     }
 
     private fun itemFor(episode: Episode): DownloadItem =
@@ -1009,5 +1205,11 @@ class DesktopDownloadQueueE2ETest {
         const val WATCH_INTERVAL_MS = 25L
         const val REAL_SOURCE_URLS_ENV = "NUVIO_DOWNLOAD_TEST_URLS"
         const val REAL_SOURCE_TIMEOUT_MS = 30L * 60L * 1000L
+        const val TORBOX_API_KEY_ENV = "NUVIO_TORBOX_API_KEY"
+        const val TORBOX_FIXTURE_ENV = "NUVIO_TORBOX_TEST_SOURCES"
+        val TORBOX_FIXTURE_JSON = Json {
+            ignoreUnknownKeys = false
+            explicitNulls = false
+        }
     }
 }

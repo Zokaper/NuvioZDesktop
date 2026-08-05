@@ -1,0 +1,27 @@
+{
+  "waitAfterPrepareSeconds": 960,
+  "queueTimeoutMinutes": 180,
+  "sources": [
+    {
+      "infoHash": "0000000000000000000000000000000000000000",
+      "fileIdx": 0,
+      "filename": "Series.Name.S01E01.mkv",
+      "season": 1,
+      "episode": 1
+    },
+    {
+      "infoHash": "0000000000000000000000000000000000000000",
+      "fileIdx": 1,
+      "filename": "Series.Name.S01E02.mkv",
+      "season": 1,
+      "episode": 2
+    },
+    {
+      "infoHash": "0000000000000000000000000000000000000000",
+      "fileIdx": 2,
+      "filename": "Series.Name.S01E03.mkv",
+      "season": 1,
+      "episode": 3
+    }
+  ]
+}
