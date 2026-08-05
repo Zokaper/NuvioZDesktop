@@ -1002,6 +1002,25 @@ tasks.withType<KotlinCompilationTask<*>>().configureEach {
     dependsOn(generateRuntimeConfigs)
 }
 
+// The desktop tests drive the real DownloadsRepository through the real desktop
+// downloader, which resolves its storage from the user's home directory. Left alone
+// they would read, write and delete downloads in the developer's own Nuvio Z install.
+// Every path DesktopStorage consults is pointed at the build directory instead; the
+// test asserts it landed somewhere disposable before it touches anything.
+tasks.withType<Test>().matching { it.name == "desktopTest" }.configureEach {
+    val testHome = layout.buildDirectory.dir("desktop-test-home").get().asFile
+    doFirst { testHome.mkdirs() }
+    systemProperty("user.home", testHome.absolutePath)
+    environment("APPDATA", testHome.absolutePath)
+    environment("XDG_CONFIG_HOME", testHome.resolve(".config").absolutePath)
+    // The download harness waits on real transfers over a local socket.
+    timeout.set(java.time.Duration.ofMinutes(20))
+    testLogging {
+        events("passed", "skipped", "failed")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
+}
+
 kotlin {
     android {
         namespace = "com.nuvio.app"

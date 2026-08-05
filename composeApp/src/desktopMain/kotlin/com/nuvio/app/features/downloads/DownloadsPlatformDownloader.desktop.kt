@@ -26,7 +26,7 @@ import kotlin.io.path.createDirectories
 private const val TRANSFER_BUFFER_BYTES = 64 * 1024
 
 /** How often the watchdog checks whether anything has arrived. */
-private const val STALL_CHECK_INTERVAL_MS = TRANSFER_STALL_TIMEOUT_MS / 4
+private fun stallCheckIntervalMs(): Long = (DownloadsTiming.stallTimeoutMs / 4).coerceAtLeast(50L)
 
 /**
  * `connectTimeout` and the per-request timeout below both stop short of the body.
@@ -42,6 +42,11 @@ private val desktopDownloadHttpClient: HttpClient = HttpClient.newBuilder()
     .build()
 
 internal actual object DownloadsPlatformDownloader {
+    // Nothing on desktop pauses the queue on the system's behalf, so nothing resumes
+    // it either. An item that reaches that state has to be taken back by the queue or
+    // it waits there until the app is restarted.
+    actual val recoversSystemPauses: Boolean = false
+
     private val downloadsDir: File
         get() = File(DesktopStorage.rootDir.resolve("downloads").also { it.createDirectories() }.toUri())
 
@@ -62,8 +67,8 @@ internal actual object DownloadsPlatformDownloader {
         // it, and this is what decides when to.
         val watchdog = scope.launch {
             while (true) {
-                delay(STALL_CHECK_INTERVAL_MS)
-                if (DownloadsClock.nowEpochMs() - lastByteAtEpochMs.get() < TRANSFER_STALL_TIMEOUT_MS) {
+                delay(stallCheckIntervalMs())
+                if (DownloadsClock.nowEpochMs() - lastByteAtEpochMs.get() < DownloadsTiming.stallTimeoutMs) {
                     continue
                 }
                 // Flagged before the close, never after: closing unblocks the reader
