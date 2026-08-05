@@ -21,7 +21,9 @@ try {
         :composeApp:desktopTest `
         --tests '*DesktopDownloadQueueE2ETest.real TorBox season rechecks and remints every source' `
         --console=plain `
-        --no-daemon
+        --no-daemon `
+        --rerun-tasks `
+        --no-configuration-cache
 
     if ($LASTEXITCODE -ne 0) {
         throw "TorBox download E2E test failed with exit code $LASTEXITCODE."
