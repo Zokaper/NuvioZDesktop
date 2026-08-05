@@ -6,20 +6,36 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import java.awt.Desktop
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.io.path.createDirectories
 
 private const val TRANSFER_BUFFER_BYTES = 64 * 1024
 
+/** How often the watchdog checks whether anything has arrived. */
+private const val STALL_CHECK_INTERVAL_MS = TRANSFER_STALL_TIMEOUT_MS / 4
+
+/**
+ * `connectTimeout` and the per-request timeout below both stop short of the body.
+ *
+ * `HttpRequest.timeout` bounds how long the *response* takes to arrive, and with
+ * `BodyHandlers.ofInputStream` the response arrives as soon as the headers do.
+ * Every byte after that is read from a stream with no deadline of its own, which
+ * is why the transfer loop runs its own stall watchdog.
+ */
 private val desktopDownloadHttpClient: HttpClient = HttpClient.newBuilder()
     .connectTimeout(Duration.ofSeconds(60))
     .followRedirects(HttpClient.Redirect.NORMAL)
@@ -35,6 +51,32 @@ internal actual object DownloadsPlatformDownloader {
     ): DownloadsTaskHandle {
         val job = SupervisorJob()
         val scope = CoroutineScope(job + Dispatchers.IO)
+        val handle = DesktopDownloadsTaskHandle(job)
+        val lastByteAtEpochMs = AtomicLong(DownloadsClock.nowEpochMs())
+        val stalled = AtomicBoolean(false)
+
+        // A connection that goes quiet without closing has no natural end: the read
+        // below blocks forever, cancelling the coroutine cannot interrupt it, and the
+        // download sits at its last percentage holding a transfer slot for good.
+        // Closing the stream out from under the read is the only thing that unblocks
+        // it, and this is what decides when to.
+        val watchdog = scope.launch {
+            while (true) {
+                delay(STALL_CHECK_INTERVAL_MS)
+                if (DownloadsClock.nowEpochMs() - lastByteAtEpochMs.get() < TRANSFER_STALL_TIMEOUT_MS) {
+                    continue
+                }
+                // Flagged before the close, never after: closing unblocks the reader
+                // immediately, and it reaches the error handler on its own thread. Set
+                // this afterwards and the transfer reports a bare "closed" rather than
+                // what actually happened to it.
+                handle.takeActiveStream()?.let { stream ->
+                    stalled.set(true)
+                    runCatching { stream.close() }
+                }
+                lastByteAtEpochMs.set(DownloadsClock.nowEpochMs())
+            }
+        }
 
         scope.launch {
             val destination = File(downloadsDir, request.destinationFileName)
@@ -46,6 +88,7 @@ internal actual object DownloadsPlatformDownloader {
                 downloadedBytes = resumeFromBytes
                 var attemptedRangeRequest = resumeFromBytes > 0L
                 var response = sendDownloadRequest(request, if (attemptedRangeRequest) resumeFromBytes else null)
+                lastByteAtEpochMs.set(DownloadsClock.nowEpochMs())
 
                 if (attemptedRangeRequest && response.statusCode() == 416) {
                     // The range starts past the end of the object. When that is because the
@@ -54,6 +97,8 @@ internal actual object DownloadsPlatformDownloader {
                     val reportedTotal =
                         parseContentRangeTotal(response.headers().firstValue("Content-Range").orElse(null))
                             ?: request.knownTotalBytes
+                    // Nothing reads this body, and an unread one holds its connection open.
+                    runCatching { response.body().close() }
 
                     if (reportedTotal != null && tempFile.length() == reportedTotal) {
                         val finalized = finalizePartialFile(tempFile, destination)
@@ -74,12 +119,15 @@ internal actual object DownloadsPlatformDownloader {
                     downloadedBytes = 0L
                     attemptedRangeRequest = false
                     response = sendDownloadRequest(request, null)
+                    lastByteAtEpochMs.set(DownloadsClock.nowEpochMs())
                 }
 
                 if (response.statusCode() !in 200..299) {
+                    val statusCode = response.statusCode()
+                    runCatching { response.body().close() }
                     listener.onFailed(
-                        failureReasonForHttpStatus(response.statusCode()),
-                        "Download failed with HTTP ${response.statusCode()}",
+                        failureReasonForHttpStatus(statusCode),
+                        "Download failed with HTTP $statusCode",
                         downloadedBytes,
                     )
                     return@launch
@@ -114,6 +162,8 @@ internal actual object DownloadsPlatformDownloader {
                 var lastReportedAtEpochMs = DownloadsClock.nowEpochMs()
 
                 response.body().use { input ->
+                    handle.attachStream(input)
+                    lastByteAtEpochMs.set(DownloadsClock.nowEpochMs())
                     FileOutputStream(tempFile, appendToTemp).use { output ->
                         val buffer = ByteArray(TRANSFER_BUFFER_BYTES)
                         while (true) {
@@ -126,6 +176,9 @@ internal actual object DownloadsPlatformDownloader {
                             // Reporting every chunk used to re-serialise and rewrite the whole
                             // downloads payload thousands of times per file.
                             val nowEpochMs = DownloadsClock.nowEpochMs()
+                            // Proof of life for the watchdog, which is otherwise the only
+                            // thing that can end a read on a connection gone quiet.
+                            lastByteAtEpochMs.set(nowEpochMs)
                             if (
                                 shouldReportProgress(
                                     downloadedBytes = downloadedBytes,
@@ -141,6 +194,19 @@ internal actual object DownloadsPlatformDownloader {
                         }
                         output.flush()
                     }
+                }
+                handle.detachStream()
+
+                // The stream can also end because the watchdog closed it. That is a
+                // stalled transfer, not a finished one, and it must not be allowed to
+                // fall through to the completion check as a short read.
+                if (stalled.get()) {
+                    listener.onFailed(
+                        DownloadFailureReason.Transient,
+                        "The source stopped sending data. Retrying.",
+                        currentPartialBytes(tempFile, downloadedBytes),
+                    )
+                    return@launch
                 }
                 listener.onProgress(downloadedBytes, totalBytes)
 
@@ -185,15 +251,33 @@ internal actual object DownloadsPlatformDownloader {
                 listener.onPaused(currentPartialBytes(tempFile, downloadedBytes))
                 throw error
             } catch (error: Throwable) {
-                listener.onFailed(
-                    DownloadFailureReason.Transient,
-                    error.message ?: "Download failed",
-                    currentPartialBytes(tempFile, downloadedBytes),
-                )
+                when {
+                    // Pausing now closes the stream so the read actually stops, which
+                    // surfaces here as an IO error rather than a cancellation. It is
+                    // still a pause.
+                    handle.isCancelled -> listener.onPaused(
+                        currentPartialBytes(tempFile, downloadedBytes),
+                    )
+
+                    stalled.get() -> listener.onFailed(
+                        DownloadFailureReason.Transient,
+                        "The source stopped sending data. Retrying.",
+                        currentPartialBytes(tempFile, downloadedBytes),
+                    )
+
+                    else -> listener.onFailed(
+                        DownloadFailureReason.Transient,
+                        error.message ?: "Download failed",
+                        currentPartialBytes(tempFile, downloadedBytes),
+                    )
+                }
+            } finally {
+                watchdog.cancel()
+                handle.detachStream()
             }
         }
 
-        return DesktopDownloadsTaskHandle(job)
+        return handle
     }
 
     actual fun partialFileBytes(destinationFileName: String): Long {
@@ -276,10 +360,44 @@ private fun openDirectoryWithPlatformCommand(directory: File): Boolean {
     return runCatching { ProcessBuilder(command).start() }.isSuccess
 }
 
+/**
+ * Handle over a transfer whose read loop is blocking, not suspending.
+ *
+ * Cancelling the job is not enough to stop it. A thread parked in a socket read
+ * observes nothing until that read returns, so a download on a connection that
+ * has gone quiet ignored both pause and cancel and kept its transfer slot. The
+ * stream reference exists so the read can be ended from the outside.
+ */
 private class DesktopDownloadsTaskHandle(
     private val job: Job,
 ) : DownloadsTaskHandle {
+    private val activeStream = AtomicReference<InputStream?>(null)
+    private val cancelled = AtomicBoolean(false)
+
+    /** True once [cancel] has been called, so a resulting IO error reads as a pause. */
+    val isCancelled: Boolean
+        get() = cancelled.get()
+
+    fun attachStream(stream: InputStream) {
+        activeStream.set(stream)
+    }
+
+    fun detachStream() {
+        activeStream.set(null)
+    }
+
+    /**
+     * Claims the stream in progress, if there still is one.
+     *
+     * Handed over rather than closed here so the caller can record why it is ending
+     * the read before the read observes it: closing unblocks the reading thread at
+     * once, and whatever it is meant to report has to be true by then.
+     */
+    fun takeActiveStream(): InputStream? = activeStream.getAndSet(null)
+
     override fun cancel() {
+        cancelled.set(true)
+        takeActiveStream()?.let { runCatching { it.close() } }
         job.cancel()
     }
 }
