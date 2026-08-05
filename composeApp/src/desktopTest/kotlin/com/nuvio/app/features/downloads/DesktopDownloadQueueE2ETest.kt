@@ -5,6 +5,10 @@ import com.nuvio.app.features.streams.StreamBehaviorHints
 import com.nuvio.app.features.streams.StreamItem
 import java.io.File
 import java.net.URI
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CompletableDeferred
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -35,7 +39,7 @@ import kotlin.test.fail
 class DesktopDownloadQueueE2ETest {
 
     private lateinit var server: FaultyMediaServer
-    private lateinit var defaultResolver: suspend (StreamItem, Int?, Int?) -> StreamItem?
+    private lateinit var defaultResolver: suspend (StreamItem, Int?, Int?) -> DownloadSourceResolution
 
     @BeforeTest
     fun setUp() {
@@ -54,6 +58,7 @@ class DesktopDownloadQueueE2ETest {
         DownloadsRepository.deleteDownloadsForTitle(META_ID)
         DownloadsTiming.stallTimeoutMs = STALL_TIMEOUT_MS
         DownloadsTiming.queueWatchdogTimeoutMs = QUEUE_WATCHDOG_MS
+        DownloadsTiming.sourceResolveTimeoutMs = SOURCE_RESOLVE_TIMEOUT_MS
         defaultResolver = DownloadsRepository.resolvePlayableStream
         server = FaultyMediaServer()
     }
@@ -174,8 +179,11 @@ class DesktopDownloadQueueE2ETest {
         val freshPath = "/fresh/${episode.path.trimStart('/')}"
         server.publish(freshPath, episode.content)
         server.failNextRequests(episode.path, FaultyMediaServer.Behavior.Reject(statusCode = 403))
+        val checks = AtomicInteger()
         DownloadsRepository.resolvePlayableStream = { stream, _, _ ->
-            stream.copy(url = server.urlFor(freshPath))
+            DownloadSourceResolution.Ready(
+                if (checks.incrementAndGet() == 1) stream else stream.copy(url = server.urlFor(freshPath)),
+            )
         }
 
         enqueue(episode, withOrigin = true)
@@ -185,6 +193,344 @@ class DesktopDownloadQueueE2ETest {
         assertEquals(DownloadStatus.Completed, item.status)
         assertContentOnDisk(item, episode.content)
         assertTrue(server.requestCount(freshPath) > 0, "the re-minted link was never used")
+    }
+
+    @Test
+    fun `re-minting may fail once and then recover`() {
+        val episode = publishEpisode(1)
+        val freshPath = "/fresh/${episode.path.trimStart('/')}"
+        server.publish(freshPath, episode.content)
+        val calls = AtomicInteger()
+        DownloadsRepository.resolvePlayableStream = { stream, _, _ ->
+            if (calls.incrementAndGet() == 1) {
+                DownloadSourceResolution.RetryableFailure("Provider unavailable")
+            } else {
+                DownloadSourceResolution.Ready(stream.copy(url = server.urlFor(freshPath)))
+            }
+        }
+
+        enqueue(episode, withOrigin = true, resolvedAtEpochMs = 0L)
+        awaitQueueDrained(timeoutMs = 20_000L)
+
+        assertEquals(2, calls.get())
+        assertContentOnDisk(itemFor(episode), episode.content)
+    }
+
+    @Test
+    fun `re-minting that always fails ends with an actionable failure`() {
+        val episode = publishEpisode(1)
+        DownloadsRepository.resolvePlayableStream = { _, _, _ ->
+            DownloadSourceResolution.RetryableFailure("Provider unavailable")
+        }
+
+        enqueue(episode, withOrigin = true, resolvedAtEpochMs = 0L)
+        awaitCondition(30_000L, "re-mint retries to reach a terminal failure") { items ->
+            items.firstOrNull { it.episodeNumber == episode.number }
+                ?.let { it.status == DownloadStatus.Failed && !it.errorMessage.isNullOrBlank() }
+                ?: false
+        }
+
+        assertEquals(MAX_SOURCE_RERESOLVE_ATTEMPTS + 1, itemFor(episode).attemptCount)
+    }
+
+    @Test
+    fun `a provider that hangs cannot hold a transfer slot forever`() {
+        val episode = publishEpisode(1)
+        val entered = CountDownLatch(1)
+        val release = CompletableDeferred<Unit>()
+        DownloadsRepository.resolvePlayableStream = { _, _, _ ->
+            entered.countDown()
+            release.await()
+            DownloadSourceResolution.RetryableFailure("Provider timed out")
+        }
+
+        enqueue(episode, withOrigin = true, resolvedAtEpochMs = 0L)
+        assertTrue(entered.await(5, TimeUnit.SECONDS), "the provider was never called")
+        try {
+            awaitCondition(10_000L, "the hung provider call to release its queue slot") { items ->
+                items.firstOrNull { it.episodeNumber == episode.number }
+                    ?.let { it.status != DownloadStatus.Downloading && it.attemptCount > 0 }
+                    ?: false
+            }
+        } finally {
+            release.complete(Unit)
+        }
+    }
+
+    @Test
+    fun `a re-minted link for a different file cannot corrupt a partial download`() {
+        val episode = publishEpisode(1)
+        val replacement = ByteArray(episode.content.size) { index -> ((index + 97) % 251).toByte() }
+        val freshPath = "/different/${episode.path.trimStart('/')}"
+        server.publish(freshPath, replacement)
+        server.failNextRequests(
+            episode.path,
+            FaultyMediaServer.Behavior.DropConnection(bytesBeforeDrop = episode.content.size / 3L),
+            FaultyMediaServer.Behavior.Reject(statusCode = 403),
+        )
+        val checks = AtomicInteger()
+        DownloadsRepository.resolvePlayableStream = { stream, _, _ ->
+            DownloadSourceResolution.Ready(
+                if (checks.incrementAndGet() <= 2) stream else stream.copy(url = server.urlFor(freshPath)),
+            )
+        }
+
+        enqueue(episode, withOrigin = true)
+        awaitQueueDrained(timeoutMs = 30_000L)
+
+        assertContentOnDisk(itemFor(episode), replacement)
+        assertTrue(
+            server.responseRangeStarts(freshPath).firstOrNull() == 0L,
+            "the replacement file was appended to bytes from the expired source",
+        )
+    }
+
+    @Test
+    fun `a re-minted link for a materially truncated file is rejected`() {
+        val episode = publishEpisode(1)
+        val truncated = episode.content.copyOf(episode.content.size / 2)
+        val freshPath = "/truncated/${episode.path.trimStart('/')}"
+        server.publish(freshPath, truncated)
+        server.failNextRequests(
+            episode.path,
+            FaultyMediaServer.Behavior.DropConnection(bytesBeforeDrop = episode.content.size / 3L),
+            FaultyMediaServer.Behavior.Reject(statusCode = 403),
+        )
+        val checks = AtomicInteger()
+        DownloadsRepository.resolvePlayableStream = { stream, _, _ ->
+            if (checks.incrementAndGet() <= 2) {
+                DownloadSourceResolution.Ready(stream)
+            } else {
+                DownloadSourceResolution.Ready(
+                    stream.copy(
+                        url = server.urlFor(freshPath),
+                        behaviorHints = stream.behaviorHints.copy(videoSize = truncated.size.toLong()),
+                    ),
+                )
+            }
+        }
+
+        enqueue(episode, withOrigin = true)
+        awaitCondition(20_000L, "the contradictory provider file size to fail") { items ->
+            items.firstOrNull { it.episodeNumber == episode.number }
+                ?.let { it.status == DownloadStatus.Failed && !it.errorMessage.isNullOrBlank() }
+                ?: false
+        }
+
+        assertEquals(0, server.requestCount(freshPath), "the known-truncated replacement was downloaded")
+        assertTrue(itemFor(episode).localFileUri == null)
+    }
+
+    @Test
+    fun `a link that expires twenty percent into the transfer is re-minted and resumed`() {
+        assertMidTransferExpiryAt(0.20)
+    }
+
+    @Test
+    fun `a link that expires ninety percent into the transfer is re-minted and resumed`() {
+        assertMidTransferExpiryAt(0.90)
+    }
+
+    @Test
+    fun `rate limits and provider server errors recover without stranding the queue`() {
+        val rateLimited = publishEpisode(1)
+        val unavailable = publishEpisode(2)
+        server.failNextRequests(rateLimited.path, FaultyMediaServer.Behavior.Reject(statusCode = 429))
+        server.failNextRequests(unavailable.path, FaultyMediaServer.Behavior.Reject(statusCode = 503))
+
+        enqueue(rateLimited)
+        enqueue(unavailable)
+        awaitQueueDrained(timeoutMs = 30_000L)
+
+        listOf(rateLimited, unavailable).forEach { episode ->
+            assertEquals(2, server.requestCount(episode.path))
+            assertContentOnDisk(itemFor(episode), episode.content)
+        }
+    }
+
+    @Test
+    fun `pausing while a re-mint is in flight stays user-paused`() {
+        val episode = publishEpisode(1)
+        val freshPath = "/fresh/${episode.path.trimStart('/')}"
+        server.publish(freshPath, episode.content)
+        val entered = CountDownLatch(1)
+        val release = CompletableDeferred<Unit>()
+        DownloadsRepository.resolvePlayableStream = { stream, _, _ ->
+            entered.countDown()
+            release.await()
+            DownloadSourceResolution.Ready(stream.copy(url = server.urlFor(freshPath)))
+        }
+
+        enqueue(episode, withOrigin = true, resolvedAtEpochMs = 0L)
+        assertTrue(entered.await(5, TimeUnit.SECONDS), "the provider was never called")
+        DownloadsRepository.pauseDownload(itemFor(episode).id)
+        release.complete(Unit)
+        awaitUserPaused(episode)
+        Thread.sleep(1_500L)
+        awaitUserPaused(episode)
+        assertEquals(0, server.requestCount(freshPath), "the cancelled re-mint started a transfer")
+
+        DownloadsRepository.resumeDownload(itemFor(episode).id)
+        awaitQueueDrained()
+        assertContentOnDisk(itemFor(episode), episode.content)
+    }
+
+    @Test
+    fun `reordering while a re-mint is in flight cannot strand either attempt`() {
+        val first = publishEpisode(1)
+        val resolving = publishEpisode(2)
+        val promoted = publishEpisode(3)
+        val freshPath = "/fresh/${resolving.path.trimStart('/')}"
+        server.publish(freshPath, resolving.content)
+        server.failNextRequests(first.path, FaultyMediaServer.Behavior.Throttle(delayPerChunkMs = 8L))
+        val entered = CountDownLatch(1)
+        val release = CompletableDeferred<Unit>()
+        val calls = AtomicInteger()
+        DownloadsRepository.resolvePlayableStream = { stream, _, _ ->
+            if (calls.incrementAndGet() == 1) {
+                entered.countDown()
+                release.await()
+            }
+            DownloadSourceResolution.Ready(stream.copy(url = server.urlFor(freshPath)))
+        }
+
+        enqueue(first)
+        enqueue(resolving, withOrigin = true, resolvedAtEpochMs = 0L)
+        enqueue(promoted)
+        assertTrue(entered.await(5, TimeUnit.SECONDS), "the provider was never called")
+        DownloadsRepository.moveDownloadToTop(itemFor(promoted).id)
+        release.complete(Unit)
+
+        val watch = QueueWatch().start()
+        try {
+            awaitQueueDrained(timeoutMs = 60_000L)
+        } finally {
+            watch.stop()
+        }
+        watch.assertNothingWasStranded()
+        listOf(first, resolving, promoted).forEach { assertContentOnDisk(itemFor(it), it.content) }
+    }
+
+    @Test
+    fun `cancelling while a re-mint is in flight cannot resurrect the row`() {
+        val episode = publishEpisode(1)
+        val entered = CountDownLatch(1)
+        val release = CompletableDeferred<Unit>()
+        DownloadsRepository.resolvePlayableStream = { stream, _, _ ->
+            entered.countDown()
+            release.await()
+            DownloadSourceResolution.Ready(stream)
+        }
+
+        enqueue(episode, withOrigin = true, resolvedAtEpochMs = 0L)
+        assertTrue(entered.await(5, TimeUnit.SECONDS), "the provider was never called")
+        val id = itemFor(episode).id
+        DownloadsRepository.cancelDownload(id)
+        release.complete(Unit)
+        Thread.sleep(1_500L)
+
+        assertTrue(DownloadsRepository.uiState.value.items.none { it.id == id })
+        assertEquals(0, server.requestCount(episode.path), "the cancelled re-mint started a transfer")
+    }
+
+    @Test
+    fun `provider cache readiness is checked immediately before transfer`() {
+        val episode = publishEpisode(1)
+        val freshPath = "/verified/${episode.path.trimStart('/')}"
+        server.publish(freshPath, episode.content)
+        val checks = AtomicInteger()
+        DownloadsRepository.resolvePlayableStream = { stream, _, _ ->
+            checks.incrementAndGet()
+            DownloadSourceResolution.Ready(stream.copy(url = server.urlFor(freshPath)))
+        }
+
+        // The URL is deliberately fresh. Addon-time readiness is not enough: the
+        // provider must still be asked now, when the transfer is about to start.
+        enqueue(episode, withOrigin = true)
+        awaitQueueDrained()
+
+        assertEquals(1, checks.get(), "the queue trusted planning-time cache metadata")
+        assertEquals(0, server.requestCount(episode.path), "the unverified URL was used")
+        assertContentOnDisk(itemFor(episode), episode.content)
+    }
+
+    @Test
+    fun `a source evicted from provider cache after planning is not downloaded`() {
+        val episode = publishEpisode(1)
+        val checks = AtomicInteger()
+        DownloadsRepository.resolvePlayableStream = { _, _, _ ->
+            checks.incrementAndGet()
+            DownloadSourceResolution.NotReady("The file is not cached on the provider yet")
+        }
+
+        enqueue(episode, withOrigin = true)
+        awaitCondition(10_000L, "the uncached source to wait without transferring") { items ->
+            items.firstOrNull { it.episodeNumber == episode.number }
+                ?.let { it.status == DownloadStatus.Queued && it.attemptCount > 0 }
+                ?: false
+        }
+
+        assertEquals(1, checks.get())
+        assertEquals(0, server.requestCount(episode.path), "an uncached source reached the media host")
+    }
+
+    @Test
+    fun `provider uncertainty waits with a visible reason instead of using an unverified link`() {
+        val episode = publishEpisode(1)
+        DownloadsRepository.resolvePlayableStream = { _, _, _ ->
+            DownloadSourceResolution.RetryableFailure("The provider could not verify this file yet")
+        }
+
+        enqueue(episode, withOrigin = true)
+        awaitCondition(10_000L, "provider uncertainty to become a named wait") { items ->
+            items.firstOrNull { it.episodeNumber == episode.number }
+                ?.let {
+                    it.status == DownloadStatus.Queued &&
+                        it.attemptCount > 0 &&
+                        !it.errorMessage.isNullOrBlank()
+                }
+                ?: false
+        }
+
+        assertEquals(0, server.requestCount(episode.path))
+    }
+
+    @Test
+    fun `a dead provider account fails plainly without touching the media link`() {
+        val episode = publishEpisode(1)
+        DownloadsRepository.resolvePlayableStream = { _, _, _ ->
+            DownloadSourceResolution.FatalFailure("Reconnect the provider account")
+        }
+
+        enqueue(episode, withOrigin = true)
+        awaitCondition(10_000L, "the dead account to fail") { items ->
+            items.firstOrNull { it.episodeNumber == episode.number }
+                ?.let { it.status == DownloadStatus.Failed && it.errorMessage == "Reconnect the provider account" }
+                ?: false
+        }
+
+        assertEquals(0, server.requestCount(episode.path))
+    }
+
+    @Test
+    fun `a placeholder that arrives after a successful cache check is still rejected`() {
+        val episode = publishEpisode(1)
+        val verifiedPath = "/verified/${episode.path.trimStart('/')}"
+        server.publish(verifiedPath, episode.content)
+        server.failNextRequests(verifiedPath, FaultyMediaServer.Behavior.Placeholder(sizeBytes = 4 * 1024))
+        DownloadsRepository.resolvePlayableStream = { stream, _, _ ->
+            DownloadSourceResolution.Ready(stream.copy(url = server.urlFor(verifiedPath)))
+        }
+
+        enqueue(episode, withOrigin = true)
+        awaitCondition(20_000L, "the post-check placeholder to be rejected") { items ->
+            items.firstOrNull { it.episodeNumber == episode.number }
+                ?.let { it.status == DownloadStatus.Queued && it.attemptCount > 0 }
+                ?: false
+        }
+
+        assertEquals(1, server.requestCount(verifiedPath))
+        assertTrue(itemFor(episode).localFileUri == null)
     }
 
     @Test
@@ -270,6 +616,168 @@ class DesktopDownloadQueueE2ETest {
         )
     }
 
+    @Test
+    fun `reordering under load preempts and resumes without losing bytes`() {
+        val episodes = (1..5).map { publishEpisode(it) }
+        episodes.take(2).forEach { episode ->
+            server.failNextRequests(
+                episode.path,
+                FaultyMediaServer.Behavior.Throttle(delayPerChunkMs = 8L),
+            )
+        }
+
+        episodes.forEach { enqueue(it) }
+        episodes.take(2).forEach { awaitProgress(it) }
+
+        DownloadsRepository.moveDownloadUp(itemFor(episodes[4]).id)
+        assertQueueOrder(1, 2, 3, 5, 4)
+        DownloadsRepository.moveDownloadDown(itemFor(episodes[4]).id)
+        assertQueueOrder(1, 2, 3, 4, 5)
+        DownloadsRepository.moveDownloadToBottom(itemFor(episodes[2]).id)
+        assertQueueOrder(1, 2, 4, 5, 3)
+
+        DownloadsRepository.moveDownloadToTop(itemFor(episodes[4]).id)
+        assertQueueOrder(5, 1, 2, 4, 3)
+        awaitCondition(10_000L, "the promoted download to start") { items ->
+            items.firstOrNull { it.episodeNumber == 5 }?.status == DownloadStatus.Downloading
+        }
+
+        awaitQueueDrained(timeoutMs = 90_000L)
+        val preempted = episodes[1]
+        assertTrue(server.requestCount(preempted.path) >= 2, "the lower-priority transfer was not preempted")
+        assertTrue(
+            server.rangeStarts(preempted.path).any { it > 0L },
+            "the preempted transfer restarted instead of resuming its partial file",
+        )
+        episodes.forEach { assertContentOnDisk(itemFor(it), it.content) }
+    }
+
+    @Test
+    fun `a user pause survives queue recovery and restart then resumes from disk`() {
+        val episode = publishEpisode(1)
+        server.failNextRequests(
+            episode.path,
+            FaultyMediaServer.Behavior.Throttle(delayPerChunkMs = 8L),
+        )
+        enqueue(episode)
+        awaitProgress(episode)
+
+        DownloadsRepository.pauseDownload(itemFor(episode).id)
+        awaitUserPaused(episode)
+        val requestsWhilePaused = server.requestCount(episode.path)
+
+        DownloadsRepository.moveDownloadToTop(itemFor(episode).id)
+        DownloadsRepository.resumeSystemPausedDownloads()
+        Thread.sleep(QUEUE_WATCHDOG_MS + 500L)
+        awaitUserPaused(episode)
+        assertEquals(requestsWhilePaused, server.requestCount(episode.path), "recovery restarted a user pause")
+
+        DownloadsRepository.clearLocalState()
+        DownloadsRepository.ensureLoaded()
+        awaitUserPaused(episode)
+        assertQueueOrder(1)
+
+        DownloadsRepository.resumeDownload(itemFor(episode).id)
+        awaitQueueDrained()
+        assertTrue(server.rangeStarts(episode.path).any { it > 0L }, "resume did not use the partial file")
+        assertContentOnDisk(itemFor(episode), episode.content)
+    }
+
+    @Test
+    fun `pausing during retry backoff is sticky`() {
+        val episode = publishEpisode(1)
+        server.failNextRequests(
+            episode.path,
+            FaultyMediaServer.Behavior.DropConnection(bytesBeforeDrop = episode.content.size / 3L),
+        )
+        enqueue(episode)
+        awaitCondition(15_000L, "the download to enter retry backoff") { items ->
+            items.firstOrNull { it.episodeNumber == episode.number }
+                ?.let { it.status == DownloadStatus.Queued && it.attemptCount == 1 && it.nextRetryAtEpochMs != null }
+                ?: false
+        }
+
+        DownloadsRepository.pauseDownload(itemFor(episode).id)
+        awaitUserPaused(episode)
+        val requestsWhilePaused = server.requestCount(episode.path)
+        Thread.sleep(3_000L)
+        awaitUserPaused(episode)
+        assertEquals(requestsWhilePaused, server.requestCount(episode.path), "the retry timer undid a user pause")
+
+        DownloadsRepository.resumeDownload(itemFor(episode).id)
+        awaitQueueDrained()
+        assertContentOnDisk(itemFor(episode), episode.content)
+    }
+
+    @Test
+    fun `cancelling the only running download removes its files and does not resurrect it`() {
+        val episode = publishEpisode(1)
+        server.failNextRequests(
+            episode.path,
+            FaultyMediaServer.Behavior.Throttle(delayPerChunkMs = 8L),
+        )
+        enqueue(episode)
+        awaitProgress(episode)
+        val item = itemFor(episode)
+
+        DownloadsRepository.cancelDownload(item.id)
+        awaitCondition(5_000L, "the cancelled row to disappear") { items ->
+            items.none { it.id == item.id }
+        }
+        Thread.sleep(QUEUE_WATCHDOG_MS + 500L)
+
+        assertTrue(DownloadsRepository.uiState.value.items.none { it.id == item.id }, "the cancelled row came back")
+        assertEquals(0L, DownloadsPlatformDownloader.partialFileBytes(item.fileName), "the partial file survived cancel")
+        assertEquals(
+            null,
+            DownloadsPlatformDownloader.resolveLocalFileUri(null, item.fileName),
+            "a completed file survived cancel",
+        )
+    }
+
+    @Test
+    fun `an active reordered queue reloads in the same order and resumes partial files`() {
+        val episodes = (1..4).map { publishEpisode(it) }
+        episodes.take(2).forEach { episode ->
+            server.failNextRequests(episode.path, FaultyMediaServer.Behavior.Throttle(delayPerChunkMs = 8L))
+        }
+        episodes.forEach { enqueue(it) }
+        episodes.take(2).forEach { awaitProgress(it) }
+        DownloadsRepository.moveDownloadUp(itemFor(episodes[3]).id)
+        assertQueueOrder(1, 2, 4, 3)
+
+        DownloadsRepository.clearLocalState()
+        DownloadsRepository.ensureLoaded()
+        assertQueueOrder(1, 2, 4, 3)
+        awaitQueueDrained(timeoutMs = 60_000L)
+
+        episodes.take(2).forEach { episode ->
+            assertTrue(server.rangeStarts(episode.path).any { it > 0L }, "${episode.path} restarted from zero")
+        }
+        episodes.forEach { assertContentOnDisk(itemFor(it), it.content) }
+    }
+
+    @Test
+    fun `deleting a title under load removes every row and partial file`() {
+        val episodes = (1..3).map { publishEpisode(it) }
+        episodes.take(2).forEach { episode ->
+            server.failNextRequests(episode.path, FaultyMediaServer.Behavior.Throttle(delayPerChunkMs = 8L))
+        }
+        episodes.forEach { enqueue(it) }
+        episodes.take(2).forEach { awaitProgress(it) }
+        val fileNames = DownloadsRepository.uiState.value.items.map { it.fileName }
+
+        DownloadsRepository.deleteDownloadsForTitle(META_ID)
+        awaitCondition(5_000L, "the title deletion to clear the queue") { it.isEmpty() }
+        Thread.sleep(QUEUE_WATCHDOG_MS + 500L)
+
+        assertTrue(DownloadsRepository.uiState.value.items.isEmpty(), "a cancelled callback restored a row")
+        fileNames.forEach { fileName ->
+            assertEquals(0L, DownloadsPlatformDownloader.partialFileBytes(fileName), "$fileName kept a partial")
+            assertEquals(null, DownloadsPlatformDownloader.resolveLocalFileUri(null, fileName))
+        }
+    }
+
     // --- Harness ------------------------------------------------------------------
 
     /**
@@ -334,7 +842,11 @@ class DesktopDownloadQueueE2ETest {
         return Episode(number, path, content)
     }
 
-    private fun enqueue(episode: Episode, withOrigin: Boolean = false) {
+    private fun enqueue(
+        episode: Episode,
+        withOrigin: Boolean = false,
+        resolvedAtEpochMs: Long? = if (withOrigin) DownloadsClock.nowEpochMs() else null,
+    ) {
         val stream = StreamItem(
             name = "Test source ${episode.number}",
             url = server.urlFor(episode.path),
@@ -357,7 +869,7 @@ class DesktopDownloadQueueE2ETest {
             episodeThumbnail = null,
             stream = stream,
             sourceOrigin = if (withOrigin) DownloadSourceOrigin(stream, season = 1, episode = episode.number) else null,
-            sourceUrlResolvedAtEpochMs = if (withOrigin) DownloadsClock.nowEpochMs() else null,
+            sourceUrlResolvedAtEpochMs = resolvedAtEpochMs,
         )
         assertEquals(DownloadEnqueueResult.Started, result, "${episode.path} was not accepted")
     }
@@ -391,6 +903,56 @@ class DesktopDownloadQueueE2ETest {
     private fun itemFor(episode: Episode): DownloadItem =
         DownloadsRepository.uiState.value.items.firstOrNull { it.episodeNumber == episode.number }
             ?: fail("no download for ${episode.path}")
+
+    private fun awaitProgress(episode: Episode, minimumBytes: Long = 256L * 1024L) {
+        awaitCondition(10_000L, "${episode.path} to make progress") { items ->
+            items.firstOrNull { it.episodeNumber == episode.number }
+                ?.let { it.status == DownloadStatus.Downloading && it.downloadedBytes >= minimumBytes }
+                ?: false
+        }
+    }
+
+    private fun assertMidTransferExpiryAt(fraction: Double) {
+        val episode = publishEpisode(1)
+        val freshPath = "/fresh/${episode.path.trimStart('/')}"
+        server.publish(freshPath, episode.content)
+        server.failNextRequests(
+            episode.path,
+            FaultyMediaServer.Behavior.DropConnection(
+                bytesBeforeDrop = (episode.content.size * fraction).toLong(),
+            ),
+            FaultyMediaServer.Behavior.Reject(statusCode = 403),
+        )
+        val checks = AtomicInteger()
+        DownloadsRepository.resolvePlayableStream = { stream, _, _ ->
+            DownloadSourceResolution.Ready(
+                if (checks.incrementAndGet() <= 2) stream else stream.copy(url = server.urlFor(freshPath)),
+            )
+        }
+
+        enqueue(episode, withOrigin = true)
+        awaitQueueDrained(timeoutMs = 30_000L)
+
+        assertTrue(server.rangeStarts(episode.path).any { it > 0L }, "the expired source was never resumed")
+        assertTrue(server.rangeStarts(freshPath).any { it > 0L }, "the fresh source did not resume the partial")
+        assertContentOnDisk(itemFor(episode), episode.content)
+    }
+
+    private fun awaitUserPaused(episode: Episode) {
+        awaitCondition(5_000L, "${episode.path} to remain user-paused") { items ->
+            items.firstOrNull { it.episodeNumber == episode.number }
+                ?.let { it.status == DownloadStatus.Paused && it.pauseReason == DownloadPauseReason.User }
+                ?: false
+        }
+    }
+
+    private fun assertQueueOrder(vararg episodeNumbers: Int) {
+        val actual = DownloadsRepository.uiState.value.items
+            .filter { it.status != DownloadStatus.Completed }
+            .sortedBy { it.queuePosition }
+            .mapNotNull { it.episodeNumber }
+        assertEquals(episodeNumbers.toList(), actual)
+    }
 
     private fun statusOf(episode: Episode): String {
         val item = itemFor(episode)
@@ -442,6 +1004,7 @@ class DesktopDownloadQueueE2ETest {
         const val EPISODE_BYTES = 6 * 1024 * 1024
         const val STALL_TIMEOUT_MS = 3_000L
         const val QUEUE_WATCHDOG_MS = 5_000L
+        const val SOURCE_RESOLVE_TIMEOUT_MS = 1_000L
         const val POLL_INTERVAL_MS = 100L
         const val WATCH_INTERVAL_MS = 25L
         const val REAL_SOURCE_URLS_ENV = "NUVIO_DOWNLOAD_TEST_URLS"

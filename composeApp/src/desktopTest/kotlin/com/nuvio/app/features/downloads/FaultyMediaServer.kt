@@ -48,6 +48,9 @@ internal class FaultyMediaServer : AutoCloseable {
          */
         data class GoSilent(val bytesBeforeSilence: Long) : Behavior
 
+        /** Serve correctly, but slowly enough for queue controls to interrupt it. */
+        data class Throttle(val delayPerChunkMs: Long) : Behavior
+
         /** Answer as an expired signed link does. */
         data class Reject(val statusCode: Int) : Behavior
 
@@ -62,6 +65,8 @@ internal class FaultyMediaServer : AutoCloseable {
     private val files = ConcurrentHashMap<String, ByteArray>()
     private val behaviors = ConcurrentHashMap<String, MutableList<Behavior>>()
     private val requestCounts = ConcurrentHashMap<String, AtomicInteger>()
+    private val requestedRangeStarts = ConcurrentHashMap<String, MutableList<Long>>()
+    private val servedRangeStarts = ConcurrentHashMap<String, MutableList<Long>>()
     private val socket = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
     private val workers = Executors.newCachedThreadPool { runnable ->
         Thread(runnable, "faulty-media-server").apply { isDaemon = true }
@@ -106,6 +111,16 @@ internal class FaultyMediaServer : AutoCloseable {
 
     fun requestCount(path: String): Int = requestCounts[path]?.get() ?: 0
 
+    /** Range offsets observed for [path], with zero representing a full request. */
+    fun rangeStarts(path: String): List<Long> = requestedRangeStarts[path]
+        ?.let { starts -> synchronized(starts) { starts.toList() } }
+        .orEmpty()
+
+    /** Effective response offsets after applying `If-Range`. */
+    fun responseRangeStarts(path: String): List<Long> = servedRangeStarts[path]
+        ?.let { starts -> synchronized(starts) { starts.toList() } }
+        .orEmpty()
+
     private fun nextBehavior(path: String): Behavior {
         val queued = behaviors[path] ?: return Behavior.Serve
         synchronized(queued) {
@@ -121,6 +136,7 @@ internal class FaultyMediaServer : AutoCloseable {
         val path = requestLine.split(' ').getOrNull(1) ?: return
 
         var rangeStart = 0L
+        var ifRange: String? = null
         while (true) {
             val header = input.readLine() ?: break
             if (header.isEmpty()) break
@@ -130,16 +146,26 @@ internal class FaultyMediaServer : AutoCloseable {
             val value = header.substring(separator + 1).trim()
             if (name == "range") {
                 rangeStart = value.removePrefix("bytes=").substringBefore('-').toLongOrNull() ?: 0L
+            } else if (name == "if-range") {
+                ifRange = value
             }
         }
 
         requestCounts.getOrPut(path) { AtomicInteger() }.incrementAndGet()
+        requestedRangeStarts.getOrPut(path) { mutableListOf() }.let { starts ->
+            synchronized(starts) { starts += rangeStart }
+        }
         val content = files[path]
         val output = client.getOutputStream()
         if (content == null) {
             output.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
             output.flush()
             return
+        }
+        val etag = etagFor(content)
+        val effectiveRangeStart = if (rangeStart > 0L && ifRange != null && ifRange != etag) 0L else rangeStart
+        servedRangeStarts.getOrPut(path) { mutableListOf() }.let { starts ->
+            synchronized(starts) { starts += effectiveRangeStart }
         }
 
         when (val behavior = nextBehavior(path)) {
@@ -153,15 +179,30 @@ internal class FaultyMediaServer : AutoCloseable {
 
             is Behavior.Placeholder -> {
                 val body = ByteArray(behavior.sizeBytes) { 0 }
-                writeHeaders(output, status = 200, bodyLength = body.size.toLong(), rangeStart = null, total = body.size.toLong())
+                writeHeaders(
+                    output,
+                    status = 200,
+                    bodyLength = body.size.toLong(),
+                    rangeStart = null,
+                    total = body.size.toLong(),
+                    etag = etagFor(body),
+                )
                 output.write(body)
                 output.flush()
             }
 
-            is Behavior.Serve -> writeBody(output, content, rangeStart, limit = Long.MAX_VALUE)
+            is Behavior.Serve -> writeBody(output, content, effectiveRangeStart, limit = Long.MAX_VALUE)
+
+            is Behavior.Throttle -> writeBody(
+                output = output,
+                content = content,
+                rangeStart = effectiveRangeStart,
+                limit = Long.MAX_VALUE,
+                delayPerChunkMs = behavior.delayPerChunkMs,
+            )
 
             is Behavior.DropConnection -> {
-                writeBody(output, content, rangeStart, limit = behavior.bytesBeforeDrop)
+                writeBody(output, content, effectiveRangeStart, limit = behavior.bytesBeforeDrop)
                 // Abrupt: no FIN through the normal path, so the client is reading a
                 // body that is simply cut off.
                 runCatching { client.setSoLinger(true, 0) }
@@ -169,7 +210,7 @@ internal class FaultyMediaServer : AutoCloseable {
             }
 
             is Behavior.GoSilent -> {
-                writeBody(output, content, rangeStart, limit = behavior.bytesBeforeSilence)
+                writeBody(output, content, effectiveRangeStart, limit = behavior.bytesBeforeSilence)
                 while (running && !client.isClosed) {
                     Thread.sleep(50L)
                 }
@@ -177,7 +218,13 @@ internal class FaultyMediaServer : AutoCloseable {
         }
     }
 
-    private fun writeBody(output: OutputStream, content: ByteArray, rangeStart: Long, limit: Long) {
+    private fun writeBody(
+        output: OutputStream,
+        content: ByteArray,
+        rangeStart: Long,
+        limit: Long,
+        delayPerChunkMs: Long = 0L,
+    ) {
         val start = rangeStart.coerceIn(0L, content.size.toLong())
         val remaining = content.size - start
         writeHeaders(
@@ -186,6 +233,7 @@ internal class FaultyMediaServer : AutoCloseable {
             bodyLength = remaining,
             rangeStart = start.takeIf { rangeStart > 0L },
             total = content.size.toLong(),
+            etag = etagFor(content),
         )
 
         var written = 0L
@@ -196,6 +244,7 @@ internal class FaultyMediaServer : AutoCloseable {
             output.flush()
             offset += chunk
             written += chunk
+            if (delayPerChunkMs > 0L) Thread.sleep(delayPerChunkMs)
         }
     }
 
@@ -205,6 +254,7 @@ internal class FaultyMediaServer : AutoCloseable {
         bodyLength: Long,
         rangeStart: Long?,
         total: Long,
+        etag: String,
     ) {
         val builder = StringBuilder()
         builder.append("HTTP/1.1 ").append(status).append(if (status == 206) " Partial Content" else " OK").append("\r\n")
@@ -213,7 +263,7 @@ internal class FaultyMediaServer : AutoCloseable {
         builder.append("Accept-Ranges: bytes\r\n")
         // A validator, so the resume path sends If-Range the way it does against a
         // real host rather than silently skipping it.
-        builder.append("ETag: \"nuvio-test-").append(total).append("\"\r\n")
+        builder.append("ETag: ").append(etag).append("\r\n")
         if (rangeStart != null) {
             builder.append("Content-Range: bytes ").append(rangeStart).append('-')
                 .append(total - 1).append('/').append(total).append("\r\n")
@@ -229,6 +279,9 @@ internal class FaultyMediaServer : AutoCloseable {
         runCatching { socket.close() }
         workers.shutdownNow()
     }
+
+    private fun etagFor(content: ByteArray): String =
+        "\"nuvio-test-${content.size}-${content.contentHashCode()}\""
 
     private companion object {
         const val CHUNK_BYTES = 16 * 1024
