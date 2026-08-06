@@ -132,6 +132,7 @@ import com.nuvio.app.features.library.TrackingMembershipRemovalConfirmationHost
 import com.nuvio.app.features.library.executeTrackingMembershipOperation
 import com.nuvio.app.features.library.showTrackingMembershipRewriteFeedback
 import com.nuvio.app.features.library.toLibraryItem
+import com.nuvio.app.features.playback.PlaybackMode
 import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.streams.StreamAutoPlayPolicy
 import com.nuvio.app.features.tmdb.TmdbSettingsRepository
@@ -1899,7 +1900,15 @@ fun MetaDetailsScreen(
                             },
                         ),
                     )
-                    if (onPlayManually != null && StreamAutoPlayPolicy.isEffectivelyEnabled(playerSettingsUiState)) {
+                    // Also offered whenever the playback mode picks the source for you, not
+                    // just when the older auto-play settings are configured. Streamlined and
+                    // Instant must always leave a way to reach the full source list.
+                    if (onPlayManually != null &&
+                        (
+                            StreamAutoPlayPolicy.isEffectivelyEnabled(playerSettingsUiState) ||
+                                playerSettingsUiState.playbackMode != PlaybackMode.CLASSIC
+                            )
+                    ) {
                         add(
                             PosterZoomOverlayAction(
                                 icon = Icons.Default.PlayArrow,
