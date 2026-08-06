@@ -52,6 +52,8 @@ internal actual object PlayerSettingsStorage {
     private const val mapDV7ToHevcKey = "map_dv7_to_hevc"
     private const val tunnelingEnabledKey = "tunneling_enabled"
     private const val playbackModeKey = "playback_mode"
+    private const val playbackAllowTorrentAutopickKey = "playback_allow_torrent_autopick"
+    private const val playbackQualityTiersKey = "playback_quality_tiers"
     private const val playbackModeSelectorSeenKey = "playback_mode_selector_seen"
     private const val streamAutoPlayModeKey = "stream_auto_play_mode"
     private const val streamAutoPlaySourceKey = "stream_auto_play_source"
@@ -125,6 +127,8 @@ internal actual object PlayerSettingsStorage {
         mapDV7ToHevcKey,
         tunnelingEnabledKey,
         playbackModeKey,
+        playbackAllowTorrentAutopickKey,
+        playbackQualityTiersKey,
         playbackModeSelectorSeenKey,
         streamAutoPlayModeKey,
         streamAutoPlaySourceKey,
@@ -233,6 +237,11 @@ internal actual object PlayerSettingsStorage {
     actual fun saveTunnelingEnabled(enabled: Boolean) = saveBoolean(tunnelingEnabledKey, enabled)
     actual fun loadPlaybackMode(): String? = loadString(playbackModeKey)
     actual fun savePlaybackMode(mode: String) = saveString(playbackModeKey, mode)
+    actual fun loadPlaybackAllowTorrentAutopick(): Boolean? = loadBoolean(playbackAllowTorrentAutopickKey)
+    actual fun savePlaybackAllowTorrentAutopick(enabled: Boolean) =
+        saveBoolean(playbackAllowTorrentAutopickKey, enabled)
+    actual fun loadPlaybackQualityTiers(): String? = loadString(playbackQualityTiersKey)
+    actual fun savePlaybackQualityTiers(payload: String) = saveString(playbackQualityTiersKey, payload)
     actual fun loadPlaybackModeSelectorSeen(): Boolean? = loadBoolean(playbackModeSelectorSeenKey)
     actual fun savePlaybackModeSelectorSeen(seen: Boolean) = saveBoolean(playbackModeSelectorSeenKey, seen)
     actual fun loadStreamAutoPlayMode(): String? = loadString(streamAutoPlayModeKey)
@@ -358,6 +367,10 @@ internal actual object PlayerSettingsStorage {
         loadMapDV7ToHevc()?.let { put(mapDV7ToHevcKey, encodeSyncBoolean(it)) }
         loadTunnelingEnabled()?.let { put(tunnelingEnabledKey, encodeSyncBoolean(it)) }
         loadPlaybackMode()?.let { put(playbackModeKey, encodeSyncString(it)) }
+        loadPlaybackAllowTorrentAutopick()?.let {
+            put(playbackAllowTorrentAutopickKey, encodeSyncBoolean(it))
+        }
+        loadPlaybackQualityTiers()?.let { put(playbackQualityTiersKey, encodeSyncString(it)) }
         loadPlaybackModeSelectorSeen()?.let {
             put(playbackModeSelectorSeenKey, encodeSyncBoolean(it))
         }
@@ -434,6 +447,9 @@ internal actual object PlayerSettingsStorage {
         payload.decodeSyncBoolean(mapDV7ToHevcKey)?.let(::saveMapDV7ToHevc)
         payload.decodeSyncBoolean(tunnelingEnabledKey)?.let(::saveTunnelingEnabled)
         payload.decodeSyncString(playbackModeKey)?.let(::savePlaybackMode)
+        payload.decodeSyncBoolean(playbackAllowTorrentAutopickKey)
+            ?.let(::savePlaybackAllowTorrentAutopick)
+        payload.decodeSyncString(playbackQualityTiersKey)?.let(::savePlaybackQualityTiers)
         payload.decodeSyncBoolean(playbackModeSelectorSeenKey)
             ?.let(::savePlaybackModeSelectorSeen)
         payload.decodeSyncString(streamAutoPlayModeKey)?.let(::saveStreamAutoPlayMode)
