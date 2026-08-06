@@ -552,6 +552,13 @@ internal fun settingsSearchEntries(
         rows = buildList {
             add(
                 PlaybackSearchRow(
+                    "playback-mode",
+                    stringResource(Res.string.settings_playback_mode),
+                    stringResource(Res.string.settings_playback_mode_description),
+                ),
+            )
+            add(
+                PlaybackSearchRow(
                     "loading-overlay",
                     stringResource(Res.string.settings_playback_show_loading_overlay),
                     stringResource(Res.string.settings_playback_show_loading_overlay_description),
