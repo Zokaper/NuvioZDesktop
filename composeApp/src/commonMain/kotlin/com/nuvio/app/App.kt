@@ -2857,7 +2857,7 @@ private fun MainAppContent(
                         }
                     }
                     val stickyPin = remember(stickyContentId) {
-                        stickyContentId?.let(BingeGroupCacheRepository::get)
+                        stickyContentId?.let(BingeGroupCacheRepository::sessionPin)
                     }
                     val matchingStickyCandidate = remember(stickyPin, playbackCandidates) {
                         stickyPin?.let { pin ->
@@ -3657,7 +3657,7 @@ private fun MainAppContent(
                                         onClick = {
                                             val facts = SourceFactsExtractor.extract(pending.stream)
                                             stickyContentId?.let { contentId ->
-                                                BingeGroupCacheRepository.save(
+                                                BingeGroupCacheRepository.saveSessionPin(
                                                     contentId,
                                                     StickySourcePin(
                                                         releaseGroup = facts.releaseGroup,
