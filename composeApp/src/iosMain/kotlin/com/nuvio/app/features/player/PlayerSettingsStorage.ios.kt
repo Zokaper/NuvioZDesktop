@@ -1066,7 +1066,7 @@ actual object PlayerSettingsStorage {
     }
 
     actual fun replaceFromSyncPayload(payload: JsonObject) {
-        syncKeys.forEach { key ->
+        syncKeysToClear(syncKeys, payload).forEach { key ->
             NSUserDefaults.standardUserDefaults.removeObjectForKey(ProfileScopedKey.of(key))
         }
 

@@ -1252,7 +1252,7 @@ actual object PlayerSettingsStorage {
 
     actual fun replaceFromSyncPayload(payload: JsonObject) {
         preferences?.edit()?.apply {
-            syncKeys.forEach { remove(ProfileScopedKey.of(it)) }
+            syncKeysToClear(syncKeys, payload).forEach { remove(ProfileScopedKey.of(it)) }
         }?.apply()
 
         payload.decodeSyncBoolean(showLoadingOverlayKey)?.let(::saveShowLoadingOverlay)

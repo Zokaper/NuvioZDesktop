@@ -421,7 +421,8 @@ internal actual object PlayerSettingsStorage {
     }
 
     actual fun replaceFromSyncPayload(payload: JsonObject) {
-        store.removeAll(syncKeys.map(::scoped))
+        // Clear only what the payload actually carries - see the Android actual for why.
+        store.removeAll(syncKeysToClear(syncKeys, payload).map(::scoped))
         payload.decodeSyncBoolean(showLoadingOverlayKey)?.let(::saveShowLoadingOverlay)
         payload.decodeSyncBoolean(showParentalGuideKey)?.let(::saveShowParentalGuide)
         payload.decodeSyncString(resizeModeKey)?.let(::saveResizeMode)
