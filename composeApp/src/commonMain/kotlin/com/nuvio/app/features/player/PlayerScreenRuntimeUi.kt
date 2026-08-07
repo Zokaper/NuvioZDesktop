@@ -428,6 +428,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                         shouldPlay = false
                         controlsVisible = !playerControlsLocked
                     }
+                    observePlaybackForNetworkEstimate()
                     observePlaybackForAutoDownshift()
                 },
                 onError = { message ->
