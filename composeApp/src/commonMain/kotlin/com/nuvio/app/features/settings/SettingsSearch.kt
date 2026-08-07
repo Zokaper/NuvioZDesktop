@@ -566,6 +566,13 @@ internal fun settingsSearchEntries(
             )
             add(
                 PlaybackSearchRow(
+                    "playback-auto-downshift",
+                    stringResource(Res.string.settings_playback_auto_downshift),
+                    stringResource(Res.string.settings_playback_auto_downshift_description),
+                ),
+            )
+            add(
+                PlaybackSearchRow(
                     "loading-overlay",
                     stringResource(Res.string.settings_playback_show_loading_overlay),
                     stringResource(Res.string.settings_playback_show_loading_overlay_description),

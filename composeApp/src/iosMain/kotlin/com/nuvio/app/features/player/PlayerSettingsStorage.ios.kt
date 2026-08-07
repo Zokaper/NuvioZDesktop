@@ -55,6 +55,7 @@ actual object PlayerSettingsStorage {
     private const val playbackAllowTorrentAutopickKey = "playback_allow_torrent_autopick"
     private const val playbackQualityTiersKey = "playback_quality_tiers"
     private const val playbackMeteredCapHeightKey = "playback_metered_cap_height"
+    private const val playbackAutoDownshiftKey = "playback_auto_downshift"
     private const val playbackModeSelectorSeenKey = "playback_mode_selector_seen"
     private const val streamAutoPlayModeKey = "stream_auto_play_mode"
     private const val streamAutoPlaySourceKey = "stream_auto_play_source"
@@ -131,6 +132,7 @@ actual object PlayerSettingsStorage {
         playbackAllowTorrentAutopickKey,
         playbackQualityTiersKey,
         playbackMeteredCapHeightKey,
+        playbackAutoDownshiftKey,
         playbackModeSelectorSeenKey,
         streamAutoPlayModeKey,
         streamAutoPlaySourceKey,
@@ -622,6 +624,16 @@ actual object PlayerSettingsStorage {
         NSUserDefaults.standardUserDefaults.setInteger(height.toLong(), forKey = ProfileScopedKey.of(playbackMeteredCapHeightKey))
     }
 
+    actual fun loadPlaybackAutoDownshift(): Boolean? {
+        val defaults = NSUserDefaults.standardUserDefaults
+        val key = ProfileScopedKey.of(playbackAutoDownshiftKey)
+        return if (defaults.objectForKey(key) != null) defaults.boolForKey(key) else null
+    }
+
+    actual fun savePlaybackAutoDownshift(enabled: Boolean) {
+        NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = ProfileScopedKey.of(playbackAutoDownshiftKey))
+    }
+
     actual fun loadPlaybackModeSelectorSeen(): Boolean? {
         val defaults = NSUserDefaults.standardUserDefaults
         val key = ProfileScopedKey.of(playbackModeSelectorSeenKey)
@@ -1014,6 +1026,7 @@ actual object PlayerSettingsStorage {
         }
         loadPlaybackQualityTiers()?.let { put(playbackQualityTiersKey, encodeSyncString(it)) }
         loadPlaybackMeteredCapHeight()?.let { put(playbackMeteredCapHeightKey, encodeSyncInt(it)) }
+        loadPlaybackAutoDownshift()?.let { put(playbackAutoDownshiftKey, encodeSyncBoolean(it)) }
         loadPlaybackModeSelectorSeen()?.let {
             put(playbackModeSelectorSeenKey, encodeSyncBoolean(it))
         }
@@ -1096,6 +1109,7 @@ actual object PlayerSettingsStorage {
             ?.let(::savePlaybackAllowTorrentAutopick)
         payload.decodeSyncString(playbackQualityTiersKey)?.let(::savePlaybackQualityTiers)
         payload.decodeSyncInt(playbackMeteredCapHeightKey)?.let(::savePlaybackMeteredCapHeight)
+        payload.decodeSyncBoolean(playbackAutoDownshiftKey)?.let(::savePlaybackAutoDownshift)
         payload.decodeSyncBoolean(playbackModeSelectorSeenKey)
             ?.let(::savePlaybackModeSelectorSeen)
         payload.decodeSyncString(streamAutoPlayModeKey)?.let(::saveStreamAutoPlayMode)
