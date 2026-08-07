@@ -1782,7 +1782,7 @@ private data class LanguageSelectionOption(
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PlaybackModeDialog(
+internal fun PlaybackModeDialog(
     selected: PlaybackMode,
     onModeSelected: (PlaybackMode) -> Unit,
     onDismiss: () -> Unit,

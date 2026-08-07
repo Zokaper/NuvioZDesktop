@@ -2,6 +2,7 @@ package com.nuvio.app.features.home.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,6 +22,8 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.contentColorFor
@@ -234,6 +237,7 @@ internal fun HomeContinueWatchingSection(
     layout: ContinueWatchingLayout? = null,
     listState: LazyListState = rememberLazyListState(),
     onItemClick: ((ContinueWatchingItem) -> Unit)? = null,
+    onDetailsClick: ((ContinueWatchingItem) -> Unit)? = null,
     onItemLongPress: ((ContinueWatchingItem) -> Unit)? = null,
 ) {
     if (items.isEmpty()) return
@@ -251,6 +255,7 @@ internal fun HomeContinueWatchingSection(
             layout = layout,
             listState = listState,
             onItemClick = onItemClick,
+            onDetailsClick = onDetailsClick,
             onItemLongPress = onItemLongPress,
         )
     } else {
@@ -267,6 +272,7 @@ internal fun HomeContinueWatchingSection(
                 layout = rememberContinueWatchingLayout(maxWidth.value),
                 listState = listState,
                 onItemClick = onItemClick,
+                onDetailsClick = onDetailsClick,
                 onItemLongPress = onItemLongPress,
             )
         }
@@ -286,6 +292,7 @@ private fun HomeContinueWatchingSectionContent(
     layout: ContinueWatchingLayout,
     listState: LazyListState,
     onItemClick: ((ContinueWatchingItem) -> Unit)?,
+    onDetailsClick: ((ContinueWatchingItem) -> Unit)?,
     onItemLongPress: ((ContinueWatchingItem) -> Unit)?,
 ) {
     key(dataSourceKey) {
@@ -310,6 +317,7 @@ private fun HomeContinueWatchingSectionContent(
             val item = entry.item
             val onClick = if (entry.exiting) null else onItemClick?.let { { it(item) } }
             val onLongClick = if (entry.exiting) null else onItemLongPress?.let { { it(item) } }
+            val onDetails = if (entry.exiting) null else onDetailsClick?.let { { it(item) } }
             DisintegratingContainer(
                 disintegrating = entry.exiting,
                 onDisintegrated = { disintegration.onDisintegrated(entry.key) },
@@ -321,6 +329,7 @@ private fun HomeContinueWatchingSectionContent(
                         blurNextUp = blurNextUp,
                         onClick = onClick,
                         onLongClick = onLongClick,
+                        onDetailsClick = onDetails,
                     )
                     ContinueWatchingSectionStyle.Wide -> ContinueWatchingWideCard(
                         item = item,
@@ -329,6 +338,7 @@ private fun HomeContinueWatchingSectionContent(
                         blurNextUp = blurNextUp,
                         onClick = onClick,
                         onLongClick = onLongClick,
+                        onDetailsClick = onDetails,
                     )
                     ContinueWatchingSectionStyle.Poster -> ContinueWatchingPosterCard(
                         item = item,
@@ -337,6 +347,7 @@ private fun HomeContinueWatchingSectionContent(
                         blurNextUp = blurNextUp,
                         onClick = onClick,
                         onLongClick = onLongClick,
+                        onDetailsClick = onDetails,
                     )
                 }
             }
@@ -625,6 +636,7 @@ private fun ContinueWatchingCard(
     blurNextUp: Boolean,
     onClick: (() -> Unit)?,
     onLongClick: (() -> Unit)?,
+    onDetailsClick: (() -> Unit)?,
 ) {
     val posterCardStyle = rememberPosterCardStyleUiState()
     val cardMetrics = remember(posterCardStyle.widthDp, posterCardStyle.cornerRadiusDp) {
@@ -705,6 +717,12 @@ private fun ContinueWatchingCard(
                         )
                     },
                 contentScale = ContentScale.Crop,
+            )
+        }
+        if (onDetailsClick != null) {
+            ContinueWatchingDetailsButton(
+                onClick = onDetailsClick,
+                modifier = Modifier.align(Alignment.TopStart).padding(7.dp),
             )
         }
         Column(
@@ -837,6 +855,7 @@ private fun ContinueWatchingWideCard(
     blurNextUp: Boolean,
     onClick: (() -> Unit)?,
     onLongClick: (() -> Unit)?,
+    onDetailsClick: (() -> Unit)?,
 ) {
     Row(
         modifier = Modifier
@@ -887,6 +906,9 @@ private fun ContinueWatchingWideCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    if (onDetailsClick != null) {
+                        ContinueWatchingDetailsButton(onClick = onDetailsClick)
+                    }
                     if (item.progressFraction <= 0f && item.seasonNumber != null && item.episodeNumber != null) {
                         val todayIsoDate = CurrentDateProvider.todayIsoDate()
                         val badgeText = when {
@@ -959,6 +981,7 @@ private fun ContinueWatchingPosterCard(
     blurNextUp: Boolean,
     onClick: (() -> Unit)?,
     onLongClick: (() -> Unit)?,
+    onDetailsClick: (() -> Unit)?,
 ) {
     val imageUrl = item.continueWatchingPosterArtworkUrl(useEpisodeThumbnails)
     Column(
@@ -997,6 +1020,12 @@ private fun ContinueWatchingPosterCard(
                         .fillMaxSize()
                         .then(if (shouldBlurArtwork) Modifier.blur(18.dp) else Modifier),
                     contentScale = if (item.isCloudLibraryItem()) ContentScale.Fit else ContentScale.Crop,
+                )
+            }
+            if (onDetailsClick != null) {
+                ContinueWatchingDetailsButton(
+                    onClick = onDetailsClick,
+                    modifier = Modifier.align(Alignment.TopStart).padding(7.dp),
                 )
             }
             if (item.progressFraction <= 0f && item.seasonNumber != null && item.episodeNumber != null) {
@@ -1079,6 +1108,28 @@ private fun ContinueWatchingPosterCard(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun ContinueWatchingDetailsButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(30.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(Color.Black.copy(alpha = 0.72f))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Info,
+            contentDescription = stringResource(Res.string.home_view_details),
+            tint = Color.White,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 

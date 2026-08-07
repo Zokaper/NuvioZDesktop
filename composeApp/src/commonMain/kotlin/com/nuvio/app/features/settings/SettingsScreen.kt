@@ -130,14 +130,15 @@ fun SettingsScreen(
     onTestUpdateBannerClick: (() -> Unit)? = null,
     onCollectionsClick: () -> Unit = {},
 ) {
+    val playerSettingsUiState by remember {
+        PlayerSettingsRepository.ensureLoaded()
+        PlayerSettingsRepository.uiState
+    }.collectAsStateWithLifecycle()
+    var showRootPlaybackModeDialog by rememberSaveable { mutableStateOf(false) }
+
     BoxWithConstraints(
         modifier = modifier.fillMaxSize(),
     ) {
-        val playerSettingsUiState by remember {
-            PlayerSettingsRepository.ensureLoaded()
-            PlayerSettingsRepository.uiState
-        }.collectAsStateWithLifecycle()
-
         val selectedTheme by remember {
             ThemeSettingsRepository.ensureLoaded()
             ThemeSettingsRepository.selectedTheme
@@ -296,6 +297,7 @@ fun SettingsScreen(
                     currentPage = it.name
                 },
                 onSearchNavigation = { revealAdvancedForSearch = true },
+                onPlaybackModeClick = { showRootPlaybackModeDialog = true },
                 showLoadingOverlay = playerSettingsUiState.showLoadingOverlay,
                 holdToSpeedEnabled = playerSettingsUiState.holdToSpeedEnabled,
                 holdToSpeedValue = playerSettingsUiState.holdToSpeedValue,
@@ -360,6 +362,7 @@ fun SettingsScreen(
                     currentPage = it.name
                 },
                 onSearchNavigation = { revealAdvancedForSearch = true },
+                onPlaybackModeClick = { showRootPlaybackModeDialog = true },
                 showLoadingOverlay = playerSettingsUiState.showLoadingOverlay,
                 holdToSpeedEnabled = playerSettingsUiState.holdToSpeedEnabled,
                 holdToSpeedValue = playerSettingsUiState.holdToSpeedValue,
@@ -422,6 +425,17 @@ fun SettingsScreen(
                 onCollectionsClick = onCollectionsClick,
             )
         }
+        if (showRootPlaybackModeDialog) {
+            PlaybackModeDialog(
+                selected = playerSettingsUiState.playbackMode,
+                onModeSelected = { mode ->
+                    PlayerSettingsRepository.setPlaybackMode(mode)
+                    PlayerSettingsRepository.markPlaybackModeSelectorSeen()
+                    showRootPlaybackModeDialog = false
+                },
+                onDismiss = { showRootPlaybackModeDialog = false },
+            )
+        }
         }
     }
 }
@@ -432,6 +446,7 @@ private fun MobileSettingsScreen(
     scrollToTopRequests: Flow<Unit>,
     onPageChange: (SettingsPage) -> Unit,
     onSearchNavigation: () -> Unit,
+    onPlaybackModeClick: () -> Unit,
     showLoadingOverlay: Boolean,
     holdToSpeedEnabled: Boolean,
     holdToSpeedValue: Float,
@@ -600,6 +615,7 @@ private fun MobileSettingsScreen(
                         settingsRootContent(
                             isTablet = false,
                             onPlaybackClick = { onPageChange(SettingsPage.Playback) },
+                            onPlaybackModeClick = onPlaybackModeClick,
                             onAppearanceClick = { onPageChange(SettingsPage.Appearance) },
                             onAdvancedClick = { onPageChange(SettingsPage.Advanced) },
                             onNotificationsClick = { onPageChange(SettingsPage.Notifications) },
@@ -799,6 +815,7 @@ private fun TabletSettingsScreen(
     scrollToTopRequests: Flow<Unit>,
     onPageChange: (SettingsPage) -> Unit,
     onSearchNavigation: () -> Unit,
+    onPlaybackModeClick: () -> Unit,
     showLoadingOverlay: Boolean,
     holdToSpeedEnabled: Boolean,
     holdToSpeedValue: Float,
@@ -1019,9 +1036,10 @@ private fun TabletSettingsScreen(
                                 onTargetClick = { openSearchTarget(it) },
                             )
                             if (settingsSearchQuery.isBlank()) {
-                                settingsRootContent(
-                                    isTablet = true,
-                                    onPlaybackClick = { openInlinePage(SettingsPage.Playback) },
+                            settingsRootContent(
+                                isTablet = true,
+                                onPlaybackClick = { openInlinePage(SettingsPage.Playback) },
+                                onPlaybackModeClick = onPlaybackModeClick,
                                     onAppearanceClick = { openInlinePage(SettingsPage.Appearance) },
                                     onAdvancedClick = { openInlinePage(SettingsPage.Advanced) },
                                     onNotificationsClick = { openInlinePage(SettingsPage.Notifications) },

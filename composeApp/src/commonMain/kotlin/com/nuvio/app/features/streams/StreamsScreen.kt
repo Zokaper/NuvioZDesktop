@@ -131,6 +131,7 @@ fun StreamsScreen(
      * promotes it from the long-press sheet to the primary tap.
      */
     downloadOnSelect: Boolean = false,
+    showRepositoryAutoPlayOverlay: Boolean = true,
     onStreamSelected: (stream: StreamItem, resumePositionMs: Long?, resumeProgressFraction: Float?) -> Unit = { _, _, _ -> },
     onStreamActionOpen: (
         stream: StreamItem,
@@ -238,7 +239,7 @@ fun StreamsScreen(
             manualSelection = manualSelection,
         )
     }
-    val enqueueWithPreset: (StreamItem, DownloadPreset) -> Unit = { stream, preset ->
+    val enqueueSelectedSource: (StreamItem, Long?) -> Unit = { stream, calculatedCapBytes ->
         val enqueueResolved: (StreamItem, DownloadSourceOrigin?) -> Unit = { downloadable, origin ->
             val result = DownloadsRepository.enqueueFromStream(
                 contentType = type,
@@ -254,10 +255,7 @@ fun StreamsScreen(
                 episodeTitle = episodeTitle,
                 episodeThumbnail = episodeThumbnail,
                 stream = downloadable,
-                calculatedCapBytes = preset.sizeCapBytes(
-                    runtimeMinutes = null,
-                    isEpisode = isEpisode,
-                ),
+                calculatedCapBytes = calculatedCapBytes,
                 sourceOrigin = origin,
                 sourceUrlResolvedAtEpochMs = origin?.let { DownloadsClock.nowEpochMs() },
             )
@@ -286,6 +284,10 @@ fun StreamsScreen(
         } else {
             enqueueResolved(stream, null)
         }
+    }
+
+    val enqueueWithPreset: (StreamItem, DownloadPreset) -> Unit = { stream, preset ->
+        enqueueSelectedSource(stream, preset.sizeCapBytes(runtimeMinutes = null, isEpisode = isEpisode))
     }
 
     BoxWithConstraints(
@@ -365,7 +367,7 @@ fun StreamsScreen(
         }
 
         AnimatedVisibility(
-            visible = uiState.showDirectAutoPlayOverlay,
+            visible = showRepositoryAutoPlayOverlay && uiState.showDirectAutoPlayOverlay,
             enter = fadeIn(animationSpec = tween(250)),
             exit = fadeOut(animationSpec = tween(200)),
             modifier = Modifier.fillMaxSize(),
@@ -455,7 +457,7 @@ fun StreamsScreen(
                 }
             },
             onDownload = { stream ->
-                downloadPresetTarget = stream
+                enqueueSelectedSource(stream, null)
             },
             onOpen = { stream, openExternally ->
                 onStreamActionOpen(
