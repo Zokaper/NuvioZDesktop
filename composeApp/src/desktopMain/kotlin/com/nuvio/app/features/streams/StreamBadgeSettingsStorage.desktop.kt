@@ -2,6 +2,7 @@ package com.nuvio.app.features.streams
 
 import com.nuvio.app.core.storage.DesktopStorage
 import com.nuvio.app.core.storage.ProfileScopedKey
+import com.nuvio.app.core.sync.syncKeysToClear
 import com.nuvio.app.core.sync.decodeSyncBoolean
 import com.nuvio.app.core.sync.decodeSyncString
 import com.nuvio.app.core.sync.encodeSyncBoolean
@@ -48,7 +49,8 @@ internal actual object StreamBadgeSettingsStorage {
     }
 
     actual fun replaceFromSyncPayload(payload: JsonObject) {
-        store.removeAll(syncKeys.map(ProfileScopedKey::of))
+        // Clear only what the payload actually carries - see syncKeysToClear.
+        store.removeAll(syncKeysToClear(syncKeys, payload).map(ProfileScopedKey::of))
         payload.decodeSyncString(streamBadgeRulesKey)?.let(::saveStreamBadgeRules)
         payload.decodeSyncBoolean(showFileSizeBadgesKey)?.let(::saveShowFileSizeBadges)
         payload.decodeSyncString(streamBadgePlacementKey)?.let(::saveStreamBadgePlacement)

@@ -2,6 +2,7 @@ package com.nuvio.app.features.debrid
 
 import com.nuvio.app.core.storage.DesktopStorage
 import com.nuvio.app.core.storage.ProfileScopedKey
+import com.nuvio.app.core.sync.syncKeysToClear
 import com.nuvio.app.core.sync.decodeSyncBoolean
 import com.nuvio.app.core.sync.decodeSyncInt
 import com.nuvio.app.core.sync.decodeSyncString
@@ -99,7 +100,8 @@ internal actual object DebridSettingsStorage {
     }
 
     actual fun replaceFromSyncPayload(payload: JsonObject) {
-        store.removeAll(syncKeys().map(ProfileScopedKey::of))
+        // Clear only what the payload actually carries - see syncKeysToClear.
+        store.removeAll(syncKeysToClear(syncKeys(), payload).map(ProfileScopedKey::of))
         payload.decodeSyncBoolean(enabledKey)?.let(::saveEnabled)
         payload.decodeSyncBoolean(cloudLibraryEnabledKey)?.let(::saveCloudLibraryEnabled)
         payload.decodeSyncString(preferredResolverProviderIdKey)?.let(::savePreferredResolverProviderId)

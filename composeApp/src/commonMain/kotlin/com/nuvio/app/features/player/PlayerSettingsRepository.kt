@@ -63,6 +63,7 @@ data class PlayerSettingsUiState(
     val tunnelingEnabled: Boolean = false,
     val playbackMode: PlaybackMode = PlaybackMode.Default,
     val playbackAllowTorrentAutopick: Boolean = false,
+    val showAdvancedSettings: Boolean = false,
     val playbackQualityTiers: List<PlaybackQualityTier> = PlaybackQualityTier.BuiltIns,
     val playbackMeteredCapHeight: Int = 720,
     /**
@@ -142,6 +143,7 @@ object PlayerSettingsRepository {
     private var tunnelingEnabled = false
     private var playbackMode = PlaybackMode.Default
     private var playbackAllowTorrentAutopick = false
+    private var showAdvancedSettings = false
     private var playbackQualityTiers = PlaybackQualityTier.BuiltIns
     private var playbackMeteredCapHeight = 720
     private var playbackAutoDownshift = false
@@ -220,6 +222,7 @@ object PlayerSettingsRepository {
         tunnelingEnabled = false
         playbackMode = PlaybackMode.Default
         playbackAllowTorrentAutopick = false
+        showAdvancedSettings = false
         playbackQualityTiers = PlaybackQualityTier.BuiltIns
         playbackMeteredCapHeight = 720
         playbackAutoDownshift = false
@@ -335,6 +338,22 @@ object PlayerSettingsRepository {
         tunnelingEnabled = PlayerSettingsStorage.loadTunnelingEnabled() ?: false
         playbackMode = PlaybackMode.fromStorage(PlayerSettingsStorage.loadPlaybackMode())
         playbackAllowTorrentAutopick = PlayerSettingsStorage.loadPlaybackAllowTorrentAutopick() ?: false
+        // Unset means the profile predates this toggle. Defaulting it to false there would
+        // hide settings the user had already tuned, which reads as data loss rather than as
+        // a cleaner screen - so a profile that has touched any advanced setting keeps them
+        // visible, and only a profile that never has starts hidden.
+        showAdvancedSettings = PlayerSettingsStorage.loadShowAdvancedSettings()
+            ?: hasTunedAnAdvancedSetting(
+                allowTorrentAutopick = PlayerSettingsStorage.loadPlaybackAllowTorrentAutopick(),
+                autoDownshift = PlayerSettingsStorage.loadPlaybackAutoDownshift(),
+                meteredCapHeight = PlayerSettingsStorage.loadPlaybackMeteredCapHeight(),
+                reuseLastLinkEnabled = PlayerSettingsStorage.loadStreamReuseLastLinkEnabled(),
+                reuseLastLinkCacheHours = PlayerSettingsStorage.loadStreamReuseLastLinkCacheHours(),
+                streamAutoPlayMode = PlayerSettingsStorage.loadStreamAutoPlayMode(),
+                streamAutoPlayRegex = PlayerSettingsStorage.loadStreamAutoPlayRegex(),
+                androidPlaybackEngine = PlayerSettingsStorage.loadAndroidPlaybackEngine(),
+                decoderPriority = PlayerSettingsStorage.loadDecoderPriority(),
+            )
         val storedPlaybackQualityTiers = PlayerSettingsStorage.loadPlaybackQualityTiers()?.let { payload ->
             runCatching {
                 json.decodeFromString(ListSerializer(PlaybackQualityTier.serializer()), payload)
@@ -660,6 +679,14 @@ object PlayerSettingsRepository {
         playbackMode = mode
         publish()
         PlayerSettingsStorage.savePlaybackMode(mode.name)
+    }
+
+    fun setShowAdvancedSettings(enabled: Boolean) {
+        ensureLoaded()
+        if (showAdvancedSettings == enabled) return
+        showAdvancedSettings = enabled
+        publish()
+        PlayerSettingsStorage.saveShowAdvancedSettings(enabled)
     }
 
     fun setPlaybackAllowTorrentAutopick(enabled: Boolean) {
@@ -1069,6 +1096,7 @@ object PlayerSettingsRepository {
             tunnelingEnabled = tunnelingEnabled,
             playbackMode = playbackMode,
             playbackAllowTorrentAutopick = playbackAllowTorrentAutopick,
+            showAdvancedSettings = showAdvancedSettings,
             playbackQualityTiers = playbackQualityTiers,
             playbackMeteredCapHeight = playbackMeteredCapHeight,
             playbackAutoDownshift = playbackAutoDownshift,

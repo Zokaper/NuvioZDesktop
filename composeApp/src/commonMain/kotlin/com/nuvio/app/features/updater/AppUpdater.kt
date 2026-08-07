@@ -113,8 +113,40 @@ private object VersionUtils {
     }
 }
 
+/** One published release, for the What's New screen's version history. */
+data class AppReleaseNotes(
+    val tag: String,
+    val title: String,
+    val notes: String,
+)
+
+/**
+ * The last few published releases, newest first.
+ *
+ * The releases feed the updater already fetches carries every release's `body`, and until now
+ * all of it but the newest was discarded. What's New reads that rather than making a second
+ * kind of request.
+ */
+suspend fun fetchRecentReleaseNotes(limit: Int = 5): Result<List<AppReleaseNotes>> = runCatching {
+    val source = AppUpdaterPlatform.releaseSource
+    AppUpdaterRepository.fetchReleases()
+        .filter { !it.draft && (source.includePrereleases || !it.prerelease) }
+        .take(limit)
+        .mapNotNull { release ->
+            val tag = release.tagName?.takeIf { it.isNotBlank() }
+                ?: release.name?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+            AppReleaseNotes(
+                tag = tag,
+                title = release.name?.takeIf { it.isNotBlank() } ?: tag,
+                notes = release.body.orEmpty(),
+            )
+        }
+}
+
 private object AppUpdaterRepository {
-    suspend fun getLatestChannelUpdate(): Result<AppUpdate> = runCatching {
+
+    suspend fun fetchReleases(): List<GitHubReleaseDto> {
         val source = AppUpdaterPlatform.releaseSource
         val response = httpRequestRaw(
             method = "GET",
@@ -128,8 +160,12 @@ private object AppUpdaterRepository {
         if (response.status !in 200..299) {
             error(getString(Res.string.updates_github_api_error, response.status))
         }
+        return appUpdaterJson.decodeFromString<List<GitHubReleaseDto>>(response.body)
+    }
 
-        val releases = appUpdaterJson.decodeFromString<List<GitHubReleaseDto>>(response.body)
+    suspend fun getLatestChannelUpdate(): Result<AppUpdate> = runCatching {
+        val source = AppUpdaterPlatform.releaseSource
+        val releases = fetchReleases()
         val release = releases.firstOrNull { release ->
             release.matchesRequestedChannel() &&
                 !release.draft &&

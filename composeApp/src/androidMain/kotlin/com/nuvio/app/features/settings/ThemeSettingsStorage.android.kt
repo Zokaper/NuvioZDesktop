@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
+import com.nuvio.app.core.sync.syncKeysToClear
 import com.nuvio.app.core.sync.decodeSyncBoolean
 import com.nuvio.app.core.sync.decodeSyncString
 import com.nuvio.app.core.sync.encodeSyncBoolean
@@ -127,7 +128,8 @@ actual object ThemeSettingsStorage {
 
     actual fun replaceFromSyncPayload(payload: JsonObject) {
         preferences?.edit()?.apply {
-            profileScopedSyncKeys.forEach { remove(ProfileScopedKey.of(it)) }
+            // Clear only what the payload actually carries - see syncKeysToClear.
+            syncKeysToClear(profileScopedSyncKeys, payload).forEach { remove(ProfileScopedKey.of(it)) }
         }?.apply()
 
         payload.decodeSyncString(selectedThemeKey)?.let(::saveSelectedTheme)
