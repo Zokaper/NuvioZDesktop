@@ -100,7 +100,7 @@ import coil3.request.CachePolicy
 import coil3.request.crossfade
 import coil3.svg.SvgDecoder
 import com.nuvio.app.core.build.AppFeaturePolicy
-import com.nuvio.app.core.build.AppVersionConfig
+import com.nuvio.app.core.build.AppVersionPolicy
 import com.nuvio.app.features.updater.AppReleaseNotes
 import com.nuvio.app.features.updater.fetchRecentReleaseNotes
 import com.nuvio.app.features.whatsnew.CurrentReleaseNotes
@@ -658,7 +658,7 @@ fun App(
             if (!ownsAppRuntime) return@LaunchedEffect
             showWhatsNew = shouldShowWhatsNew(
                 lastSeenVersion = WhatsNewStorage.loadLastSeenVersion(),
-                currentVersion = AppVersionConfig.VERSION_NAME,
+                currentVersion = AppVersionPolicy.displayVersionName,
                 sections = whatsNewSections,
             )
         }
@@ -668,7 +668,7 @@ fun App(
             if (whatsNewHistory != null) return@LaunchedEffect
             whatsNewHistory = fetchRecentReleaseNotes()
                 .getOrNull()
-                ?.filter { it.tag.trimStart('v', 'V') != AppVersionConfig.VERSION_NAME }
+                ?.filter { it.tag.trimStart('v', 'V') != AppVersionPolicy.displayVersionName }
                 ?: emptyList()
         }
         var pendingProfileSwitch by remember { mutableStateOf<PendingProfileSwitch?>(null) }
@@ -931,17 +931,17 @@ fun App(
 
         if (showWhatsNew && gateScreen == AppGateScreen.Main.name) {
             WhatsNewScreen(
-                versionName = AppVersionConfig.VERSION_NAME,
+                versionName = AppVersionPolicy.displayVersionName,
                 sections = whatsNewSections,
                 history = whatsNewHistory,
                 onContinue = {
-                    WhatsNewStorage.saveLastSeenVersion(AppVersionConfig.VERSION_NAME)
+                    WhatsNewStorage.saveLastSeenVersion(AppVersionPolicy.displayVersionName)
                     showWhatsNew = false
                 },
             )
         } else if (showWhatsNewOnDemand) {
             WhatsNewScreen(
-                versionName = AppVersionConfig.VERSION_NAME,
+                versionName = AppVersionPolicy.displayVersionName,
                 sections = whatsNewSections,
                 history = whatsNewHistory,
                 dismissible = true,
@@ -2605,6 +2605,11 @@ private fun MainAppContent(
                     // 1-based, and only ever advanced by the auto-pick failure chain. The overlay
                     // shows it so a silent retry does not read as a hang.
                     var autoPickAttempt by rememberSaveable(route.launchId) { mutableStateOf(1) }
+                    // Set at *every* exit to playback, not just the reuse-last-link one.
+                    // Instant deliberately leaves StreamRoute on the back stack so the failure
+                    // chain survives, so without this, backing out of the player lands on an
+                    // opaque overlay with nothing to interact with.
+                    var playbackHandedOff by rememberSaveable(route.launchId) { mutableStateOf(false) }
                     var meteredChoice by remember(route.launchId) {
                         mutableStateOf(NetworkQualityRepository.meteredChoiceForCurrentNetwork())
                     }
@@ -2739,6 +2744,7 @@ private fun MainAppContent(
 
                         val launchId = PlayerLaunchStore.put(playerLaunch)
                         StreamsRepository.cancelLoading()
+                        playbackHandedOff = true
                         navController.navigate(PlayerRoute(launchId = launchId, title = playerLaunch.title)) {
                             if (replaceStreamRoute) {
                                 popUpTo<StreamRoute> { inclusive = true }
@@ -2956,6 +2962,7 @@ private fun MainAppContent(
                                 contentLanguage = cached.contentLanguage,
                             )
                             if (externalPlayerSupported && playerSettings.externalPlayerEnabled) {
+                                playbackHandedOff = true
                                 openExternalPlayback(playerLaunch)
                                 StreamsRepository.setOverlayVisible(false)
                                 reuseNavigated = true
@@ -2964,6 +2971,7 @@ private fun MainAppContent(
                             StreamsRepository.clear()
                             reuseNavigated = true
                             val launchId = PlayerLaunchStore.put(playerLaunch)
+                            playbackHandedOff = true
                             navController.navigate(PlayerRoute(launchId = launchId, title = playerLaunch.title)) {
                                 popUpTo<StreamRoute> { inclusive = true }
                             }
@@ -3095,6 +3103,7 @@ private fun MainAppContent(
                             instantAutoPick = isInstantAutoPlay,
                         )
                         if (externalPlayerSupported && playerSettings.externalPlayerEnabled) {
+                            playbackHandedOff = true
                             openExternalPlayback(playerLaunch)
                             if (!isInstantAutoPlay) StreamsRepository.consumeAutoPlay()
                             StreamsRepository.cancelLoading()
@@ -3103,6 +3112,7 @@ private fun MainAppContent(
                         if (!isInstantAutoPlay) StreamsRepository.consumeAutoPlay()
                         StreamsRepository.cancelLoading()
                         val launchId = PlayerLaunchStore.put(playerLaunch)
+                        playbackHandedOff = true
                         navController.navigate(PlayerRoute(launchId = launchId, title = playerLaunch.title)) {
                             if (!isInstantAutoPlay) popUpTo<StreamRoute> { inclusive = true }
                         }
@@ -3232,6 +3242,7 @@ private fun MainAppContent(
 
                         if (!forceInternal && externalPlayerSupported && (forceExternal || playerSettings.externalPlayerEnabled)) {
                             streamRouteScope.launch {
+                                playbackHandedOff = true
                                 openExternalPlayback(playerLaunch)
                                 StreamsRepository.cancelLoading()
                             }
@@ -3390,7 +3401,7 @@ private fun MainAppContent(
                         isStreamlinedPlaybackStarting = streamlinedPlaybackStarting,
                         manualSourceListRequested = manualSourceListRequested,
                         awaitingMeteredChoice = awaitingUserAnswer,
-                        hasNavigatedAway = reuseNavigated,
+                        hasNavigatedAway = reuseNavigated || playbackHandedOff,
                     )
 
                     Box(modifier = Modifier.fillMaxSize()) {
