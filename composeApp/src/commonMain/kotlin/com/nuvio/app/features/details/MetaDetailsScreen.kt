@@ -190,8 +190,8 @@ fun MetaDetailsScreen(
     type: String,
     id: String,
     onBack: () -> Unit,
-    onPlay: ((type: String, videoId: String, parentMetaId: String, parentMetaType: String, title: String, logo: String?, poster: String?, background: String?, seasonNumber: Int?, episodeNumber: Int?, episodeTitle: String?, episodeThumbnail: String?, pauseDescription: String?, resumePositionMs: Long?) -> Unit)? = null,
-    onPlayManually: ((type: String, videoId: String, parentMetaId: String, parentMetaType: String, title: String, logo: String?, poster: String?, background: String?, seasonNumber: Int?, episodeNumber: Int?, episodeTitle: String?, episodeThumbnail: String?, pauseDescription: String?, resumePositionMs: Long?) -> Unit)? = null,
+    onPlay: ((type: String, videoId: String, parentMetaId: String, parentMetaType: String, title: String, logo: String?, poster: String?, background: String?, seasonNumber: Int?, episodeNumber: Int?, episodeTitle: String?, episodeThumbnail: String?, pauseDescription: String?, runtimeMinutes: Int?, resumePositionMs: Long?) -> Unit)? = null,
+    onPlayManually: ((type: String, videoId: String, parentMetaId: String, parentMetaType: String, title: String, logo: String?, poster: String?, background: String?, seasonNumber: Int?, episodeNumber: Int?, episodeTitle: String?, episodeThumbnail: String?, pauseDescription: String?, runtimeMinutes: Int?, resumePositionMs: Long?) -> Unit)? = null,
     /**
      * Opens the source list to download a chosen release - Classic's download entry point.
      *
@@ -787,6 +787,7 @@ fun MetaDetailsScreen(
                                 seriesAction.episodeTitle,
                                 seriesAction.episodeThumbnail,
                                 seriesPauseDescription,
+                                seriesActionVideo?.runtime,
                                 seriesAction.resumePositionMs,
                             )
                         }
@@ -806,6 +807,7 @@ fun MetaDetailsScreen(
                                 null,
                                 null,
                                 meta.description,
+                                meta.runtime?.let(::parseRuntimeMinutes),
                                 movieProgress?.lastPositionMs,
                             )
                         }
@@ -833,6 +835,7 @@ fun MetaDetailsScreen(
                                         seriesAction.episodeTitle,
                                         seriesAction.episodeThumbnail,
                                         seriesPauseDescription,
+                                        seriesActionVideo?.runtime,
                                         seriesAction.resumePositionMs,
                                     )
                                 }
@@ -852,6 +855,7 @@ fun MetaDetailsScreen(
                                         null,
                                         null,
                                         meta.description,
+                                        meta.runtime?.let(::parseRuntimeMinutes),
                                         movieProgress?.lastPositionMs,
                                     )
                                 }
@@ -889,6 +893,7 @@ fun MetaDetailsScreen(
                         video.title,
                         video.thumbnail,
                         video.overview,
+                        video.runtime,
                         savedProgress?.lastPositionMs,
                     )
                 }
@@ -923,6 +928,7 @@ fun MetaDetailsScreen(
                         video.title,
                         video.thumbnail,
                         video.overview,
+                        video.runtime,
                         savedProgress?.lastPositionMs,
                     )
                 }
@@ -2011,6 +2017,7 @@ fun MetaDetailsScreen(
                                         selectedEpisode.title,
                                         selectedEpisode.thumbnail,
                                         selectedEpisode.overview,
+                                        selectedEpisode.runtime,
                                         savedProgress?.lastPositionMs,
                                     )
                                 },
