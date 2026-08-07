@@ -24,6 +24,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.core.build.AppVersionPolicy
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.compose_about_based_on_version_format
@@ -56,6 +60,8 @@ import nuvio.composeapp.generated.resources.compose_settings_root_about_section
 import nuvio.composeapp.generated.resources.compose_settings_root_account_section
 import nuvio.composeapp.generated.resources.compose_settings_root_advanced_description
 import nuvio.composeapp.generated.resources.compose_settings_root_advanced_section
+import nuvio.composeapp.generated.resources.compose_settings_root_show_advanced
+import nuvio.composeapp.generated.resources.compose_settings_root_show_advanced_description
 import nuvio.composeapp.generated.resources.compose_settings_page_content_discovery
 import nuvio.composeapp.generated.resources.compose_settings_page_tracking
 import nuvio.composeapp.generated.resources.settings_playback_subtitle
@@ -248,15 +254,33 @@ internal fun LazyListScope.settingsRootContent(
     }
     if (showAdvancedSection) {
         item {
+            // Read here rather than threaded through both layout composables and both call
+            // sites: the switch needs the *stored* value, not the search-reveal-augmented one
+            // that LocalShowAdvancedSettings carries.
+            val playerSettings by remember {
+                PlayerSettingsRepository.ensureLoaded()
+                PlayerSettingsRepository.uiState
+            }.collectAsStateWithLifecycle()
             SettingsSection(
                 title = stringResource(Res.string.compose_settings_root_advanced_section),
                 isTablet = isTablet,
             ) {
                 SettingsGroup(isTablet = isTablet) {
+                    // The switch itself is never advanced - hiding the way back would trap a
+                    // user who turned it off.
+                    SettingsSwitchRow(
+                        title = stringResource(Res.string.compose_settings_root_show_advanced),
+                        description = stringResource(Res.string.compose_settings_root_show_advanced_description),
+                        checked = playerSettings.showAdvancedSettings,
+                        isTablet = isTablet,
+                        onCheckedChange = PlayerSettingsRepository::setShowAdvancedSettings,
+                    )
+                    SettingsGroupDivider(isTablet = isTablet)
                     SettingsNavigationRow(
                         title = stringResource(Res.string.compose_settings_page_advanced),
                         description = stringResource(Res.string.compose_settings_root_advanced_description),
                         icon = Icons.Rounded.Tune,
+                        isAdvanced = true,
                         isTablet = isTablet,
                         onClick = onAdvancedClick,
                     )

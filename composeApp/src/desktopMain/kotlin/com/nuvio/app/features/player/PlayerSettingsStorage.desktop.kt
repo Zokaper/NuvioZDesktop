@@ -54,6 +54,7 @@ internal actual object PlayerSettingsStorage {
     private const val tunnelingEnabledKey = "tunneling_enabled"
     private const val playbackModeKey = "playback_mode"
     private const val playbackAllowTorrentAutopickKey = "playback_allow_torrent_autopick"
+    private const val showAdvancedSettingsKey = "settings_show_advanced"
     private const val playbackQualityTiersKey = "playback_quality_tiers"
     private const val playbackMeteredCapHeightKey = "playback_metered_cap_height"
     private const val playbackAutoDownshiftKey = "playback_auto_downshift"
@@ -131,6 +132,7 @@ internal actual object PlayerSettingsStorage {
         tunnelingEnabledKey,
         playbackModeKey,
         playbackAllowTorrentAutopickKey,
+        showAdvancedSettingsKey,
         playbackQualityTiersKey,
         playbackMeteredCapHeightKey,
         playbackAutoDownshiftKey,
@@ -245,6 +247,9 @@ internal actual object PlayerSettingsStorage {
     actual fun loadPlaybackAllowTorrentAutopick(): Boolean? = loadBoolean(playbackAllowTorrentAutopickKey)
     actual fun savePlaybackAllowTorrentAutopick(enabled: Boolean) =
         saveBoolean(playbackAllowTorrentAutopickKey, enabled)
+    actual fun loadShowAdvancedSettings(): Boolean? = loadBoolean(showAdvancedSettingsKey)
+    actual fun saveShowAdvancedSettings(enabled: Boolean) =
+        saveBoolean(showAdvancedSettingsKey, enabled)
     actual fun loadPlaybackQualityTiers(): String? = loadString(playbackQualityTiersKey)
     actual fun savePlaybackQualityTiers(payload: String) = saveString(playbackQualityTiersKey, payload)
     actual fun loadPlaybackMeteredCapHeight(): Int? = loadInt(playbackMeteredCapHeightKey)
@@ -377,6 +382,7 @@ internal actual object PlayerSettingsStorage {
         loadMapDV7ToHevc()?.let { put(mapDV7ToHevcKey, encodeSyncBoolean(it)) }
         loadTunnelingEnabled()?.let { put(tunnelingEnabledKey, encodeSyncBoolean(it)) }
         loadPlaybackMode()?.let { put(playbackModeKey, encodeSyncString(it)) }
+        loadShowAdvancedSettings()?.let { put(showAdvancedSettingsKey, encodeSyncBoolean(it)) }
         loadPlaybackAllowTorrentAutopick()?.let {
             put(playbackAllowTorrentAutopickKey, encodeSyncBoolean(it))
         }
@@ -462,6 +468,7 @@ internal actual object PlayerSettingsStorage {
         payload.decodeSyncString(playbackModeKey)?.let(::savePlaybackMode)
         payload.decodeSyncBoolean(playbackAllowTorrentAutopickKey)
             ?.let(::savePlaybackAllowTorrentAutopick)
+        payload.decodeSyncBoolean(showAdvancedSettingsKey)?.let(::saveShowAdvancedSettings)
         payload.decodeSyncString(playbackQualityTiersKey)?.let(::savePlaybackQualityTiers)
         payload.decodeSyncInt(playbackMeteredCapHeightKey)?.let(::savePlaybackMeteredCapHeight)
         payload.decodeSyncBoolean(playbackAutoDownshiftKey)?.let(::savePlaybackAutoDownshift)

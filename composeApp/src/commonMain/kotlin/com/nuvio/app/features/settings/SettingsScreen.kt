@@ -27,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -234,6 +235,10 @@ fun SettingsScreen(
         }
 
         var currentPage by rememberSaveable { mutableStateOf(SettingsPage.Root.name) }
+        // Settings search still finds advanced rows while they are hidden, and reveals them
+        // on the page it lands on. Hiding a setting the user just searched for by name would
+        // be worse than showing it. Ordinary navigation clears the reveal again.
+        var revealAdvancedForSearch by rememberSaveable { mutableStateOf(false) }
         val scrollToTopRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
         val page = remember(currentPage) {
             runCatching { SettingsPage.valueOf(currentPage) }
@@ -278,11 +283,18 @@ fun SettingsScreen(
             onBack = { previousPage?.let { currentPage = it.name } },
         )
 
+        CompositionLocalProvider(
+            LocalShowAdvancedSettings provides (playerSettingsUiState.showAdvancedSettings || revealAdvancedForSearch),
+        ) {
         if (maxWidth >= 768.dp) {
             TabletSettingsScreen(
                 page = page,
                 scrollToTopRequests = scrollToTopRequests,
-                onPageChange = { currentPage = it.name },
+                onPageChange = {
+                    if (it == SettingsPage.Root) revealAdvancedForSearch = false
+                    currentPage = it.name
+                },
+                onSearchNavigation = { revealAdvancedForSearch = true },
                 showLoadingOverlay = playerSettingsUiState.showLoadingOverlay,
                 holdToSpeedEnabled = playerSettingsUiState.holdToSpeedEnabled,
                 holdToSpeedValue = playerSettingsUiState.holdToSpeedValue,
@@ -341,7 +353,11 @@ fun SettingsScreen(
             MobileSettingsScreen(
                 page = page,
                 scrollToTopRequests = scrollToTopRequests,
-                onPageChange = { currentPage = it.name },
+                onPageChange = {
+                    if (it == SettingsPage.Root) revealAdvancedForSearch = false
+                    currentPage = it.name
+                },
+                onSearchNavigation = { revealAdvancedForSearch = true },
                 showLoadingOverlay = playerSettingsUiState.showLoadingOverlay,
                 holdToSpeedEnabled = playerSettingsUiState.holdToSpeedEnabled,
                 holdToSpeedValue = playerSettingsUiState.holdToSpeedValue,
@@ -403,6 +419,7 @@ fun SettingsScreen(
                 onCollectionsClick = onCollectionsClick,
             )
         }
+        }
     }
 }
 
@@ -411,6 +428,7 @@ private fun MobileSettingsScreen(
     page: SettingsPage,
     scrollToTopRequests: Flow<Unit>,
     onPageChange: (SettingsPage) -> Unit,
+    onSearchNavigation: () -> Unit,
     showLoadingOverlay: Boolean,
     holdToSpeedEnabled: Boolean,
     holdToSpeedValue: Float,
@@ -506,6 +524,7 @@ private fun MobileSettingsScreen(
         )
 
         fun openSearchTarget(target: SettingsSearchTarget) {
+            onSearchNavigation()
             when (target) {
                 is SettingsSearchTarget.Page -> when (target.page) {
                     SettingsPage.Account -> onAccountClick()
@@ -774,6 +793,7 @@ private fun TabletSettingsScreen(
     page: SettingsPage,
     scrollToTopRequests: Flow<Unit>,
     onPageChange: (SettingsPage) -> Unit,
+    onSearchNavigation: () -> Unit,
     showLoadingOverlay: Boolean,
     holdToSpeedEnabled: Boolean,
     holdToSpeedValue: Float,
@@ -907,6 +927,7 @@ private fun TabletSettingsScreen(
             )
 
             fun openSearchTarget(target: SettingsSearchTarget) {
+                onSearchNavigation()
                 when (target) {
                     is SettingsSearchTarget.Page -> {
                         if (target.page.isEnabledByPolicy()) {
