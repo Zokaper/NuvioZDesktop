@@ -549,6 +549,7 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
             },
             onSourcesClick = if (activeVideoId != null) { { openSourcesPanel() } } else null,
             onEpisodesClick = if (isSeries) { { openEpisodesPanel() } } else null,
+            onNextEpisodeClick = if (nextEpisodeInfo?.hasAired == true) { { playNextEpisode() } } else null,
             onOpenInExternalPlayer = args.onOpenInExternalPlayer?.let { openExternal ->
                 {
                     val loadedSubtitles = addonSubtitles
@@ -1450,11 +1451,16 @@ private fun PlayerScreenRuntime.RenderPlayerModals(displayedPositionMs: Long) {
         episodeStreamsPanelState = episodeStreamsPanelState,
         episodeStreamsRepoState = episodeStreamsRepoState,
         onEpisodeSelectedForDownload = { episode ->
-            selectDownloadedEpisodeForPlayback(
-                parentMetaId = parentMetaId,
-                episode = episode,
-                onDownloadedEpisodeSelected = { item, video -> switchToDownloadedEpisode(item, video) },
-            )
+            if (playerSettingsUiState.playbackMode == com.nuvio.app.features.playback.PlaybackMode.CLASSIC) {
+                selectDownloadedEpisodeForPlayback(
+                    parentMetaId = parentMetaId,
+                    episode = episode,
+                    onDownloadedEpisodeSelected = { item, video -> switchToDownloadedEpisode(item, video) },
+                )
+            } else {
+                playEpisodeFromPicker(episode)
+                true
+            }
         },
         onEpisodeStreamsRequested = { episode ->
             PlayerStreamsRepository.loadEpisodeStreams(
