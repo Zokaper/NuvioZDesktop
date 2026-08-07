@@ -126,6 +126,7 @@ fun SettingsScreen(
     onSupportersContributorsClick: () -> Unit = {},
     onLicensesAttributionsClick: () -> Unit = {},
     onCheckForUpdatesClick: (() -> Unit)? = null,
+    onWhatsNewClick: (() -> Unit)? = null,
     onTestUpdateBannerClick: (() -> Unit)? = null,
     onCollectionsClick: () -> Unit = {},
 ) {
@@ -346,6 +347,7 @@ fun SettingsScreen(
                 onSupportersContributorsClick = onSupportersContributorsClick,
                 onLicensesAttributionsClick = onLicensesAttributionsClick,
                 onCheckForUpdatesClick = onCheckForUpdatesClick,
+                onWhatsNewClick = onWhatsNewClick,
                 onTestUpdateBannerClick = onTestUpdateBannerClick,
                 onCollectionsClick = onCollectionsClick,
             )
@@ -415,6 +417,7 @@ fun SettingsScreen(
                 onSupportersContributorsClick = onSupportersContributorsClick,
                 onLicensesAttributionsClick = onLicensesAttributionsClick,
                 onCheckForUpdatesClick = onCheckForUpdatesClick,
+                onWhatsNewClick = onWhatsNewClick,
                 onTestUpdateBannerClick = onTestUpdateBannerClick,
                 onCollectionsClick = onCollectionsClick,
             )
@@ -486,6 +489,7 @@ private fun MobileSettingsScreen(
     onSupportersContributorsClick: () -> Unit = {},
     onLicensesAttributionsClick: () -> Unit = {},
     onCheckForUpdatesClick: (() -> Unit)? = null,
+    onWhatsNewClick: (() -> Unit)? = null,
     onTestUpdateBannerClick: (() -> Unit)? = null,
     onCollectionsClick: () -> Unit = {},
 ) {
@@ -605,6 +609,7 @@ private fun MobileSettingsScreen(
                             onSupportersContributorsClick = onSupportersContributorsClick,
                             onLicensesAttributionsClick = onLicensesAttributionsClick,
                             onCheckForUpdatesClick = onCheckForUpdatesClick,
+                            onWhatsNewClick = onWhatsNewClick,
                             onTestUpdateBannerClick = onTestUpdateBannerClick,
                             onDownloadsClick = onDownloadsClick,
                             onAccountClick = onAccountClick,
@@ -845,6 +850,7 @@ private fun TabletSettingsScreen(
     onSupportersContributorsClick: () -> Unit = {},
     onLicensesAttributionsClick: () -> Unit = {},
     onCheckForUpdatesClick: (() -> Unit)? = null,
+    onWhatsNewClick: (() -> Unit)? = null,
     onTestUpdateBannerClick: (() -> Unit)? = null,
     onCollectionsClick: () -> Unit = {},
 ) {
@@ -1025,6 +1031,7 @@ private fun TabletSettingsScreen(
                                     onSupportersContributorsClick = { openInlinePage(SettingsPage.SupportersContributors) },
                                     onLicensesAttributionsClick = { openInlinePage(SettingsPage.LicensesAttributions) },
                                     onCheckForUpdatesClick = onCheckForUpdatesClick,
+                                    onWhatsNewClick = onWhatsNewClick,
                                     onTestUpdateBannerClick = onTestUpdateBannerClick,
                                     onDownloadsClick = onDownloadsClick,
                                     onAccountClick = { openInlinePage(SettingsPage.Account) },

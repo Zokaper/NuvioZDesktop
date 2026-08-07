@@ -100,6 +100,13 @@ import coil3.request.CachePolicy
 import coil3.request.crossfade
 import coil3.svg.SvgDecoder
 import com.nuvio.app.core.build.AppFeaturePolicy
+import com.nuvio.app.core.build.AppVersionConfig
+import com.nuvio.app.features.updater.AppReleaseNotes
+import com.nuvio.app.features.updater.fetchRecentReleaseNotes
+import com.nuvio.app.features.whatsnew.CurrentReleaseNotes
+import com.nuvio.app.features.whatsnew.WhatsNewScreen
+import com.nuvio.app.features.whatsnew.WhatsNewStorage
+import com.nuvio.app.features.whatsnew.shouldShowWhatsNew
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
 import com.nuvio.app.core.auth.DeviceSessionRegistration
@@ -635,6 +642,35 @@ fun App(
         var editingProfile by remember { mutableStateOf<NuvioProfile?>(null) }
         var isNewProfile by remember { mutableStateOf(false) }
         var autoSkipProfileSelection by rememberSaveable { mutableStateOf(false) }
+        val whatsNewSections = remember {
+            CurrentReleaseNotes.sections(isDesktop = WhatsNewStorage.isDesktop)
+        }
+        var showWhatsNew by remember { mutableStateOf(false) }
+        // Opened from Settings rather than shown after an update: dismissible, and it must not
+        // record the version as seen or the post-update showing would be skipped.
+        var showWhatsNewOnDemand by remember { mutableStateOf(false) }
+        // null while loading, empty when it could not be fetched. Either way the curated
+        // sections still render - this screen has to work offline and on builds where the
+        // in-app updater is disabled.
+        var whatsNewHistory by remember { mutableStateOf<List<AppReleaseNotes>?>(null) }
+
+        LaunchedEffect(ownsAppRuntime) {
+            if (!ownsAppRuntime) return@LaunchedEffect
+            showWhatsNew = shouldShowWhatsNew(
+                lastSeenVersion = WhatsNewStorage.loadLastSeenVersion(),
+                currentVersion = AppVersionConfig.VERSION_NAME,
+                sections = whatsNewSections,
+            )
+        }
+
+        LaunchedEffect(showWhatsNew, showWhatsNewOnDemand) {
+            if (!showWhatsNew && !showWhatsNewOnDemand) return@LaunchedEffect
+            if (whatsNewHistory != null) return@LaunchedEffect
+            whatsNewHistory = fetchRecentReleaseNotes()
+                .getOrNull()
+                ?.filter { it.tag.trimStart('v', 'V') != AppVersionConfig.VERSION_NAME }
+                ?: emptyList()
+        }
         var pendingProfileSwitch by remember { mutableStateOf<PendingProfileSwitch?>(null) }
 
         LaunchedEffect(gateScreen, onAppReady) {
@@ -866,6 +902,7 @@ fun App(
                     )
                 } else {
                     MainAppContent(
+                        onWhatsNewClick = { showWhatsNewOnDemand = true },
                         initialTab = initialTab,
                         initialRoute = initialRoute,
                         useNativeNavigation = useNativeNavigation,
@@ -891,6 +928,26 @@ fun App(
                 }
             }
         }
+
+        if (showWhatsNew && gateScreen == AppGateScreen.Main.name) {
+            WhatsNewScreen(
+                versionName = AppVersionConfig.VERSION_NAME,
+                sections = whatsNewSections,
+                history = whatsNewHistory,
+                onContinue = {
+                    WhatsNewStorage.saveLastSeenVersion(AppVersionConfig.VERSION_NAME)
+                    showWhatsNew = false
+                },
+            )
+        } else if (showWhatsNewOnDemand) {
+            WhatsNewScreen(
+                versionName = AppVersionConfig.VERSION_NAME,
+                sections = whatsNewSections,
+                history = whatsNewHistory,
+                dismissible = true,
+                onContinue = { showWhatsNewOnDemand = false },
+            )
+        }
     }
 }
 }
@@ -898,6 +955,11 @@ fun App(
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalSharedTransitionApi::class)
 @Composable
 private fun MainAppContent(
+    // Hoisted rather than owned here: the post-update showing lives in App(), and one flag for
+    // both keeps "opened from Settings" from recording the version as seen. Null on the
+    // bypass-gate path, which renders no What's New dialog - a row that opened nothing would
+    // be worse than no row.
+    onWhatsNewClick: (() -> Unit)? = null,
     initialTab: AppScreenTab = AppScreenTab.Home,
     initialRoute: AppRoute = TabsRoute,
     useNativeNavigation: Boolean = false,
@@ -2252,6 +2314,7 @@ private fun MainAppContent(
                                         onLicensesAttributionsSettingsClick = {
                                             navController.navigate(LicensesAttributionsSettingsRoute(licensesSettingsTitle))
                                         },
+                                        onWhatsNewClick = onWhatsNewClick,
                                         onCheckForUpdatesClick = if (AppFeaturePolicy.inAppUpdaterEnabled) {
                                             {
                                                 appUpdaterController.checkForUpdates(
@@ -3768,6 +3831,7 @@ private fun MainAppContent(
                         onCollectionsClick = {
                             navController.navigate(CollectionsRoute(collectionsTitle))
                         },
+                        onWhatsNewClick = onWhatsNewClick,
                         onCheckForUpdatesClick = if (AppFeaturePolicy.inAppUpdaterEnabled) {
                             {
                                 appUpdaterController.checkForUpdates(
@@ -4377,6 +4441,7 @@ private fun AppTabHost(
     onSupportersContributorsSettingsClick: () -> Unit = {},
     onLicensesAttributionsSettingsClick: () -> Unit = {},
     onCheckForUpdatesClick: (() -> Unit)? = null,
+    onWhatsNewClick: (() -> Unit)? = null,
     onTestUpdateBannerClick: (() -> Unit)? = null,
     onCollectionsSettingsClick: () -> Unit = {},
     onFolderClick: ((collectionId: String, folderId: String) -> Unit)? = null,
@@ -4468,6 +4533,7 @@ private fun AppTabHost(
                                 onSupportersContributorsClick = onSupportersContributorsSettingsClick,
                                 onLicensesAttributionsClick = onLicensesAttributionsSettingsClick,
                                 onCheckForUpdatesClick = onCheckForUpdatesClick,
+                                onWhatsNewClick = onWhatsNewClick,
                                 onTestUpdateBannerClick = onTestUpdateBannerClick,
                                 onCollectionsClick = onCollectionsSettingsClick,
                             )
@@ -4567,6 +4633,7 @@ private fun AppSettingsTabContent(
     onSupportersContributorsClick: () -> Unit,
     onLicensesAttributionsClick: () -> Unit,
     onCheckForUpdatesClick: (() -> Unit)?,
+    onWhatsNewClick: (() -> Unit)?,
     onTestUpdateBannerClick: (() -> Unit)?,
     onCollectionsClick: () -> Unit,
 ) {
@@ -4587,6 +4654,7 @@ private fun AppSettingsTabContent(
         onSupportersContributorsClick = onSupportersContributorsClick,
         onLicensesAttributionsClick = onLicensesAttributionsClick,
         onCheckForUpdatesClick = onCheckForUpdatesClick,
+        onWhatsNewClick = onWhatsNewClick,
         onTestUpdateBannerClick = onTestUpdateBannerClick,
         onCollectionsClick = onCollectionsClick,
     )
