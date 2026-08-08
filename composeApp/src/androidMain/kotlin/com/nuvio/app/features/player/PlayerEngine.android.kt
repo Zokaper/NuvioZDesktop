@@ -44,6 +44,8 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.text.Cue
 import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
+import com.nuvio.app.core.debug.ThrottledDataSourceFactory
+import com.nuvio.app.core.debug.isDebugBuild
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
@@ -308,7 +310,7 @@ private fun ExoPlayerSurface(
         useYoutubeChunkedPlayback,
         externalSubtitles,
     ) {
-        PlatformPlaybackDataSourceFactory.create(
+        val base = PlatformPlaybackDataSourceFactory.create(
             context = context,
             defaultRequestHeaders = sanitizedSourceHeaders,
             defaultResponseHeaders = sanitizedSourceResponseHeaders,
@@ -316,6 +318,7 @@ private fun ExoPlayerSurface(
             useLongReadTimeout = isLoopbackPlaybackSource(sourceUrl),
             externalSubtitles = externalSubtitles,
         )
+        if (isDebugBuild) ThrottledDataSourceFactory(base) else base
     }
 
     fun ExoPlayer.setPlaybackMediaItem(videoMediaItem: MediaItem, startPositionMs: Long? = null) {
@@ -1255,6 +1258,7 @@ private class NuvioLibmpvView(
             playbackSpeed = (mpv.getPropertyDouble("speed") ?: 1.0).toFloat(),
             videoWidth = videoWidth,
             videoHeight = videoHeight,
+            engineName = "libmpv",
         )
     }
 
@@ -1509,6 +1513,7 @@ private fun ExoPlayer.snapshot(): PlayerPlaybackSnapshot {
         playbackSpeed = playbackParameters.speed,
         videoWidth = videoWidth,
         videoHeight = videoHeight,
+        engineName = "ExoPlayer",
     )
 }
 

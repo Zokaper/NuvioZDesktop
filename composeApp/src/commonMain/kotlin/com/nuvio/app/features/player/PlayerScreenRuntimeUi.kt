@@ -36,6 +36,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
+import com.nuvio.app.features.playback.SwapDiagnosticsLog
 
 private val playerControlsLog = Logger.withTag("PlayerControls")
 
@@ -425,7 +426,22 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                     val wasPlaying = playbackSnapshot.isPlaying
                     playbackSnapshot = snapshot
                     if (!wasPlaying && snapshot.isPlaying) args.onPlaybackStarted?.invoke()
-                    if (!snapshot.isLoading) initialLoadCompleted = true
+                    if (!snapshot.isLoading) {
+                        initialLoadCompleted = true
+                        // A swap is only over when the replacement actually renders. This is
+                        // the measurement that decides whether automatic quality switching is
+                        // worth its interruption; nothing else in the app times it.
+                        swapStartedAt?.takeIf {
+                            snapshot.isPlaying && playerSurfaceSourceUrl ==
+                                (if (activeTorrentInfoHash != null) p2pResolvedSourceUrl else activeSourceUrl)
+                        }?.let { startedAt ->
+                            SwapDiagnosticsLog.completePending(
+                                startedAt.elapsedNow().inWholeMilliseconds,
+                                positionMsAfter = snapshot.positionMs,
+                            )
+                            swapStartedAt = null
+                        }
+                    }
                     if (snapshot.isEnded) {
                         shouldPlay = false
                         controlsVisible = !playerControlsLocked
@@ -479,6 +495,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             p2pRebufferProgress = p2pRebufferProgress,
             suppressOpeningOverlay = isDesktop && playerSurfaceSourceUrl != null,
         )
+        RenderPlaybackDiagnosticsHud()
         RenderPlayerModals(displayedPositionMs = displayedPositionMs)
     }
 }
