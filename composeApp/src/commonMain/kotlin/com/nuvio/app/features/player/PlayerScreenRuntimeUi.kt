@@ -14,6 +14,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import co.touchlab.kermit.Logger
+import com.nuvio.app.core.debug.PlaybackDebugSettings
+import com.nuvio.app.core.debug.isDebugBuild
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.debrid.DebridSettingsRepository
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
@@ -457,7 +459,11 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                     if (message != null) {
                         controlsVisible = !playerControlsLocked
                         removeFailedStreamFromCache()
-                        args.onFatalPlaybackError?.invoke()
+                        // Diagnostics must retain the failure screen so the tester can read the
+                        // real player error instead of being silently returned to details.
+                        if (!(isDebugBuild && PlaybackDebugSettings.hudEnabled)) {
+                            args.onFatalPlaybackError?.invoke()
+                        }
                     }
                 },
             )
