@@ -14,6 +14,7 @@ import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import androidx.compose.ui.unit.dp
+import com.nuvio.app.core.debug.DesktopDebugLog
 import com.nuvio.app.core.deeplink.handleAppUrl
 import com.nuvio.app.features.p2p.P2pStreamingEngine
 import com.nuvio.app.features.player.PlatformPlayerSurface
@@ -34,6 +35,8 @@ private const val NuvioDesktopIconPath = "icons/nuvio-app-icon.png"
 private const val MacosDarkAquaAppearance = "NSAppearanceNameDarkAqua"
 
 fun main(args: Array<String>) {
+    // First, so the rest of startup is inside the capture. No-op unless -Dnuvio.debugTools=true.
+    DesktopDebugLog.install()?.let { logFile -> println("Nuvio debug log: $logFile") }
     configureDesktopChrome()
     installDesktopOpenUriHandler()
     handleDesktopLaunchArgs(args)

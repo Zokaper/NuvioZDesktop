@@ -1198,6 +1198,12 @@ compose.desktop {
         mainClass = "com.nuvio.app.MainKt"
         val smokePlayerUrl = providers.gradleProperty("nuvio.desktop.smokePlayerUrl").orNull
             ?: System.getenv("NUVIO_DESKTOP_SMOKE_PLAYER_URL")
+        // Bakes the debug switch into the packaged app, so a distributable built with
+        // -Pnuvio.desktop.debugTools=true carries the diagnostics HUD and the file log without
+        // the tester having to launch it by hand with a -D flag. Absent by default, which is
+        // what keeps both out of the shipped Windows build.
+        val debugTools = providers.gradleProperty("nuvio.desktop.debugTools").orNull
+            ?: System.getenv("NUVIO_DESKTOP_DEBUG_TOOLS")
         jvmArgs += listOfNotNull(
             "-Dapple.awt.application.appearance=NSAppearanceNameDarkAqua",
             "--add-opens=java.desktop/java.awt=ALL-UNNAMED",
@@ -1205,6 +1211,7 @@ compose.desktop {
             "--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED",
             "--add-opens=java.desktop/sun.awt.windows=ALL-UNNAMED",
             smokePlayerUrl?.takeIf { it.isNotBlank() }?.let { "-Dnuvio.desktop.smokePlayerUrl=$it" },
+            debugTools?.takeIf { it.equals("true", ignoreCase = true) }?.let { "-Dnuvio.debugTools=true" },
         )
 
         nativeDistributions {

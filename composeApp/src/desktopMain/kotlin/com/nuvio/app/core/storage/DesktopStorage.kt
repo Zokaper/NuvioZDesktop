@@ -36,7 +36,9 @@ internal object DesktopStorage {
         }
     }
 
-    private fun resolveAppDataDir(): Path {
+    // Internal rather than private so the debug log writer lands beside the state it describes.
+    // Two copies of this OS branching would drift the moment either one changed.
+    internal fun resolveAppDataDir(): Path {
         val osName = System.getProperty("os.name").orEmpty().lowercase(Locale.ROOT)
         val userHome = Paths.get(System.getProperty("user.home").orEmpty())
         return when {
