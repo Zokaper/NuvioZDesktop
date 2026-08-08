@@ -35,6 +35,7 @@ const subtitlesLabel = document.getElementById("subtitlesLabel");
 const audioLabel = document.getElementById("audioLabel");
 const sourcesLabel = document.getElementById("sourcesLabel");
 const episodesLabel = document.getElementById("episodesLabel");
+const nextEpisodeLabel = document.getElementById("nextEpisodeLabel");
 const submitIntroButton = document.getElementById("submitIntroButton");
 const lockButton = document.getElementById("lockButton");
 const videoSettingsButton = document.getElementById("videoSettingsButton");
@@ -68,6 +69,7 @@ const nextEpisodeStatus = document.getElementById("nextEpisodeStatus");
 const nextEpisodeAction = document.getElementById("nextEpisodeAction");
 const sourcesButton = document.getElementById("sourcesButton");
 const episodesButton = document.getElementById("episodesButton");
+const nextEpisodeButton = document.getElementById("nextEpisodeButton");
 const lockedLabel = document.getElementById("lockedLabel");
 const audioModal = document.getElementById("audioModal");
 const subtitleModal = document.getElementById("subtitleModal");
@@ -172,6 +174,7 @@ let state = {
   audioLabel: "Audio",
   sourcesLabel: "Sources",
   episodesLabel: "Episodes",
+  nextEpisodeLabel: "Next Episode",
   externalPlayerLabel: "External",
   playLabel: "Play",
   pauseLabel: "Pause",
@@ -272,6 +275,7 @@ let state = {
   showVideoSettings: false,
   showSources: false,
   showEpisodes: false,
+  showNextEpisode: false,
   showExternalPlayer: false,
   durationMs: 0,
   positionMs: 0,
@@ -1858,12 +1862,14 @@ const renderChrome = () => {
   audioLabel.textContent = state.audioLabel || "Audio";
   sourcesLabel.textContent = state.sourcesLabel || "Sources";
   episodesLabel.textContent = state.episodesLabel || "Episodes";
+  nextEpisodeLabel.textContent = state.nextEpisodeLabel || "Next Episode";
   setActionButtonLabel("resize", state.resizeModeLabel || "Fit");
   setActionButtonLabel("speed", state.playbackSpeedLabel || "1x");
   setActionButtonLabel("subtitles", state.subtitlesLabel || "Subs");
   setActionButtonLabel("audio", state.audioLabel || "Audio");
   setActionButtonLabel("sources", state.sourcesLabel || "Sources");
   setActionButtonLabel("episodes", state.episodesLabel || "Episodes");
+  setActionButtonLabel("nextEpisode", state.nextEpisodeLabel || "Next Episode");
   lockedLabel.textContent = state.tapToUnlockLabel || "Tap to unlock";
   const showBuffering = Boolean(!showError && state.isLoading && !state.isLocked && !activeModal && !showOpening);
   bufferingStatus.classList.toggle("visible", showBuffering);
@@ -1873,6 +1879,7 @@ const renderChrome = () => {
   setVisible(videoSettingsButton, Boolean(state.showVideoSettings));
   setVisible(sourcesButton, Boolean(state.showSources));
   setVisible(episodesButton, Boolean(state.showEpisodes));
+  setVisible(nextEpisodeButton, Boolean(state.showNextEpisode));
   syncActionFocusState();
 
   const playPauseLabel = isPlaying ? state.pauseLabel : state.playLabel;

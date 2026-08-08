@@ -693,6 +693,7 @@ private fun String.toPlayerControlsAction(): PlayerControlsAction? =
         "audio" -> PlayerControlsAction.Audio
         "sources" -> PlayerControlsAction.Sources
         "episodes" -> PlayerControlsAction.Episodes
+        "nextEpisode" -> PlayerControlsAction.NextEpisode
         "external" -> PlayerControlsAction.OpenExternalPlayer
         "submitIntro" -> PlayerControlsAction.SubmitIntro
         "lock" -> PlayerControlsAction.LockToggle
@@ -741,6 +742,8 @@ private fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
         appendJsonField("sourcesLabel", sourcesLabel)
         append(',')
         appendJsonField("episodesLabel", episodesLabel)
+        append(',')
+        appendJsonField("nextEpisodeLabel", nextEpisodeLabel)
         append(',')
         appendJsonField("externalPlayerLabel", externalPlayerLabel)
         append(',')
@@ -941,6 +944,8 @@ private fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
         appendJsonField("showSources", showSources)
         append(',')
         appendJsonField("showEpisodes", showEpisodes)
+        append(',')
+        appendJsonField("showNextEpisode", showNextEpisode)
         append(',')
         appendJsonField("showExternalPlayer", showExternalPlayer)
         append(',')

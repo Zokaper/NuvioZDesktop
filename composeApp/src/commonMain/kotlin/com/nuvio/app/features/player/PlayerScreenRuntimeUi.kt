@@ -206,6 +206,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         audioLabel = stringResource(Res.string.compose_player_audio),
         sourcesLabel = stringResource(Res.string.compose_player_sources),
         episodesLabel = stringResource(Res.string.compose_player_episodes),
+        nextEpisodeLabel = stringResource(Res.string.player_next_episode),
         externalPlayerLabel = stringResource(Res.string.streams_open_external_player),
         playLabel = stringResource(Res.string.detail_btn_play),
         pauseLabel = stringResource(Res.string.compose_action_pause),
@@ -291,6 +292,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         showVideoSettings = isIos,
         showSources = activeVideoId != null,
         showEpisodes = isSeries,
+        showNextEpisode = nextEpisodeInfo?.hasAired == true,
         showExternalPlayer = args.onOpenInExternalPlayer != null,
         durationMs = playbackSnapshot.durationMs,
         positionMs = displayedPositionMs,
@@ -666,6 +668,10 @@ private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControl
         }
         PlayerControlsAction.Episodes -> {
             prepareEpisodesForPlayerControls()
+        }
+        PlayerControlsAction.NextEpisode -> {
+            nextEpisodeAutoPlayJob?.cancel()
+            playNextEpisode()
         }
         PlayerControlsAction.OpenExternalPlayer -> openInExternalPlayer()
         PlayerControlsAction.SubmitIntro -> {
