@@ -1137,12 +1137,15 @@
     <string name="playback_mode_instant_stream_2">Asks once before using mobile data</string>
     <string name="playback_mode_instant_download">Starts straight away with the preset matching your connection</string>
     <string name="playback_mode_escape_hatch">In every mode, long-press an episode to pick the source yourself for one play.</string>
+    <string name="playback_mode_unavailable">Not available in this version</string>
     <string name="playback_quality_title">Choose playback quality</string>
     <string name="playback_quality_description">Nuvio will choose the best matching source.</string>
     <string name="playback_quality_loading">Finding available sources…</string>
     <string name="playback_quality_best">Best available</string>
     <string name="playback_quality_variant_high">High</string>
+    <string name="playback_quality_variant_mid">Mid</string>
     <string name="playback_quality_variant_low">Low</string>
+    <string name="playback_quality_over_connection">May be more than your connection carries</string>
     <string name="playback_quality_needs">Needs %1$d Mb/s</string>
     <string name="playback_quality_needs_estimated">Needs about %1$d Mb/s</string>
     <string name="playback_quality_summary_with_size">%1$s · %2$s</string>
@@ -1150,6 +1153,8 @@
     <string name="player_source_switched">Connection dropped - switched to %1$s</string>
     <string name="playback_instant_selected">Playing %1$s</string>
     <string name="playback_quality_no_match">No safe automatic source matched. Choose a source manually.</string>
+    <string name="playback_source_failed_advancing">%1$s did not start. Trying the next source…</string>
+    <string name="playback_source_failed_advancing_reason">%1$s: %2$s. Trying the next source…</string>
     <string name="playback_progress_finding">Looking for sources…</string>
     <string name="playback_progress_choosing">Choosing the best source</string>
     <string name="playback_progress_resolving">Preparing the link</string>
