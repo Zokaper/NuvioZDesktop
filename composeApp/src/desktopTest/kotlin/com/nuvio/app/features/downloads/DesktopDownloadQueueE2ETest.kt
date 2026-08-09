@@ -18,11 +18,15 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.downloads_error_stalled
+import org.jetbrains.compose.resources.getString
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
@@ -110,6 +114,105 @@ class DesktopDownloadQueueE2ETest {
         assertEquals(DownloadStatus.Completed, item.status)
         assertContentOnDisk(item, episode.content)
         assertEquals(2, server.requestCount(episode.path), "the retry should have resumed rather than restarted")
+    }
+
+    /**
+     * The reported Punisher stall: 5.8 of 6.2 GB, "Retrying", it does retry, nothing happens.
+     *
+     * `attemptCount` used to be zeroed by any forward byte movement, so a source that trickles
+     * a little and then drops refreshed its retry budget every cycle. `shouldRetry` never
+     * returned false, the row never reached Failed, and it cycled Downloading -> trickle ->
+     * drop -> Queued forever. Pause and resume could not clear it either: during the backoff
+     * the item is Queued with no handle, so `pauseDownload` has nothing to cancel and
+     * `resumeDownload` zeroes `attemptCount` - which is what the loop was already doing to
+     * itself.
+     *
+     * Twelve drops, each a little further along, is that shape: real progress every attempt,
+     * never enough to mean the source works.
+     */
+    @Test
+    fun `a source that trickles and drops forever fails instead of retrying forever`() {
+        val episode = publishEpisode(1)
+        val trickle = (episode.content.size / 64L).coerceAtLeast(1L)
+        server.failNextRequests(
+            episode.path,
+            *Array(12) { index ->
+                FaultyMediaServer.Behavior.DropConnection(bytesBeforeDrop = trickle * (index + 1))
+            },
+        )
+
+        enqueue(episode)
+        awaitCondition(STALLED_GIVE_UP_TIMEOUT_MS, "the download to give up") { items ->
+            items.firstOrNull { it.episodeNumber == episode.number }?.status == DownloadStatus.Failed
+        }
+
+        val item = itemFor(episode)
+        assertEquals(DownloadStatus.Failed, item.status)
+        // Not a bare "Download failed": the row has to say something the user can act on.
+        assertEquals(
+            runBlocking { getString(Res.string.downloads_error_stalled) },
+            item.errorMessage,
+            "an exhausted download must name what happened",
+        )
+        // It gave up rather than settling into a slower loop.
+        assertNull(item.nextRetryAtEpochMs, "a failed download must not still be counting down")
+    }
+
+    @Test
+    fun `a stalled download restarts from zero once before giving up`() {
+        val episode = publishEpisode(1)
+        val trickle = (episode.content.size / 64L).coerceAtLeast(1L)
+        server.failNextRequests(
+            episode.path,
+            *Array(12) { index ->
+                FaultyMediaServer.Behavior.DropConnection(bytesBeforeDrop = trickle * (index + 1))
+            },
+        )
+
+        enqueue(episode)
+        var sawRestart = false
+        awaitCondition(
+            STALLED_GIVE_UP_TIMEOUT_MS,
+            "the download to give up",
+            onSample = { items ->
+                items.firstOrNull { it.episodeNumber == episode.number }?.let {
+                    if (it.restartedFromZero) sawRestart = true
+                }
+            },
+        ) { items ->
+            items.firstOrNull { it.episodeNumber == episode.number }?.status == DownloadStatus.Failed
+        }
+
+        // A partial file the server will not correctly resume is the likeliest explanation
+        // for a stall pinned near the end, so starting over is the last thing worth trying.
+        assertTrue(sawRestart, "the download never tried starting over")
+        // And exactly once - a restart loop is the same fault wearing a different hat.
+        assertTrue(itemFor(episode).restartedFromZero)
+        assertTrue(
+            server.rangeStarts(episode.path).any { it == 0L },
+            "the restart did not fetch from the beginning",
+        )
+    }
+
+    @Test
+    fun `a download that stalls near the end completes once the source recovers`() {
+        val episode = publishEpisode(1)
+        val trickle = (episode.content.size / 64L).coerceAtLeast(1L)
+        // Enough drops to spend the first budget, then a clean serve. The escalation exists
+        // to recover downloads, not merely to fail them faster.
+        server.failNextRequests(
+            episode.path,
+            *Array(MAX_DOWNLOAD_ATTEMPTS) { index ->
+                FaultyMediaServer.Behavior.DropConnection(bytesBeforeDrop = trickle * (index + 1))
+            },
+        )
+
+        enqueue(episode)
+        awaitQueueDrained(timeoutMs = STALLED_GIVE_UP_TIMEOUT_MS)
+
+        val item = itemFor(episode)
+        assertEquals(DownloadStatus.Completed, item.status)
+        assertContentOnDisk(item, episode.content)
     }
 
     @Test
@@ -1202,6 +1305,17 @@ class DesktopDownloadQueueE2ETest {
         const val QUEUE_WATCHDOG_MS = 5_000L
         const val SOURCE_RESOLVE_TIMEOUT_MS = 1_000L
         const val POLL_INTERVAL_MS = 100L
+
+        /**
+         * Long enough for two whole retry budgets plus the restart between them.
+         *
+         * `retryBackoffMs` is real time, not simulated: 2 + 5 + 15 + 30 seconds to spend one
+         * budget, a 30 second wait before the from-zero run, then the same again - about 130
+         * seconds before a trickling source is allowed to give up. `DownloadsTiming` turns the
+         * stall and watchdog deadlines down for the harness but deliberately leaves the retry
+         * schedule alone, because the escalation being tested here *is* that schedule.
+         */
+        const val STALLED_GIVE_UP_TIMEOUT_MS = 240_000L
         const val WATCH_INTERVAL_MS = 25L
         const val REAL_SOURCE_URLS_ENV = "NUVIO_DOWNLOAD_TEST_URLS"
         const val REAL_SOURCE_TIMEOUT_MS = 30L * 60L * 1000L
