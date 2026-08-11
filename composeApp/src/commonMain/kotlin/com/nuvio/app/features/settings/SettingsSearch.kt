@@ -577,6 +577,20 @@ internal fun settingsSearchEntries(
             )
             add(
                 PlaybackSearchRow(
+                    "playback-codec-preference",
+                    stringResource(Res.string.settings_playback_codec_preference),
+                    stringResource(Res.string.settings_playback_codec_preference_description),
+                ),
+            )
+            add(
+                PlaybackSearchRow(
+                    "playback-dynamic-range",
+                    stringResource(Res.string.settings_playback_dynamic_range),
+                    stringResource(Res.string.settings_playback_dynamic_range_description),
+                ),
+            )
+            add(
+                PlaybackSearchRow(
                     "playback-auto-downshift",
                     stringResource(Res.string.settings_playback_auto_downshift),
                     stringResource(Res.string.settings_playback_auto_downshift_description),

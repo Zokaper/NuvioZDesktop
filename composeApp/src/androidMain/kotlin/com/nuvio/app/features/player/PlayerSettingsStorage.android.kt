@@ -56,6 +56,8 @@ actual object PlayerSettingsStorage {
     private const val tunnelingEnabledKey = "tunneling_enabled"
     private const val playbackModeKey = "playback_mode"
     private const val playbackAllowTorrentAutopickKey = "playback_allow_torrent_autopick"
+    private const val playbackCodecPreferenceKey = "playback_codec_preference"
+    private const val playbackDynamicRangePolicyKey = "playback_dynamic_range_policy"
     private const val showAdvancedSettingsKey = "settings_show_advanced"
     private const val playbackQualityTiersKey = "playback_quality_tiers"
     private const val playbackMeteredCapHeightKey = "playback_metered_cap_height"
@@ -135,6 +137,8 @@ actual object PlayerSettingsStorage {
         tunnelingEnabledKey,
         playbackModeKey,
         playbackAllowTorrentAutopickKey,
+        playbackCodecPreferenceKey,
+        playbackDynamicRangePolicyKey,
         showAdvancedSettingsKey,
         playbackQualityTiersKey,
         playbackMeteredCapHeightKey,
@@ -715,6 +719,20 @@ actual object PlayerSettingsStorage {
         preferences?.edit()?.putBoolean(ProfileScopedKey.of(playbackAllowTorrentAutopickKey), enabled)?.apply()
     }
 
+    actual fun loadPlaybackCodecPreference(): String? =
+        preferences?.getString(ProfileScopedKey.of(playbackCodecPreferenceKey), null)
+
+    actual fun savePlaybackCodecPreference(preference: String) {
+        preferences?.edit()?.putString(ProfileScopedKey.of(playbackCodecPreferenceKey), preference)?.apply()
+    }
+
+    actual fun loadPlaybackDynamicRangePolicy(): String? =
+        preferences?.getString(ProfileScopedKey.of(playbackDynamicRangePolicyKey), null)
+
+    actual fun savePlaybackDynamicRangePolicy(policy: String) {
+        preferences?.edit()?.putString(ProfileScopedKey.of(playbackDynamicRangePolicyKey), policy)?.apply()
+    }
+
     actual fun loadShowAdvancedSettings(): Boolean? =
         preferences?.let { sharedPreferences ->
             val key = ProfileScopedKey.of(showAdvancedSettingsKey)
@@ -1223,6 +1241,10 @@ actual object PlayerSettingsStorage {
         loadPlaybackAllowTorrentAutopick()?.let {
             put(playbackAllowTorrentAutopickKey, encodeSyncBoolean(it))
         }
+        loadPlaybackCodecPreference()?.let { put(playbackCodecPreferenceKey, encodeSyncString(it)) }
+        loadPlaybackDynamicRangePolicy()?.let {
+            put(playbackDynamicRangePolicyKey, encodeSyncString(it))
+        }
         loadPlaybackQualityTiers()?.let { put(playbackQualityTiersKey, encodeSyncString(it)) }
         loadPlaybackMeteredCapHeight()?.let { put(playbackMeteredCapHeightKey, encodeSyncInt(it)) }
         loadPlaybackAutoDownshift()?.let { put(playbackAutoDownshiftKey, encodeSyncBoolean(it)) }
@@ -1307,6 +1329,9 @@ actual object PlayerSettingsStorage {
         payload.decodeSyncString(playbackModeKey)?.let(::savePlaybackMode)
         payload.decodeSyncBoolean(playbackAllowTorrentAutopickKey)
             ?.let(::savePlaybackAllowTorrentAutopick)
+        payload.decodeSyncString(playbackCodecPreferenceKey)?.let(::savePlaybackCodecPreference)
+        payload.decodeSyncString(playbackDynamicRangePolicyKey)
+            ?.let(::savePlaybackDynamicRangePolicy)
         payload.decodeSyncBoolean(showAdvancedSettingsKey)?.let(::saveShowAdvancedSettings)
         payload.decodeSyncString(playbackQualityTiersKey)?.let(::savePlaybackQualityTiers)
         payload.decodeSyncInt(playbackMeteredCapHeightKey)?.let(::savePlaybackMeteredCapHeight)

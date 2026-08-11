@@ -26,7 +26,7 @@ import kotlin.io.path.createDirectories
 private const val TRANSFER_BUFFER_BYTES = 64 * 1024
 
 /** How often the watchdog checks whether anything has arrived. */
-private fun stallCheckIntervalMs(): Long = (DownloadsTiming.stallTimeoutMs / 4).coerceAtLeast(50L)
+// The interval now comes from `DownloadTransfer.kt`, shared with the Android watchdog.
 
 /**
  * `connectTimeout` and the per-request timeout below both stop short of the body.
@@ -67,7 +67,7 @@ internal actual object DownloadsPlatformDownloader {
         // it, and this is what decides when to.
         val watchdog = scope.launch {
             while (true) {
-                delay(stallCheckIntervalMs())
+                delay(stallCheckIntervalMs(DownloadsTiming.stallTimeoutMs))
                 if (DownloadsClock.nowEpochMs() - lastByteAtEpochMs.get() < DownloadsTiming.stallTimeoutMs) {
                     continue
                 }

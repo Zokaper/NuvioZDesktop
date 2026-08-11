@@ -54,6 +54,8 @@ internal actual object PlayerSettingsStorage {
     private const val tunnelingEnabledKey = "tunneling_enabled"
     private const val playbackModeKey = "playback_mode"
     private const val playbackAllowTorrentAutopickKey = "playback_allow_torrent_autopick"
+    private const val playbackCodecPreferenceKey = "playback_codec_preference"
+    private const val playbackDynamicRangePolicyKey = "playback_dynamic_range_policy"
     private const val showAdvancedSettingsKey = "settings_show_advanced"
     private const val playbackQualityTiersKey = "playback_quality_tiers"
     private const val playbackMeteredCapHeightKey = "playback_metered_cap_height"
@@ -132,6 +134,8 @@ internal actual object PlayerSettingsStorage {
         tunnelingEnabledKey,
         playbackModeKey,
         playbackAllowTorrentAutopickKey,
+        playbackCodecPreferenceKey,
+        playbackDynamicRangePolicyKey,
         showAdvancedSettingsKey,
         playbackQualityTiersKey,
         playbackMeteredCapHeightKey,
@@ -247,6 +251,12 @@ internal actual object PlayerSettingsStorage {
     actual fun loadPlaybackAllowTorrentAutopick(): Boolean? = loadBoolean(playbackAllowTorrentAutopickKey)
     actual fun savePlaybackAllowTorrentAutopick(enabled: Boolean) =
         saveBoolean(playbackAllowTorrentAutopickKey, enabled)
+    actual fun loadPlaybackCodecPreference(): String? = loadString(playbackCodecPreferenceKey)
+    actual fun savePlaybackCodecPreference(preference: String) =
+        saveString(playbackCodecPreferenceKey, preference)
+    actual fun loadPlaybackDynamicRangePolicy(): String? = loadString(playbackDynamicRangePolicyKey)
+    actual fun savePlaybackDynamicRangePolicy(policy: String) =
+        saveString(playbackDynamicRangePolicyKey, policy)
     actual fun loadShowAdvancedSettings(): Boolean? = loadBoolean(showAdvancedSettingsKey)
     actual fun saveShowAdvancedSettings(enabled: Boolean) =
         saveBoolean(showAdvancedSettingsKey, enabled)
@@ -389,6 +399,10 @@ internal actual object PlayerSettingsStorage {
         loadPlaybackQualityTiers()?.let { put(playbackQualityTiersKey, encodeSyncString(it)) }
         loadPlaybackMeteredCapHeight()?.let { put(playbackMeteredCapHeightKey, encodeSyncInt(it)) }
         loadPlaybackAutoDownshift()?.let { put(playbackAutoDownshiftKey, encodeSyncBoolean(it)) }
+        loadPlaybackCodecPreference()?.let { put(playbackCodecPreferenceKey, encodeSyncString(it)) }
+        loadPlaybackDynamicRangePolicy()?.let {
+            put(playbackDynamicRangePolicyKey, encodeSyncString(it))
+        }
         loadPlaybackModeSelectorSeen()?.let {
             put(playbackModeSelectorSeenKey, encodeSyncBoolean(it))
         }
@@ -472,6 +486,9 @@ internal actual object PlayerSettingsStorage {
         payload.decodeSyncString(playbackQualityTiersKey)?.let(::savePlaybackQualityTiers)
         payload.decodeSyncInt(playbackMeteredCapHeightKey)?.let(::savePlaybackMeteredCapHeight)
         payload.decodeSyncBoolean(playbackAutoDownshiftKey)?.let(::savePlaybackAutoDownshift)
+        payload.decodeSyncString(playbackCodecPreferenceKey)?.let(::savePlaybackCodecPreference)
+        payload.decodeSyncString(playbackDynamicRangePolicyKey)
+            ?.let(::savePlaybackDynamicRangePolicy)
         payload.decodeSyncBoolean(playbackModeSelectorSeenKey)
             ?.let(::savePlaybackModeSelectorSeen)
         payload.decodeSyncString(streamAutoPlayModeKey)?.let(::saveStreamAutoPlayMode)
