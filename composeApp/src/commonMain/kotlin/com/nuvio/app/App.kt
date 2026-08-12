@@ -5273,6 +5273,7 @@ private fun AppSettingsTabContent(
     onLicensesAttributionsClick: () -> Unit,
     onCheckForUpdatesClick: (() -> Unit)?,
     onWhatsNewClick: (() -> Unit)?,
+    onRunSetupAgainClick: (() -> Unit)?,
     onTestUpdateBannerClick: (() -> Unit)?,
     onCollectionsClick: () -> Unit,
 ) {
