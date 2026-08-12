@@ -61,6 +61,7 @@ internal actual object PlayerSettingsStorage {
     private const val playbackMeteredCapHeightKey = "playback_metered_cap_height"
     private const val playbackAutoDownshiftKey = "playback_auto_downshift"
     private const val playbackModeSelectorSeenKey = "playback_mode_selector_seen"
+    private const val setupWizardCompletedRevisionKey = "setup_wizard_completed_revision"
     private const val streamAutoPlayModeKey = "stream_auto_play_mode"
     private const val streamAutoPlaySourceKey = "stream_auto_play_source"
     private const val streamAutoPlaySelectedAddonsKey = "stream_auto_play_selected_addons"
@@ -141,6 +142,7 @@ internal actual object PlayerSettingsStorage {
         playbackMeteredCapHeightKey,
         playbackAutoDownshiftKey,
         playbackModeSelectorSeenKey,
+        setupWizardCompletedRevisionKey,
         streamAutoPlayModeKey,
         streamAutoPlaySourceKey,
         streamAutoPlaySelectedAddonsKey,
@@ -269,6 +271,9 @@ internal actual object PlayerSettingsStorage {
         saveBoolean(playbackAutoDownshiftKey, enabled)
     actual fun loadPlaybackModeSelectorSeen(): Boolean? = loadBoolean(playbackModeSelectorSeenKey)
     actual fun savePlaybackModeSelectorSeen(seen: Boolean) = saveBoolean(playbackModeSelectorSeenKey, seen)
+    actual fun loadSetupWizardCompletedRevision(): Int? = loadInt(setupWizardCompletedRevisionKey)
+    actual fun saveSetupWizardCompletedRevision(revision: Int) =
+        saveInt(setupWizardCompletedRevisionKey, revision)
     actual fun loadStreamAutoPlayMode(): String? = loadString(streamAutoPlayModeKey)
     actual fun saveStreamAutoPlayMode(mode: String) = saveString(streamAutoPlayModeKey, mode)
     actual fun loadStreamAutoPlaySource(): String? = loadString(streamAutoPlaySourceKey)
@@ -406,6 +411,9 @@ internal actual object PlayerSettingsStorage {
         loadPlaybackModeSelectorSeen()?.let {
             put(playbackModeSelectorSeenKey, encodeSyncBoolean(it))
         }
+        loadSetupWizardCompletedRevision()?.let {
+            put(setupWizardCompletedRevisionKey, encodeSyncInt(it))
+        }
         loadStreamAutoPlayMode()?.let { put(streamAutoPlayModeKey, encodeSyncString(it)) }
         loadStreamAutoPlaySource()?.let { put(streamAutoPlaySourceKey, encodeSyncString(it)) }
         loadStreamAutoPlaySelectedAddons()?.let { put(streamAutoPlaySelectedAddonsKey, encodeSyncStringSet(it)) }
@@ -491,6 +499,8 @@ internal actual object PlayerSettingsStorage {
             ?.let(::savePlaybackDynamicRangePolicy)
         payload.decodeSyncBoolean(playbackModeSelectorSeenKey)
             ?.let(::savePlaybackModeSelectorSeen)
+        payload.decodeSyncInt(setupWizardCompletedRevisionKey)
+            ?.let(::saveSetupWizardCompletedRevision)
         payload.decodeSyncString(streamAutoPlayModeKey)?.let(::saveStreamAutoPlayMode)
         payload.decodeSyncString(streamAutoPlaySourceKey)?.let(::saveStreamAutoPlaySource)
         payload.decodeSyncStringSet(streamAutoPlaySelectedAddonsKey)?.let(::saveStreamAutoPlaySelectedAddons)

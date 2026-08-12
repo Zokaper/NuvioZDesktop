@@ -127,6 +127,7 @@ fun SettingsScreen(
     onLicensesAttributionsClick: () -> Unit = {},
     onCheckForUpdatesClick: (() -> Unit)? = null,
     onWhatsNewClick: (() -> Unit)? = null,
+    onRunSetupAgainClick: (() -> Unit)? = null,
     onTestUpdateBannerClick: (() -> Unit)? = null,
     onCollectionsClick: () -> Unit = {},
 ) {
@@ -350,6 +351,7 @@ fun SettingsScreen(
                 onLicensesAttributionsClick = onLicensesAttributionsClick,
                 onCheckForUpdatesClick = onCheckForUpdatesClick,
                 onWhatsNewClick = onWhatsNewClick,
+                onRunSetupAgainClick = onRunSetupAgainClick,
                 onTestUpdateBannerClick = onTestUpdateBannerClick,
                 onCollectionsClick = onCollectionsClick,
             )
@@ -421,6 +423,7 @@ fun SettingsScreen(
                 onLicensesAttributionsClick = onLicensesAttributionsClick,
                 onCheckForUpdatesClick = onCheckForUpdatesClick,
                 onWhatsNewClick = onWhatsNewClick,
+                onRunSetupAgainClick = onRunSetupAgainClick,
                 onTestUpdateBannerClick = onTestUpdateBannerClick,
                 onCollectionsClick = onCollectionsClick,
             )
@@ -505,6 +508,7 @@ private fun MobileSettingsScreen(
     onLicensesAttributionsClick: () -> Unit = {},
     onCheckForUpdatesClick: (() -> Unit)? = null,
     onWhatsNewClick: (() -> Unit)? = null,
+    onRunSetupAgainClick: (() -> Unit)? = null,
     onTestUpdateBannerClick: (() -> Unit)? = null,
     onCollectionsClick: () -> Unit = {},
 ) {
@@ -540,6 +544,7 @@ private fun MobileSettingsScreen(
             liquidGlassNativeTabBarSupported = liquidGlassNativeTabBarSupported,
             switchProfileAvailable = onSwitchProfile != null,
             checkForUpdatesAvailable = onCheckForUpdatesClick != null,
+            runSetupAgainAvailable = onRunSetupAgainClick != null,
         )
 
         fun openSearchTarget(target: SettingsSearchTarget) {
@@ -572,6 +577,7 @@ private fun MobileSettingsScreen(
                 SettingsSearchTarget.Collections -> onCollectionsClick()
                 SettingsSearchTarget.SwitchProfile -> onSwitchProfile?.invoke()
                 SettingsSearchTarget.CheckForUpdates -> onCheckForUpdatesClick?.invoke()
+                SettingsSearchTarget.RunSetupAgain -> onRunSetupAgainClick?.invoke()
             }
         }
 
@@ -626,6 +632,7 @@ private fun MobileSettingsScreen(
                             onLicensesAttributionsClick = onLicensesAttributionsClick,
                             onCheckForUpdatesClick = onCheckForUpdatesClick,
                             onWhatsNewClick = onWhatsNewClick,
+                            onRunSetupAgainClick = onRunSetupAgainClick,
                             onTestUpdateBannerClick = onTestUpdateBannerClick,
                             onDownloadsClick = onDownloadsClick,
                             onAccountClick = onAccountClick,
@@ -868,6 +875,7 @@ private fun TabletSettingsScreen(
     onLicensesAttributionsClick: () -> Unit = {},
     onCheckForUpdatesClick: (() -> Unit)? = null,
     onWhatsNewClick: (() -> Unit)? = null,
+    onRunSetupAgainClick: (() -> Unit)? = null,
     onTestUpdateBannerClick: (() -> Unit)? = null,
     onCollectionsClick: () -> Unit = {},
 ) {
@@ -947,6 +955,7 @@ private fun TabletSettingsScreen(
                 liquidGlassNativeTabBarSupported = liquidGlassNativeTabBarSupported,
                 switchProfileAvailable = onSwitchProfile != null,
                 checkForUpdatesAvailable = onCheckForUpdatesClick != null,
+                runSetupAgainAvailable = onRunSetupAgainClick != null,
             )
 
             fun openSearchTarget(target: SettingsSearchTarget) {
@@ -965,6 +974,7 @@ private fun TabletSettingsScreen(
                     SettingsSearchTarget.Collections -> onCollectionsClick()
                     SettingsSearchTarget.SwitchProfile -> onSwitchProfile?.invoke()
                     SettingsSearchTarget.CheckForUpdates -> onCheckForUpdatesClick?.invoke()
+                    SettingsSearchTarget.RunSetupAgain -> onRunSetupAgainClick?.invoke()
                 }
             }
 
@@ -1050,6 +1060,7 @@ private fun TabletSettingsScreen(
                                     onLicensesAttributionsClick = { openInlinePage(SettingsPage.LicensesAttributions) },
                                     onCheckForUpdatesClick = onCheckForUpdatesClick,
                                     onWhatsNewClick = onWhatsNewClick,
+                                    onRunSetupAgainClick = onRunSetupAgainClick,
                                     onTestUpdateBannerClick = onTestUpdateBannerClick,
                                     onDownloadsClick = onDownloadsClick,
                                     onAccountClick = { openInlinePage(SettingsPage.Account) },
