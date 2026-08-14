@@ -116,6 +116,22 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      # SetupWizardRenderHarness draws the Welcome step and every specimen band
+      # off-screen and writes them here. It can only assert that they rendered
+      # without throwing, so the images are the actual check - and every Welcome
+      # defect that came back from a device (the hero swallowing the frame, the
+      # nav pill floating mid-screen) was plain in them while the harness passed.
+      # `always()`, not `success()`: a failed assertion is exactly when the
+      # picture is worth having.
+      - name: Upload setup wizard renders
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: setup-wizard-renders
+          path: composeApp/build/setup-wizard-render/
+          if-no-files-found: ignore
+          retention-days: 7
+
   windows-msi:
     name: Windows MSI
     runs-on: windows-2022
