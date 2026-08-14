@@ -720,6 +720,18 @@ fun App(
             }
         }
 
+        // ⚠ Here as well as in `warmProfileBoundRepositories`, because every warm call sits
+        // behind either `MainAppContent` or a profile *switch* - and the setup wizard replaces
+        // `MainAppContent` while it is gating the app, so on a first launch nothing was
+        // observing. The observer's own `combine(...).drop(1)` then discarded the first
+        // signature it saw once the wizard finished, which is the one carrying the completed
+        // revision, so the remote never learned it and the next startup pull re-gated the app
+        // with the old one. Settings written while the wizard is up are settings.
+        // `startObserving` is idempotent, so this and the warm path are safe together.
+        if (ownsAppRuntime) {
+            remember { ProfileSettingsSync.startObserving() }
+        }
+
         LaunchedEffect(useNativeNavigation, ownsAppRuntime) {
             if (!useNativeNavigation || !ownsAppRuntime) return@LaunchedEffect
             NativeAppGateRequests.profileSelection.collect {

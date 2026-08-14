@@ -1,6 +1,7 @@
 package com.nuvio.app.features.player
 
 import com.nuvio.app.core.sync.syncKeysToClear
+import com.nuvio.app.core.sync.mergeMonotonicSyncInt
 import com.nuvio.app.core.sync.decodeSyncBoolean
 import com.nuvio.app.core.sync.decodeSyncFloat
 import com.nuvio.app.core.sync.decodeSyncInt
@@ -1130,6 +1131,9 @@ actual object PlayerSettingsStorage {
     }
 
     actual fun replaceFromSyncPayload(payload: JsonObject) {
+        // ⚠ Read before the clear below - see the Android actual and `mergeMonotonicSyncInt`.
+        val localSetupWizardRevision = loadSetupWizardCompletedRevision()
+
         syncKeysToClear(syncKeys, payload).forEach { key ->
             NSUserDefaults.standardUserDefaults.removeObjectForKey(ProfileScopedKey.of(key))
         }
@@ -1180,8 +1184,10 @@ actual object PlayerSettingsStorage {
         payload.decodeSyncBoolean(playbackAutoDownshiftKey)?.let(::savePlaybackAutoDownshift)
         payload.decodeSyncBoolean(playbackModeSelectorSeenKey)
             ?.let(::savePlaybackModeSelectorSeen)
-        payload.decodeSyncInt(setupWizardCompletedRevisionKey)
-            ?.let(::saveSetupWizardCompletedRevision)
+        mergeMonotonicSyncInt(
+            local = localSetupWizardRevision,
+            remote = payload.decodeSyncInt(setupWizardCompletedRevisionKey),
+        )?.let(::saveSetupWizardCompletedRevision)
         payload.decodeSyncString(streamAutoPlayModeKey)?.let(::saveStreamAutoPlayMode)
         payload.decodeSyncString(streamAutoPlaySourceKey)?.let(::saveStreamAutoPlaySource)
         payload.decodeSyncStringSet(streamAutoPlaySelectedAddonsKey)?.let(::saveStreamAutoPlaySelectedAddons)
