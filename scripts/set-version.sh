@@ -5,11 +5,15 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE_VERSION_FILE="$ROOT_DIR/iosApp/Configuration/Version.xcconfig"
 DESKTOP_VERSION_FILE="$ROOT_DIR/composeApp/Configuration/DesktopVersion.properties"
+# Separate on purpose: a commit touching the release version file is read as a
+# version bump by release-metadata.sh. See the header of the debug file.
+DESKTOP_DEBUG_VERSION_FILE="$ROOT_DIR/composeApp/Configuration/DesktopDebugVersion.properties"
 
 BASE_VERSION=""
 BASE_CODE=""
 DESKTOP_VERSION=""
 DESKTOP_CODE=""
+DESKTOP_DEBUG=""
 DRY_RUN=false
 SHOW=false
 
@@ -19,6 +23,7 @@ Usage:
   ./scripts/set-version.sh --desktop 0.1.0 --desktop-code 1
   ./scripts/set-version.sh --base 0.2.4 --base-code 75
   ./scripts/set-version.sh --base 0.2.4 --base-code 75 --desktop 0.1.0 --desktop-code 1
+  ./scripts/set-version.sh --desktop-debug 4
   ./scripts/set-version.sh --show
 
 Options:
@@ -26,12 +31,18 @@ Options:
   --base-code CODE        Set the upstream/mobile build code.
   --desktop VERSION       Set the desktop app release version.
   --desktop-code CODE     Set the desktop app build code.
+  --desktop-debug COUNT   Set the desktop debug-channel build counter.
   --dry-run               Print changes without writing files.
   --show                  Print current configured versions.
   -h, --help              Show this help.
 
 The base version is stored in iosApp/Configuration/Version.xcconfig.
 The desktop version is stored in composeApp/Configuration/DesktopVersion.properties.
+
+--desktop-debug only affects builds made with -Pnuvio.desktop.debugChannel=true,
+which is the "Desktop debug release" workflow. Bump it for every debug MSI
+published: it is what makes an installed debug build see a newer one, and the
+tag it produces (debug-v<VERSION_NAME>.<COUNT>) is single-use.
 EOF
 }
 
@@ -110,14 +121,20 @@ write_key() {
 }
 
 print_current_versions() {
-  local base_version base_code desktop_version desktop_code
+  local base_version base_code desktop_version desktop_code desktop_debug
   base_version="$(read_key "$BASE_VERSION_FILE" "MARKETING_VERSION")"
   base_code="$(read_key "$BASE_VERSION_FILE" "CURRENT_PROJECT_VERSION")"
   desktop_version="$(read_key "$DESKTOP_VERSION_FILE" "VERSION_NAME")"
   desktop_code="$(read_key "$DESKTOP_VERSION_FILE" "VERSION_CODE")"
+  desktop_debug="$(read_key "$DESKTOP_DEBUG_VERSION_FILE" "DEBUG_BUILD")"
 
   echo "Base/mobile: ${base_version:-unset} (${base_code:-unset})"
   echo "Desktop:     ${desktop_version:-unset} (${desktop_code:-unset})"
+  if [[ -n "$desktop_debug" ]]; then
+    echo "Desktop debug channel: ${desktop_version:-unset}.${desktop_debug} (debug-v${desktop_version:-unset}.${desktop_debug})"
+  else
+    echo "Desktop debug channel: unset"
+  fi
 }
 
 queue_change() {
@@ -160,6 +177,11 @@ while [[ $# -gt 0 ]]; do
       DESKTOP_CODE="$2"
       shift 2
       ;;
+    --desktop-debug)
+      [[ $# -ge 2 ]] || die "--desktop-debug requires a value"
+      DESKTOP_DEBUG="$2"
+      shift 2
+      ;;
     --dry-run)
       DRY_RUN=true
       shift
@@ -180,14 +202,14 @@ done
 
 if [[ "$SHOW" == true ]]; then
   print_current_versions
-  if [[ -z "$BASE_VERSION$BASE_CODE$DESKTOP_VERSION$DESKTOP_CODE" ]]; then
+  if [[ -z "$BASE_VERSION$BASE_CODE$DESKTOP_VERSION$DESKTOP_CODE$DESKTOP_DEBUG" ]]; then
     exit 0
   fi
   echo
 fi
 
-[[ -n "$BASE_VERSION$BASE_CODE$DESKTOP_VERSION$DESKTOP_CODE" ]] ||
-  die "nothing to change; pass --base/--base-code/--desktop/--desktop-code or --show"
+[[ -n "$BASE_VERSION$BASE_CODE$DESKTOP_VERSION$DESKTOP_CODE$DESKTOP_DEBUG" ]] ||
+  die "nothing to change; pass --base/--base-code/--desktop/--desktop-code/--desktop-debug or --show"
 
 if [[ -n "$BASE_VERSION" ]]; then
   validate_version "base version" "$BASE_VERSION"
@@ -201,6 +223,9 @@ fi
 if [[ -n "$DESKTOP_CODE" ]]; then
   validate_code "desktop code" "$DESKTOP_CODE"
 fi
+if [[ -n "$DESKTOP_DEBUG" ]]; then
+  validate_code "desktop debug build" "$DESKTOP_DEBUG"
+fi
 
 if [[ -n "$BASE_VERSION$BASE_CODE" ]]; then
   echo "Base/mobile version file: $BASE_VERSION_FILE"
@@ -212,6 +237,11 @@ if [[ -n "$DESKTOP_VERSION$DESKTOP_CODE" ]]; then
   echo "Desktop version file: $DESKTOP_VERSION_FILE"
   [[ -z "$DESKTOP_VERSION" ]] || queue_change "$DESKTOP_VERSION_FILE" "VERSION_NAME" "$DESKTOP_VERSION"
   [[ -z "$DESKTOP_CODE" ]] || queue_change "$DESKTOP_VERSION_FILE" "VERSION_CODE" "$DESKTOP_CODE"
+fi
+
+if [[ -n "$DESKTOP_DEBUG" ]]; then
+  echo "Desktop debug version file: $DESKTOP_DEBUG_VERSION_FILE"
+  queue_change "$DESKTOP_DEBUG_VERSION_FILE" "DEBUG_BUILD" "$DESKTOP_DEBUG"
 fi
 
 echo

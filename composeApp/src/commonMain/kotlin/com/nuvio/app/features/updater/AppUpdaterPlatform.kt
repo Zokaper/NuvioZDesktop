@@ -6,6 +6,15 @@ data class AppUpdateReleaseSource(
     val channelBranch: String? = null,
     val includePrereleases: Boolean = false,
     val userAgent: String,
+    /**
+     * Whether this build updates from the debug channel - the prereleases tagged `debug-v*`.
+     *
+     * Deliberately not derived from [AppUpdaterPlatform.isDebugBuild]. That flag means "this
+     * binary is debuggable", which is true of the Android debug APK built from this repository,
+     * and that APK still belongs on the ordinary release line. Only a build actually published
+     * to the debug channel may read from it.
+     */
+    val debugChannel: Boolean = false,
 )
 
 data class AppUpdateAssetSelector(
