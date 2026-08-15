@@ -104,8 +104,6 @@ internal expect object PlayerSettingsStorage {
     fun savePlaybackDynamicRangePolicy(policy: String)
     fun loadShowAdvancedSettings(): Boolean?
     fun saveShowAdvancedSettings(enabled: Boolean)
-    fun loadPlaybackQualityTiers(): String?
-    fun savePlaybackQualityTiers(payload: String)
     fun loadPlaybackMeteredCapHeight(): Int?
     fun savePlaybackMeteredCapHeight(height: Int)
     fun loadPlaybackAutoDownshift(): Boolean?
@@ -178,8 +176,6 @@ internal expect object PlayerSettingsStorage {
     fun saveIosSaturation(value: Int)
     fun loadIosGamma(): Int?
     fun saveIosGamma(value: Int)
-    fun loadNvidiaRtxSuperResolutionEnabled(): Boolean?
-    fun saveNvidiaRtxSuperResolutionEnabled(enabled: Boolean)
     fun exportToSyncPayload(): JsonObject
     fun replaceFromSyncPayload(payload: JsonObject)
 }

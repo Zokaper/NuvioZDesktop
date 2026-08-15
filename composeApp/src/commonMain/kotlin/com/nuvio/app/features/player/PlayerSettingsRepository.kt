@@ -5,13 +5,11 @@ import com.nuvio.app.features.player.skip.NextEpisodeThresholdMode
 import com.nuvio.app.features.downloads.CodecPreference
 import com.nuvio.app.features.downloads.DynamicRangePolicy
 import com.nuvio.app.features.playback.PlaybackMode
-import com.nuvio.app.features.playback.PlaybackQualityTier
 import com.nuvio.app.features.streams.StreamAutoPlayMode
 import com.nuvio.app.features.streams.StreamAutoPlaySource
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlin.math.abs
 
@@ -76,7 +74,6 @@ data class PlayerSettingsUiState(
     val playbackCodecPreference: CodecPreference = CodecPreference.ANY,
     val playbackDynamicRangePolicy: DynamicRangePolicy = DynamicRangePolicy.ANY,
     val showAdvancedSettings: Boolean = false,
-    val playbackQualityTiers: List<PlaybackQualityTier> = PlaybackQualityTier.BuiltIns,
     val playbackMeteredCapHeight: Int = 720,
     /**
      * Instant's opt-in automatic source downshift. Off by default: it trades a visible
@@ -183,7 +180,6 @@ object PlayerSettingsRepository {
     private var playbackCodecPreference = CodecPreference.ANY
     private var playbackDynamicRangePolicy = DynamicRangePolicy.ANY
     private var showAdvancedSettings = false
-    private var playbackQualityTiers = PlaybackQualityTier.BuiltIns
     private var playbackMeteredCapHeight = 720
     private var playbackAutoDownshift = false
     private var playbackModeSelectorSeen = false
@@ -265,7 +261,6 @@ object PlayerSettingsRepository {
         playbackCodecPreference = CodecPreference.ANY
         playbackDynamicRangePolicy = DynamicRangePolicy.ANY
         showAdvancedSettings = false
-        playbackQualityTiers = PlaybackQualityTier.BuiltIns
         playbackMeteredCapHeight = 720
         playbackAutoDownshift = false
         playbackModeSelectorSeen = false
@@ -410,20 +405,9 @@ object PlayerSettingsRepository {
                 androidPlaybackEngine = PlayerSettingsStorage.loadAndroidPlaybackEngine(),
                 decoderPriority = PlayerSettingsStorage.loadDecoderPriority(),
             )
-        val storedPlaybackQualityTiers = PlayerSettingsStorage.loadPlaybackQualityTiers()?.let { payload ->
-            runCatching {
-                json.decodeFromString(ListSerializer(PlaybackQualityTier.serializer()), payload)
-            }.getOrNull()
-        }.orEmpty()
-        playbackQualityTiers = PlaybackQualityTier.mergeStoredTiers(storedPlaybackQualityTiers)
         playbackMeteredCapHeight = PlayerSettingsStorage.loadPlaybackMeteredCapHeight()
             ?.takeIf { it in 360..2160 } ?: 720
         playbackAutoDownshift = PlayerSettingsStorage.loadPlaybackAutoDownshift() ?: false
-        if (playbackQualityTiers != storedPlaybackQualityTiers) {
-            PlayerSettingsStorage.savePlaybackQualityTiers(
-                json.encodeToString(ListSerializer(PlaybackQualityTier.serializer()), playbackQualityTiers),
-            )
-        }
         playbackModeSelectorSeen =
             PlayerSettingsStorage.loadPlaybackModeSelectorSeen() ?: false
         setupWizardCompletedRevision =
@@ -769,17 +753,6 @@ object PlayerSettingsRepository {
         playbackDynamicRangePolicy = policy
         publish()
         PlayerSettingsStorage.savePlaybackDynamicRangePolicy(policy.name)
-    }
-
-    fun setPlaybackQualityTiers(tiers: List<PlaybackQualityTier>) {
-        ensureLoaded()
-        val normalized = PlaybackQualityTier.mergeStoredTiers(tiers)
-        if (playbackQualityTiers == normalized) return
-        playbackQualityTiers = normalized
-        publish()
-        PlayerSettingsStorage.savePlaybackQualityTiers(
-            json.encodeToString(ListSerializer(PlaybackQualityTier.serializer()), normalized),
-        )
     }
 
     fun setPlaybackMeteredCapHeight(height: Int) {
@@ -1188,7 +1161,6 @@ object PlayerSettingsRepository {
             playbackCodecPreference = playbackCodecPreference,
             playbackDynamicRangePolicy = playbackDynamicRangePolicy,
             showAdvancedSettings = showAdvancedSettings,
-            playbackQualityTiers = playbackQualityTiers,
             playbackMeteredCapHeight = playbackMeteredCapHeight,
             playbackAutoDownshift = playbackAutoDownshift,
             playbackModeSelectorSeen = playbackModeSelectorSeen,
