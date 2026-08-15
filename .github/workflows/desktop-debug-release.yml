@@ -1,0 +1,263 @@
+name: Desktop debug release
+
+# Publishes a Windows MSI to the desktop debug update channel, so an installed
+# debug build can update itself from inside the app.
+#
+# This is the desktop half of "The debug update line" in nuvio-z's STATUS.md.
+# The channel is GitHub **prereleases** tagged `debug-v*` in this repository.
+# The release updater rejects that tag prefix outright, so the two lines cannot
+# see each other and the release flow is untouched.
+#
+# The debug build is a different application, not a differently-configured one:
+# `-Pnuvio.desktop.debugChannel=true` gives it the package name "Nuvio Z Debug",
+# its own MSI upgrade UUID and its own app-data directory, so it installs beside
+# the release app instead of replacing it. That flag is off everywhere else, so
+# ci.yml and desktop-release.yml keep building the release app unchanged.
+#
+# No signing secret is involved because the MSI is unsigned on both channels.
+# Windows decides an upgrade from the MSI ProductVersion, which is why
+# DEBUG_BUILD is folded into it - see the comment in composeApp/build.gradle.kts.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-debug-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and publish debug MSI
+    runs-on: windows-2022
+    env:
+      LOCAL_PROPERTIES_BASE64: ${{ secrets.NUVIO_DESKTOP_LOCAL_PROPERTIES_BASE64 }}
+      WEBVIEW2_VERSION: 1.0.4078.44
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Resolve debug version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          config=composeApp/Configuration/DesktopVersion.properties
+          debug_config=composeApp/Configuration/DesktopDebugVersion.properties
+          read_value() {
+            sed -nE "s/^[[:space:]]*$2[[:space:]]*=[[:space:]]*([^[:space:]#]+).*/\1/p" "$1" | head -1
+          }
+          version_name="$(read_value "${config}" VERSION_NAME)"
+          version_code="$(read_value "${config}" VERSION_CODE)"
+          debug_build="$(read_value "${debug_config}" DEBUG_BUILD)"
+          if [[ -z "${version_name}" || -z "${version_code}" ]]; then
+            echo "::error::Could not read VERSION_NAME / VERSION_CODE from ${config}"
+            exit 1
+          fi
+          if [[ -z "${debug_build}" ]]; then
+            echo "::error::Could not read DEBUG_BUILD from ${debug_config}"
+            exit 1
+          fi
+
+          version="${version_name}.${debug_build}"
+          tag="debug-v${version}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          # The MSI ProductVersion build.gradle.kts will derive, restated here so a
+          # mismatch shows up in the log rather than on the machine being tested.
+          echo "Publishing ${tag} (expected MSI ProductVersion 1.${version_code}.${debug_build})"
+
+          # A tag is single-use, exactly as it is on the release line: republishing
+          # one would leave installs that already took it stranded on older code
+          # with a newer name. Bump DEBUG_BUILD instead.
+          if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "::error::${tag} already exists. Bump DEBUG_BUILD in ${debug_config} and dispatch again."
+            exit 1
+          fi
+
+      - name: Fetch Windows runtime from Git LFS
+        shell: bash
+        run: |
+          git lfs pull \
+            --include="composeApp/src/desktopMain/native/windows/runtime/**,composeApp/src/desktopMain/resources/torrserver/windows-amd64/TorrServer.exe" \
+            --exclude=""
+
+          runtime_path="composeApp/src/desktopMain/native/windows/runtime/libmpv-2.dll"
+          if [[ ! -f "${runtime_path}" ]] || (( $(wc -c < "${runtime_path}") < 1000000 )); then
+            echo "The bundled Windows libmpv runtime was not materialized from Git LFS." >&2
+            echo "Forks do not always carry LFS objects; check that this repository has them." >&2
+            exit 1
+          fi
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Cap Gradle memory for hosted runners
+        shell: bash
+        run: |
+          # gradle.properties asks for more heap than a standard hosted runner has.
+          # Values in GRADLE_USER_HOME take precedence over the project file, so
+          # override without touching the repository.
+          mkdir -p "${HOME}/.gradle"
+          {
+            echo 'org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8'
+            echo 'kotlin.daemon.jvmargs=-Xmx3g'
+          } >> "${HOME}/.gradle/gradle.properties"
+
+      - name: Configure runtime properties
+        shell: bash
+        run: |
+          # Copied from ci.yml rather than shared, because the two workflows must
+          # not be able to break each other. Without the secret the build still
+          # succeeds but ships with no backend, so sign-in and Trakt will not work
+          # - which is worth knowing before spending a test session on it.
+          if [[ -z "${LOCAL_PROPERTIES_BASE64}" ]]; then
+            echo "::warning::NUVIO_DESKTOP_LOCAL_PROPERTIES_BASE64 is not set; building without backend configuration."
+            : > local.properties
+            exit 0
+          fi
+
+          # Secrets have arrived with a UTF-8 BOM in front of the base64, and
+          # variously wrapped, CRLF-terminated or URL-safe encoded. Drop every
+          # character the base64 alphabet does not contain rather than failing.
+          normalise_b64() {
+            printf '%s' "$1" | tr '_-' '/+' | LC_ALL=C tr -cd 'A-Za-z0-9+/='
+          }
+          # A properties file stored without any encoding: it has KEY= lines and
+          # contains characters base64 never does.
+          looks_like_properties() {
+            printf '%s' "$1" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=' \
+              && printf '%s' "$1" | LC_ALL=C grep -q '[:.]'
+          }
+          decode_text_secret() {
+            local name="$1" raw="$2" out="$3" cleaned
+            if looks_like_properties "${raw}"; then
+              echo "::warning::${name} is not base64; storing it as literal file content."
+              printf '%s\n' "${raw}" > "${out}"
+            else
+              cleaned="$(normalise_b64 "${raw}")"
+              echo "${name}: ${#raw} chars raw, ${#cleaned} base64 characters after cleaning"
+              printf '%s' "${cleaned}" | base64 --decode > "${out}"
+            fi
+            if ! grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=.' "${out}"; then
+              echo "${name} did not yield a properties file." >&2
+              exit 1
+            fi
+          }
+
+          decode_text_secret LOCAL_PROPERTIES_BASE64 "${LOCAL_PROPERTIES_BASE64}" local.properties
+          sed -i -E '/^[[:space:]]*(sdk\.dir|NUVIO_RELEASE_(STORE_FILE|STORE_PASSWORD|KEY_ALIAS|KEY_PASSWORD)|NUVIO_MACOS_(SIGNING_IDENTITY|NOTARY_APPLE_ID|NOTARY_TEAM_ID|NOTARY_PASSWORD|NOTARY_KEYCHAIN_PROFILE|NOTARY_KEYCHAIN_PATH))[[:space:]]*=/d' local.properties
+
+      - name: Install WebView2 SDK
+        shell: pwsh
+        run: |
+          nuget install Microsoft.Web.WebView2 `
+            -Version $env:WEBVIEW2_VERSION `
+            -OutputDirectory "$env:RUNNER_TEMP\nuget" `
+            -DirectDownload `
+            -NonInteractive `
+            -NoCache
+
+          $webView2Root = Join-Path $env:RUNNER_TEMP "nuget\Microsoft.Web.WebView2.$env:WEBVIEW2_VERSION"
+          if (-not (Test-Path (Join-Path $webView2Root "build\native\x64\WebView2Loader.dll.lib"))) {
+            throw "WebView2Loader.dll.lib was not found under $webView2Root"
+          }
+          "WEBVIEW2_ROOT=$webView2Root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run desktop tests
+        shell: pwsh
+        run: |
+          & .\gradlew.bat `
+            :composeApp:desktopTest `
+            "-Pnuvio.desktop.debugChannel=true" `
+            "-Pnuvio.webview2.dir=$env:WEBVIEW2_ROOT" `
+            --no-configuration-cache `
+            --no-daemon `
+            --console=plain 2>&1 | Tee-Object -FilePath test.log
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output "::error::Desktop tests failed"
+            Select-String -Path test.log -Pattern '^e: ' | Select-Object -First 60 | ForEach-Object { $_.Line }
+            exit 1
+          }
+
+      # A test failure produces no `e:` lines at all, and the raw job log is long
+      # enough that reading it back through the API returns only post-job cache
+      # noise. Without this a red run says "tests failed" and nothing else.
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-debug-release-test-reports-${{ github.sha }}
+          path: composeApp/build/reports/tests/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Build debug MSI
+        shell: pwsh
+        run: |
+          & .\gradlew.bat `
+            :composeApp:packageReleaseMsi `
+            "-Pnuvio.desktop.debugChannel=true" `
+            "-Pnuvio.webview2.dir=$env:WEBVIEW2_ROOT" `
+            "-Pcompose.desktop.packaging.checkJdkVendor=false" `
+            --no-configuration-cache `
+            --no-daemon `
+            --console=plain 2>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output "::error::Debug MSI build failed"
+            Select-String -Path build.log -Pattern '^e: ' | Select-Object -First 60 | ForEach-Object { $_.Line }
+            exit 1
+          }
+
+      - name: Identify the MSI
+        id: msi
+        shell: pwsh
+        env:
+          DEBUG_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $expected = "composeApp\build\compose\release-msis\Nuvio-Z-Debug-Windows-x64-$env:DEBUG_VERSION.msi"
+          if (-not (Test-Path $expected)) {
+            # Name it rather than globbing: a build that silently produced the
+            # release artifact name means the debugChannel flag did not reach the
+            # packaging task, which is the failure worth catching here.
+            Write-Output "::error::Expected debug MSI was not produced: $expected"
+            Get-ChildItem "composeApp\build\compose\release-msis" -ErrorAction SilentlyContinue |
+              ForEach-Object { Write-Output "found instead: $($_.Name)" }
+            exit 1
+          }
+          $path = (Resolve-Path $expected).Path
+          "path=$path" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Output "Debug MSI: $path"
+
+      - name: Publish to the debug channel
+        shell: bash
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          MSI_PATH: ${{ steps.msi.outputs.path }}
+        run: |
+          set -euo pipefail
+          gh release create "${TAG}" "${MSI_PATH}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "Desktop debug ${VERSION}" \
+            --prerelease \
+            --notes "Desktop debug build from \`${GITHUB_REF_NAME}\` at \`${GITHUB_SHA}\`.
+
+          Installs as **Nuvio Z Debug**, side by side with the release app, with its
+          own settings directory. It updates from this channel only; the release app
+          ignores it.
+
+          Not a release. The release updater rejects the \`debug-\` tag prefix."
+
+          echo "Published ${TAG}"

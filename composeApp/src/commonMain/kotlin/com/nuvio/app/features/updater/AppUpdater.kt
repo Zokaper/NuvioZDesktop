@@ -76,10 +76,19 @@ private class NoChannelReleaseException : IllegalStateException(
     runBlocking { getString(Res.string.updates_no_channel_release) },
 )
 
-private object VersionUtils {
+/** Tag prefix that marks a release as belonging to the debug update channel. */
+internal const val debugChannelTagPrefix = "debug-"
+
+internal object VersionUtils {
     fun normalize(raw: String?): String {
         if (raw.isNullOrBlank()) return ""
-        return raw.trim().removePrefix("v").removePrefix("V")
+        // The debug prefix has to come off before the "v", and both before parsing: left on,
+        // "debug-v0.4.14-beta.2" tokenises to [4, 14, 2] - the leading 0 lost with the "v0"
+        // token - and every debug release would read as newer than every local version forever.
+        return raw.trim()
+            .removePrefix(debugChannelTagPrefix)
+            .removePrefix("v")
+            .removePrefix("V")
     }
 
     fun parseVersionParts(raw: String?): List<Int>? {
@@ -130,7 +139,14 @@ data class AppReleaseNotes(
 suspend fun fetchRecentReleaseNotes(limit: Int = 5): Result<List<AppReleaseNotes>> = runCatching {
     val source = AppUpdaterPlatform.releaseSource
     AppUpdaterRepository.fetchReleases()
-        .filter { !it.draft && (source.includePrereleases || !it.prerelease) }
+        // Debug releases are excluded on both channels, including from a debug build's own
+        // history. What's New is the product's version history; a debug build is a copy of one
+        // of those versions, and its notes say only which branch it was cut from.
+        .filter { release ->
+            !release.draft &&
+                release.tagName?.trim()?.startsWith(debugChannelTagPrefix, ignoreCase = true) != true &&
+                (source.includePrereleases || !release.prerelease)
+        }
         .take(limit)
         .mapNotNull { release ->
             val tag = release.tagName?.takeIf { it.isNotBlank() }
@@ -166,12 +182,23 @@ private object AppUpdaterRepository {
     suspend fun getLatestChannelUpdate(): Result<AppUpdate> = runCatching {
         val source = AppUpdaterPlatform.releaseSource
         val releases = fetchReleases()
-        val release = releases.firstOrNull { release ->
-            release.matchesRequestedChannel() &&
-                !release.draft &&
-                (source.includePrereleases || !release.prerelease)
+        // The two channels cannot see each other, and each half of that matters. A debug build
+        // takes only `debug-v*` prereleases, so it never installs the release app over itself.
+        // A release build rejects them outright rather than relying on `includePrereleases`,
+        // because this repository's Android build sets that flag true and would otherwise be
+        // offered a desktop MSI it has no asset for.
+        val release = if (source.debugChannel) {
+            releases.firstOrNull { !it.draft && it.prerelease && it.isDebugChannelRelease() }
+                ?: throw NoChannelReleaseException()
+        } else {
+            releases.firstOrNull { release ->
+                release.matchesRequestedChannel() &&
+                    !release.draft &&
+                    !release.isDebugChannelRelease() &&
+                    (source.includePrereleases || !release.prerelease)
+            }
+                ?: throw NoChannelReleaseException()
         }
-            ?: throw NoChannelReleaseException()
 
         val tag = release.tagName?.takeIf { it.isNotBlank() }
             ?: release.name?.takeIf { it.isNotBlank() }
@@ -200,6 +227,9 @@ private object AppUpdaterRepository {
             assetSizeBytes = asset.size,
         )
     }
+
+    private fun GitHubReleaseDto.isDebugChannelRelease(): Boolean =
+        tagName?.trim()?.startsWith(debugChannelTagPrefix, ignoreCase = true) == true
 
     private fun GitHubReleaseDto.matchesRequestedChannel(): Boolean {
         val channel = AppUpdaterPlatform.releaseSource.channelBranch

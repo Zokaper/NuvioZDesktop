@@ -40,6 +40,16 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
     @get:Input
     abstract val desktopAppVersionCode: Property<Int>
 
+    /**
+     * Whether this build belongs to the desktop debug update channel.
+     *
+     * Baked in rather than probed at runtime because it decides the app's identity - its
+     * package name, its MSI upgrade code and its data directory are all chosen at
+     * configuration time, and the updater has to agree with them.
+     */
+    @get:Input
+    abstract val desktopDebugChannel: Property<Boolean>
+
     @get:Input
     abstract val supabaseUrl: Property<String>
 
@@ -173,6 +183,7 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
                 |    const val VERSION_CODE = ${appVersionCode.get()}
                 |    const val DESKTOP_VERSION_NAME = "${desktopAppVersionName.get()}"
                 |    const val DESKTOP_VERSION_CODE = ${desktopAppVersionCode.get()}
+                |    const val DESKTOP_DEBUG_CHANNEL = ${desktopDebugChannel.get()}
                 |}
                 """.trimMargin()
             )
@@ -460,14 +471,14 @@ val desktopVersionProps = Properties().apply {
         desktopVersionConfigFile.inputStream().use { load(it) }
     }
 }
-val desktopReleaseVersionName = (
+val desktopBaseVersionName = (
     providers.gradleProperty("nuvio.desktop.versionName").orNull
         ?: System.getenv("NUVIO_DESKTOP_VERSION_NAME")
         ?: supabaseProps.getProperty("NUVIO_DESKTOP_VERSION_NAME")
         ?: desktopVersionProps.getProperty("VERSION_NAME")
         ?: "0.1.0"
     ).trim()
-require(desktopReleaseVersionName.isNotBlank()) {
+require(desktopBaseVersionName.isNotBlank()) {
     "Desktop version name must not be blank."
 }
 val desktopReleaseVersionCode = (
@@ -479,17 +490,87 @@ val desktopReleaseVersionCode = (
     ?.takeIf { it.isNotBlank() }
     ?.toIntOrNull()
     ?: 1
-val desktopReleasePackageVersion = jpackageCompatibleVersion(desktopReleaseVersionName)
+
+// The debug update channel. Off unless asked for, so every existing invocation -
+// ci.yml, desktop-release.yml, a local run - keeps building the release app.
+val isDesktopDebugChannel = (
+    providers.gradleProperty("nuvio.desktop.debugChannel").orNull
+        ?: System.getenv("NUVIO_DESKTOP_DEBUG_CHANNEL")
+    )?.trim()?.lowercase() in setOf("1", "true", "yes", "on")
+
+// The debug counter, mirroring DEBUG_BUILD in the mobile repository. It is what
+// makes one debug build newer than the last while the marketing version stays put.
+// It lives in its own file rather than in DesktopVersion.properties - see the
+// comment there for why moving it must not touch the release version file.
+val desktopDebugVersionConfigFile = rootProject.file("composeApp/Configuration/DesktopDebugVersion.properties")
+val desktopDebugVersionProps = Properties().apply {
+    if (desktopDebugVersionConfigFile.exists()) {
+        desktopDebugVersionConfigFile.inputStream().use { load(it) }
+    }
+}
+val desktopDebugBuild = (
+    providers.gradleProperty("nuvio.desktop.debugBuild").orNull
+        ?: System.getenv("NUVIO_DESKTOP_DEBUG_BUILD")
+        ?: desktopDebugVersionProps.getProperty("DEBUG_BUILD")
+    )?.trim()
+    ?.takeIf { it.isNotBlank() }
+    ?.toIntOrNull()
+    ?: 1
+require(!isDesktopDebugChannel || desktopDebugBuild > 0) {
+    "DEBUG_BUILD must be a positive integer for a debug-channel build."
+}
+
+// A fourth component, exactly as the mobile debug line does it: 0.4.14-beta.3.
+// The release build never sees it.
+val desktopReleaseVersionName = if (isDesktopDebugChannel) {
+    "$desktopBaseVersionName.$desktopDebugBuild"
+} else {
+    desktopBaseVersionName
+}
+
+// Windows decides whether an MSI is an upgrade from its ProductVersion, which
+// jpackage limits to three numeric components - so the debug counter cannot ride
+// in the "-beta.3" suffix the way it does in the version *name*. It is folded
+// into three numbers instead. VERSION_CODE only ever increases, so
+// "1.<code>.<debug>" is monotonic across the whole debug line even when the
+// marketing version stands still, which is the case this counter exists for.
+val desktopReleasePackageVersion = if (isDesktopDebugChannel) {
+    // Windows Installer caps the second component at 255 and the third at 65535, and
+    // silently truncating either would break upgrade detection in a way that only shows
+    // up on a machine. Fail here instead, where the message says which number to move.
+    require(desktopReleaseVersionCode in 0..255) {
+        "Desktop VERSION_CODE ($desktopReleaseVersionCode) no longer fits an MSI ProductVersion " +
+            "component; the debug channel's 1.<code>.<debug> scheme needs revisiting."
+    }
+    require(desktopDebugBuild in 0..65535) {
+        "DEBUG_BUILD ($desktopDebugBuild) exceeds the MSI ProductVersion limit; reset it and " +
+            "raise VERSION_CODE instead."
+    }
+    "1.$desktopReleaseVersionCode.$desktopDebugBuild"
+} else {
+    jpackageCompatibleVersion(desktopBaseVersionName)
+}
 
 // Display name of the installed application. jpackage also names its default
 // output after this, so the artifact rename helpers below derive from it.
-val desktopPackageName = "Nuvio Z"
+val desktopPackageName = if (isDesktopDebugChannel) "Nuvio Z Debug" else "Nuvio Z"
 // Basename for the published artifacts; kept separate from the display name so
 // the files have no spaces in them.
-val desktopArtifactName = "Nuvio-Z"
+val desktopArtifactName = if (isDesktopDebugChannel) "Nuvio-Z-Debug" else "Nuvio-Z"
 // Distinct from official Nuvio's UUID so installing this fork upgrades only
-// itself instead of replacing an existing Nuvio installation.
-val windowsMsiUpgradeUuid = "7b1f2c94-53ad-4c1e-9f6a-2d8e0b45c7f1"
+// itself instead of replacing an existing Nuvio installation. The debug channel
+// needs its own for the same reason one step further in: sharing this UUID would
+// make every debug MSI *replace* the release app rather than install beside it.
+val windowsMsiUpgradeUuid = if (isDesktopDebugChannel) {
+    "3e6c8d15-9a47-4b02-8c73-1f5a90d2e6b8"
+} else {
+    "7b1f2c94-53ad-4c1e-9f6a-2d8e0b45c7f1"
+}
+val macosBundleId = if (isDesktopDebugChannel) {
+    "com.nuvio.media.z.desktop.debug"
+} else {
+    "com.nuvio.media.z.desktop"
+}
 val iosDistribution = (
     providers.gradleProperty("nuvio.ios.distribution").orNull
         ?: System.getenv("NUVIO_IOS_DISTRIBUTION")
@@ -571,6 +652,7 @@ val generateRuntimeConfigs = tasks.register<GenerateRuntimeConfigsTask>("generat
     appVersionCode.set(releaseAppVersionCode)
     desktopAppVersionName.set(desktopReleaseVersionName)
     desktopAppVersionCode.set(desktopReleaseVersionCode)
+    desktopDebugChannel.set(isDesktopDebugChannel)
     supabaseUrl.set(runtimeConfigValue("NUVIO_SUPABASE_URL"))
     supabaseAnonKey.set(runtimeConfigValue("NUVIO_SUPABASE_ANON_KEY"))
     supabaseFallbackUrl.set(runtimeConfigValue("NUVIO_SUPABASE_FALLBACK_URL"))
@@ -1202,8 +1284,11 @@ compose.desktop {
         // -Pnuvio.desktop.debugTools=true carries the diagnostics HUD and the file log without
         // the tester having to launch it by hand with a -D flag. Absent by default, which is
         // what keeps both out of the shipped Windows build.
+        // A debug-channel build turns them on by default - that is what the channel is for -
+        // while still honouring an explicit setting either way.
         val debugTools = providers.gradleProperty("nuvio.desktop.debugTools").orNull
             ?: System.getenv("NUVIO_DESKTOP_DEBUG_TOOLS")
+            ?: isDesktopDebugChannel.toString().takeIf { isDesktopDebugChannel }
         jvmArgs += listOfNotNull(
             "-Dapple.awt.application.appearance=NSAppearanceNameDarkAqua",
             "--add-opens=java.desktop/java.awt=ALL-UNNAMED",
@@ -1228,15 +1313,20 @@ compose.desktop {
                 "jdk.unsupported",
             )
             macOS {
-                bundleID = "com.nuvio.media.z.desktop"
+                bundleID = macosBundleId
                 iconFile.set(project.file("src/desktopMain/resources/icons/nuvio-app-icon.icns"))
                 infoPlist {
+                    // The `nuvio` and `stremio` schemes are deliberately NOT suffixed on the
+                    // debug channel. AGENTS.md requires the deep links and the Trakt callback
+                    // to stay intact, and a debug build that cannot receive them cannot test
+                    // them. Two installed apps claiming one scheme means the OS picks one -
+                    // acceptable, and the reason to run only one of them at a time.
                     extraKeysRawXml = """
                         <key>CFBundleURLTypes</key>
                         <array>
                             <dict>
                                 <key>CFBundleURLName</key>
-                                <string>com.nuvio.media.z.desktop</string>
+                                <string>$macosBundleId</string>
                                 <key>CFBundleURLSchemes</key>
                                 <array>
                                     <string>nuvio</string>

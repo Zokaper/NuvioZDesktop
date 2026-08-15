@@ -1,5 +1,6 @@
 package com.nuvio.app.core.storage
 
+import com.nuvio.app.core.build.AppVersionConfig
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.nio.file.Files
@@ -41,17 +42,23 @@ internal object DesktopStorage {
     internal fun resolveAppDataDir(): Path {
         val osName = System.getProperty("os.name").orEmpty().lowercase(Locale.ROOT)
         val userHome = Paths.get(System.getProperty("user.home").orEmpty())
+        // A debug-channel build installs beside the release app, so it must not read or write
+        // the release app's state. Sharing it would let a build published to test a fix corrupt
+        // the settings of the app it is being compared against - and every stored-state fault in
+        // STATUS.md was found by comparing exactly those two.
+        val directoryName = if (AppVersionConfig.DESKTOP_DEBUG_CHANNEL) "Nuvio Z Debug" else "Nuvio Z"
+        val linuxDirectoryName = if (AppVersionConfig.DESKTOP_DEBUG_CHANNEL) "nuvio-z-debug" else "nuvio-z"
         return when {
             // Kept distinct from official Nuvio so both can be installed at once
             // without sharing, and corrupting, one another's stored state.
-            osName.contains("mac") -> userHome.resolve("Library/Application Support/Nuvio Z")
+            osName.contains("mac") -> userHome.resolve("Library/Application Support/$directoryName")
             osName.contains("win") -> {
                 val appData = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
-                (appData?.let(Paths::get) ?: userHome.resolve("AppData/Roaming")).resolve("Nuvio Z")
+                (appData?.let(Paths::get) ?: userHome.resolve("AppData/Roaming")).resolve(directoryName)
             }
             else -> {
                 val xdgConfig = System.getenv("XDG_CONFIG_HOME")?.takeIf { it.isNotBlank() }
-                (xdgConfig?.let(Paths::get) ?: userHome.resolve(".config")).resolve("nuvio-z")
+                (xdgConfig?.let(Paths::get) ?: userHome.resolve(".config")).resolve(linuxDirectoryName)
             }
         }
     }

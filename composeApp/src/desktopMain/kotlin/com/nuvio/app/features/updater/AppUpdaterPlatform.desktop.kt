@@ -33,16 +33,21 @@ private val desktopUpdaterHttpClient: HttpClient = HttpClient.newBuilder()
 actual object AppUpdaterPlatform {
     private val currentOs: DesktopUpdaterOs = DesktopUpdaterOs.current()
     private val store = DesktopStorage.store(desktopUpdaterPreferencesName)
-    actual val isDebugBuild: Boolean = false
+    actual val isDebugBuild: Boolean = AppVersionConfig.DESKTOP_DEBUG_CHANNEL
 
     actual val isSupported: Boolean = currentOs != DesktopUpdaterOs.UNKNOWN
 
+    // Both channels read the same repository; what separates them is the `debug-` tag prefix
+    // and the prerelease flag, applied in AppUpdater. `includePrereleases` is true only for the
+    // debug build: the release line publishes plain releases, so this costs the stable channel
+    // nothing and stops a debug prerelease from ever being offered to a release install.
     actual val releaseSource: AppUpdateReleaseSource = AppUpdateReleaseSource(
         owner = "Zokaper",
         repo = "NuvioZDesktop",
         channelBranch = null,
-        includePrereleases = true,
-        userAgent = "NuvioZDesktop",
+        includePrereleases = isDebugBuild,
+        userAgent = if (isDebugBuild) "NuvioZDesktopDebug" else "NuvioZDesktop",
+        debugChannel = isDebugBuild,
     )
 
     actual val assetSelector: AppUpdateAssetSelector
