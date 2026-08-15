@@ -26,6 +26,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,6 +40,8 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -87,7 +90,25 @@ fun SetupDiagram(
     step: SetupStep,
     playbackMode: PlaybackMode,
     modifier: Modifier = Modifier,
+    scale: Float = 1f,
 ) {
+    // ⚠ **A density override rather than `scale` parameters threaded through the file, and rather
+    // than `Modifier.scale`.** Every metric below is a hand-fitted constant (see the block at the
+    // bottom) and this drawing has no desktop *layout* - it is an illustration that simply needs
+    // to be bigger on a big screen. Multiplying the density gets the whole thing, text included,
+    // laid out and rasterised at the larger size, so the labels stay crisp; `Modifier.scale` or a
+    // `graphicsLayer` would draw them at 1x and stretch the pixels.
+    //
+    // Deriving from `LocalDensity.current` rather than the platform density is correct here: the
+    // theme's own desktop scale should still apply, and this compounds on top of it. `fontScale`
+    // is copied across explicitly - `Density(x)` would silently reset it to 1f and shrink every
+    // label.
+    val density = LocalDensity.current
+    val scaled = remember(density, scale) {
+        Density(density = density.density * scale, fontScale = density.fontScale)
+    }
+
+    CompositionLocalProvider(LocalDensity provides scaled) {
     Box(
         modifier = modifier.padding(horizontal = 24.dp),
         contentAlignment = Alignment.Center,
@@ -112,6 +133,7 @@ fun SetupDiagram(
             SetupStep.Theme,
             -> Unit
         }
+    }
     }
 }
 

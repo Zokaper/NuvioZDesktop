@@ -101,24 +101,14 @@ fun SetupWizardDesktopLayout(
         contentAlignment = Alignment.Center,
     ) {
         val paneHeight = maxHeight
-        // ⚠ **Capped and centred rather than stretched edge to edge, and this is the fix for
-        // "everything looks broken on 4K".** The specimens are hand-drawn at roughly a phone's
-        // width: the home banner is 400x150 (2.67:1) and the details hero 400x96 (4.17:1), both
-        // `fillMaxWidth`. Given a 2140 dp pane they become 14:1 and 22:1 - the hero stops being a
-        // hero and becomes a letterbox strip with a logo lost in the middle of it, which is
-        // exactly what the 4K screenshots showed. The theme step's accent button went to 52:1.
-        //
-        // Capping the *block* rather than the specimen's content is what lets `SetupSpecimen.kt`
-        // stay byte-identical with the mobile repository: the band still fills its own pane and
-        // still paints its own gradient, the pane is simply the width the drawings were made for.
-        val blockWidth = maxWidth.coerceAtMost(DesktopWizardBlockMaxWidth)
-        val controlPaneWidth = desktopControlPaneWidth(blockWidth)
+        // ⚠ **The panes fill the window again.** An earlier attempt capped the whole thing at a
+        // 1060 dp block to stop the specimens distorting, and that was the wrong lever: it did
+        // not make them desktop-shaped, it just cropped a phone-shaped drawing and left it
+        // marooned in the middle of a large screen. The specimens are adapted for a wide pane now
+        // - see `scale` and `wide` below - so the pane can have the width it is given.
+        val controlPaneWidth = desktopControlPaneWidth(maxWidth)
 
-        Row(
-            modifier = Modifier
-                .width(blockWidth)
-                .fillMaxHeight(),
-        ) {
+        Row(modifier = Modifier.fillMaxSize()) {
             // The specimen pane.
             //
             // ⚠ **The band gets `preferredHeight`, not the pane's height, and that is the whole
@@ -171,6 +161,8 @@ fun SetupWizardDesktopLayout(
                     tabLayout = tabLayout,
                     nextUpLabel = nextUpLabel,
                     modifier = Modifier.fillMaxWidth(),
+                    scale = specimen.desktopScale,
+                    wide = true,
                 )
                 Box(
                     modifier = Modifier
@@ -207,67 +199,75 @@ fun SetupWizardDesktopLayout(
 }
 
 /**
- * How tall to draw a specimen when there is a whole pane to put it in.
+ * How tall to draw a specimen when there is a whole desktop pane to put it in.
  *
- * ⚠ **Only [SetupSpecimen.Details] differs, and a blanket bonus would be wrong.** `preferredHeight`
- * is not "how much room this would like" - it is the height each specimen was *fitted* against,
- * and `SpecimenHome`, `SpecimenTheme` and `SetupDiagram` all draw exactly that much and top-anchor
- * whatever is left over. Handing them more does not centre them better, it strands them against
- * the top of a taller empty box.
+ * ⚠ These are **not** `preferredHeight * DesktopSpecimenScale`, and they cannot be. The two heroes
+ * are laid out by aspect ratio on a wide pane rather than by fixed height, so how tall a specimen
+ * comes out depends on how wide the pane is - a 1200 dp pane gives the home banner 375 dp of
+ * height on its own. These are budgets generous enough for the widest pane the layout allows, and
+ * the band centres whatever is shorter. `coerceAtMost(paneHeight)` at the call site stops a short
+ * window from being overrun.
  *
- * Details is the exception because its budget was deliberately set *below* its content: 400 dp is
- * roughly `windowHeight * 0.5f` on a phone, and `SetupSpecimen.kt` says in as many words that the
- * trailers rail is meant to be the part that clips there, because a page continuing below the fold
- * is what the real details screen does. That reasoning is about a screen edge. In a pane with 820
- * dp to spend the same clip lands in the middle of the window with empty space under it, where it
- * reads as a broken row rather than as a fold - so here it gets the height it actually needs.
- *
- * Kept in this file rather than raising the enum's own value, so `SetupSpecimen.kt` stays
- * byte-identical with the mobile repository and the phone layout keeps the fold it was tuned for.
+ * `preferredHeight` stays exactly as it is: it is the phone budget, and the phone layout is
+ * unchanged.
  */
 private val SetupSpecimen.desktopHeight: Dp
     get() = when (this) {
-        SetupSpecimen.Details -> DesktopDetailsSpecimenHeight
-        else -> preferredHeight
+        // Banner (up to ~390 at the widest pane) + gap + the tallest Continue Watching style.
+        SetupSpecimen.Home -> 660.dp
+        // Hero + seam + episode row + two stacked sections with a rail under each.
+        SetupSpecimen.Details -> 800.dp
+        // A row of scaled poster cards plus their titles.
+        SetupSpecimen.Cards -> 420.dp
+        SetupSpecimen.Theme -> 300.dp
+        SetupSpecimen.Diagram -> 420.dp
     }
 
-/** Enough for the trailers rail to finish. Measured against the render harness, not guessed. */
-private val DesktopDetailsSpecimenHeight = 500.dp
+/**
+ * How much the specimen's own drawing is enlarged on a desktop pane.
+ *
+ * ⚠ **1.4 is not a taste value - it is `NuvioDesktopCatalogShelfPosterScale`.** `ShelfComponents.kt`
+ * draws catalog posters 1.4x larger on desktop than the raw poster-width setting, so a specimen
+ * that drew them at 1.0 would be showing the user a *smaller* card than the app is about to. Every
+ * other fixed dimension in the specimens is scaled by the same factor so the mock stays internally
+ * proportioned.
+ *
+ * This is separate from the theme's own UI scale, which has already been applied by the time this
+ * multiplies anything: the theme decides how big a dp is, this decides how many dp the drawing is.
+ */
+internal const val DesktopSpecimenScale = 1.4f
 
 /**
- * How wide the two panes together are allowed to get.
+ * How much the specimen is enlarged, per specimen.
  *
- * A **500 dp specimen pane plus a 560 dp control pane**. The specimen half is the number that
- * matters and it comes from the drawings themselves, not from taste:
- *
- * - The home banner is 400x150 as designed; at 500 it is 3.3:1 against a designed 2.67:1.
- * - The details hero is 400x96; at 500 it is 5.2:1 against a designed 4.17:1. It is the shortest
- *   full-bleed element in `SetupSpecimen.kt` and therefore the first thing to look wrong, which is
- *   what sets the ceiling here.
- * - ⚠ **The horizontal rails have to keep overflowing.** The narrowest the cards row can ever be
- *   is 754 dp (six poster cards at the `Dense` 112 dp setting) and the widest 1457 dp; Continue
- *   Watching's widest style is 580 dp and the episode row 580 dp. A 500 dp stage keeps every one
- *   of them running off the edge, which is the behaviour `SetupSpecimen.kt` calls for in as many
- *   words - "content deliberately overflows the right edge the way a real catalog row does". Widen
- *   this much past 560 and those rows start to *fit*, which silently deletes that intent.
+ * ⚠ The diagram gets substantially more, and it is the one case where matching the app is not the
+ * goal. The mocks are previews of real screens, so 1.4x is bounded by what those screens actually
+ * do. `SetupDiagram` is an *illustration* - a TV, an arrow and a play button - and it is the only
+ * thing in its pane, with no rails or artwork beside it to give it scale. At 1.4x on a large
+ * monitor it read as a detail lost in the middle of an empty half of the window.
  */
-private val DesktopWizardBlockMaxWidth = 1060.dp
+private val SetupSpecimen.desktopScale: Float
+    get() = when (this) {
+        SetupSpecimen.Diagram -> DesktopSpecimenScale * DesktopDiagramExtraScale
+        else -> DesktopSpecimenScale
+    }
+
+private const val DesktopDiagramExtraScale = 1.8f
 
 /**
  * The controls, in a column of their own.
  *
- * Proportional with hard clamps, following `detailTabletContentMaxWidth` in `MetaDetailsScreen`,
- * so the split degrades sensibly on a window narrower than the block cap instead of the specimen
- * collapsing to nothing.
+ * Proportional with hard clamps, following `detailTabletContentMaxWidth` in `MetaDetailsScreen`:
+ * a fraction alone would let a very wide window stretch the body copy back out, and a fixed width
+ * alone would crowd the specimen at 1000 dp.
  */
-internal fun desktopControlPaneWidth(blockWidth: Dp): Dp =
-    (blockWidth * DesktopControlPaneFraction)
+internal fun desktopControlPaneWidth(windowWidth: Dp): Dp =
+    (windowWidth * DesktopControlPaneFraction)
         .coerceIn(DesktopControlPaneMinWidth, DesktopControlPaneMaxWidth)
 
-/** 560 / 1060 - the control pane's share of the block at full width. */
-private const val DesktopControlPaneFraction = 0.528f
-private val DesktopControlPaneMinWidth = 420.dp
-private val DesktopControlPaneMaxWidth = 560.dp
+private const val DesktopControlPaneFraction = 0.32f
+private val DesktopControlPaneMinWidth = 440.dp
+private val DesktopControlPaneMaxWidth = 620.dp
 
 /**
  * Horizontal padding inside the control pane.
