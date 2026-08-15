@@ -20,6 +20,9 @@ object ThemeSettingsRepository {
     private val _desktopNavigationLayout = MutableStateFlow(DesktopNavigationLayout.Default)
     val desktopNavigationLayout: StateFlow<DesktopNavigationLayout> = _desktopNavigationLayout.asStateFlow()
 
+    private val _desktopUiZoom = MutableStateFlow(DesktopUiZoom.Default)
+    val desktopUiZoom: StateFlow<DesktopUiZoom> = _desktopUiZoom.asStateFlow()
+
     private val _selectedAppLanguage = MutableStateFlow(AppLanguage.DEVICE)
     val selectedAppLanguage: StateFlow<AppLanguage> = _selectedAppLanguage.asStateFlow()
 
@@ -47,6 +50,10 @@ object ThemeSettingsRepository {
         NativeTabBridge.publishLiquidGlassEnabled(false)
         _selectedAppLanguage.value = AppLanguage.DEVICE
         _navBarStyle.value = NavBarStyle.ADAPTIVE
+        // ⚠ `_desktopUiZoom` is deliberately NOT reset here. This runs when the profile's local
+        // state is cleared, and zoom belongs to the display rather than to the profile - having
+        // the whole interface change size because somebody signed out would read as a bug. It is
+        // device-local for the same reason it is not synced; see `ThemeSettingsStorage`.
     }
 
     private fun loadFromDisk() {
@@ -69,6 +76,9 @@ object ThemeSettingsRepository {
         NativeTabBridge.publishLiquidGlassEnabled(liquidGlassEnabled)
         _desktopNavigationLayout.value = DesktopNavigationLayout.fromName(
             ThemeSettingsStorage.loadDesktopNavigationLayout(),
+        )
+        _desktopUiZoom.value = DesktopUiZoom.fromPercent(
+            ThemeSettingsStorage.loadDesktopUiZoomPercent(),
         )
         val appLanguage = AppLanguage.fromCode(ThemeSettingsStorage.loadSelectedAppLanguage())
         ThemeSettingsStorage.applySelectedAppLanguage(appLanguage.code)
@@ -104,6 +114,31 @@ object ThemeSettingsRepository {
         if (_desktopNavigationLayout.value == layout) return
         _desktopNavigationLayout.value = layout
         ThemeSettingsStorage.saveDesktopNavigationLayout(layout.name)
+    }
+
+    fun setDesktopUiZoom(zoom: DesktopUiZoom) {
+        ensureLoaded()
+        if (_desktopUiZoom.value == zoom) return
+        _desktopUiZoom.value = zoom
+        // Stored by percentage, not by enum name - see `DesktopUiZoom.fromPercent`.
+        ThemeSettingsStorage.saveDesktopUiZoomPercent(zoom.percent)
+    }
+
+    /** `Ctrl` `+`. No-ops at the top of the ladder rather than wrapping round. */
+    fun zoomDesktopUiIn() {
+        ensureLoaded()
+        setDesktopUiZoom(_desktopUiZoom.value.zoomedIn())
+    }
+
+    /** `Ctrl` `-`. */
+    fun zoomDesktopUiOut() {
+        ensureLoaded()
+        setDesktopUiZoom(_desktopUiZoom.value.zoomedOut())
+    }
+
+    /** `Ctrl` `0` - back to the scale the app picks for itself. */
+    fun resetDesktopUiZoom() {
+        setDesktopUiZoom(DesktopUiZoom.Default)
     }
 
     fun setAppLanguage(language: AppLanguage) {

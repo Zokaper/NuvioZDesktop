@@ -674,6 +674,10 @@
     <string name="settings_appearance_desktop_navigation_sheet_title">Choose Desktop Navigation</string>
     <string name="settings_appearance_desktop_navigation_sidebar">Sidebar</string>
     <string name="settings_appearance_desktop_navigation_top_bar">Top Bar</string>
+    <string name="settings_appearance_desktop_ui_zoom">Interface Size</string>
+    <string name="settings_appearance_desktop_ui_zoom_sheet_title">Choose Interface Size</string>
+    <string name="settings_appearance_desktop_ui_zoom_shortcut">Ctrl + / Ctrl -</string>
+    <string name="settings_appearance_desktop_ui_zoom_default">Default</string>
     <string name="settings_appearance_liquid_glass">Liquid Glass</string>
     <string name="settings_appearance_liquid_glass_description">Use the native iPhone tab bar on iOS 26 and later.</string>
     <string name="settings_appearance_poster_customization_description">Tune card width and corner radius.</string>

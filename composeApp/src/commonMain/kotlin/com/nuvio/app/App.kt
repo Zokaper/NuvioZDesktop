@@ -594,8 +594,16 @@ fun App(
         ThemeSettingsRepository.selectedTheme
     }.collectAsStateWithLifecycle()
     val amoledEnabled by remember { ThemeSettingsRepository.amoledEnabled }.collectAsStateWithLifecycle()
+    val desktopUiZoom by remember { ThemeSettingsRepository.desktopUiZoom }.collectAsStateWithLifecycle()
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val desktopUiScale = desktopUiScaleForWindow(maxWidth.value, maxHeight.value)
+        // ⚠ This `BoxWithConstraints` is outside `NuvioTheme` on purpose, so `maxWidth`/`maxHeight`
+        // are **platform** dp - the real window - rather than the dp space the theme is about to
+        // create from them. Moving it inside would make the scale depend on its own output.
+        //
+        // The user's zoom multiplies what the app chose for itself, which is what makes 100% mean
+        // the same thing on a laptop and on a 4K panel. See `DesktopUiZoom`.
+        val desktopUiScale = desktopUiScaleForWindow(maxWidth.value, maxHeight.value) *
+            desktopUiZoom.factor
         NuvioTheme(
             appTheme = selectedTheme,
             amoled = amoledEnabled,

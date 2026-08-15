@@ -65,6 +65,10 @@ import nuvio.composeapp.generated.resources.settings_appearance_amoled_descripti
 import nuvio.composeapp.generated.resources.settings_appearance_continue_watching_description
 import nuvio.composeapp.generated.resources.settings_appearance_desktop_navigation
 import nuvio.composeapp.generated.resources.settings_appearance_desktop_navigation_sheet_title
+import nuvio.composeapp.generated.resources.settings_appearance_desktop_ui_zoom
+import nuvio.composeapp.generated.resources.settings_appearance_desktop_ui_zoom_default
+import nuvio.composeapp.generated.resources.settings_appearance_desktop_ui_zoom_sheet_title
+import nuvio.composeapp.generated.resources.settings_appearance_desktop_ui_zoom_shortcut
 import nuvio.composeapp.generated.resources.settings_appearance_liquid_glass
 import nuvio.composeapp.generated.resources.settings_appearance_liquid_glass_description
 import nuvio.composeapp.generated.resources.settings_appearance_poster_customization_description
@@ -156,9 +160,14 @@ internal fun LazyListScope.appearanceSettingsContent(
     item {
         var showLanguageSheet by remember { mutableStateOf(false) }
         var showDesktopNavigationSheet by remember { mutableStateOf(false) }
+        var showDesktopUiZoomSheet by remember { mutableStateOf(false) }
         val desktopNavigationLayout by remember {
             ThemeSettingsRepository.ensureLoaded()
             ThemeSettingsRepository.desktopNavigationLayout
+        }.collectAsStateWithLifecycle()
+        val desktopUiZoom by remember {
+            ThemeSettingsRepository.ensureLoaded()
+            ThemeSettingsRepository.desktopUiZoom
         }.collectAsStateWithLifecycle()
         var showNavBarStyleSheet by remember { mutableStateOf(false) }
         SettingsSection(
@@ -191,6 +200,16 @@ internal fun LazyListScope.appearanceSettingsContent(
                         isTablet = isTablet,
                         onClick = { showDesktopNavigationSheet = true },
                     )
+                    SettingsGroupDivider(isTablet = isTablet)
+                    SettingsNavigationRow(
+                        title = stringResource(Res.string.settings_appearance_desktop_ui_zoom),
+                        // The percentage, then the shortcut. Somebody who opens this row once
+                        // should not have to come back to it.
+                        description = desktopUiZoom.label + "  ·  " +
+                            stringResource(Res.string.settings_appearance_desktop_ui_zoom_shortcut),
+                        isTablet = isTablet,
+                        onClick = { showDesktopUiZoomSheet = true },
+                    )
                 }
                 SettingsGroupDivider(isTablet = isTablet)
                 SettingsNavigationRow(
@@ -219,6 +238,17 @@ internal fun LazyListScope.appearanceSettingsContent(
                     showDesktopNavigationSheet = false
                 },
                 onDismiss = { showDesktopNavigationSheet = false },
+            )
+        }
+
+        if (showDesktopUiZoomSheet) {
+            DesktopUiZoomBottomSheet(
+                selectedZoom = desktopUiZoom,
+                onZoomSelected = {
+                    ThemeSettingsRepository.setDesktopUiZoom(it)
+                    showDesktopUiZoomSheet = false
+                },
+                onDismiss = { showDesktopUiZoomSheet = false },
             )
         }
 
@@ -360,6 +390,84 @@ private fun DesktopNavigationLayoutBottomSheet(
                     },
                     trailingContent = {
                         if (layout == selectedLayout) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = stringResource(Res.string.cd_selected),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The interface zoom picker.
+ *
+ * A discrete list rather than a slider, for two reasons: every other picker in settings is a
+ * bottom sheet of options, and the same ladder has to be walked by `Ctrl` `+` / `-`, so a
+ * continuous control would need quantising back into steps anyway. `DesktopUiZoom` owns the
+ * ladder and both entry points share it.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DesktopUiZoomBottomSheet(
+    selectedZoom: DesktopUiZoom,
+    onZoomSelected: (DesktopUiZoom) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val coroutineScope = rememberCoroutineScope()
+
+    NuvioModalBottomSheet(
+        onDismissRequest = {
+            coroutineScope.launch {
+                dismissNuvioBottomSheet(sheetState = sheetState, onDismiss = onDismiss)
+            }
+        },
+        sheetState = sheetState,
+    ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 16.dp),
+        ) {
+            item {
+                Text(
+                    text = stringResource(Res.string.settings_appearance_desktop_ui_zoom_sheet_title),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                )
+            }
+
+            itemsIndexed(DesktopUiZoom.entries) { index, zoom ->
+                if (index > 0) {
+                    NuvioBottomSheetDivider()
+                }
+                // Only 100% is annotated: it is the one value whose meaning is not the number
+                // itself, because it defers to whatever the app sized itself to. Appended to the
+                // title rather than passed as a description, because `NuvioBottomSheetActionRow`
+                // has no description slot and widening a shared component for one row is worse.
+                val title = if (zoom == DesktopUiZoom.Default) {
+                    zoom.label + "  ·  " +
+                        stringResource(Res.string.settings_appearance_desktop_ui_zoom_default)
+                } else {
+                    zoom.label
+                }
+                NuvioBottomSheetActionRow(
+                    title = title,
+                    onClick = {
+                        onZoomSelected(zoom)
+                        coroutineScope.launch {
+                            dismissNuvioBottomSheet(sheetState = sheetState, onDismiss = onDismiss)
+                        }
+                    },
+                    trailingContent = {
+                        if (zoom == selectedZoom) {
                             Icon(
                                 imageVector = Icons.Default.Check,
                                 contentDescription = stringResource(Res.string.cd_selected),

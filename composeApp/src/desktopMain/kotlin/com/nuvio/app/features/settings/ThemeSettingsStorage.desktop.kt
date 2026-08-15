@@ -19,6 +19,12 @@ internal actual object ThemeSettingsStorage {
     private const val desktopNavigationLayoutKey = "desktop_navigation_layout"
     private const val selectedAppLanguageKey = "selected_app_language"
     private const val navBarStyleKey = "nav_bar_style"
+
+    // ⚠ Not `ProfileScopedKey`, and not in `profileScopedSyncKeys` below. Zoom belongs to the
+    // screen this app is running on, not to the profile signed into it - switching profiles must
+    // not resize the interface, and pushing a 4K desktop's zoom onto a laptop would be worse than
+    // having no setting at all. `selectedAppLanguageKey` is the existing device-local key.
+    private const val desktopUiZoomPercentKey = "desktop_ui_zoom_percent"
     private val profileScopedSyncKeys = listOf(
         selectedThemeKey,
         amoledEnabledKey,
@@ -54,6 +60,13 @@ internal actual object ThemeSettingsStorage {
 
     actual fun saveDesktopNavigationLayout(layoutName: String) {
         store.putString(ProfileScopedKey.of(desktopNavigationLayoutKey), layoutName)
+    }
+
+    actual fun loadDesktopUiZoomPercent(): Int? =
+        store.getInt(desktopUiZoomPercentKey)
+
+    actual fun saveDesktopUiZoomPercent(percent: Int) {
+        store.putInt(desktopUiZoomPercentKey, percent)
     }
 
     actual fun loadSelectedAppLanguage(): String? =

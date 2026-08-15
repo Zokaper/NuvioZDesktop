@@ -24,6 +24,7 @@ import com.nuvio.app.features.player.desktop.DesktopWindowGeometry
 import com.nuvio.app.features.player.desktop.DesktopWindowModeStorage
 import com.nuvio.app.features.player.desktop.applyNativeDesktopWindowChrome
 import com.nuvio.app.features.player.desktop.installDesktopAppFullscreenShortcuts
+import com.nuvio.app.features.settings.installDesktopUiZoomShortcuts
 import com.nuvio.app.features.player.desktop.preloadNativePlayerBridgeAsync
 import com.nuvio.app.features.player.desktop.registerDesktopAppFullscreenToggle
 import java.awt.Desktop
@@ -131,9 +132,11 @@ fun main(args: Array<String>) {
                     },
                 )
                 val uninstallFullscreenShortcuts = installDesktopAppFullscreenShortcuts(window)
+                val uninstallZoomShortcuts = installDesktopUiZoomShortcuts()
                 onDispose {
                     fullscreenController.dispose(window)
                     uninstallFullscreenShortcuts()
+                    uninstallZoomShortcuts()
                     unregisterFullscreenToggle()
                 }
             }

@@ -67,6 +67,12 @@ actual object ThemeSettingsStorage {
     actual fun loadDesktopNavigationLayout(): String? =
         NSUserDefaults.standardUserDefaults.stringForKey(ProfileScopedKey.of(desktopNavigationLayoutKey))
 
+    // Desktop-only setting; a stub here purely to satisfy the common `expect` object, exactly as
+    // the desktop navigation layout above does. Nothing on iOS reads or writes it.
+    actual fun loadDesktopUiZoomPercent(): Int? = null
+
+    actual fun saveDesktopUiZoomPercent(percent: Int) = Unit
+
     actual fun saveDesktopNavigationLayout(layoutName: String) {
         NSUserDefaults.standardUserDefaults.setObject(
             layoutName,
