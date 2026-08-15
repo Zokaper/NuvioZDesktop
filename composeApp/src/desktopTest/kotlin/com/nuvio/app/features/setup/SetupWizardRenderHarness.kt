@@ -68,7 +68,10 @@ class SetupWizardRenderHarness {
         // real graphics context - so what these PNGs show is close to the **worst** case, which
         // is exactly the one revision 2 failed. If the heading is hard to read here, deepen the
         // alphas in `SetupWelcomeSurface`.
-        for ((widthDp, heightDp) in listOf(420 to 900, 1100 to 800)) {
+        // ⚠ 1280x820 is the default desktop window and is the size the Welcome panel's new
+        // bounded-card layout has to look right at; 420x900 is the phone path, which must be
+        // unchanged by that work.
+        for ((widthDp, heightDp) in listOf(420 to 900, 1100 to 800, 1280 to 820, 1600 to 900)) {
             for (theme in listOf(AppTheme.WHITE, AppTheme.entries.last())) {
                 for (amoled in listOf(false, true)) {
                     val name = "welcome-${widthDp}x$heightDp-${theme.name.lowercase()}" +
@@ -78,6 +81,19 @@ class SetupWizardRenderHarness {
                     }
                 }
             }
+        }
+
+        // The desktop two-pane layout, one PNG per step, at the default window (1280x820, see
+        // `Main.kt`) and one larger size.
+        //
+        // ⚠ **This is new coverage, and it is the first time a whole wizard step has been
+        // renderable at all.** `SetupWizardScreen` holds the current step in `rememberSaveable`
+        // state, so there is no way in from outside and everything above this line can only draw
+        // Welcome or a band in isolation. `SetupWizardDesktopLayout` takes `step` as a parameter
+        // precisely so this loop can exist - if it ever starts reading the step from state, this
+        // goes back to covering nothing.
+        for ((widthDp, heightDp) in listOf(1280 to 820, 1600 to 900)) {
+            renderDesktopSteps(widthDp, heightDp, failures)
         }
 
         // The bands for steps 2-8, at the settings each one can be asked to draw. The band is
@@ -99,6 +115,87 @@ class SetupWizardRenderHarness {
             fail("Scenes failed to render:\n" + failures.joinToString("\n"))
         }
         println("Setup wizard renders written to ${outputDir.absolutePath}")
+    }
+
+    /**
+     * Every step except Welcome, through the desktop two-pane layout.
+     *
+     * The bodies are the **real** `SetupStepBody`, not a stand-in, so what these PNGs show is the
+     * actual control set for each step inside the actual pane. That is the whole point: the
+     * defects this harness exists to catch - a clipped card, a chip aligned hard left, a rail too
+     * dark to see - all live in the bodies rather than in the frame around them.
+     *
+     * ⚠ The plan is `offerSources = true` so that Sources is included and the step count reads
+     * 8. A run with an addon installed drops that step; the layout is the same either way.
+     */
+    private fun renderDesktopSteps(widthDp: Int, heightDp: Int, failures: MutableList<String>) {
+        val plan = SetupWizardPlan(offerSources = true)
+        val steps = setupWizardSteps(plan).filter { it != SetupStep.Welcome }
+
+        for (step in steps) {
+            val specimen = when (step) {
+                SetupStep.Cards -> SetupSpecimen.Cards
+                SetupStep.Home -> SetupSpecimen.Home
+                SetupStep.Details -> SetupSpecimen.Details
+                SetupStep.Theme -> SetupSpecimen.Theme
+                else -> SetupSpecimen.Diagram
+            }
+            val name = "desktop-${step.name.lowercase()}-${widthDp}x$heightDp"
+            render(name, widthDp, heightDp, AppTheme.WHITE, false, failures) {
+                SetupWizardDesktopLayout(
+                    step = step,
+                    plan = plan,
+                    specimen = specimen,
+                    dismissible = step != SetupStep.Cards,
+                    onDismiss = {},
+                    playbackMode = PlaybackMode.STREAMLINED,
+                    posterWidthDp = 126,
+                    posterCornerRadiusDp = 8,
+                    landscapeCards = false,
+                    showCardTitles = true,
+                    heroEnabled = true,
+                    continueWatchingStyle = ContinueWatchingSectionStyle.Card,
+                    useEpisodeThumbnails = true,
+                    blurNextUp = false,
+                    backgroundMode = MetaScreenBackgroundMode.Cinematic,
+                    episodeCardStyle = MetaEpisodeCardStyle.Horizontal,
+                    blurUnwatchedEpisodes = false,
+                    tabLayout = false,
+                    nextUpLabel = "Next episode",
+                    topInset = 0.dp,
+                    bottomInset = 0.dp,
+                    onBack = {},
+                    onAdvance = {},
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    SetupStepBody(
+                        step = step,
+                        goingForward = true,
+                        playbackMode = PlaybackMode.STREAMLINED,
+                        posterWidthDp = 126,
+                        posterCornerRadiusDp = 8,
+                        landscapeCards = false,
+                        hideLabels = false,
+                        heroEnabled = true,
+                        continueWatchingStyle = ContinueWatchingSectionStyle.Card,
+                        useEpisodeThumbnails = true,
+                        blurNextUp = false,
+                        backgroundMode = MetaScreenBackgroundMode.Cinematic,
+                        episodeCardStyle = MetaEpisodeCardStyle.Horizontal,
+                        blurUnwatchedEpisodes = false,
+                        tabLayout = false,
+                        selectedTheme = AppTheme.WHITE,
+                        amoledEnabled = false,
+                        addonUrl = "",
+                        addonBusy = false,
+                        addonError = null,
+                        addonInstalledName = null,
+                        onAddonUrlChange = {},
+                        onInstallAddon = {},
+                    )
+                }
+            }
+        }
     }
 
     private fun renderBands(widthDp: Int, failures: MutableList<String>) {

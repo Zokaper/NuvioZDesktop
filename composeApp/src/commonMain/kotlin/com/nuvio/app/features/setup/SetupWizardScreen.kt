@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.sync.ProfileSettingsSync
+import com.nuvio.app.isDesktop
 import com.nuvio.app.core.ui.AppTheme
 import com.nuvio.app.core.ui.NuvioInputField
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
@@ -254,6 +255,18 @@ fun SetupWizardScreen(
         val windowWidth = maxWidth
         val insets = WindowInsets.safeDrawing.asPaddingValues()
 
+        // ⚠ **The one thing that decides mobile-shaped or desktop-shaped, and it is deliberately
+        // the same expression `MetaDetailsScreen` uses for `useDesktopDetailLayout`.** Both
+        // halves matter: `isDesktop` keeps an Android tablet on the stacked layout it was
+        // designed and tested for, and the width test keeps a desktop window the user has
+        // dragged narrow from being handed a two-pane layout that no longer fits in it.
+        //
+        // The default desktop window is 1280x820 (`Main.kt`), so this is true on launch. Note
+        // that `NuvioTheme` scales density by `desktopUiScaleForWindow` against that same
+        // 1280x820 base, so this threshold is in scaled dp - at the default window the scale is
+        // exactly 1.0 and below it the layout only ever gets *more* room per dp.
+        val useDesktopWizardLayout = isDesktop && windowWidth >= DesktopWizardMinWidth
+
         // Each specimen asks for the height it needs, capped so that a short phone always
         // leaves the panel the larger share.
         //
@@ -284,11 +297,90 @@ fun SetupWizardScreen(
             SetupWelcomeSurface(
                 insets = insets,
                 maxPanelWidth = if (windowWidth >= 768.dp) 620.dp else windowWidth,
+                desktop = useDesktopWizardLayout,
                 onAdvance = ::advance,
                 onSkipAll = ::complete,
                 dismissible = dismissible,
                 onDismiss = onDismiss,
             )
+            return@BoxWithConstraints
+        }
+
+        // Steps 2-8 on a desktop window: the specimen beside the controls rather than above them.
+        // Everything the step *is* - the questions, their order, what each control writes - comes
+        // from the same `SetupStepBody` the stacked layout calls. Only the frame differs.
+        if (useDesktopWizardLayout) {
+            SetupWizardDesktopLayout(
+                step = step,
+                plan = plan,
+                specimen = specimen,
+                dismissible = dismissible,
+                onDismiss = onDismiss,
+                playbackMode = playerSettings.playbackMode,
+                posterWidthDp = posterStyle.widthDp,
+                posterCornerRadiusDp = posterStyle.cornerRadiusDp,
+                landscapeCards = posterStyle.catalogLandscapeModeEnabled,
+                showCardTitles = !posterStyle.hideLabelsEnabled,
+                heroEnabled = homeSettings.heroEnabled,
+                continueWatchingStyle = continueWatching.style,
+                useEpisodeThumbnails = continueWatching.useEpisodeThumbnails,
+                blurNextUp = continueWatching.blurNextUp,
+                backgroundMode = metaSettings.backgroundMode,
+                episodeCardStyle = metaSettings.episodeCardStyle,
+                blurUnwatchedEpisodes = metaSettings.blurUnwatchedEpisodes,
+                tabLayout = metaSettings.tabLayout,
+                nextUpLabel = nextUpLabel,
+                topInset = insets.calculateTopPadding(),
+                bottomInset = insets.calculateBottomPadding(),
+                onBack = { previousSetupStep(step, plan)?.let { stepName = it.name } },
+                onAdvance = ::advance,
+            ) {
+                SetupStepBody(
+                    step = step,
+                    goingForward = goingForward,
+                    playbackMode = playerSettings.playbackMode,
+                    posterWidthDp = posterStyle.widthDp,
+                    posterCornerRadiusDp = posterStyle.cornerRadiusDp,
+                    landscapeCards = posterStyle.catalogLandscapeModeEnabled,
+                    hideLabels = posterStyle.hideLabelsEnabled,
+                    heroEnabled = homeSettings.heroEnabled,
+                    continueWatchingStyle = continueWatching.style,
+                    useEpisodeThumbnails = continueWatching.useEpisodeThumbnails,
+                    blurNextUp = continueWatching.blurNextUp,
+                    backgroundMode = metaSettings.backgroundMode,
+                    episodeCardStyle = metaSettings.episodeCardStyle,
+                    blurUnwatchedEpisodes = metaSettings.blurUnwatchedEpisodes,
+                    tabLayout = metaSettings.tabLayout,
+                    selectedTheme = selectedTheme,
+                    amoledEnabled = amoledEnabled,
+                    addonUrl = addonUrl,
+                    addonBusy = addonBusy,
+                    addonError = addonError,
+                    addonInstalledName = addonInstalledName,
+                    onAddonUrlChange = {
+                        addonUrl = it
+                        addonError = null
+                        addonInstalledName = null
+                    },
+                    onInstallAddon = {
+                        installAddon(
+                            scope = scope,
+                            rawUrl = addonUrl,
+                            emptyUrlMessage = emptyUrlMessage,
+                            setBusy = { addonBusy = it },
+                            onInstalled = { name ->
+                                addonUrl = ""
+                                addonError = null
+                                addonInstalledName = name
+                            },
+                            onFailed = { message ->
+                                addonInstalledName = null
+                                addonError = message
+                            },
+                        )
+                    },
+                )
+            }
             return@BoxWithConstraints
         }
 
@@ -417,6 +509,7 @@ fun SetupWizardScreen(
 private fun SetupWelcomeSurface(
     insets: PaddingValues,
     maxPanelWidth: Dp,
+    desktop: Boolean,
     onAdvance: () -> Unit,
     onSkipAll: () -> Unit,
     dismissible: Boolean,
@@ -442,10 +535,38 @@ private fun SetupWelcomeSurface(
                 .hazeSource(state = hazeState),
         )
 
+        // ⚠ **The panel is a bounded card on desktop and a full-width strip on a phone, and the
+        // difference is not cosmetic.** On a phone the panel spans the window because the window
+        // *is* the panel's natural width. Carried onto a 1280 dp window unchanged, the same code
+        // tinted the full width while holding a 620 dp column of text in the middle of it - a
+        // wide empty bar with a strip of writing in the centre, which is what "the intro screen
+        // looks super off" was.
+        //
+        // Bottom-**start**, not centre: it sits over the corner of the still that carries the
+        // least of the hero's own content, and it lines up with the sidebar rail the still now
+        // draws rather than floating free of it.
+        val panelAlignment = if (desktop) Alignment.BottomStart else Alignment.BottomCenter
+        val panelShape = RoundedCornerShape(WelcomePanelCornerRadius)
+
         Box(
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
+                .align(panelAlignment)
+                .then(
+                    if (desktop) {
+                        Modifier
+                            .padding(
+                                start = SetupStillRailWidth + 32.dp,
+                                end = 32.dp,
+                                bottom = 48.dp + insets.calculateBottomPadding(),
+                            )
+                            .widthIn(max = WelcomeDesktopPanelWidth)
+                            // Clip *before* the blur and the tint, so both stop at the rounded
+                            // edge instead of the card showing square corners over the still.
+                            .clip(panelShape)
+                    } else {
+                        Modifier.fillMaxWidth()
+                    },
+                )
                 .hazeEffect(state = hazeState) { blurRadius = WelcomeBlurRadius }
                 .background(
                     Brush.verticalGradient(
@@ -453,18 +574,29 @@ private fun SetupWelcomeSurface(
                         0.55f to tokens.colors.background.copy(alpha = tintMid),
                         1f to tokens.colors.background.copy(alpha = tintBottom),
                     ),
+                )
+                .then(
+                    if (desktop) {
+                        Modifier.border(
+                            width = tokens.borders.hairline,
+                            color = tokens.colors.borderSubtle.copy(alpha = 0.6f),
+                            shape = panelShape,
+                        )
+                    } else {
+                        Modifier
+                    },
                 ),
             contentAlignment = Alignment.TopCenter,
         ) {
             Column(
                 modifier = Modifier
-                    .widthIn(max = maxPanelWidth)
+                    .widthIn(max = if (desktop) WelcomeDesktopPanelWidth else maxPanelWidth)
                     .fillMaxWidth()
                     .padding(
-                        start = 22.dp,
-                        end = 22.dp,
-                        top = 26.dp,
-                        bottom = 14.dp + insets.calculateBottomPadding(),
+                        start = if (desktop) 28.dp else 22.dp,
+                        end = if (desktop) 28.dp else 22.dp,
+                        top = if (desktop) 28.dp else 26.dp,
+                        bottom = if (desktop) 28.dp else 14.dp + insets.calculateBottomPadding(),
                     ),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
@@ -475,18 +607,49 @@ private fun SetupWelcomeSurface(
                     onDismiss = onDismiss,
                 )
                 SetupParagraph(stringResource(Res.string.setup_welcome_body))
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Button(onClick = onAdvance, modifier = Modifier.fillMaxWidth()) {
-                        Text(text = stringResource(Res.string.setup_welcome_start))
+                if (desktop) {
+                    // Sized to their labels. A pointer does not need a 460 dp target, and two
+                    // stacked full-width buttons in a card read as a phone sheet.
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Button(onClick = onAdvance) {
+                            Text(text = stringResource(Res.string.setup_welcome_start))
+                        }
+                        TextButton(onClick = onSkipAll) {
+                            Text(text = stringResource(Res.string.setup_welcome_skip))
+                        }
                     }
-                    TextButton(onClick = onSkipAll, modifier = Modifier.fillMaxWidth()) {
-                        Text(text = stringResource(Res.string.setup_welcome_skip))
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Button(onClick = onAdvance, modifier = Modifier.fillMaxWidth()) {
+                            Text(text = stringResource(Res.string.setup_welcome_start))
+                        }
+                        TextButton(onClick = onSkipAll, modifier = Modifier.fillMaxWidth()) {
+                            Text(text = stringResource(Res.string.setup_welcome_skip))
+                        }
                     }
                 }
             }
         }
     }
 }
+
+/** Matches `NuvioComponentTokens.sheetMaxWidth`; wide enough for the body copy, no wider. */
+private val WelcomeDesktopPanelWidth = 520.dp
+
+/** `NuvioTokens.Radius.card`. Kept local so the mobile path keeps its square-edged strip. */
+private val WelcomePanelCornerRadius = 24.dp
+
+/**
+ * The width the two-pane layout needs before it is worth using.
+ *
+ * Same threshold as `MetaDetailsScreen`'s `useDesktopDetailLayout`. Below it the control pane
+ * would be clamped to its 460 dp minimum and the specimen would get less room than the stacked
+ * layout already gives it, so the stacked layout is simply better there.
+ */
+private val DesktopWizardMinWidth = 1000.dp
 
 /** Matches the streams tablet panel rather than the nav pill: this pane is much larger. */
 private val WelcomeBlurRadius = 40.dp
@@ -603,8 +766,15 @@ private fun SetupPanel(
     }
 }
 
+/**
+ * Step counter, title, subtitle and the optional close button.
+ *
+ * `internal` rather than private because `SetupWizardDesktopLayout` draws the same header in its
+ * control pane. Sharing it is the point: a second copy is a second place for the progress line to
+ * drift from `setupStepPosition`.
+ */
 @Composable
-private fun SetupPanelHeader(
+internal fun SetupPanelHeader(
     step: SetupStep,
     plan: SetupWizardPlan,
     dismissible: Boolean,
@@ -673,31 +843,62 @@ private fun SetupPanelFooter(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (previousSetupStep(step, plan) != null) {
-            TextButton(onClick = onBack) {
-                Text(text = stringResource(Res.string.setup_back))
-            }
-        }
+        SetupBackButton(step = step, plan = plan, onBack = onBack)
         Spacer(modifier = Modifier.weight(1f))
-        Button(onClick = onAdvance) {
-            Text(
-                text = stringResource(
-                    if (isFinalSetupStep(step, plan)) {
-                        Res.string.setup_done_finish
-                    } else {
-                        Res.string.setup_next
-                    },
-                ),
-            )
+        SetupAdvanceButton(step = step, plan = plan, onAdvance = onAdvance)
+    }
+}
+
+/**
+ * Back, or nothing on the first step shown.
+ *
+ * Split out of [SetupPanelFooter] so the desktop pane's footer cannot drift from it. ⚠ The
+ * *absence* on the first step is the behaviour, not an oversight: `previousSetupStep` answers
+ * against the plan, so a dropped optional step cannot leave a Back button that goes nowhere.
+ */
+@Composable
+internal fun SetupBackButton(
+    step: SetupStep,
+    plan: SetupWizardPlan,
+    onBack: () -> Unit,
+) {
+    if (previousSetupStep(step, plan) != null) {
+        TextButton(onClick = onBack) {
+            Text(text = stringResource(Res.string.setup_back))
         }
+    }
+}
+
+/** Next, or Finish on the last step the plan will show. */
+@Composable
+internal fun SetupAdvanceButton(
+    step: SetupStep,
+    plan: SetupWizardPlan,
+    onAdvance: () -> Unit,
+) {
+    Button(onClick = onAdvance) {
+        Text(
+            text = stringResource(
+                if (isFinalSetupStep(step, plan)) {
+                    Res.string.setup_done_finish
+                } else {
+                    Res.string.setup_next
+                },
+            ),
+        )
     }
 }
 
 /**
  * The controls for the current step.
+ *
+ * `internal` so `SetupWizardRenderHarness` can draw a real step body inside the desktop layout.
+ * Before the desktop layout existed no wizard step could be rendered off-screen at all - the step
+ * lives in `rememberSaveable` state in [SetupWizardScreen] and there is no way in from outside -
+ * so the harness could only ever cover Welcome and the bands in isolation. ⚠ Keep it callable.
  */
 @Composable
-private fun SetupStepBody(
+internal fun SetupStepBody(
     step: SetupStep,
     goingForward: Boolean,
     playbackMode: PlaybackMode,
