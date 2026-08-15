@@ -94,11 +94,31 @@ fun SetupWizardDesktopLayout(
 ) {
     val tokens = MaterialTheme.nuvio
 
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxSize()
+            .background(tokens.colors.background),
+        contentAlignment = Alignment.Center,
+    ) {
         val paneHeight = maxHeight
-        val controlPaneWidth = desktopControlPaneWidth(maxWidth)
+        // ⚠ **Capped and centred rather than stretched edge to edge, and this is the fix for
+        // "everything looks broken on 4K".** The specimens are hand-drawn at roughly a phone's
+        // width: the home banner is 400x150 (2.67:1) and the details hero 400x96 (4.17:1), both
+        // `fillMaxWidth`. Given a 2140 dp pane they become 14:1 and 22:1 - the hero stops being a
+        // hero and becomes a letterbox strip with a logo lost in the middle of it, which is
+        // exactly what the 4K screenshots showed. The theme step's accent button went to 52:1.
+        //
+        // Capping the *block* rather than the specimen's content is what lets `SetupSpecimen.kt`
+        // stay byte-identical with the mobile repository: the band still fills its own pane and
+        // still paints its own gradient, the pane is simply the width the drawings were made for.
+        val blockWidth = maxWidth.coerceAtMost(DesktopWizardBlockMaxWidth)
+        val controlPaneWidth = desktopControlPaneWidth(blockWidth)
 
-        Row(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .width(blockWidth)
+                .fillMaxHeight(),
+        ) {
             // The specimen pane.
             //
             // ⚠ **The band gets `preferredHeight`, not the pane's height, and that is the whole
@@ -215,18 +235,38 @@ private val SetupSpecimen.desktopHeight: Dp
 private val DesktopDetailsSpecimenHeight = 500.dp
 
 /**
+ * How wide the two panes together are allowed to get.
+ *
+ * A **500 dp specimen pane plus a 560 dp control pane**. The specimen half is the number that
+ * matters and it comes from the drawings themselves, not from taste:
+ *
+ * - The home banner is 400x150 as designed; at 500 it is 3.3:1 against a designed 2.67:1.
+ * - The details hero is 400x96; at 500 it is 5.2:1 against a designed 4.17:1. It is the shortest
+ *   full-bleed element in `SetupSpecimen.kt` and therefore the first thing to look wrong, which is
+ *   what sets the ceiling here.
+ * - ⚠ **The horizontal rails have to keep overflowing.** The narrowest the cards row can ever be
+ *   is 754 dp (six poster cards at the `Dense` 112 dp setting) and the widest 1457 dp; Continue
+ *   Watching's widest style is 580 dp and the episode row 580 dp. A 500 dp stage keeps every one
+ *   of them running off the edge, which is the behaviour `SetupSpecimen.kt` calls for in as many
+ *   words - "content deliberately overflows the right edge the way a real catalog row does". Widen
+ *   this much past 560 and those rows start to *fit*, which silently deletes that intent.
+ */
+private val DesktopWizardBlockMaxWidth = 1060.dp
+
+/**
  * The controls, in a column of their own.
  *
- * Proportional with hard clamps, following `detailTabletContentMaxWidth` in `MetaDetailsScreen`:
- * a fraction alone would give a 4K window a pane wide enough to stretch the body text back out,
- * and a fixed width alone would crowd the specimen at 1000 dp.
+ * Proportional with hard clamps, following `detailTabletContentMaxWidth` in `MetaDetailsScreen`,
+ * so the split degrades sensibly on a window narrower than the block cap instead of the specimen
+ * collapsing to nothing.
  */
-internal fun desktopControlPaneWidth(windowWidth: Dp): Dp =
-    (windowWidth * DesktopControlPaneFraction)
+internal fun desktopControlPaneWidth(blockWidth: Dp): Dp =
+    (blockWidth * DesktopControlPaneFraction)
         .coerceIn(DesktopControlPaneMinWidth, DesktopControlPaneMaxWidth)
 
-private const val DesktopControlPaneFraction = 0.34f
-private val DesktopControlPaneMinWidth = 460.dp
+/** 560 / 1060 - the control pane's share of the block at full width. */
+private const val DesktopControlPaneFraction = 0.528f
+private val DesktopControlPaneMinWidth = 420.dp
 private val DesktopControlPaneMaxWidth = 560.dp
 
 /**

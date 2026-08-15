@@ -9,6 +9,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.AppTheme
 import com.nuvio.app.core.ui.NuvioTheme
+import com.nuvio.app.core.ui.desktopUiScaleForWindow
 import com.nuvio.app.features.details.MetaEpisodeCardStyle
 import com.nuvio.app.features.details.MetaScreenBackgroundMode
 import com.nuvio.app.features.playback.PlaybackMode
@@ -57,6 +58,28 @@ class SetupWizardRenderHarness {
 
     private val outputDir = File("build/setup-wizard-render")
 
+    /**
+     * The desktop windows worth drawing, in **platform** dp.
+     *
+     * Not an arbitrary ladder: 1280x820 is the default window `Main.kt` opens, and 3840x2160 is a
+     * 4K panel at 100% Windows scaling - where the automatic scale reaches its 2.2 ceiling and the
+     * app lays out into 1745x982 dp. Everything between those two behaves like one of them.
+     */
+    private val DesktopWindowSizes = listOf(
+        1280 to 820,
+        2560 to 1440,
+        3840 to 2160,
+    )
+
+    /**
+     * Pixels per platform dp for a scene.
+     *
+     * 2x for small windows so the PNGs are legible when read back, but 1x for anything already
+     * large - a 3840 dp window at 2x would be a 7680x4320 scene, which is 33 megapixels of mostly
+     * flat background per step.
+     */
+    private fun platformDensityFor(widthDp: Int): Float = if (widthDp >= 2000) 1f else 2f
+
     @Test
     fun renderEveryWizardSurface() {
         outputDir.mkdirs()
@@ -68,15 +91,28 @@ class SetupWizardRenderHarness {
         // real graphics context - so what these PNGs show is close to the **worst** case, which
         // is exactly the one revision 2 failed. If the heading is hard to read here, deepen the
         // alphas in `SetupWelcomeSurface`.
-        // ⚠ 1280x820 is the default desktop window and is the size the Welcome panel's new
-        // bounded-card layout has to look right at; 420x900 is the phone path, which must be
-        // unchanged by that work.
-        for ((widthDp, heightDp) in listOf(420 to 900, 1100 to 800, 1280 to 820, 1600 to 900)) {
+        // ⚠ These are **real windows**, in platform dp. 1280x820 is the desktop default
+        // (`Main.kt`); 2560x1440 and 3840x2160 are the sizes that actually exposed the last pass
+        // as wrong, and 3840x2160 at 100% Windows scaling is the maintainer's own screen. 420x900
+        // is the phone path, which this work must leave untouched.
+        //
+        // ⚠ 1600x900 was removed rather than kept: production scales that window by 1.0976 and
+        // lays out into 1458x820 dp, so the old renders at that name showed ~142 dp more width
+        // than the window can ever have. A scene that lies is worse than no scene.
+        for ((widthDp, heightDp) in DesktopWindowSizes + listOf(420 to 900)) {
             for (theme in listOf(AppTheme.WHITE, AppTheme.entries.last())) {
                 for (amoled in listOf(false, true)) {
                     val name = "welcome-${widthDp}x$heightDp-${theme.name.lowercase()}" +
                         if (amoled) "-amoled" else ""
-                    render(name, widthDp, heightDp, theme, amoled, failures) {
+                    render(
+                        name = name,
+                        widthDp = widthDp,
+                        heightDp = heightDp,
+                        theme = theme,
+                        amoled = amoled,
+                        failures = failures,
+                        platformDensity = platformDensityFor(widthDp),
+                    ) {
                         SetupWizardScreen(onFinished = {}, modifier = Modifier.fillMaxSize())
                     }
                 }
@@ -92,7 +128,7 @@ class SetupWizardRenderHarness {
         // Welcome or a band in isolation. `SetupWizardDesktopLayout` takes `step` as a parameter
         // precisely so this loop can exist - if it ever starts reading the step from state, this
         // goes back to covering nothing.
-        for ((widthDp, heightDp) in listOf(1280 to 820, 1600 to 900)) {
+        for ((widthDp, heightDp) in DesktopWindowSizes) {
             renderDesktopSteps(widthDp, heightDp, failures)
         }
 
@@ -141,7 +177,15 @@ class SetupWizardRenderHarness {
                 else -> SetupSpecimen.Diagram
             }
             val name = "desktop-${step.name.lowercase()}-${widthDp}x$heightDp"
-            render(name, widthDp, heightDp, AppTheme.WHITE, false, failures) {
+            render(
+                name = name,
+                widthDp = widthDp,
+                heightDp = heightDp,
+                theme = AppTheme.WHITE,
+                amoled = false,
+                failures = failures,
+                platformDensity = platformDensityFor(widthDp),
+            ) {
                 SetupWizardDesktopLayout(
                     step = step,
                     plan = plan,
@@ -277,16 +321,32 @@ class SetupWizardRenderHarness {
         amoled: Boolean,
         failures: MutableList<String>,
         nanoTime: Long = 0L,
+        platformDensity: Float = 2f,
         content: @Composable () -> Unit,
     ) {
-        val density = Density(2f)
+        val density = Density(platformDensity)
         runCatching {
             val scene = ImageComposeScene(
                 width = (widthDp * density.density).toInt(),
                 height = (heightDp * density.density).toInt(),
                 density = density,
             ) {
-                NuvioTheme(darkTheme = true, appTheme = theme, amoled = amoled) {
+                // ⚠ **Passing this is what makes the render honest, and its absence is why the
+                // first desktop pass shipped looking wrong.** `NuvioTheme` multiplies the ambient
+                // density by `desktopUiScale`, and `App.kt` derives that from the window size. The
+                // harness used to leave it at its `1f` default, so every scene was drawn as though
+                // the app never scaled - true only at 1280x820, where the scale happens to be 1.0.
+                // At 3840x2160 production scales by 2.2 and lays out into 1745 dp, not 3840, and
+                // nothing here could show that.
+                //
+                // `widthDp`/`heightDp` are **platform** dp - the window as the OS reports it -
+                // exactly like the `BoxWithConstraints` in `App.kt` that sits outside the theme.
+                NuvioTheme(
+                    darkTheme = true,
+                    appTheme = theme,
+                    amoled = amoled,
+                    desktopUiScale = desktopUiScaleForWindow(widthDp.toFloat(), heightDp.toFloat()),
+                ) {
                     content()
                 }
             }

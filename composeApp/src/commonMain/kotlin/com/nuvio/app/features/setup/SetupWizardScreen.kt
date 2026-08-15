@@ -529,11 +529,32 @@ private fun SetupWelcomeSurface(
     val tintBottom = if (blurred) FrostedTintBottom else ScrimTintBottom
 
     Box(modifier = Modifier.fillMaxSize()) {
-        SetupHomeStill(
+        // ⚠ **The scrim is inside the haze source, not layered over it.** `hazeEffect` samples
+        // whatever this subtree draws, so a scrim applied as a sibling *after* it would leave the
+        // panel blurring the original bright artwork while the screen around the panel was dimmed
+        // - the panel would read brighter than its own surroundings, which is backwards.
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .hazeSource(state = hazeState),
-        )
+        ) {
+            SetupHomeStill(modifier = Modifier.fillMaxSize())
+
+            // The still is a real home screen - hero artwork, two catalog rows, a Continue
+            // Watching row - and on a large display that is a great deal of colour competing with
+            // two sentences in a corner. Reported as "the homepage is too overwhelming, you almost
+            // don't notice the wizard". Dimming it is half the fix; the panel also got bigger.
+            //
+            // ⚠ Only on desktop. On a phone the panel already covers most of the window, so a
+            // scrim there would darken the screen for nothing.
+            if (desktop) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(tokens.colors.background.copy(alpha = WelcomeStillScrimAlpha)),
+                )
+            }
+        }
 
         // ⚠ **The panel is a bounded card on desktop and a full-width strip on a phone, and the
         // difference is not cosmetic.** On a phone the panel spans the window because the window
@@ -593,12 +614,12 @@ private fun SetupWelcomeSurface(
                     .widthIn(max = if (desktop) WelcomeDesktopPanelWidth else maxPanelWidth)
                     .fillMaxWidth()
                     .padding(
-                        start = if (desktop) 28.dp else 22.dp,
-                        end = if (desktop) 28.dp else 22.dp,
-                        top = if (desktop) 28.dp else 26.dp,
-                        bottom = if (desktop) 28.dp else 14.dp + insets.calculateBottomPadding(),
+                        start = if (desktop) 36.dp else 22.dp,
+                        end = if (desktop) 36.dp else 22.dp,
+                        top = if (desktop) 36.dp else 26.dp,
+                        bottom = if (desktop) 36.dp else 14.dp + insets.calculateBottomPadding(),
                     ),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(if (desktop) 20.dp else 16.dp),
             ) {
                 SetupPanelHeader(
                     step = SetupStep.Welcome,
@@ -636,8 +657,27 @@ private fun SetupWelcomeSurface(
     }
 }
 
-/** Matches `NuvioComponentTokens.sheetMaxWidth`; wide enough for the body copy, no wider. */
-private val WelcomeDesktopPanelWidth = 520.dp
+/**
+ * How wide the intro card is on desktop.
+ *
+ * ⚠ Was 520 dp (`NuvioComponentTokens.sheetMaxWidth`) and that was too modest: on a large display
+ * a 520 dp card in the corner of the window reads as a tooltip rather than as the thing the screen
+ * is for. 640 gives the heading and both sentences room to sit on fewer lines, which is most of
+ * what makes it read as a panel.
+ */
+private val WelcomeDesktopPanelWidth = 640.dp
+
+/**
+ * How far the home-screen still is dimmed behind the intro card.
+ *
+ * ⚠ Deliberately a flat wash rather than a gradient. The panel is anchored in one corner, so a
+ * gradient would have to be aimed at it, and every future move of the panel would silently leave
+ * the bright end in the wrong place. Flat is also honest about what it is: the app, turned down.
+ *
+ * This is **not** part of the panel's own tint - see `FrostedTintTop` and the warning above it.
+ * Those alphas are tuned for the no-blur case and must not be traded off against this one.
+ */
+private const val WelcomeStillScrimAlpha = 0.62f
 
 /** `NuvioTokens.Radius.card`. Kept local so the mobile path keeps its square-edged strip. */
 private val WelcomePanelCornerRadius = 24.dp
