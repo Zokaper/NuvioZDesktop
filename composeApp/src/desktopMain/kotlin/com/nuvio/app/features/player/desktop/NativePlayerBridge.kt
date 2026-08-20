@@ -58,6 +58,36 @@ internal object NativePlayerBridge {
     external fun speed(handle: Long): Float
     external fun audioTracksJson(handle: Long): String
     external fun subtitleTracksJson(handle: Long): String
+
+    /**
+     * mpv properties that no other path exposes: `hwdec-current`, the codecs, the real decoded
+     * dimensions, fps, the dropped-frame counters, and **both** demuxer cache properties.
+     *
+     * Added for the debug self-test harness and called only from behind `isDebugBuild`. ⚠ The
+     * native export is **not** stripped from a release build - the debug and release MSIs compile
+     * one `player_bridge.cpp` from one Gradle task - so the gate lives here in Kotlin. Anything
+     * added to the native side of this inherits that, not a compile-time switch.
+     *
+     * `hwdec-current` is the one that matters: it is the only way to tell whether a stream
+     * decoded on the GPU on a given machine, which is the whole reason the harness runs on real
+     * hardware rather than in CI.
+     *
+     * Returns `{}` when the handle is dead. Parse with [NativeMpvDiagnostics.parse].
+     */
+    external fun diagnosticsJson(handle: Long): String
+
+    /**
+     * mpv's own screenshot - the only proof that a frame decoded.
+     *
+     * `includeSubtitles` picks mpv's `subtitles` mode over `video`, which is how the harness
+     * shows that libass rendered. Neither mode captures the WebView2 controls; those are a
+     * separate HWND and only a screen grab sees them, which is why the harness takes both.
+     *
+     * ⚠ **Asynchronous.** mpv queues the command and writes the file on its own thread, and on
+     * macOS this hops to the main queue as well, so the file is not on disk when this returns.
+     * `true` means the command was dispatched, nothing more - wait for the path to exist.
+     */
+    external fun screenshotToFile(handle: Long, path: String, includeSubtitles: Boolean): Boolean
     external fun selectAudioTrack(handle: Long, trackId: Int)
     external fun selectSubtitleTrack(handle: Long, trackId: Int)
     external fun addSubtitleUrl(handle: Long, url: String)

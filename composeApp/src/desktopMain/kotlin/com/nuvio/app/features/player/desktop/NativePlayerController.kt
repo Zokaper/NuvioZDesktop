@@ -2,6 +2,7 @@ package com.nuvio.app.features.player.desktop
 
 import androidx.compose.ui.graphics.Color
 import co.touchlab.kermit.Logger
+import com.nuvio.app.core.debug.isDebugBuild
 import com.nuvio.app.features.player.PlayerControlAddonSubtitleItem
 import com.nuvio.app.features.player.PlayerControlEpisodeItem
 import com.nuvio.app.features.player.PlayerControlFilterItem
@@ -166,6 +167,9 @@ internal class NativePlayerController(
                         return@invokeLater
                     }
                     handle = created
+                    // After `handle`, so the harness never sees a published controller with a
+                    // dead handle. No-op outside a debug build.
+                    NativePlayerDiagnosticsRegistry.publish(this@NativePlayerController)
                     log.d {
                         "attach created handle=$created source=${resolvedSource.toPlaybackLogKey()} " +
                             "initialPositionMs=${pending.initialPositionMs}"
@@ -395,8 +399,32 @@ internal class NativePlayerController(
         }.getOrDefault(PlayerPlaybackSnapshot(isLoading = true))
     }
 
+    /**
+     * mpv's own view of the stream, for the debug self-test harness.
+     *
+     * Debug builds only, and deliberately **not** folded into [snapshot]: that runs on the 500 ms
+     * polling loop for every play in the shipped app, and this reads seventeen more properties for
+     * a harness that samples on its own schedule.
+     */
+    internal fun mpvDiagnostics(): NativeMpvDiagnostics? {
+        if (!isDebugBuild) return null
+        val current = handle
+        if (current == 0L) return null
+        return runCatching { NativeMpvDiagnostics.parse(NativePlayerBridge.diagnosticsJson(current)) }.getOrNull()
+    }
+
+    /** See [NativePlayerDiagnosticsRegistry.writeFrame], which is what should be called instead. */
+    internal fun requestMpvScreenshot(path: String, includeSubtitles: Boolean): Boolean {
+        if (!isDebugBuild) return false
+        val current = handle
+        if (current == 0L) return false
+        return runCatching { NativePlayerBridge.screenshotToFile(current, path, includeSubtitles) }
+            .getOrDefault(false)
+    }
+
     fun dispose() {
         host.resetCursorVisibility()
+        NativePlayerDiagnosticsRegistry.clear(this)
         disposePlayerHandle()
     }
 

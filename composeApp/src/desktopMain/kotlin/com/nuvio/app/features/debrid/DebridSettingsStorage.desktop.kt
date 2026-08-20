@@ -29,6 +29,7 @@ internal actual object DebridSettingsStorage {
     private const val streamPreferencesKey = "debrid_stream_preferences"
     private const val streamNameTemplateKey = "debrid_stream_name_template"
     private const val streamDescriptionTemplateKey = "debrid_stream_description_template"
+    private const val streamPreferenceScopeKey = "debrid_stream_preference_scope"
     private const val pendingDeviceAuthorizationPrefix = "debrid_pending_device_authorization_"
     private val store = DesktopStorage.store("nuvio_debrid_settings")
 
@@ -64,6 +65,8 @@ internal actual object DebridSettingsStorage {
     actual fun saveStreamNameTemplate(template: String) = saveString(streamNameTemplateKey, template)
     actual fun loadStreamDescriptionTemplate(): String? = loadString(streamDescriptionTemplateKey)
     actual fun saveStreamDescriptionTemplate(template: String) = saveString(streamDescriptionTemplateKey, template)
+    actual fun loadStreamPreferenceScope(): String? = loadString(streamPreferenceScopeKey)
+    actual fun saveStreamPreferenceScope(scope: String) = saveString(streamPreferenceScopeKey, scope)
     actual fun loadPendingDeviceAuthorization(providerId: String): String? =
         loadString(pendingDeviceAuthorizationKey(providerId))
 
@@ -97,6 +100,7 @@ internal actual object DebridSettingsStorage {
         loadStreamPreferences()?.let { put(streamPreferencesKey, encodeSyncString(it)) }
         loadStreamNameTemplate()?.let { put(streamNameTemplateKey, encodeSyncString(it)) }
         loadStreamDescriptionTemplate()?.let { put(streamDescriptionTemplateKey, encodeSyncString(it)) }
+        loadStreamPreferenceScope()?.let { put(streamPreferenceScopeKey, encodeSyncString(it)) }
     }
 
     actual fun replaceFromSyncPayload(payload: JsonObject) {
@@ -118,6 +122,7 @@ internal actual object DebridSettingsStorage {
         payload.decodeSyncString(streamPreferencesKey)?.let(::saveStreamPreferences)
         payload.decodeSyncString(streamNameTemplateKey)?.let(::saveStreamNameTemplate)
         payload.decodeSyncString(streamDescriptionTemplateKey)?.let(::saveStreamDescriptionTemplate)
+        payload.decodeSyncString(streamPreferenceScopeKey)?.let(::saveStreamPreferenceScope)
     }
 
     private fun syncKeys(): List<String> =
@@ -135,6 +140,7 @@ internal actual object DebridSettingsStorage {
             streamPreferencesKey,
             streamNameTemplateKey,
             streamDescriptionTemplateKey,
+            streamPreferenceScopeKey,
         ) + DebridProviders.all().map { providerApiKeyKey(it.id) }
 
     private fun providerApiKeyKey(providerId: String): String {

@@ -15,6 +15,9 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.debug.DesktopDebugLog
+import com.nuvio.app.core.debug.SelfTestHooks
+import com.nuvio.app.core.debug.selftest.DesktopSelfTest
+import com.nuvio.app.core.debug.selftest.SelfTestOverlay
 import com.nuvio.app.core.deeplink.handleAppUrl
 import com.nuvio.app.features.p2p.P2pStreamingEngine
 import com.nuvio.app.features.player.PlatformPlayerSurface
@@ -141,8 +144,17 @@ fun main(args: Array<String>) {
                 }
             }
 
+            // The self-test needs the window itself: only a screen grab can photograph the native
+            // mpv surface and the WebView2 controls, and only a real synthetic click travels the
+            // path where a non-consuming overlay goes wrong. No-op outside a debug build.
+            DisposableEffect(window) {
+                DesktopSelfTest.install(window)
+                onDispose { SelfTestHooks.launch = null }
+            }
+
             if (smokePlayerUrl == null) {
                 App()
+                SelfTestOverlay()
             } else {
                 PlatformPlayerSurface(
                     sourceUrl = smokePlayerUrl,

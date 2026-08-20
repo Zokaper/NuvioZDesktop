@@ -57,6 +57,8 @@ internal actual object PlayerSettingsStorage {
     private const val playbackAllowTorrentAutopickKey = "playback_allow_torrent_autopick"
     private const val playbackCodecPreferenceKey = "playback_codec_preference"
     private const val playbackDynamicRangePolicyKey = "playback_dynamic_range_policy"
+    private const val playbackLanguageStrictnessKey = "playback_language_strictness"
+    private const val playbackQualityCeilingMbpsKey = "playback_quality_ceiling_mbps"
     private const val showAdvancedSettingsKey = "settings_show_advanced"
     private const val playbackMeteredCapHeightKey = "playback_metered_cap_height"
     private const val playbackAutoDownshiftKey = "playback_auto_downshift"
@@ -137,6 +139,8 @@ internal actual object PlayerSettingsStorage {
         playbackAllowTorrentAutopickKey,
         playbackCodecPreferenceKey,
         playbackDynamicRangePolicyKey,
+        playbackLanguageStrictnessKey,
+        playbackQualityCeilingMbpsKey,
         showAdvancedSettingsKey,
         playbackMeteredCapHeightKey,
         playbackAutoDownshiftKey,
@@ -258,6 +262,12 @@ internal actual object PlayerSettingsStorage {
     actual fun loadPlaybackDynamicRangePolicy(): String? = loadString(playbackDynamicRangePolicyKey)
     actual fun savePlaybackDynamicRangePolicy(policy: String) =
         saveString(playbackDynamicRangePolicyKey, policy)
+    actual fun loadPlaybackLanguageStrictness(): String? = loadString(playbackLanguageStrictnessKey)
+    actual fun savePlaybackLanguageStrictness(strictness: String) =
+        saveString(playbackLanguageStrictnessKey, strictness)
+    actual fun loadPlaybackQualityCeilingMbps(): Int? = loadInt(playbackQualityCeilingMbpsKey)
+    actual fun savePlaybackQualityCeilingMbps(mbps: Int) =
+        saveInt(playbackQualityCeilingMbpsKey, mbps)
     actual fun loadShowAdvancedSettings(): Boolean? = loadBoolean(showAdvancedSettingsKey)
     actual fun saveShowAdvancedSettings(enabled: Boolean) =
         saveBoolean(showAdvancedSettingsKey, enabled)
@@ -404,6 +414,12 @@ internal actual object PlayerSettingsStorage {
         loadPlaybackDynamicRangePolicy()?.let {
             put(playbackDynamicRangePolicyKey, encodeSyncString(it))
         }
+        loadPlaybackLanguageStrictness()?.let {
+            put(playbackLanguageStrictnessKey, encodeSyncString(it))
+        }
+        loadPlaybackQualityCeilingMbps()?.let {
+            put(playbackQualityCeilingMbpsKey, encodeSyncInt(it))
+        }
         loadPlaybackModeSelectorSeen()?.let {
             put(playbackModeSelectorSeenKey, encodeSyncBoolean(it))
         }
@@ -495,6 +511,9 @@ internal actual object PlayerSettingsStorage {
         payload.decodeSyncString(playbackCodecPreferenceKey)?.let(::savePlaybackCodecPreference)
         payload.decodeSyncString(playbackDynamicRangePolicyKey)
             ?.let(::savePlaybackDynamicRangePolicy)
+        payload.decodeSyncString(playbackLanguageStrictnessKey)
+            ?.let(::savePlaybackLanguageStrictness)
+        payload.decodeSyncInt(playbackQualityCeilingMbpsKey)?.let(::savePlaybackQualityCeilingMbps)
         payload.decodeSyncBoolean(playbackModeSelectorSeenKey)
             ?.let(::savePlaybackModeSelectorSeen)
         mergeMonotonicSyncInt(

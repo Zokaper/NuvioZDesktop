@@ -1090,6 +1090,65 @@ public:
         return flagProperty("eof-reached", false);
     }
 
+    /**
+     * Everything the Kotlin side cannot otherwise see, in one call.
+     *
+     * These properties are read by the debug self-test harness, and only by it - the Kotlin
+     * callers are all behind `isDebugBuild`. **The export itself is not stripped from a release
+     * DLL**, because the debug and release MSIs compile this file from one Gradle task; the gate
+     * is in Kotlin, not here. Do not assume otherwise when adding to this.
+     *
+     * One export rather than a dozen is deliberate: the JNI surface is a maintenance cost paid
+     * per symbol, and every field here is read at the same instants anyway.
+     *
+     * `hwdec-current` is the reason this exists. Nothing in either repository can currently
+     * answer whether a stream decoded on the GPU on the user's own hardware, which is the
+     * difference between "it played" and "it played properly".
+     */
+    std::string diagnosticsJson() {
+        std::ostringstream json;
+        json << "{"
+             << "\"hwdec\":\"" << jsonEscape(stringProperty("hwdec-current", "")) << "\","
+             << "\"videoCodec\":\"" << jsonEscape(stringProperty("video-codec", "")) << "\","
+             << "\"audioCodec\":\"" << jsonEscape(stringProperty("audio-codec", "")) << "\","
+             << "\"mpvVersion\":\"" << jsonEscape(stringProperty("mpv-version", "")) << "\","
+             << "\"videoWidth\":" << int64Property("video-params/w", 0) << ","
+             << "\"videoHeight\":" << int64Property("video-params/h", 0) << ","
+             << "\"containerFps\":" << doubleProperty("container-fps", 0.0) << ","
+             << "\"estimatedVfFps\":" << doubleProperty("estimated-vf-fps", 0.0) << ","
+             << "\"droppedFrames\":" << int64Property("frame-drop-count", 0) << ","
+             << "\"decoderDroppedFrames\":" << int64Property("decoder-frame-drop-count", 0) << ","
+             << "\"videoBitrate\":" << int64Property("video-bitrate", 0) << ","
+             << "\"avsync\":" << doubleProperty("avsync", 0.0) << ","
+             // Both cache properties, unresolved. `demuxer-cache-time` is an absolute stream
+             // timestamp and `demuxer-cache-duration` is a duration ahead of the position; the
+             // two have been confused across engines before, so the harness gets the raw pair
+             // and decides for itself rather than being handed one number that means either.
+             << "\"demuxerCacheTime\":" << doubleProperty("demuxer-cache-time", -1.0) << ","
+             << "\"demuxerCacheDuration\":" << doubleProperty("demuxer-cache-duration", -1.0) << ","
+             << "\"pausedForCache\":" << (flagProperty("paused-for-cache", false) ? "true" : "false") << ","
+             << "\"coreIdle\":" << (flagProperty("core-idle", false) ? "true" : "false")
+             << "}";
+        return json.str();
+    }
+
+    /**
+     * mpv's own screenshot, which is the only way to prove a frame actually decoded.
+     *
+     * `video` writes the decoded frame with no OSD and no subtitles; `subtitles` includes them,
+     * which is how the harness proves libass rendered. Neither captures the WebView2 controls -
+     * those live in a separate HWND and only a screen grab sees them.
+     */
+    bool screenshotToFile(const std::string &path, bool includeSubtitles) {
+        if (path.empty()) return false;
+        {
+            std::lock_guard<std::mutex> lock(mpvMutex);
+            if (!mpv) return false;
+        }
+        command({"screenshot-to-file", path, includeSubtitles ? "subtitles" : "video"});
+        return true;
+    }
+
     std::string audioTracksJson() {
         return tracksJsonForType("audio");
     }
@@ -2306,6 +2365,27 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setResizeMode(JNIEnv *, jobject, jlong handle, jint mode) {
     auto player = playerFromHandle(handle);
     if (player) player->setResizeMode(mode);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_diagnosticsJson(JNIEnv *env, jobject, jlong handle) {
+    auto player = playerFromHandle(handle);
+    return newJavaStringUtf8(env, player ? player->diagnosticsJson() : "{}");
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_screenshotToFile(
+    JNIEnv *env,
+    jobject,
+    jlong handle,
+    jstring path,
+    jboolean includeSubtitles
+) {
+    auto player = playerFromHandle(handle);
+    if (!player) return JNI_FALSE;
+    return player->screenshotToFile(jstringToUtf8(env, path), includeSubtitles == JNI_TRUE)
+        ? JNI_TRUE
+        : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jstring JNICALL

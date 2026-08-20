@@ -59,6 +59,8 @@ actual object PlayerSettingsStorage {
     private const val playbackAllowTorrentAutopickKey = "playback_allow_torrent_autopick"
     private const val playbackCodecPreferenceKey = "playback_codec_preference"
     private const val playbackDynamicRangePolicyKey = "playback_dynamic_range_policy"
+    private const val playbackLanguageStrictnessKey = "playback_language_strictness"
+    private const val playbackQualityCeilingMbpsKey = "playback_quality_ceiling_mbps"
     private const val showAdvancedSettingsKey = "settings_show_advanced"
     private const val playbackMeteredCapHeightKey = "playback_metered_cap_height"
     private const val playbackAutoDownshiftKey = "playback_auto_downshift"
@@ -140,6 +142,8 @@ actual object PlayerSettingsStorage {
         playbackAllowTorrentAutopickKey,
         playbackCodecPreferenceKey,
         playbackDynamicRangePolicyKey,
+        playbackLanguageStrictnessKey,
+        playbackQualityCeilingMbpsKey,
         showAdvancedSettingsKey,
         playbackMeteredCapHeightKey,
         playbackAutoDownshiftKey,
@@ -734,6 +738,24 @@ actual object PlayerSettingsStorage {
         preferences?.edit()?.putString(ProfileScopedKey.of(playbackDynamicRangePolicyKey), policy)?.apply()
     }
 
+    actual fun loadPlaybackLanguageStrictness(): String? =
+        preferences?.getString(ProfileScopedKey.of(playbackLanguageStrictnessKey), null)
+
+    actual fun savePlaybackLanguageStrictness(strictness: String) {
+        preferences?.edit()
+            ?.putString(ProfileScopedKey.of(playbackLanguageStrictnessKey), strictness)
+            ?.apply()
+    }
+
+    actual fun loadPlaybackQualityCeilingMbps(): Int? = preferences?.let { prefs ->
+        val key = ProfileScopedKey.of(playbackQualityCeilingMbpsKey)
+        if (prefs.contains(key)) prefs.getInt(key, 0) else null
+    }
+
+    actual fun savePlaybackQualityCeilingMbps(mbps: Int) {
+        preferences?.edit()?.putInt(ProfileScopedKey.of(playbackQualityCeilingMbpsKey), mbps)?.apply()
+    }
+
     actual fun loadShowAdvancedSettings(): Boolean? =
         preferences?.let { sharedPreferences ->
             val key = ProfileScopedKey.of(showAdvancedSettingsKey)
@@ -1248,6 +1270,12 @@ actual object PlayerSettingsStorage {
         loadPlaybackDynamicRangePolicy()?.let {
             put(playbackDynamicRangePolicyKey, encodeSyncString(it))
         }
+        loadPlaybackLanguageStrictness()?.let {
+            put(playbackLanguageStrictnessKey, encodeSyncString(it))
+        }
+        loadPlaybackQualityCeilingMbps()?.let {
+            put(playbackQualityCeilingMbpsKey, encodeSyncInt(it))
+        }
         loadPlaybackMeteredCapHeight()?.let { put(playbackMeteredCapHeightKey, encodeSyncInt(it)) }
         loadPlaybackAutoDownshift()?.let { put(playbackAutoDownshiftKey, encodeSyncBoolean(it)) }
         loadPlaybackModeSelectorSeen()?.let {
@@ -1345,6 +1373,9 @@ actual object PlayerSettingsStorage {
         payload.decodeSyncString(playbackDynamicRangePolicyKey)
             ?.let(::savePlaybackDynamicRangePolicy)
         payload.decodeSyncBoolean(showAdvancedSettingsKey)?.let(::saveShowAdvancedSettings)
+        payload.decodeSyncString(playbackLanguageStrictnessKey)
+            ?.let(::savePlaybackLanguageStrictness)
+        payload.decodeSyncInt(playbackQualityCeilingMbpsKey)?.let(::savePlaybackQualityCeilingMbps)
         payload.decodeSyncInt(playbackMeteredCapHeightKey)?.let(::savePlaybackMeteredCapHeight)
         payload.decodeSyncBoolean(playbackAutoDownshiftKey)?.let(::savePlaybackAutoDownshift)
         payload.decodeSyncBoolean(playbackModeSelectorSeenKey)

@@ -70,6 +70,7 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -112,6 +113,8 @@ import com.nuvio.app.features.whatsnew.shouldShowWhatsNew
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
 import com.nuvio.app.core.auth.DeviceSessionRegistration
+import com.nuvio.app.core.debug.SelfTestHooks
+import com.nuvio.app.core.debug.isDebugBuild
 import com.nuvio.app.core.deeplink.AppDeepLink
 import com.nuvio.app.core.deeplink.AppDeepLinkRepository
 import com.nuvio.app.core.network.NetworkCondition
@@ -267,6 +270,7 @@ import com.nuvio.app.features.playback.PlaybackModeRouter
 import com.nuvio.app.features.playback.PlaybackProgress
 import com.nuvio.app.features.playback.PlaybackProgressFailure
 import com.nuvio.app.features.playback.PlaybackProgressInputs
+import com.nuvio.app.features.playback.PlaybackPreferencesDialog
 import com.nuvio.app.features.playback.PlaybackProgressOverlay
 import com.nuvio.app.features.playback.PLAYBACK_PROGRESS_STALL_GRACE_MS
 import com.nuvio.app.features.playback.playbackChain
@@ -1086,6 +1090,25 @@ private fun MainAppContent(
             warmProfileBoundRepositories()
         }
         val currentRoute = navBackStack.lastOrNull() as? AppRoute
+        // Publishes the real back stack to the debug self-test harness, which drives the routes a
+        // user would rather than composing screens in isolation - that is the whole difference
+        // between it and the offscreen render harness in `desktopTest`. No-op outside a debug
+        // build, and null on every platform that has no harness. See `SelfTestHooks`.
+        if (isDebugBuild) {
+            DisposableEffect(navController) {
+                SelfTestHooks.navigate = { route -> navController.navigate(route) }
+                SelfTestHooks.popBackStack = { navController.popBackStack() }
+                onDispose {
+                    SelfTestHooks.navigate = null
+                    SelfTestHooks.popBackStack = null
+                    SelfTestHooks.currentRoute = null
+                }
+            }
+            // Separate from the block above, and re-read on every route change: the harness asks
+            // this *after* a click that should have been swallowed, so a stale answer would make
+            // the pointer-input check pass for the exact fault it exists to catch.
+            SideEffect { SelfTestHooks.currentRoute = { currentRoute } }
+        }
         val liquidGlassNativeTabBarEnabled by remember {
             ThemeSettingsRepository.liquidGlassNativeTabBarEnabled
         }.collectAsStateWithLifecycle()
@@ -2690,6 +2713,15 @@ private fun MainAppContent(
                     // Ids are resolution+variant, so they survive the refetch this round-trips through.
                     var pendingStreamlinedOptionId by rememberSaveable(route.launchId) { mutableStateOf<String?>(null) }
                     var manualSourceListRequested by rememberSaveable(route.launchId) { mutableStateOf(false) }
+                    // Deliberately **not** part of `awaitingUserAnswer`. That flag uncovers the
+                    // source list so a dialog has something usable behind it, which is right for
+                    // a question the app is asking; this one is drawn over the sheet the user is
+                    // already reading, and pulling the sheet out from under it would answer a
+                    // question nobody asked. The sheet outranks `awaitingUserAnswer` in
+                    // `streamRouteSurface`, so no change is needed there - only this comment,
+                    // because the next person to add a dialog here will have to decide the same
+                    // thing.
+                    var showPlaybackPreferences by rememberSaveable(route.launchId) { mutableStateOf(false) }
                     // The band chosen earlier in this sitting for this show, read once. Read
                     // once because the route *clears* it on "Change", and a value that moved
                     // underneath the effects below would let one frame see a band and the next
@@ -2727,6 +2759,13 @@ private fun MainAppContent(
                     fun giveUpToSourceList(reason: String? = null) {
                         qualitySheetDismissed = true
                         manualSourceListRequested = true
+                        // Arriving here means the app could not choose, so the user is about to
+                        // do it by hand - and `StreamsScreen` auto-filters to whichever addon
+                        // last served this show. That filter is a convenience when the list is
+                        // the first thing you see; it is an obstacle when the list is the
+                        // fallback, because the addon it selects is quite possibly the one that
+                        // just failed to produce anything usable.
+                        StreamsRepository.selectFilter(null)
                         val message = reason ?: noAutomaticSourceMessage
                         if (message.isNotBlank()) NuvioToastController.show(message)
                     }
@@ -3004,6 +3043,9 @@ private fun MainAppContent(
                         launch.episodeNumber,
                         playerSettings.playbackAllowTorrentAutopick,
                         playerSettings.preferredAudioLanguage,
+                        playerSettings.secondaryPreferredAudioLanguage,
+                        playerSettings.playbackLanguageStrictness,
+                        playerSettings.playbackQualityCeilingMbps,
                         playerSettings.playbackCodecPreference,
                         playerSettings.playbackDynamicRangePolicy,
                     ) {
@@ -3012,6 +3054,13 @@ private fun MainAppContent(
                             isEpisode = launch.seasonNumber != null && launch.episodeNumber != null,
                             allowTorrentSources = playerSettings.playbackAllowTorrentAutopick,
                             preferredAudioLanguage = playerSettings.rankableAudioLanguage,
+                            // The same sentinel-stripping the primary gets. `default`, `device`
+                            // and `original` are instructions to the player's track selection and
+                            // name no language a release can be ranked against.
+                            secondaryAudioLanguage = playerSettings.rankableSecondaryAudioLanguage,
+                            languageStrictness = playerSettings.playbackLanguageStrictness,
+                            qualityCeilingMbps = playerSettings.playbackQualityCeilingMbps
+                                .takeIf { it > 0 }?.toDouble(),
                             codecPreference = playerSettings.playbackCodecPreference,
                             dynamicRangePolicy = playerSettings.playbackDynamicRangePolicy,
                         )
@@ -4044,6 +4093,7 @@ private fun MainAppContent(
                                     qualitySheetDismissed = true
                                     manualSourceListRequested = true
                                 },
+                                onAdjustPreferences = { showPlaybackPreferences = true },
                                 onDismiss = {
                                     // Backing out of the sheet means "not now", so it returns to
                                     // details rather than uncovering the Classic source list the
@@ -4055,6 +4105,24 @@ private fun MainAppContent(
                                     leaveToDetails()
                                 },
 
+                            )
+                        }
+                        if (showPlaybackPreferences) {
+                            PlaybackPreferencesDialog(
+                                languageStrictness = playerSettings.playbackLanguageStrictness,
+                                dynamicRangePolicy = playerSettings.playbackDynamicRangePolicy,
+                                qualityCeilingMbps = playerSettings.playbackQualityCeilingMbps,
+                                // Straight through the real setters, so the grid behind this
+                                // rebuilds from the same state the next play will use. A
+                                // preview-only copy would be a second source of truth for a
+                                // decision the user is watching the result of.
+                                onLanguageStrictnessChange =
+                                    PlayerSettingsRepository::setPlaybackLanguageStrictness,
+                                onDynamicRangePolicyChange =
+                                    PlayerSettingsRepository::setPlaybackDynamicRangePolicy,
+                                onQualityCeilingChange =
+                                    PlayerSettingsRepository::setPlaybackQualityCeilingMbps,
+                                onDismiss = { showPlaybackPreferences = false },
                             )
                         }
                         pendingUncachedStream?.let { uncached ->

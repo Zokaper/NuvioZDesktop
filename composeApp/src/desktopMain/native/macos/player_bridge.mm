@@ -109,6 +109,8 @@
 - (BOOL)isEnded;
 - (NSString *)audioTracksJson;
 - (NSString *)subtitleTracksJson;
+- (NSString *)diagnosticsJson;
+- (BOOL)screenshotToFile:(NSString *)path includeSubtitles:(BOOL)includeSubtitles;
 - (void)selectAudioTrackId:(int)trackId;
 - (void)selectSubtitleTrackId:(int)trackId;
 - (void)addSubtitleUrl:(NSString *)url;
@@ -1968,6 +1970,45 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     return [self tracksJsonForType:@"sub"];
 }
 
+/**
+ * Kept in step with the Windows bridge's `diagnosticsJson` - same keys, same meanings.
+ *
+ * Read only by the debug self-test harness, whose Kotlin callers are all behind `isDebugBuild`.
+ * The export is not stripped from a release build; the gate is in Kotlin.
+ */
+- (NSString *)diagnosticsJson {
+    if (!_mpv) return @"{}";
+    NSDictionary *diagnostics = @{
+        @"hwdec": [self stringProperty:"hwdec-current" fallback:@""] ?: @"",
+        @"videoCodec": [self stringProperty:"video-codec" fallback:@""] ?: @"",
+        @"audioCodec": [self stringProperty:"audio-codec" fallback:@""] ?: @"",
+        @"mpvVersion": [self stringProperty:"mpv-version" fallback:@""] ?: @"",
+        @"videoWidth": @([self int64Property:"video-params/w" fallback:0]),
+        @"videoHeight": @([self int64Property:"video-params/h" fallback:0]),
+        @"containerFps": @([self doubleProperty:"container-fps" fallback:0.0]),
+        @"estimatedVfFps": @([self doubleProperty:"estimated-vf-fps" fallback:0.0]),
+        @"droppedFrames": @([self int64Property:"frame-drop-count" fallback:0]),
+        @"decoderDroppedFrames": @([self int64Property:"decoder-frame-drop-count" fallback:0]),
+        @"videoBitrate": @([self int64Property:"video-bitrate" fallback:0]),
+        @"avsync": @([self doubleProperty:"avsync" fallback:0.0]),
+        // Both cache properties, unresolved - see the Windows bridge for why the harness is
+        // handed the raw pair rather than one number that could mean either.
+        @"demuxerCacheTime": @([self doubleProperty:"demuxer-cache-time" fallback:-1.0]),
+        @"demuxerCacheDuration": @([self doubleProperty:"demuxer-cache-duration" fallback:-1.0]),
+        @"pausedForCache": @([self flagProperty:"paused-for-cache" fallback:NO]),
+        @"coreIdle": @([self flagProperty:"core-idle" fallback:NO]),
+    };
+    NSData *data = [NSJSONSerialization dataWithJSONObject:diagnostics options:0 error:nil];
+    if (!data) return @"{}";
+    return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"{}";
+}
+
+- (BOOL)screenshotToFile:(NSString *)path includeSubtitles:(BOOL)includeSubtitles {
+    if (!_mpv || path.length == 0) return NO;
+    [self command:@[@"screenshot-to-file", path, includeSubtitles ? @"subtitles" : @"video"]];
+    return YES;
+}
+
 - (void)selectAudioTrackId:(int)trackId {
     if (!_mpv) return;
     int64_t id = trackId;
@@ -2703,6 +2744,38 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setResizeMode(
     runOnMainAsync(^{
         [player setResizeMode:(int)mode];
     });
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_diagnosticsJson(
+    JNIEnv *env,
+    jobject /* bridge */,
+    jlong handle
+) {
+    if (handle == 0) return env->NewStringUTF("{}");
+    MpvWebPlayer *player = (__bridge MpvWebPlayer *)(void *)(intptr_t)handle;
+    NSString *json = [player diagnosticsJson] ?: @"{}";
+    return env->NewStringUTF(json.UTF8String);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_screenshotToFile(
+    JNIEnv *env,
+    jobject /* bridge */,
+    jlong handle,
+    jstring path,
+    jboolean includeSubtitles
+) {
+    if (handle == 0) return JNI_FALSE;
+    std::string screenshotPath = jstringToString(env, path);
+    if (screenshotPath.empty()) return JNI_FALSE;
+    MpvWebPlayer *player = (__bridge MpvWebPlayer *)(void *)(intptr_t)handle;
+    BOOL includeSubs = includeSubtitles == JNI_TRUE;
+    runOnMainAsync(^{
+        [player screenshotToFile:[NSString stringWithUTF8String:screenshotPath.c_str()]
+                includeSubtitles:includeSubs];
+    });
+    return JNI_TRUE;
 }
 
 extern "C" JNIEXPORT jstring JNICALL

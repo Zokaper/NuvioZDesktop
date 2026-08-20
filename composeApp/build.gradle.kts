@@ -1280,6 +1280,11 @@ compose.desktop {
         mainClass = "com.nuvio.app.MainKt"
         val smokePlayerUrl = providers.gradleProperty("nuvio.desktop.smokePlayerUrl").orNull
             ?: System.getenv("NUVIO_DESKTOP_SMOKE_PLAYER_URL")
+        // Starts the debug self-test automatically a few seconds after launch, so the suite can be
+        // driven from a command line rather than by pressing the settings row. Only has any effect
+        // alongside the debug switch below, which is what gates the harness in the first place.
+        val autoSelfTest = providers.gradleProperty("nuvio.desktop.selfTest").orNull
+            ?: System.getenv("NUVIO_DESKTOP_SELF_TEST")
         // Bakes the debug switch into the packaged app, so a distributable built with
         // -Pnuvio.desktop.debugTools=true carries the diagnostics HUD and the file log without
         // the tester having to launch it by hand with a -D flag. Absent by default, which is
@@ -1297,6 +1302,7 @@ compose.desktop {
             "--add-opens=java.desktop/sun.awt.windows=ALL-UNNAMED",
             smokePlayerUrl?.takeIf { it.isNotBlank() }?.let { "-Dnuvio.desktop.smokePlayerUrl=$it" },
             debugTools?.takeIf { it.equals("true", ignoreCase = true) }?.let { "-Dnuvio.debugTools=true" },
+            autoSelfTest?.takeIf { it.equals("true", ignoreCase = true) }?.let { "-Dnuvio.selfTest=true" },
         )
 
         nativeDistributions {

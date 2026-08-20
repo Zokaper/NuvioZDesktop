@@ -610,6 +610,20 @@ internal fun settingsSearchEntries(
             )
             add(
                 PlaybackSearchRow(
+                    "playback-language-strictness",
+                    stringResource(Res.string.settings_playback_language_strictness),
+                    stringResource(Res.string.settings_playback_language_strictness_description),
+                ),
+            )
+            add(
+                PlaybackSearchRow(
+                    "playback-quality-ceiling",
+                    stringResource(Res.string.settings_playback_quality_ceiling),
+                    stringResource(Res.string.settings_playback_quality_ceiling_description),
+                ),
+            )
+            add(
+                PlaybackSearchRow(
                     "playback-auto-downshift",
                     stringResource(Res.string.settings_playback_auto_downshift),
                     stringResource(Res.string.settings_playback_auto_downshift_description),
