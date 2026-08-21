@@ -28,6 +28,7 @@ import com.nuvio.app.features.p2p.formatP2pSpeed
 import com.nuvio.app.features.player.skip.SkipIntroRepository
 import com.nuvio.app.features.streams.AddonStreamGroup
 import com.nuvio.app.features.streams.StreamItem
+import com.nuvio.app.features.streams.StreamsRepository
 import com.nuvio.app.features.streams.isSelectableForPlayback
 import com.nuvio.app.features.watchprogress.buildPlaybackVideoId
 import com.nuvio.app.features.watching.application.WatchingState
@@ -471,6 +472,11 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                             }
                             errorMessage = message
                             controlsVisible = !playerControlsLocked
+                            // The engine's own words, carried to the progress overlay of the
+                            // *next* attempt. This route bumped the attempt counter in silence,
+                            // and it is the one that covers the most visible failure there is -
+                            // a source that opens, plays a second and dies.
+                            StreamsRepository.noteAutoPickFailureReason(message)
                             args.onFatalPlaybackError?.invoke()
                             return@PlatformPlayerSurface
                         }
