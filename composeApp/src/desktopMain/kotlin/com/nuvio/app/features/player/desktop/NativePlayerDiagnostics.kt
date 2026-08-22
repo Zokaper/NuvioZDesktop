@@ -104,10 +104,22 @@ internal object NativePlayerDiagnosticsRegistry {
      * [NativePlayerBridge.screenshotToFile] means nothing about the file. Waits for a **stable**
      * size rather than mere existence: the file is created empty and filled, and a screenshot read
      * back mid-write is a truncated PNG that looks like a decode failure.
+     *
+     * ⚠ **And the target is deleted first, because a stable size proves nothing on its own.**
+     * The settle loop only asks whether the file is non-empty and unchanged across two polls, so
+     * a file left behind by an earlier capture satisfied it immediately - mpv had not touched
+     * the path yet - and the harness verified a frame from the *previous* source. A false pass
+     * on the single check whose whole purpose is proving that this frame decoded. A target that
+     * cannot be removed cannot be proven fresh either, so that fails rather than proceeding.
      */
     fun writeFrame(target: Path, includeSubtitles: Boolean, timeoutMs: Long = 5_000L): Boolean {
         val controller = current ?: return false
         runCatching { Files.createDirectories(target.parent) }
+        val cleared = runCatching { Files.deleteIfExists(target) }.isSuccess && !Files.exists(target)
+        if (!cleared) {
+            log.w { "could not clear a previous capture, so a fresh frame cannot be proven: $target" }
+            return false
+        }
         if (!controller.requestMpvScreenshot(target.toAbsolutePath().toString(), includeSubtitles)) return false
 
         val deadline = System.currentTimeMillis() + timeoutMs
