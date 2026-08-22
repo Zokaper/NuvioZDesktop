@@ -1105,6 +1105,25 @@ public:
      * answer whether a stream decoded on the GPU on the user's own hardware, which is the
      * difference between "it played" and "it played properly".
      */
+    /**
+     * A double that is safe to write into JSON.
+     *
+     * ⚠ **mpv returns NaN for several of these routinely, and MSVC writes NaN as `nan` or
+     * `-nan(ind)` - neither of which is valid JSON.** `avsync` is NaN whenever there is no audio
+     * track, and `container-fps` is on some containers. One such field made the entire object
+     * unparseable, so `NativeMpvDiagnostics.parse` threw, returned null, and the harness lost
+     * *all seventeen* fields - including `hwdec-current`, which is the reason this export
+     * exists. Same guard `rawPositionSeconds` already applies, applied where the value is
+     * serialized rather than where it is read.
+     *
+     * The macOS bridge is safe from this by accident: `NSJSONSerialization` rejects the
+     * dictionary and returns `@"{}"`. Keep that divergence in mind when comparing the two.
+     */
+    double finiteProperty(const char *name, double fallback) {
+        double value = doubleProperty(name, fallback);
+        return std::isfinite(value) ? value : fallback;
+    }
+
     std::string diagnosticsJson() {
         std::ostringstream json;
         json << "{"
@@ -1114,18 +1133,18 @@ public:
              << "\"mpvVersion\":\"" << jsonEscape(stringProperty("mpv-version", "")) << "\","
              << "\"videoWidth\":" << int64Property("video-params/w", 0) << ","
              << "\"videoHeight\":" << int64Property("video-params/h", 0) << ","
-             << "\"containerFps\":" << doubleProperty("container-fps", 0.0) << ","
-             << "\"estimatedVfFps\":" << doubleProperty("estimated-vf-fps", 0.0) << ","
+             << "\"containerFps\":" << finiteProperty("container-fps", 0.0) << ","
+             << "\"estimatedVfFps\":" << finiteProperty("estimated-vf-fps", 0.0) << ","
              << "\"droppedFrames\":" << int64Property("frame-drop-count", 0) << ","
              << "\"decoderDroppedFrames\":" << int64Property("decoder-frame-drop-count", 0) << ","
              << "\"videoBitrate\":" << int64Property("video-bitrate", 0) << ","
-             << "\"avsync\":" << doubleProperty("avsync", 0.0) << ","
+             << "\"avsync\":" << finiteProperty("avsync", 0.0) << ","
              // Both cache properties, unresolved. `demuxer-cache-time` is an absolute stream
              // timestamp and `demuxer-cache-duration` is a duration ahead of the position; the
              // two have been confused across engines before, so the harness gets the raw pair
              // and decides for itself rather than being handed one number that means either.
-             << "\"demuxerCacheTime\":" << doubleProperty("demuxer-cache-time", -1.0) << ","
-             << "\"demuxerCacheDuration\":" << doubleProperty("demuxer-cache-duration", -1.0) << ","
+             << "\"demuxerCacheTime\":" << finiteProperty("demuxer-cache-time", -1.0) << ","
+             << "\"demuxerCacheDuration\":" << finiteProperty("demuxer-cache-duration", -1.0) << ","
              << "\"pausedForCache\":" << (flagProperty("paused-for-cache", false) ? "true" : "false") << ","
              << "\"coreIdle\":" << (flagProperty("core-idle", false) ? "true" : "false")
              << "}";
