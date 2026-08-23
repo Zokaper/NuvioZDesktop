@@ -48,7 +48,10 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
      * configuration time, and the updater has to agree with them.
      */
     @get:Input
-    abstract val desktopDebugChannel: Property<Boolean>
+    abstract val desktopDebugChannel: Property<Boolean>
+
+    @get:Input
+    abstract val releaseSerial: Property<Int>
 
     @get:Input
     abstract val supabaseUrl: Property<String>
@@ -184,6 +187,17 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
                 |    const val DESKTOP_VERSION_NAME = "${desktopAppVersionName.get()}"
                 |    const val DESKTOP_VERSION_CODE = ${desktopAppVersionCode.get()}
                 |    const val DESKTOP_DEBUG_CHANNEL = ${desktopDebugChannel.get()}
+                |
+                |    /**
+                |     * What orders this build against a published release.
+                |     *
+                |     * A monotonic integer carried in the tag as "+<serial>". It exists because a
+                |     * Nuvio Z version can go BACKWARDS by name - adopting vanilla's numbering puts
+                |     * 0.4.9-z1 after 0.4.14-beta - and the version string cannot order that.
+                |     *
+                |     * See RELEASE_SERIAL in DesktopReleaseSerial.properties.
+                |     */
+                |    const val RELEASE_SERIAL = ${releaseSerial.get()}
                 |}
                 """.trimMargin()
             )
@@ -520,6 +534,23 @@ require(!isDesktopDebugChannel || desktopDebugBuild > 0) {
     "DEBUG_BUILD must be a positive integer for a debug-channel build."
 }
 
+// The release ordering serial, mirroring RELEASE_SERIAL in the mobile repository and
+// kept in step with it: the serial identifies a RELEASE, and the two apps ship one
+// version name between them. Also its own file, and for the same reason as the debug
+// counter above. Optional and defaulted - 0 means "no serial", and VersionUtils falls
+// back to the old string comparison whenever either side lacks one.
+val desktopReleaseSerialConfigFile = rootProject.file("composeApp/Configuration/DesktopReleaseSerial.properties")
+val desktopReleaseSerialProps = Properties().apply {
+    if (desktopReleaseSerialConfigFile.exists()) {
+        desktopReleaseSerialConfigFile.inputStream().use { load(it) }
+    }
+}
+val desktopReleaseSerial = desktopReleaseSerialProps.getProperty("RELEASE_SERIAL")
+    ?.trim()
+    ?.takeIf { it.isNotBlank() }
+    ?.toIntOrNull()
+    ?: 0
+
 // A fourth component, exactly as the mobile debug line does it: 0.4.14-beta.3.
 // The release build never sees it.
 val desktopReleaseVersionName = if (isDesktopDebugChannel) {
@@ -653,6 +684,7 @@ val generateRuntimeConfigs = tasks.register<GenerateRuntimeConfigsTask>("generat
     desktopAppVersionName.set(desktopReleaseVersionName)
     desktopAppVersionCode.set(desktopReleaseVersionCode)
     desktopDebugChannel.set(isDesktopDebugChannel)
+    releaseSerial.set(desktopReleaseSerial)
     supabaseUrl.set(runtimeConfigValue("NUVIO_SUPABASE_URL"))
     supabaseAnonKey.set(runtimeConfigValue("NUVIO_SUPABASE_ANON_KEY"))
     supabaseFallbackUrl.set(runtimeConfigValue("NUVIO_SUPABASE_FALLBACK_URL"))

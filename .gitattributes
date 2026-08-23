@@ -15,3 +15,4 @@ composeApp/src/desktopMain/resources/torrserver/windows-amd64/TorrServer.exe fil
 iosApp/Configuration/Version.xcconfig                    merge=ours
 composeApp/Configuration/DesktopVersion.properties       merge=ours
 composeApp/Configuration/DesktopDebugVersion.properties  merge=ours
+composeApp/Configuration/DesktopReleaseSerial.properties merge=ours
