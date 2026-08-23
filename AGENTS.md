@@ -32,6 +32,33 @@ what that means are canonical in `nuvio-z` and cover this repository too:
 Run `scripts/upstream-drift.sh` to see the current distance. Pushing to either upstream is disabled
 by a `DISABLED` push URL.
 
+### Shared changes flow by merge, not by `cp`
+
+**The `cp` ritual is retired.** `Zokaper/nuvio-z` is the remote `mobile` here, and
+the two repos share history at mobile's fork base `979d5680`, so a shared change
+can be carried across with `git merge mobile/<branch>` and a conflict is a
+conflict rather than a silent delta. Push to it is disabled.
+
+```bash
+scripts/shared-code-drift.sh              # what differs, and why
+scripts/shared-code-drift.sh --expected   # only the unexplained ones
+```
+
+**303 shared files currently differ.** Two causes, which the script labels:
+**upstream-fork-gap** (the two repos forked from different upstreams, so SIMKL and
+the newer locales are inherited on one side only - settled by an upstream sync,
+never by copying) and **missed `cp`** (one of our changes that never made it
+across - the real bug).
+
+For a genuinely divergent file, port by hand; do not copy. `AppUpdater.kt` is the
+worked example: it looks shared, but this repo's carries MSI paths,
+`downloadedUpdatePath` instead of `downloadedApkPath`, its own install-permission
+naming and a different import list. A `cp` reverts all of it silently.
+
+Never copy: `MetaDetailsScreen.kt`, `strings.xml` (extra keys here), this repo's
+`AppFeaturePolicy` external-player gating, the NVIDIA RTX setting,
+`features/setup/SetupHomeStill.kt`, and everything under `desktopMain`.
+
 **First clone, once, or `.gitattributes` silently does nothing:**
 
 ```bash
