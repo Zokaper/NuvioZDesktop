@@ -2,6 +2,35 @@
 
 Last updated: 2026-08-16
 
+
+## Upstream drift, measured for the first time (2026-08-23)
+
+This repository had **no `upstream` remote at all**, so its distance from vanilla had never been
+measured. Canonical write-up is in `nuvio-z/STATUS.md`; the desktop-specific part is here.
+
+| | |
+| --- | --- |
+| Upstream ref | `upstream/Dev` (**`NuvioMedia/NuvioDesktop`**), push disabled |
+| Ahead / behind | **176 ahead, 192 behind** (base `1704f6c9` 2026-08-02, tip `e1e27163` 2026-08-23) |
+| Patch surface | **135** upstream-owned files we modify |
+| Conflict surface | **47** - the subset upstream has also touched since the base |
+| Dry-run merge | **14** conflicts; version files clean, `0.4.14-beta` and `DEBUG_BUILD=15` survived |
+
+**Upstream for desktop is a different repository from mobile's.** `NuvioMobile:desktopweb` has been
+retired and our base `1704f6c9` is *not* an ancestor of `cmp-rewrite`, whose `desktopMain` is
+vestigial -- **4 files against our 278**. Upstream moved desktop development into
+`NuvioMedia/NuvioDesktop` branch `Dev`, which does contain `1704f6c9`. Remotes here are therefore
+`upstream` (NuvioDesktop/`Dev`, the sync source) and `upstream-mobile` (NuvioMobile/`cmp-rewrite`,
+reference for the shared `commonMain` only -- **never** a merge source).
+
+**This bears on the plan's Stage 4** (unify the two KMP repos): upstream has itself split mobile and
+desktop into two repositories. Unifying ours means every future sync straddles two upstreams.
+
+⚠ `merge=ours` only fires on a conflict. `iosApp/Configuration/Version.xcconfig` is stale and unused
+here (`0.4.0`, while the app ships `0.4.14-beta` from `DesktopVersion.properties`), so the dry-run
+merge silently moved it to upstream's `0.4.7`. Harmless today, but re-check version files by eye
+after every sync.
+
 ## Playback-mode UX correctness pass (2026-08-16, unreleased, both repositories)
 
 A second read of the shipped mode surfaces - after the pass below - found seven places where

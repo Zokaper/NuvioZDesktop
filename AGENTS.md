@@ -18,9 +18,19 @@ what that means are canonical in `nuvio-z` and cover this repository too:
 - `Docs/PATCH-SURFACE.md`: https://github.com/Zokaper/nuvio-z/blob/main/Docs/PATCH-SURFACE.md
   (every upstream-owned file we modify - **135 of them here**, against 8 in `NuvioZWeb`)
 
-This repository has **no `upstream` remote at all**, and its base `1704f6c9` sits on upstream's
-`desktopweb` branch, which is a different branch from the one mobile forked. Wiring it is the first
-thing to do.
+**Upstream for this repository is a different repository from mobile's.** Upstream retired
+`NuvioMedia/NuvioMobile` branch `desktopweb` and moved desktop development to
+`NuvioMedia/NuvioDesktop` branch `Dev`, which is where our base `1704f6c9` lives.
+`NuvioMobile:cmp-rewrite` still carries a `desktopMain`, but it is vestigial -- 4 files against our
+278 -- so merging desktop work from it would be wrong.
+
+| remote | tracks | role |
+| --- | --- | --- |
+| `upstream` | `NuvioDesktop.git` branch `Dev` | the sync source |
+| `upstream-mobile` | `NuvioMobile.git` branch `cmp-rewrite` | reference for the shared `commonMain`; **never** a merge source |
+
+Run `scripts/upstream-drift.sh` to see the current distance. Pushing to either upstream is disabled
+by a `DISABLED` push URL.
 
 **First clone, once, or `.gitattributes` silently does nothing:**
 
@@ -28,6 +38,12 @@ thing to do.
 git config merge.ours.driver true
 git config rerere.enabled true
 ```
+
+**`merge=ours` only fires on a *conflict*.** A version file we have not touched since the fork base
+merges cleanly and silently takes upstream's value -- this is exactly what happens to `appinfo.json`
+on web and to the (stale, unused) `iosApp/Configuration/Version.xcconfig` on desktop. After every
+sync, re-check the version files by eye before cutting a release; the attribute protects the files
+we edit, not the files we ignore.
 
 Active feature plan, also canonical in `nuvio-z` and covering both repositories:
 
