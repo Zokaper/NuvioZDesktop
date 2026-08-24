@@ -3,17 +3,17 @@
 Last updated: 2026-08-24
 
 
-## Connection figure deadline race fixed, device confirmation pending (2026-08-24)
+## Connection figure deadline race fixed and confirmed (2026-08-24)
 
 The five-second deadline and the real probe used to write one settle nonce. When the deadline won,
 the sheet published its stored link-type guess; the probe then landed and replaced it under the
 reader. The new import-free `ConnectionProbeSettlement` separates the two answers: the deadline
 settles Instant's bounded automatic decision, while only probe completion settles the figure shown
 in the quality sheet. Monotonic nonces prevent a late older re-test from regressing the current ask.
-Three ordering cases are in the pure suite. Both repos pass **290 pure tests, 0 failures**. The fix
-still needs the reporting handset; the number must appear once and remain fixed. Debug packages
-carrying it are published: mobile `debug-v0.4.14-beta.24` (run `32735072649`) and desktop
-`debug-v0.4.14-beta.17` (run `32735073128`).
+Three ordering cases are in the pure suite. Both repos pass **290 pure tests, 0 failures**. The
+reporting handset confirmed `.24` shows one fixed 541 Mb/s value, compared with 497 Mb/s from Ookla;
+the former late replacement is gone. Debug packages carrying the fix are mobile
+`debug-v0.4.14-beta.24` (run `32735072649`) and desktop `debug-v0.4.14-beta.17` (run `32735073128`).
 
 
 ## KMP About names the vanilla base (2026-08-24)
