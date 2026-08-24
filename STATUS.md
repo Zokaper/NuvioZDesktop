@@ -1,7 +1,15 @@
 # Nuvio Z Status
 
-Last updated: 2026-08-16
+Last updated: 2026-08-24
 
+
+## KMP About names the vanilla base (2026-08-24)
+
+Settings → About now derives the vanilla base from the Z version name through the import-free
+`core/build/NuvioZVersion.kt` policy. `0.6.0-z2` and debug `0.6.0-z2.3` both name Nuvio `0.6.0`;
+the bridge and pre-scheme versions show no base rather than guessing. Three tests cover the rule,
+and `scripts/run-pure-suites.sh` passes **287 tests, 0 failures**. The focused local Gradle attempt
+exceeded its bounded runtime and was stopped; Compose wiring remains a CI gate.
 
 ## Upstream drift, measured for the first time (2026-08-23)
 
