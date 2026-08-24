@@ -11,7 +11,9 @@ reader. The new import-free `ConnectionProbeSettlement` separates the two answer
 settles Instant's bounded automatic decision, while only probe completion settles the figure shown
 in the quality sheet. Monotonic nonces prevent a late older re-test from regressing the current ask.
 Three ordering cases are in the pure suite. Both repos pass **290 pure tests, 0 failures**. The fix
-still needs the reporting handset; the number must appear once and remain fixed.
+still needs the reporting handset; the number must appear once and remain fixed. Debug packages
+carrying it are published: mobile `debug-v0.4.14-beta.24` (run `32735072649`) and desktop
+`debug-v0.4.14-beta.17` (run `32735073128`).
 
 
 ## KMP About names the vanilla base (2026-08-24)
