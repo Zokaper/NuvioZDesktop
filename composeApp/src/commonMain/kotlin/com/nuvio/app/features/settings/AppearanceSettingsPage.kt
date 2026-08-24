@@ -53,11 +53,15 @@ import nuvio.composeapp.generated.resources.cd_selected
 import nuvio.composeapp.generated.resources.collections_header
 import nuvio.composeapp.generated.resources.compose_settings_page_continue_watching
 import nuvio.composeapp.generated.resources.compose_settings_page_homescreen
+import nuvio.composeapp.generated.resources.compose_settings_page_hover_preview
 import nuvio.composeapp.generated.resources.compose_settings_page_meta_screen
 import nuvio.composeapp.generated.resources.compose_settings_page_poster_customization
 import nuvio.composeapp.generated.resources.compose_settings_page_streams
 import nuvio.composeapp.generated.resources.settings_appearance_app_language
 import nuvio.composeapp.generated.resources.settings_appearance_app_language_sheet_title
+import nuvio.composeapp.generated.resources.settings_appearance_app_icon
+import nuvio.composeapp.generated.resources.settings_appearance_app_icon_black_background
+import nuvio.composeapp.generated.resources.settings_appearance_app_icon_black_background_description
 import nuvio.composeapp.generated.resources.settings_appearance_nav_bar_style
 import nuvio.composeapp.generated.resources.settings_appearance_nav_bar_style_sheet_title
 import nuvio.composeapp.generated.resources.settings_appearance_amoled_black
@@ -69,6 +73,7 @@ import nuvio.composeapp.generated.resources.settings_appearance_desktop_ui_zoom
 import nuvio.composeapp.generated.resources.settings_appearance_desktop_ui_zoom_default
 import nuvio.composeapp.generated.resources.settings_appearance_desktop_ui_zoom_sheet_title
 import nuvio.composeapp.generated.resources.settings_appearance_desktop_ui_zoom_shortcut
+import nuvio.composeapp.generated.resources.settings_appearance_hover_preview_description
 import nuvio.composeapp.generated.resources.settings_appearance_liquid_glass
 import nuvio.composeapp.generated.resources.settings_appearance_liquid_glass_description
 import nuvio.composeapp.generated.resources.settings_appearance_poster_customization_description
@@ -95,6 +100,10 @@ internal fun LazyListScope.appearanceSettingsContent(
     liquidGlassNativeTabBarSupported: Boolean,
     liquidGlassNativeTabBarEnabled: Boolean,
     onLiquidGlassNativeTabBarToggle: (Boolean) -> Unit,
+    appIconState: AppIconSettingsState,
+    onAppIconSelected: (AppIconOption) -> Unit,
+    onAppIconBackgroundChanged: (Boolean) -> Unit,
+    onAppIconFailureDismissed: () -> Unit,
     selectedAppLanguage: AppLanguage,
     onAppLanguageSelected: (AppLanguage) -> Unit,
     selectedNavBarStyle: NavBarStyle,
@@ -105,6 +114,7 @@ internal fun LazyListScope.appearanceSettingsContent(
     onCollectionsClick: () -> Unit,
     onContinueWatchingClick: () -> Unit,
     onPosterCustomizationClick: () -> Unit,
+    onHoverPreviewClick: () -> Unit,
 ) {
     item {
         SettingsSection(
@@ -170,6 +180,7 @@ internal fun LazyListScope.appearanceSettingsContent(
             ThemeSettingsRepository.desktopUiZoom
         }.collectAsStateWithLifecycle()
         var showNavBarStyleSheet by remember { mutableStateOf(false) }
+        var showAppIconPicker by remember { mutableStateOf(false) }
         SettingsSection(
             title = stringResource(Res.string.settings_appearance_section_display),
             isTablet = isTablet,
@@ -209,6 +220,42 @@ internal fun LazyListScope.appearanceSettingsContent(
                             stringResource(Res.string.settings_appearance_desktop_ui_zoom_shortcut),
                         isTablet = isTablet,
                         onClick = { showDesktopUiZoomSheet = true },
+                    )
+                    SettingsGroupDivider(isTablet = isTablet)
+                    SettingsNavigationRow(
+                        title = stringResource(Res.string.compose_settings_page_hover_preview),
+                        description = stringResource(Res.string.settings_appearance_hover_preview_description),
+                        isTablet = isTablet,
+                        onClick = onHoverPreviewClick,
+                    )
+                }
+                if (AppIconPlatform.isSupported) {
+                    SettingsGroupDivider(isTablet = isTablet)
+                    SettingsNavigationRow(
+                        title = stringResource(Res.string.settings_appearance_app_icon),
+                        description = stringResource(appIconState.selected.labelResource),
+                        enabled = appIconState.pending == null,
+                        isTablet = isTablet,
+                        trailingContent = {
+                            AppIconThumbnail(
+                                icon = appIconState.selected,
+                                blackBackground = appIconState.blackBackground,
+                                modifier = Modifier.size(if (isTablet) 44.dp else 40.dp),
+                                cornerRadius = if (isTablet) 11.dp else 10.dp,
+                            )
+                        },
+                        onClick = {
+                            onAppIconFailureDismissed()
+                            showAppIconPicker = true
+                        },
+                    )
+                    SettingsGroupDivider(isTablet = isTablet)
+                    SettingsSwitchRow(
+                        title = stringResource(Res.string.settings_appearance_app_icon_black_background),
+                        description = stringResource(Res.string.settings_appearance_app_icon_black_background_description),
+                        checked = appIconState.blackBackground,
+                        isTablet = isTablet,
+                        onCheckedChange = onAppIconBackgroundChanged,
                     )
                 }
                 SettingsGroupDivider(isTablet = isTablet)
@@ -260,6 +307,18 @@ internal fun LazyListScope.appearanceSettingsContent(
                     showLanguageSheet = false
                 },
                 onDismiss = { showLanguageSheet = false },
+            )
+        }
+
+        if (showAppIconPicker) {
+            AppIconPicker(
+                isTablet = isTablet,
+                state = appIconState,
+                onSelected = onAppIconSelected,
+                onDismiss = {
+                    onAppIconFailureDismissed()
+                    showAppIconPicker = false
+                },
             )
         }
 

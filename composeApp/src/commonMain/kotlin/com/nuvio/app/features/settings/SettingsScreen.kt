@@ -160,6 +160,14 @@ fun SettingsScreen(
         val liquidGlassNativeTabBarSupported = remember { isLiquidGlassNativeTabBarSupported() }
         val selectedAppLanguage by remember { ThemeSettingsRepository.selectedAppLanguage }.collectAsStateWithLifecycle()
         val navBarStyle by remember { ThemeSettingsRepository.navBarStyle }.collectAsStateWithLifecycle()
+        val appIconState by remember {
+            AppIconRepository.ensureLoaded()
+            AppIconRepository.state
+        }.collectAsStateWithLifecycle()
+        val appIconScope = rememberCoroutineScope()
+        val onAppIconSelected: (AppIconOption) -> Unit = { icon ->
+            appIconScope.launch { AppIconRepository.select(icon) }
+        }
         val tmdbSettings by remember {
             TmdbSettingsRepository.ensureLoaded()
             TmdbSettingsRepository.uiState
@@ -335,6 +343,10 @@ fun SettingsScreen(
                 liquidGlassNativeTabBarSupported = liquidGlassNativeTabBarSupported,
                 liquidGlassNativeTabBarEnabled = liquidGlassNativeTabBarEnabled,
                 onLiquidGlassNativeTabBarToggle = ThemeSettingsRepository::setLiquidGlassNativeTabBar,
+                appIconState = appIconState,
+                onAppIconSelected = onAppIconSelected,
+                onAppIconBackgroundChanged = { enabled -> AppIconRepository.setBlackBackground(enabled) },
+                onAppIconFailureDismissed = AppIconRepository::clearFailure,
                 selectedAppLanguage = selectedAppLanguage,
                 onAppLanguageSelected = ThemeSettingsRepository::setAppLanguage,
                 navBarStyle = navBarStyle,
@@ -401,6 +413,10 @@ fun SettingsScreen(
                 liquidGlassNativeTabBarSupported = liquidGlassNativeTabBarSupported,
                 liquidGlassNativeTabBarEnabled = liquidGlassNativeTabBarEnabled,
                 onLiquidGlassNativeTabBarToggle = ThemeSettingsRepository::setLiquidGlassNativeTabBar,
+                appIconState = appIconState,
+                onAppIconSelected = onAppIconSelected,
+                onAppIconBackgroundChanged = { enabled -> AppIconRepository.setBlackBackground(enabled) },
+                onAppIconFailureDismissed = AppIconRepository::clearFailure,
                 selectedAppLanguage = selectedAppLanguage,
                 onAppLanguageSelected = ThemeSettingsRepository::setAppLanguage,
                 navBarStyle = navBarStyle,
@@ -486,6 +502,9 @@ private fun MobileSettingsScreen(
     liquidGlassNativeTabBarSupported: Boolean,
     liquidGlassNativeTabBarEnabled: Boolean,
     onLiquidGlassNativeTabBarToggle: (Boolean) -> Unit,
+    appIconState: AppIconSettingsState,
+    onAppIconSelected: (AppIconOption) -> Unit,
+    onAppIconBackgroundChanged: (Boolean) -> Unit,    onAppIconFailureDismissed: () -> Unit,
     selectedAppLanguage: AppLanguage,
     onAppLanguageSelected: (AppLanguage) -> Unit,
     navBarStyle: NavBarStyle,
@@ -701,6 +720,10 @@ private fun MobileSettingsScreen(
                     liquidGlassNativeTabBarSupported = liquidGlassNativeTabBarSupported,
                     liquidGlassNativeTabBarEnabled = liquidGlassNativeTabBarEnabled,
                     onLiquidGlassNativeTabBarToggle = onLiquidGlassNativeTabBarToggle,
+                    appIconState = appIconState,
+                    onAppIconSelected = onAppIconSelected,
+                onAppIconBackgroundChanged = { enabled -> AppIconRepository.setBlackBackground(enabled) },
+                    onAppIconFailureDismissed = onAppIconFailureDismissed,
                     selectedAppLanguage = selectedAppLanguage,
                     onAppLanguageSelected = onAppLanguageSelected,
                     selectedNavBarStyle = navBarStyle,
@@ -711,6 +734,11 @@ private fun MobileSettingsScreen(
                     onCollectionsClick = onCollectionsClick,
                     onContinueWatchingClick = onContinueWatchingClick,
                     onPosterCustomizationClick = { onPageChange(SettingsPage.PosterCustomization) },
+                    onHoverPreviewClick = { onPageChange(SettingsPage.HoverPreview) },
+                )
+                SettingsPage.HoverPreview -> hoverPreviewSettingsContent(
+                    isTablet = false,
+                    uiState = posterCardStyleUiState,
                 )
                 SettingsPage.Advanced -> advancedSettingsContent(
                     isTablet = false,
@@ -863,6 +891,9 @@ private fun TabletSettingsScreen(
     liquidGlassNativeTabBarSupported: Boolean,
     liquidGlassNativeTabBarEnabled: Boolean,
     onLiquidGlassNativeTabBarToggle: (Boolean) -> Unit,
+    appIconState: AppIconSettingsState,
+    onAppIconSelected: (AppIconOption) -> Unit,
+    onAppIconBackgroundChanged: (Boolean) -> Unit,    onAppIconFailureDismissed: () -> Unit,
     selectedAppLanguage: AppLanguage,
     onAppLanguageSelected: (AppLanguage) -> Unit,
     navBarStyle: NavBarStyle,
@@ -1141,6 +1172,10 @@ private fun TabletSettingsScreen(
                             liquidGlassNativeTabBarSupported = liquidGlassNativeTabBarSupported,
                             liquidGlassNativeTabBarEnabled = liquidGlassNativeTabBarEnabled,
                             onLiquidGlassNativeTabBarToggle = onLiquidGlassNativeTabBarToggle,
+                            appIconState = appIconState,
+                            onAppIconSelected = onAppIconSelected,
+                onAppIconBackgroundChanged = { enabled -> AppIconRepository.setBlackBackground(enabled) },
+                            onAppIconFailureDismissed = onAppIconFailureDismissed,
                             selectedAppLanguage = selectedAppLanguage,
                             onAppLanguageSelected = onAppLanguageSelected,
                             selectedNavBarStyle = navBarStyle,
@@ -1151,6 +1186,11 @@ private fun TabletSettingsScreen(
                             onCollectionsClick = onCollectionsClick,
                             onContinueWatchingClick = { openInlinePage(SettingsPage.ContinueWatching) },
                             onPosterCustomizationClick = { openInlinePage(SettingsPage.PosterCustomization) },
+                            onHoverPreviewClick = { openInlinePage(SettingsPage.HoverPreview) },
+                        )
+                        SettingsPage.HoverPreview -> hoverPreviewSettingsContent(
+                            isTablet = true,
+                            uiState = posterCardStyleUiState,
                         )
                         SettingsPage.Advanced -> advancedSettingsContent(
                             isTablet = true,

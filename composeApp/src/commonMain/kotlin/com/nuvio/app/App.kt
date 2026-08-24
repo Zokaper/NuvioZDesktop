@@ -130,6 +130,8 @@ import com.nuvio.app.core.ui.rememberNuvioNavBarScrollState
 import com.nuvio.app.core.format.formatReleaseDateForDisplay
 import com.nuvio.app.core.ui.NuvioContinueWatchingActionSheet
 import com.nuvio.app.core.ui.NuvioCardDepthSurface
+import com.nuvio.app.core.ui.DisintegrationRequest
+import com.nuvio.app.core.ui.DisintegrationRequestController
 import com.nuvio.app.core.ui.NuvioPosterZoomActionOverlay
 import com.nuvio.app.core.ui.PosterZoomAnchor
 import com.nuvio.app.core.ui.PosterZoomAnchorHolder
@@ -153,7 +155,9 @@ import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.LocalNuvioBottomNavigationOverlayPadding
 import com.nuvio.app.core.ui.NativeNavigationTab
 import com.nuvio.app.core.ui.NativeProfileSwitcherController
+import com.nuvio.app.core.ui.AppPresenceState
 import com.nuvio.app.core.ui.NativeTabBridge
+import com.nuvio.app.core.ui.PresenceSnapshot
 import com.nuvio.app.core.ui.desktopUiScaleForWindow
 import com.nuvio.app.core.ui.isLiquidGlassNativeTabBarSupported
 import com.nuvio.app.core.ui.localizedContinueWatchingSubtitle
@@ -198,6 +202,7 @@ import com.nuvio.app.features.library.LibraryRepository
 import com.nuvio.app.features.library.LibrarySection
 import com.nuvio.app.features.library.LibrarySortOption
 import com.nuvio.app.features.library.LibrarySourceMode
+import com.nuvio.app.features.library.librarySectionItemKey
 import com.nuvio.app.features.library.PendingTrackingMembershipRemoval
 import com.nuvio.app.features.library.TrackingMembershipRemovalConfirmationHost
 import com.nuvio.app.features.library.executeTrackingMembershipOperation
@@ -240,6 +245,7 @@ import com.nuvio.app.features.settings.ContinueWatchingSettingsScreen
 import com.nuvio.app.features.settings.AddonsSettingsScreen
 import com.nuvio.app.features.settings.PluginsSettingsScreen
 import com.nuvio.app.features.settings.AccountSettingsScreen
+import com.nuvio.app.features.settings.AppBrandWordmark
 import com.nuvio.app.features.settings.DesktopNavigationLayout
 import com.nuvio.app.features.settings.SupportersContributorsSettingsScreen
 import com.nuvio.app.features.settings.LicensesAttributionsSettingsScreen
@@ -319,6 +325,7 @@ import com.nuvio.app.features.watchprogress.ResumePromptRepository
 import com.nuvio.app.features.watchprogress.WatchProgressPlaybackSession
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import com.nuvio.app.features.watchprogress.WatchProgressSourceCoordinator
+import com.nuvio.app.features.watchprogress.continueWatchingItemKey
 import com.nuvio.app.features.watchprogress.nextUpDismissKey
 import com.nuvio.app.features.watchprogress.toContinueWatchingItem
 import com.nuvio.app.features.watching.application.WatchingActions
@@ -335,7 +342,6 @@ import kotlinx.serialization.modules.polymorphic
 import kotlinx.serialization.modules.subclass
 import com.nuvio.app.navigation.*
 import nuvio.composeapp.generated.resources.*
-import nuvio.composeapp.generated.resources.app_logo_wordmark
 import nuvio.composeapp.generated.resources.compose_catalog_subtitle_library
 import nuvio.composeapp.generated.resources.compose_catalog_subtitle_trakt_library
 import nuvio.composeapp.generated.resources.compose_nav_home
@@ -588,6 +594,11 @@ fun App(
             .memoryCachePolicy(CachePolicy.ENABLED)
             .components {
                 add(SvgDecoder.Factory())
+                add(
+                    coil3.network.ktor3.KtorNetworkFetcherFactory(
+                        cacheStrategy = { coil3.network.cachecontrol.CacheControlCacheStrategy() },
+                    )
+                )
             }
             .configurePlatformImageLoader()
             .build()
@@ -724,6 +735,15 @@ fun App(
                 ?: emptyList()
         }
         var pendingProfileSwitch by remember { mutableStateOf<PendingProfileSwitch?>(null) }
+
+        // Use the incoming profile's color during a switch so the loading overlay
+        // already shows the correct hue before MainAppContent's own overlay takes over.
+        val gateProfileColor = remember(pendingProfileSwitch, profileState.activeProfile, profileState.profiles) {
+            val sourceProfile = pendingProfileSwitch?.profile
+                ?: profileState.activeProfile
+                ?: profileState.profiles.firstOrNull()
+            sourceProfile?.avatarColorHex?.let(::parseHexColor) ?: Color(0xFF1E88E5)
+        }
 
         LaunchedEffect(gateScreen, onAppReady) {
             if (gateScreen != AppGateScreen.Main.name) {
@@ -911,7 +931,10 @@ fun App(
             when (currentGate) {
                 AppGateScreen.Loading.name,
                 AppGateScreen.ProfileSwitching.name -> {
-                    AppLaunchOverlay(modifier = Modifier.fillMaxSize())
+                    AppLaunchOverlay(
+                        profileColor = gateProfileColor,
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 }
                 AppGateScreen.Auth.name -> {
                     AuthScreen(modifier = Modifier.fillMaxSize())
@@ -1125,6 +1148,8 @@ private fun MainAppContent(
         val posterOverlayHazeState = rememberHazeState()
         var selectedContinueWatchingForActions by remember { mutableStateOf<ContinueWatchingItem?>(null) }
         var selectedContinueWatchingZoomAnchor by remember { mutableStateOf<PosterZoomAnchor?>(null) }
+        val libraryDisintegrationRequests = remember { DisintegrationRequestController<String>() }
+        val continueWatchingDisintegrationRequests = remember { DisintegrationRequestController<String>() }
         var requestedSettingsPageName by rememberSaveable { mutableStateOf<String?>(null) }
         var showLibraryListPicker by remember { mutableStateOf(false) }
         var pickerItem by remember { mutableStateOf<LibraryItem?>(null) }
@@ -1171,6 +1196,7 @@ private fun MainAppContent(
         WatchedRepository.ensureLoaded()
         WatchedRepository.uiState
     }.collectAsStateWithLifecycle()
+    val fullyWatchedSeriesKeys by WatchedRepository.fullyWatchedSeriesKeys.collectAsStateWithLifecycle()
     val downloadsUiState by remember {
         DownloadsRepository.ensureLoaded()
         DownloadsRepository.uiState
@@ -1317,6 +1343,19 @@ private fun MainAppContent(
         if (selectedTab != AppScreenTab.Search) {
             searchFocusRequestCount = 0
         }
+    }
+
+    LaunchedEffect(selectedTab, navBackStack.lastOrNull()) {
+        val topRoute = navBackStack.lastOrNull()
+        if (topRoute is PlayerRoute) return@LaunchedEffect
+        val detailTitle = (topRoute as? DetailRoute)?.title
+        AppPresenceState.publish(
+            if (!detailTitle.isNullOrBlank()) {
+                PresenceSnapshot.Details(detailTitle)
+            } else {
+                PresenceSnapshot.Tab(selectedTab)
+            },
+        )
     }
 
     var profileSwitchLoading by remember { mutableStateOf(false) }
@@ -2147,6 +2186,7 @@ private fun MainAppContent(
         }
 
         val onContinueWatchingRemove: (ContinueWatchingItem) -> Unit = { item ->
+            continueWatchingDisintegrationRequests.arm(continueWatchingItemKey(item))
             if (item.isNextUp) {
                 ContinueWatchingPreferencesRepository.addDismissedNextUpKey(
                     nextUpDismissKey(
@@ -2383,6 +2423,8 @@ private fun MainAppContent(
                                         onContinueWatchingClick = onContinueWatchingClick,
                                         onContinueWatchingDetails = onContinueWatchingDetails,
                                         onContinueWatchingLongPress = onContinueWatchingLongPress,
+                                        libraryDisintegrationRequest = libraryDisintegrationRequests.current,
+                                        continueWatchingDisintegrationRequest = continueWatchingDisintegrationRequests.current,
                                         onSwitchProfile = onSwitchProfile,
                                         onHomescreenSettingsClick = { navController.navigate(HomescreenSettingsRoute(homescreenSettingsTitle)) },
                                         onMetaScreenSettingsClick = { navController.navigate(MetaScreenSettingsRoute(metaScreenSettingsTitle)) },
@@ -5104,6 +5146,7 @@ private fun MainAppContent(
                     val isWatched = WatchingState.isPosterWatched(
                         watchedKeys = watchedUiState.watchedKeys,
                         item = preview,
+                        fullyWatchedSeriesKeys = fullyWatchedSeriesKeys,
                     )
                     val removesFromLibrary = isSaved &&
                         (posterActionTarget.libraryItem != null || !isRemoteLibrarySource)
@@ -5136,6 +5179,8 @@ private fun MainAppContent(
                                     val libraryItem = posterActionTarget.libraryItem
                                         ?: preview.toLibraryItem(savedAtEpochMs = 0L)
                                     if (posterActionTarget.libraryItem != null) {
+                                        val animationKey = posterActionTarget.libraryListKey
+                                            ?.let { listKey -> librarySectionItemKey(listKey, libraryItem) }
                                         if (isRemoteLibrarySource) {
                                             coroutineScope.launch {
                                                 val listKey = posterActionTarget.libraryListKey
@@ -5156,14 +5201,33 @@ private fun MainAppContent(
                                                         )
                                                     }
                                                 }
+                                                val removeMembershipWithAnimation:
+                                                    suspend (Set<TrackingProviderId>) -> TrackingMembershipApplyResult =
+                                                    { confirmedProviders ->
+                                                        val request = if (removesFromLibrary) {
+                                                            animationKey?.let(libraryDisintegrationRequests::arm)
+                                                        } else {
+                                                            null
+                                                        }
+                                                        try {
+                                                            removeMembership(confirmedProviders).also { result ->
+                                                                if (result.requiresRemovalConfirmation && request != null) {
+                                                                    libraryDisintegrationRequests.cancel(request)
+                                                                }
+                                                            }
+                                                        } catch (error: Throwable) {
+                                                            request?.let(libraryDisintegrationRequests::cancel)
+                                                            throw error
+                                                        }
+                                                    }
                                                 executeTrackingMembershipOperation(
-                                                    operation = { removeMembership(emptySet()) },
+                                                    operation = { removeMembershipWithAnimation(emptySet()) },
                                                     onSuccess = { result ->
                                                         if (result.requiresRemovalConfirmation) {
                                                             pendingTrackingRemoval = PendingTrackingMembershipRemoval(
                                                                 itemTitle = libraryItem.name,
                                                                 confirmations = result.requiredRemovalConfirmations,
-                                                                retry = removeMembership,
+                                                                retry = removeMembershipWithAnimation,
                                                                 onApplied = {},
                                                                 onFailure = { error ->
                                                                     NuvioToastController.show(
@@ -5182,6 +5246,9 @@ private fun MainAppContent(
                                                 )
                                             }
                                         } else {
+                                            if (removesFromLibrary) {
+                                                animationKey?.let(libraryDisintegrationRequests::arm)
+                                            }
                                             LibraryRepository.remove(libraryItem.id)
                                         }
                                     } else {
@@ -5510,6 +5577,8 @@ private fun AppTabHost(
     onContinueWatchingClick: ((ContinueWatchingItem) -> Unit)? = null,
     onContinueWatchingDetails: ((ContinueWatchingItem) -> Unit)? = null,
     onContinueWatchingLongPress: ((ContinueWatchingItem) -> Unit)? = null,
+    libraryDisintegrationRequest: DisintegrationRequest<String>? = null,
+    continueWatchingDisintegrationRequest: DisintegrationRequest<String>? = null,
     onSwitchProfile: (() -> Unit)? = null,
     onHomescreenSettingsClick: () -> Unit = {},
     onMetaScreenSettingsClick: () -> Unit = {},
@@ -5552,6 +5621,7 @@ private fun AppTabHost(
                 onContinueWatchingClick = onContinueWatchingClick,
                 onContinueWatchingDetails = onContinueWatchingDetails,
                 onContinueWatchingLongPress = onContinueWatchingLongPress,
+                continueWatchingDisintegrationRequest = continueWatchingDisintegrationRequest,
                 onFolderClick = onFolderClick,
                 onInitialHomeContentRendered = onInitialHomeContentRendered,
             )
@@ -5586,6 +5656,7 @@ private fun AppTabHost(
                                 onSectionViewAllClick = onLibrarySectionViewAllClick,
                                 onCloudFilePlay = onCloudFilePlay,
                                 onConnectCloudClick = onConnectCloudClick,
+                                disintegrationRequest = libraryDisintegrationRequest,
                             )
                         }
 
@@ -5643,6 +5714,7 @@ private fun AppHomeTabContent(
     onContinueWatchingClick: ((ContinueWatchingItem) -> Unit)?,
     onContinueWatchingDetails: ((ContinueWatchingItem) -> Unit)?,
     onContinueWatchingLongPress: ((ContinueWatchingItem) -> Unit)?,
+    continueWatchingDisintegrationRequest: DisintegrationRequest<String>?,
     onFolderClick: ((collectionId: String, folderId: String) -> Unit)?,
     onInitialHomeContentRendered: () -> Unit,
 ) {
@@ -5659,6 +5731,7 @@ private fun AppHomeTabContent(
         onContinueWatchingClick = onContinueWatchingClick,
         onContinueWatchingDetails = onContinueWatchingDetails,
         onContinueWatchingLongPress = onContinueWatchingLongPress,
+        continueWatchingDisintegrationRequest = continueWatchingDisintegrationRequest,
         onFolderClick = onFolderClick,
         onFirstCatalogRendered = onInitialHomeContentRendered,
     )
@@ -5691,6 +5764,7 @@ private fun AppLibraryTabContent(
     onSectionViewAllClick: ((LibrarySection, LibrarySortOption) -> Unit)?,
     onCloudFilePlay: ((CloudLibraryItem, CloudLibraryFile) -> Unit)?,
     onConnectCloudClick: (() -> Unit)?,
+    disintegrationRequest: DisintegrationRequest<String>?,
 ) {
     LibraryScreen(
         modifier = Modifier.fillMaxSize(),
@@ -5701,6 +5775,7 @@ private fun AppLibraryTabContent(
         onSectionViewAllClick = onSectionViewAllClick,
         onCloudFilePlay = onCloudFilePlay,
         onConnectCloudClick = onConnectCloudClick,
+        disintegrationRequest = disintegrationRequest,
     )
 }
 
@@ -6234,13 +6309,11 @@ private fun AppLaunchOverlay(
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Image(
-                painter = painterResource(Res.drawable.app_logo_wordmark),
+            AppBrandWordmark(
                 contentDescription = stringResource(Res.string.app_brand_name),
                 modifier = Modifier
                     .fillMaxWidth(0.48f)
                     .height(44.dp),
-                contentScale = ContentScale.Fit,
             )
             Spacer(modifier = Modifier.height(tokens.spacing.sectionGap))
             NuvioLoadingIndicator(color = tokens.colors.accent)

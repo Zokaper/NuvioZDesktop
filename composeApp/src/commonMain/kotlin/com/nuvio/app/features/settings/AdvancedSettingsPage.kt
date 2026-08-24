@@ -77,16 +77,28 @@ import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.*
 import nuvio.composeapp.generated.resources.action_cancel
 import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.settings_advanced_discord_rich_presence
+import nuvio.composeapp.generated.resources.settings_advanced_discord_rich_presence_description
+import nuvio.composeapp.generated.resources.settings_advanced_opengl_renderer
+import nuvio.composeapp.generated.resources.settings_advanced_opengl_renderer_description
+import nuvio.composeapp.generated.resources.settings_advanced_opengl_renderer_external_description
+import nuvio.composeapp.generated.resources.settings_advanced_section_discord
+import nuvio.composeapp.generated.resources.settings_advanced_section_windows_graphics
+import nuvio.composeapp.generated.resources.settings_advanced_sentry_reports_subtitle_desktop
 import nuvio.composeapp.generated.resources.sentry_disable_dialog_subtitle
+import nuvio.composeapp.generated.resources.sentry_disable_dialog_subtitle_desktop
 import nuvio.composeapp.generated.resources.sentry_disable_dialog_title
 import nuvio.composeapp.generated.resources.sentry_enable_dialog_subtitle
+import nuvio.composeapp.generated.resources.sentry_enable_dialog_subtitle_desktop
 import nuvio.composeapp.generated.resources.sentry_enable_dialog_title
 import nuvio.composeapp.generated.resources.sentry_help_body
+import nuvio.composeapp.generated.resources.sentry_help_body_desktop
 import nuvio.composeapp.generated.resources.sentry_help_title
 import nuvio.composeapp.generated.resources.sentry_keep_enabled
 import nuvio.composeapp.generated.resources.sentry_not_sent_body
 import nuvio.composeapp.generated.resources.sentry_not_sent_title
 import nuvio.composeapp.generated.resources.sentry_sent_body
+import nuvio.composeapp.generated.resources.sentry_sent_body_desktop
 import nuvio.composeapp.generated.resources.sentry_sent_title
 import nuvio.composeapp.generated.resources.sentry_turn_off
 import nuvio.composeapp.generated.resources.sentry_turn_on
@@ -122,6 +134,37 @@ internal fun LazyListScope.advancedSettingsContent(
             }
         }
     }
+    if (DesktopRendererSettings.isSupported) {
+        item {
+            val externallyControlled = remember { DesktopRendererSettings.isExternallyControlled }
+            var useOpenGl by remember { mutableStateOf(DesktopRendererSettings.useOpenGl) }
+
+            SettingsSection(
+                title = stringResource(Res.string.settings_advanced_section_windows_graphics),
+                isTablet = isTablet,
+            ) {
+                SettingsGroup(isTablet = isTablet) {
+                    SettingsSwitchRow(
+                        title = stringResource(Res.string.settings_advanced_opengl_renderer),
+                        description = stringResource(
+                            if (externallyControlled) {
+                                Res.string.settings_advanced_opengl_renderer_external_description
+                            } else {
+                                Res.string.settings_advanced_opengl_renderer_description
+                            },
+                        ),
+                        checked = useOpenGl,
+                        enabled = !externallyControlled,
+                        isTablet = isTablet,
+                        onCheckedChange = { enabled ->
+                            DesktopRendererSettings.setUseOpenGl(enabled)
+                            useOpenGl = enabled
+                        },
+                    )
+                }
+            }
+        }
+    }
     // The self-test row shares the Diagnostics heading rather than raising a second one, so the
     // section has to survive Sentry being unsupported on a platform - otherwise the button
     // disappears with it.
@@ -147,7 +190,13 @@ internal fun LazyListScope.advancedSettingsContent(
                     if (SentrySettingsRepository.isSupported) {
                         SettingsSwitchRow(
                             title = stringResource(Res.string.settings_advanced_sentry_reports),
-                            description = stringResource(Res.string.settings_advanced_sentry_reports_subtitle),
+                            description = stringResource(
+                                if (SentrySettingsPlatform.usesDesktopCopy) {
+                                    Res.string.settings_advanced_sentry_reports_subtitle_desktop
+                                } else {
+                                    Res.string.settings_advanced_sentry_reports_subtitle
+                                },
+                            ),
                             checked = sentryEnabled,
                             isTablet = isTablet,
                             onCheckedChange = { showSentryDialog = true },
@@ -180,6 +229,30 @@ internal fun LazyListScope.advancedSettingsContent(
                         showSentryDialog = false
                     },
                 )
+            }
+        }
+    }
+    if (DiscordRichPresenceRepository.isSupported) {
+        item {
+            val discordEnabledFlow = remember {
+                DiscordRichPresenceRepository.ensureLoaded()
+                DiscordRichPresenceRepository.enabled
+            }
+            val discordEnabled by discordEnabledFlow.collectAsStateWithLifecycle()
+
+            SettingsSection(
+                title = stringResource(Res.string.settings_advanced_section_discord),
+                isTablet = isTablet,
+            ) {
+                SettingsGroup(isTablet = isTablet) {
+                    SettingsSwitchRow(
+                        title = stringResource(Res.string.settings_advanced_discord_rich_presence),
+                        description = stringResource(Res.string.settings_advanced_discord_rich_presence_description),
+                        checked = discordEnabled,
+                        isTablet = isTablet,
+                        onCheckedChange = DiscordRichPresenceRepository::setEnabled,
+                    )
+                }
             }
         }
     }
@@ -252,10 +325,15 @@ private fun SentrySettingsDialog(
                 Spacer(modifier = Modifier.height(tokens.spacing.controlGap))
                 Text(
                     text = stringResource(
-                        if (enabled) {
-                            Res.string.sentry_disable_dialog_subtitle
-                        } else {
-                            Res.string.sentry_enable_dialog_subtitle
+                        when {
+                            enabled && SentrySettingsPlatform.usesDesktopCopy -> {
+                                Res.string.sentry_disable_dialog_subtitle_desktop
+                            }
+                            enabled -> Res.string.sentry_disable_dialog_subtitle
+                            SentrySettingsPlatform.usesDesktopCopy -> {
+                                Res.string.sentry_enable_dialog_subtitle_desktop
+                            }
+                            else -> Res.string.sentry_enable_dialog_subtitle
                         },
                     ),
                     style = MaterialTheme.typography.bodyLarge,
@@ -267,11 +345,23 @@ private fun SentrySettingsDialog(
                 ) {
                     SentryInfoSection(
                         title = stringResource(Res.string.sentry_help_title),
-                        body = stringResource(Res.string.sentry_help_body),
+                        body = stringResource(
+                            if (SentrySettingsPlatform.usesDesktopCopy) {
+                                Res.string.sentry_help_body_desktop
+                            } else {
+                                Res.string.sentry_help_body
+                            },
+                        ),
                     )
                     SentryInfoSection(
                         title = stringResource(Res.string.sentry_sent_title),
-                        body = stringResource(Res.string.sentry_sent_body),
+                        body = stringResource(
+                            if (SentrySettingsPlatform.usesDesktopCopy) {
+                                Res.string.sentry_sent_body_desktop
+                            } else {
+                                Res.string.sentry_sent_body
+                            },
+                        ),
                     )
                     SentryInfoSection(
                         title = stringResource(Res.string.sentry_not_sent_title),
