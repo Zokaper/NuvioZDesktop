@@ -338,9 +338,11 @@ jobs:
         env:
           MACOS_ARCH: ${{ matrix.arch }}
         run: |
-          ./gradlew \
-            :composeApp:notarizeReleaseDmgWithKeychain \
-            :desktopSentry:sentryUploadSourceBundleJava \
+          tasks=(:composeApp:notarizeReleaseDmgWithKeychain)
+          if [[ -n "${SENTRY_AUTH_TOKEN}" ]]; then
+            tasks+=(:desktopSentry:sentryUploadSourceBundleJava)
+          fi
+          ./gradlew "${tasks[@]}" \
             "-Pnuvio.macos.arch=${MACOS_ARCH}" \
             -Pcompose.desktop.packaging.checkJdkVendor=false \
             --no-configuration-cache \
@@ -547,9 +549,12 @@ jobs:
       - name: Build MSI
         shell: pwsh
         run: |
+          $tasks = @(':composeApp:packageReleaseMsi')
+          if (-not [string]::IsNullOrWhiteSpace($env:SENTRY_AUTH_TOKEN)) {
+            $tasks += ':desktopSentry:sentryUploadSourceBundleJava'
+          }
           & .\gradlew.bat `
-            :composeApp:packageReleaseMsi `
-            :desktopSentry:sentryUploadSourceBundleJava `
+            @tasks `
             "-Pnuvio.webview2.dir=$env:WEBVIEW2_ROOT" `
             "-Pcompose.desktop.packaging.checkJdkVendor=false" `
             --no-configuration-cache `
