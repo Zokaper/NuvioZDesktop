@@ -2,6 +2,14 @@
 
 Last updated: 2026-08-24
 
+## The numbering bridge is published (2026-08-24)
+
+Stable `0.5.0-beta+126` is live. Release run `32777297995` built and verified the Windows MSI,
+published its checksum file, and tagged the exact release commit `ee193661`. The bridge ranks above
+`0.4.14-beta` for old updaters and carries the serial-aware updater required before adopting the
+synced vanilla version as `<vanilla>-z1`. Full desktop CI run `32775960554` passed the desktop suite
+and MSI packaging at the same commit.
+
 
 ## Connection figure deadline race fixed and confirmed (2026-08-24)
 
