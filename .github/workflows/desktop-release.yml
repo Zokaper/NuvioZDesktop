@@ -202,8 +202,6 @@ jobs:
             MACOS_NOTARY_TEAM_ID
             NUVIO_MACOS_NOTARY_KEYCHAIN_PROFILE
             NUVIO_MACOS_SIGNING_IDENTITY
-            SENTRY_AUTH_TOKEN
-            SENTRY_DESKTOP_DSN
           )
           missing=()
           for value_name in "${required_values[@]}"; do
@@ -215,6 +213,11 @@ jobs:
             printf 'Missing required desktop release values: %s\n' "${missing[*]}" >&2
             exit 1
           fi
+          for value_name in SENTRY_AUTH_TOKEN SENTRY_DESKTOP_DSN; do
+            if [[ -z "${!value_name}" ]]; then
+              echo "::warning::${value_name} is not set; Sentry reporting will be unavailable in this build."
+            fi
+          done
 
           # Secrets have arrived with a UTF-8 BOM in front of the base64, and
           # variously wrapped, CRLF-terminated or URL-safe encoded. Drop every
@@ -432,8 +435,6 @@ jobs:
           missing=()
           required_values=(
             LOCAL_PROPERTIES_BASE64
-            SENTRY_AUTH_TOKEN
-            SENTRY_DESKTOP_DSN
           )
           for value_name in "${required_values[@]}"; do
             if [[ -z "${!value_name}" ]]; then
@@ -444,6 +445,11 @@ jobs:
             printf 'Missing required desktop release values: %s\n' "${missing[*]}" >&2
             exit 1
           fi
+          for value_name in SENTRY_AUTH_TOKEN SENTRY_DESKTOP_DSN; do
+            if [[ -z "${!value_name}" ]]; then
+              echo "::warning::${value_name} is not set; Sentry reporting will be unavailable in this build."
+            fi
+          done
 
           # Secrets have arrived with a UTF-8 BOM in front of the base64, and
           # variously wrapped, CRLF-terminated or URL-safe encoded. Drop every
