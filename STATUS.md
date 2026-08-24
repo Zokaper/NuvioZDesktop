@@ -2,6 +2,19 @@
 
 Last updated: 2026-08-24
 
+## NuvioDesktop 0.1.20-alpha is synced (2026-08-24)
+
+Merge `e649ff75` brings in named upstream release `0.1.20-alpha` (`b32dd57b`) while preserving
+Nuvio Z's playback watchdog, network-quality settlement, next-episode chain and desktop player
+controls. The full local desktop test task passed. Build-only run `32781339968` then compiled the
+final hosted tree, built the Windows MSI, verified it and uploaded it.
+
+Upstream's new Sentry integration originally made its credentials mandatory in the release
+workflow, but this fork has none. Commits `5338b72a` and `c1dfe4b4` make those values optional and
+skip only the source-bundle upload when absent; the app and MSI still build normally with an
+explicit warning. Current drift against `upstream/Dev` is **193 ahead / 162 behind**, patch surface
+**144**, conflict surface **44**.
+
 ## The numbering bridge is published (2026-08-24)
 
 Stable `0.5.0-beta+126` is live. Release run `32777297995` built and verified the Windows MSI,
