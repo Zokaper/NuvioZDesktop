@@ -201,6 +201,7 @@ internal class PlayerScreenRuntime(
     var playerControlsPendingP2pSwitch by mutableStateOf<PendingPlayerP2pSwitch?>(null)
     var playerControlsCloseModalsToken by mutableStateOf(0L)
     var episodeStreamsPanelState by mutableStateOf(EpisodeStreamsPanelState())
+    var episodeQualitySheetEpisode by mutableStateOf<MetaVideo?>(null)
     var playerMetaVideos by mutableStateOf<List<MetaVideo>>(emptyList())
     var skipIntervals by mutableStateOf<List<SkipInterval>>(emptyList())
     var activeSkipInterval by mutableStateOf<SkipInterval?>(null)
@@ -212,9 +213,8 @@ internal class PlayerScreenRuntime(
     var playbackStartedForParentalGuide by mutableStateOf(false)
     var nextEpisodeInfo by mutableStateOf<NextEpisodeInfo?>(null)
     var showNextEpisodeCard by mutableStateOf(false)
-    var nextEpisodeAutoPlaySearching by mutableStateOf(false)
-    var nextEpisodeAutoPlaySourceName by mutableStateOf<String?>(null)
-    var nextEpisodeAutoPlayCountdown by mutableStateOf<Int?>(null)
+    var nextEpisodeTransition by mutableStateOf(PlayerNextEpisodeTransition.Idle)
+    var nextEpisodeDismissedForVideoId by mutableStateOf<String?>(null)
     var nextEpisodeAutoPlayJob by mutableStateOf<Job?>(null)
 
     /**

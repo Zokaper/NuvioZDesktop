@@ -734,6 +734,25 @@ button:disabled {
   color: inherit;
 }
 
+.next-episode-dismiss {
+  width: 28px;
+  height: 28px;
+  margin-left: 4px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(255, 255, 255, .78);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.next-episode-dismiss:hover,
+.next-episode-dismiss:focus-visible {
+  background: rgba(255, 255, 255, .12);
+  color: var(--theme-control-foreground);
+}
+
 .header-actions {
   display: flex;
   gap: 10px;

@@ -66,6 +66,7 @@ const nextEpisodeHeader = document.getElementById("nextEpisodeHeader");
 const nextEpisodeTitle = document.getElementById("nextEpisodeTitle");
 const nextEpisodeStatus = document.getElementById("nextEpisodeStatus");
 const nextEpisodeAction = document.getElementById("nextEpisodeAction");
+const nextEpisodeDismiss = document.getElementById("nextEpisodeDismiss");
 const sourcesButton = document.getElementById("sourcesButton");
 const episodesButton = document.getElementById("episodesButton");
 const nextEpisodeButton = document.getElementById("nextEpisodeButton");
@@ -1963,6 +1964,7 @@ const renderNativePlaybackPrompts = () => {
   nextEpisodeStatus.textContent = state.nextEpisodeStatus || "";
   nextEpisodeStatus.hidden = !state.nextEpisodeStatus;
   nextEpisodeAction.textContent = state.nextEpisodeActionLabel || "Play";
+  nextEpisodeDismiss.setAttribute("aria-label", state.closeLabel || "Close");
   nextEpisodeCard.setAttribute("aria-hidden", showNextEpisode ? "false" : "true");
   nextEpisodeCard.classList.toggle("visible", showNextEpisode);
   nextEpisodeCard.classList.toggle("playable", Boolean(state.nextEpisodePlayable));
@@ -2703,6 +2705,11 @@ nextEpisodeCard.addEventListener("click", event => {
   if (state.nextEpisodePlayable) {
     send("playNextEpisode", 0);
   }
+});
+
+nextEpisodeDismiss.addEventListener("click", event => {
+  event.stopPropagation();
+  send("dismissNextEpisode", 0);
 });
 
 seek.addEventListener("input", () => {
