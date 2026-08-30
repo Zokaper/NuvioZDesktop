@@ -30,6 +30,15 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
+      - name: Install Linux media development libraries
+        run: |
+          # compose-media-player builds its native Linux shim as part of desktopTest.
+          # The synced module requires the GStreamer core, app and video pkg-config files.
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgstreamer1.0-dev \
+            libgstreamer-plugins-base1.0-dev
+
       - name: Cap Gradle memory for hosted runners
         run: |
           # gradle.properties asks for 12G heap, which is more than a standard
