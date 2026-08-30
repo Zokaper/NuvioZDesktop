@@ -70,7 +70,6 @@ const nextEpisodeDismiss = document.getElementById("nextEpisodeDismiss");
 const sourcesButton = document.getElementById("sourcesButton");
 const episodesButton = document.getElementById("episodesButton");
 const nextEpisodeButton = document.getElementById("nextEpisodeButton");
-const lockedLabel = document.getElementById("lockedLabel");
 const audioModal = document.getElementById("audioModal");
 const subtitleModal = document.getElementById("subtitleModal");
 const audioPanelTitle = document.getElementById("audioPanelTitle");
@@ -2137,8 +2136,7 @@ const renderChrome = () => {
   setActionButtonLabel("sources", state.sourcesLabel || "Sources");
   setActionButtonLabel("episodes", state.episodesLabel || "Episodes");
   setActionButtonLabel("nextEpisode", state.nextEpisodeLabel || "Next Episode");
-  lockedLabel.textContent = state.tapToUnlockLabel || "Tap to unlock";
-  const showBuffering = Boolean(!showError && state.isLoading && !state.isLocked && !activeModal && !showOpening);
+  const showBuffering = Boolean(!showError && state.isLoading && !activeModal && !showOpening);
   bufferingStatus.classList.toggle("visible", showBuffering);
   bufferingStatus.setAttribute("aria-hidden", showBuffering ? "false" : "true");
 

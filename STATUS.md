@@ -1,6 +1,19 @@
 # Nuvio Z Status
 
-Last updated: 2026-08-24
+Last updated: 2026-08-31
+
+## Desktop native player controls restored after the 0.1.20-alpha sync (2026-08-31)
+
+The refreshed native desktop player page removed its lock-controls markup, but merge `e649ff75`
+retained a `lockedLabel` dereference and an `isLocked` condition in `controls.js`. The first
+`render()` therefore threw before the page could send `controlsReady`. With the native bridge never
+receiving that handshake, playback commands appeared dead, the timeline stayed at `00:00`, and the
+opening artwork/logo state was never rendered. The two stale lock references are removed while
+preserving upstream's newer player UI. `NativePlayerControlsPageTest` now checks that every element
+requested with `getElementById` exists in `controls.html`, covering this merge failure directly.
+The focused Gradle desktop test passes and `controls.js` passes Node's syntax check. The full
+desktop suite was also started, but its unrelated end-to-end harness remained silent for several
+minutes and was stopped rather than reported as a pass.
 
 ## NuvioDesktop 0.1.20-alpha is synced (2026-08-24)
 
