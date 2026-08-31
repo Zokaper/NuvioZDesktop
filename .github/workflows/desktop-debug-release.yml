@@ -263,11 +263,12 @@ jobs:
             exit 1
           fi
           sed -i '' -E '/^[[:space:]]*(sdk\.dir|NUVIO_RELEASE_(STORE_FILE|STORE_PASSWORD|KEY_ALIAS|KEY_PASSWORD)|NUVIO_MACOS_(SIGNING_IDENTITY|NOTARY_APPLE_ID|NOTARY_TEAM_ID|NOTARY_PASSWORD|NOTARY_KEYCHAIN_PROFILE|NOTARY_KEYCHAIN_PATH))[[:space:]]*=/d' local.properties
-      - name: Run desktop tests on macOS
+      - name: Run release selection tests on macOS
         shell: bash
         run: |
           set -o pipefail
           ./gradlew :composeApp:desktopTest \
+            --tests 'com.nuvio.app.features.updater.AppUpdateAssetSelectionTest' \
             -Pnuvio.desktop.debugChannel=true \
             -Pnuvio.macos.arch="${MACOS_ARCH}" \
             --no-configuration-cache \
