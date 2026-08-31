@@ -1,5 +1,6 @@
 package com.nuvio.app.features.player
 
+import com.nuvio.app.isDesktop
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.features.debrid.DirectDebridPlayableResult
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
@@ -722,7 +723,7 @@ internal fun PlayerScreenRuntime.playEpisodeFromPicker(episode: MetaVideo) {
         )
     ) return
 
-    when (playerEpisodeModeRoute(playerSettingsUiState.playbackMode)) {
+    when (playerEpisodeModeRoute(playerSettingsUiState.playbackMode, isDesktop = isDesktop)) {
         PlayerEpisodeModeRoute.SOURCE_LIST -> openEpisodeSourceList(episode)
         PlayerEpisodeModeRoute.QUALITY_SHEET -> openEpisodeQualitySheet(episode)
         PlayerEpisodeModeRoute.AUTO_PICK ->

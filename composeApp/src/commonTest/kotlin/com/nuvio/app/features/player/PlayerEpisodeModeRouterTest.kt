@@ -16,6 +16,14 @@ class PlayerEpisodeModeRouterTest {
     }
 
     @Test
+    fun streamlinedDesktopOpensTheNativeSourceList() {
+        assertEquals(
+            PlayerEpisodeModeRoute.SOURCE_LIST,
+            playerEpisodeModeRoute(PlaybackMode.STREAMLINED, isDesktop = true),
+        )
+    }
+
+    @Test
     fun instantAutoPicks() {
         assertEquals(PlayerEpisodeModeRoute.AUTO_PICK, playerEpisodeModeRoute(PlaybackMode.INSTANT))
     }
