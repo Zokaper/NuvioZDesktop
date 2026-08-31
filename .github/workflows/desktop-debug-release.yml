@@ -70,26 +70,26 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v6
       - name: Fetch pinned Windows runtime
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          archive="${RUNNER_TEMP}/nuvio-desktop-runtime-windows-x64-v1.tar.gz"
-          expected_sha256=9d9004672ddca02892e8128feb2dea5d70df0d9fe9af1b18c89d2e3a3ffffa32
-          gh release download desktop-runtime-v1 \
-            --repo "${GITHUB_REPOSITORY}" \
-            --pattern "$(basename "${archive}")" \
-            --dir "${RUNNER_TEMP}" \
-            --clobber
-          actual_sha256="$(sha256sum "${archive}" | awk '{print $1}')"
-          if [[ "${actual_sha256}" != "${expected_sha256}" ]]; then
-            echo "The pinned Windows runtime archive checksum does not match." >&2
-            exit 1
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:RUNNER_TEMP 'nuvio-desktop-runtime-windows-x64-v1.tar.gz'
+          $expectedSha256 = '9d9004672ddca02892e8128feb2dea5d70df0d9fe9af1b18c89d2e3a3ffffa32'
+          gh release download desktop-runtime-v1 --repo $env:GITHUB_REPOSITORY --pattern (Split-Path -Leaf $archive) --dir $env:RUNNER_TEMP --clobber
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Unable to download the pinned Windows runtime archive.'
           fi
-          tar -xzf "${archive}"
-          runtime_path="composeApp/src/desktopMain/native/windows/runtime/libmpv-2.dll"
-          if [[ ! -f "${runtime_path}" ]] || (( $(wc -c < "${runtime_path}") < 1000000 )); then
-            echo "The bundled Windows libmpv runtime was not materialized from Git LFS." >&2
-            exit 1
+          $actualSha256 = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) {
+            throw 'The pinned Windows runtime archive checksum does not match.'
+          }
+          tar -xzf $archive
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Unable to extract the pinned Windows runtime archive.'
+          }
+          $runtimePath = 'composeApp/src/desktopMain/native/windows/runtime/libmpv-2.dll'
+          if (!(Test-Path -LiteralPath $runtimePath) -or (Get-Item -LiteralPath $runtimePath).Length -lt 1000000) {
+            throw 'The bundled Windows libmpv runtime was not materialized from the pinned archive.'
           fi
       - name: Set up Java
         uses: actions/setup-java@v5
