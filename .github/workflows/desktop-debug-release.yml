@@ -78,7 +78,7 @@ jobs:
           gh release download desktop-runtime-v1 --repo $env:GITHUB_REPOSITORY --pattern (Split-Path -Leaf $archive) --dir $env:RUNNER_TEMP --clobber
           if ($LASTEXITCODE -ne 0) {
             throw 'Unable to download the pinned Windows runtime archive.'
-          fi
+          }
           $actualSha256 = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($actualSha256 -ne $expectedSha256) {
             throw 'The pinned Windows runtime archive checksum does not match.'
@@ -90,7 +90,7 @@ jobs:
           $runtimePath = 'composeApp/src/desktopMain/native/windows/runtime/libmpv-2.dll'
           if (!(Test-Path -LiteralPath $runtimePath) -or (Get-Item -LiteralPath $runtimePath).Length -lt 1000000) {
             throw 'The bundled Windows libmpv runtime was not materialized from the pinned archive.'
-          fi
+          }
       - name: Set up Java
         uses: actions/setup-java@v5
         with:
