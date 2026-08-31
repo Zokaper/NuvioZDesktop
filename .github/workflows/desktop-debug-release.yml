@@ -65,15 +65,27 @@ jobs:
     env:
       LOCAL_PROPERTIES_BASE64: ${{ secrets.NUVIO_DESKTOP_LOCAL_PROPERTIES_BASE64 }}
       WEBVIEW2_VERSION: 1.0.4078.44
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Check out source
         uses: actions/checkout@v6
-      - name: Fetch Windows runtime from Git LFS
+      - name: Fetch pinned Windows runtime
         shell: bash
         run: |
-          git lfs pull \
-            --include="composeApp/src/desktopMain/native/windows/runtime/**,composeApp/src/desktopMain/resources/torrserver/windows-amd64/TorrServer.exe" \
-            --exclude=""
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/nuvio-desktop-runtime-windows-x64-v1.tar.gz"
+          expected_sha256=9d9004672ddca02892e8128feb2dea5d70df0d9fe9af1b18c89d2e3a3ffffa32
+          gh release download desktop-runtime-v1 \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern "$(basename "${archive}")" \
+            --dir "${RUNNER_TEMP}" \
+            --clobber
+          actual_sha256="$(sha256sum "${archive}" | awk '{print $1}')"
+          if [[ "${actual_sha256}" != "${expected_sha256}" ]]; then
+            echo "The pinned Windows runtime archive checksum does not match." >&2
+            exit 1
+          fi
+          tar -xzf "${archive}"
           runtime_path="composeApp/src/desktopMain/native/windows/runtime/libmpv-2.dll"
           if [[ ! -f "${runtime_path}" ]] || (( $(wc -c < "${runtime_path}") < 1000000 )); then
             echo "The bundled Windows libmpv runtime was not materialized from Git LFS." >&2
@@ -176,16 +188,27 @@ jobs:
     env:
       LOCAL_PROPERTIES_BASE64: ${{ secrets.NUVIO_DESKTOP_LOCAL_PROPERTIES_BASE64 }}
       MACOS_ARCH: arm64
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Check out source
         uses: actions/checkout@v6
-      - name: Fetch and verify macOS runtime
+      - name: Fetch and verify pinned macOS runtime
         shell: bash
         run: |
           set -euo pipefail
-          git lfs pull \
-            --include="composeApp/src/desktopMain/native/macos/runtime/${MACOS_ARCH}/**" \
-            --exclude=""
+          archive="${RUNNER_TEMP}/nuvio-desktop-runtime-macos-arm64-v1.tar.gz"
+          expected_sha256=0a4d925ad6768be37cade47291a4941748d34783291fb8c708ca19f16ab65c1c
+          gh release download desktop-runtime-v1 \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern "$(basename "${archive}")" \
+            --dir "${RUNNER_TEMP}" \
+            --clobber
+          actual_sha256="$(shasum -a 256 "${archive}" | awk '{print $1}')"
+          if [[ "${actual_sha256}" != "${expected_sha256}" ]]; then
+            echo "The pinned macOS runtime archive checksum does not match." >&2
+            exit 1
+          fi
+          tar -xzf "${archive}"
           runtime="composeApp/src/desktopMain/native/macos/runtime/${MACOS_ARCH}/libmpv.2.dylib"
           torrserver="composeApp/src/desktopMain/torrserver/macos-arm64/TorrServer"
           if [[ ! -f "${runtime}" ]] || (( $(wc -c < "${runtime}") < 1000000 )); then

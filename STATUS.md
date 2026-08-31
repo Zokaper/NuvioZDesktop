@@ -16,6 +16,12 @@ rejects build-machine library paths, and keeps the packaged app alive for a shor
 test. `AppUpdateAssetSelectionTest` also covers selecting the arm64 DMG from a prerelease that
 contains both Windows and Mac assets; the focused desktop test passes locally (6 tests).
 
+The first dispatch exposed a repository-level blocker before either platform compiled: GitHub
+reported that this repository had exceeded its LFS bandwidth budget. The already-tracked runtime
+payloads are now mirrored in the private draft `desktop-runtime-v1` release, which is invisible to
+both application update feeds. Each workflow job downloads only its architecture and verifies a
+pinned SHA-256 before extraction, so CI no longer depends on mutable or exhausted LFS bandwidth.
+
 This does **not** claim playback works on a Mac yet. The platform implementation and both native
 runtimes exist, but no previous macOS workflow reached compilation because the release job required
 Apple credentials that this repository does not have. The first hosted build is the compiler/linker
