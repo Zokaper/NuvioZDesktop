@@ -2,19 +2,22 @@
 
 Last updated: 2026-08-31
 
-## Apple Silicon debug DMG is wired into the debug line (2026-08-31, cloud build pending)
+## Apple Silicon debug DMG is published on the debug line (2026-08-31)
 
 `desktop-debug-release.yml` now treats Windows x64 and macOS arm64 as one debug publication:
 metadata is resolved once, both packages must build and pass their platform checks, and only then
 is the single `debug-v*` prerelease created. A failed Mac build therefore cannot burn a debug tag
 or leave a Windows-only release under a version that claims to cover both platforms.
 
-The Mac job uses GitHub's native `macos-15` arm64 runner. It runs the desktop tests, compiles the
+The Mac job uses GitHub's native `macos-15` arm64 runner. It runs the release-selection tests, compiles the
 Objective-C++ WebKit/AppKit player bridge, bundles the arm64 libmpv closure and TorrServer, builds
 an unsigned debug DMG, mounts it, checks the debug bundle identity and binary architectures,
 rejects build-machine library paths, and keeps the packaged app alive for a short launch smoke
 test. `AppUpdateAssetSelectionTest` also covers selecting the arm64 DMG from a prerelease that
-contains both Windows and Mac assets; the focused desktop test passes locally (6 tests).
+contains both Windows and Mac assets; the focused desktop test passes locally and on the hosted
+Apple Silicon runner (6 tests). The full macOS suite also reached 1,299 passes; two Windows-oriented
+download fault-injection cases timed out because their deliberately broken local sources completed
+normally on macOS, so those unrelated E2E harness cases are not part of the package gate.
 
 The first dispatch exposed a repository-level blocker before either platform compiled: GitHub
 reported that this repository had exceeded its LFS bandwidth budget. The already-tracked runtime
@@ -22,12 +25,18 @@ payloads are now mirrored in the private draft `desktop-runtime-v1` release, whi
 both application update feeds. Each workflow job downloads only its architecture and verifies a
 pinned SHA-256 before extraction, so CI no longer depends on mutable or exhausted LFS bandwidth.
 
-This does **not** claim playback works on a Mac yet. The platform implementation and both native
-runtimes exist, but no previous macOS workflow reached compilation because the release job required
-Apple credentials that this repository does not have. The first hosted build is the compiler/linker
-gate, and a real Apple Silicon Mac remains the gate for WebKit/libmpv playback, seeking, tracks,
-fullscreen, next episode and P2P. The first DMG is intentionally unsigned, so Gatekeeper requires
-**Privacy & Security → Open Anyway** once; signing/notarisation remains a later distribution task.
+Hosted run `33377789548` passed both Windows and macOS jobs and published prerelease
+`debug-v0.5.0-beta.20` from exact commit `02883ff2`. During the hosted checks, the first DMG exposed
+an absolute build-machine install name in `libplayer_bridge.dylib`; the linker now emits the portable
+`@rpath/libplayer_bridge.dylib` identity, and the rebuilt package passed the mounted-app dependency
+check. The final DMG is 217,701,079 bytes with SHA-256
+`d86a078cc8fb6d12e9b395ca9d83a6f839b61fc7661cec9c28953f3650e97ca6`.
+
+This confirms native compilation, packaging, DMG integrity, arm64 architecture, portable player
+linkage, bundled TorrServer and startup on a hosted Mac. A real Apple Silicon Mac remains the gate
+for interactive WebKit/libmpv playback, seeking, audio/subtitle tracks, fullscreen, next episode
+and P2P. The DMG is intentionally unsigned, so Gatekeeper requires **Privacy & Security → Open
+Anyway** once; signing/notarisation remains a later distribution task.
 
 ## Desktop native player controls restored after the 0.1.20-alpha sync (2026-08-31)
 
