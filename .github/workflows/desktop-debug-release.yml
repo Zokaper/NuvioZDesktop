@@ -334,7 +334,7 @@ jobs:
             exit 1
           fi
           otool -L "${bridge}" | tee macos-player-dependencies.txt
-          if grep -E '/(opt/homebrew|usr/local|Users|private/var)/' macos-player-dependencies.txt; then
+          if grep -E '^[[:space:]]+/(opt/homebrew|usr/local|Users|private/var)/' macos-player-dependencies.txt; then
             echo "The player bridge contains a build-machine-only library path." >&2
             exit 1
           fi
