@@ -24,6 +24,24 @@ class AppUpdateAssetSelectionTest {
     }
 
     @Test
+    fun `selects Apple Silicon DMG from a mixed desktop debug release`() {
+        val selected = selectBestUpdateAsset(
+            assets = listOf(
+                asset("Nuvio-Z-Debug-Windows-x64-0.5.0-beta.20.msi"),
+                asset("Nuvio-Z-Debug-macOS-arm64-0.5.0-beta.20.dmg"),
+                asset("Nuvio-Z-Debug-macOS-x86_64-0.5.0-beta.20.dmg"),
+            ),
+            selector = AppUpdateAssetSelector(
+                fileExtensions = listOf(".dmg", ".pkg"),
+                preferredNameFragments = listOf("arm64", "aarch64", "macos", "mac", "darwin"),
+                fallbackNameFragments = listOf("universal", "all"),
+            ),
+        )
+
+        assertEquals("Nuvio-Z-Debug-macOS-arm64-0.5.0-beta.20.dmg", selected?.name)
+    }
+
+    @Test
     fun `ignores unrelated octet stream assets when desktop selector has no content types`() {
         val selected = selectBestUpdateAsset(
             assets = listOf(

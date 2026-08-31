@@ -2,6 +2,27 @@
 
 Last updated: 2026-08-31
 
+## Apple Silicon debug DMG is wired into the debug line (2026-08-31, cloud build pending)
+
+`desktop-debug-release.yml` now treats Windows x64 and macOS arm64 as one debug publication:
+metadata is resolved once, both packages must build and pass their platform checks, and only then
+is the single `debug-v*` prerelease created. A failed Mac build therefore cannot burn a debug tag
+or leave a Windows-only release under a version that claims to cover both platforms.
+
+The Mac job uses GitHub's native `macos-15` arm64 runner. It runs the desktop tests, compiles the
+Objective-C++ WebKit/AppKit player bridge, bundles the arm64 libmpv closure and TorrServer, builds
+an unsigned debug DMG, mounts it, checks the debug bundle identity and binary architectures,
+rejects build-machine library paths, and keeps the packaged app alive for a short launch smoke
+test. `AppUpdateAssetSelectionTest` also covers selecting the arm64 DMG from a prerelease that
+contains both Windows and Mac assets; the focused desktop test passes locally (6 tests).
+
+This does **not** claim playback works on a Mac yet. The platform implementation and both native
+runtimes exist, but no previous macOS workflow reached compilation because the release job required
+Apple credentials that this repository does not have. The first hosted build is the compiler/linker
+gate, and a real Apple Silicon Mac remains the gate for WebKit/libmpv playback, seeking, tracks,
+fullscreen, next episode and P2P. The first DMG is intentionally unsigned, so Gatekeeper requires
+**Privacy & Security → Open Anyway** once; signing/notarisation remains a later distribution task.
+
 ## Desktop native player controls restored after the 0.1.20-alpha sync (2026-08-31)
 
 The refreshed native desktop player page removed its lock-controls markup, but merge `e649ff75`
@@ -324,8 +345,8 @@ break the release workflow. The debug ProductVersion sequence `1.38.1 → 1.38.2
    one and confirm the first offers it.
 4. **The release app must be shown to ignore the debug channel** - the half that cannot be
    proved by installing the debug build alone.
-5. macOS and Linux are untested and unpublished; the workflow builds Windows only, matching
-   `desktop-release.yml`'s existing `target: windows` constraint.
+5. Linux remains untested and unpublished. macOS arm64 is now part of the debug workflow, with its
+   first GitHub-hosted build and real-Mac playback pass tracked at the top of this file.
 
 **Read `AGENTS.md` first.** It carries the two-repository mirroring rules, the
 full release procedure, which secrets exist and where, and how to verify code in a
