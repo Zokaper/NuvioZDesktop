@@ -10,6 +10,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -101,21 +102,24 @@ object ZSessionBridge {
             return false
         }
 
-        val response = runCatching {
-            http.post("${ZSupabaseConfig.URL}/functions/v1/z-session") {
-                header("apikey", ZSupabaseConfig.PUBLISHABLE_KEY)
-                // Set explicitly: this endpoint authenticates the *official* token, not a Z one, so
-                // it must not carry whatever session the Z client happens to hold.
-                header("Authorization", "Bearer $officialToken")
-                contentType(ContentType.Application.Json)
-                setBody("""{"profile_id":"$profileId"}""")
-            }
-        }.getOrElse { cause ->
+        // One account can hold several profiles, and the verified profile lives on the shared user
+        // record, so two devices exchanging at once can each be issued the other's profile. The
+        // function detects that and refuses rather than handing back a wrong identity; the loser
+        // simply goes again, by which point the other write has settled.
+        var response = runCatching { postExchange(officialToken, profileId) }.getOrElse { cause ->
             lastFailure = "Could not reach Nuvio Z: ${cause.message ?: "network error"}"
             return false
         }
+        var body = runCatching { response.bodyAsText() }.getOrDefault("")
+        if (response.status.value == HTTP_CONFLICT && body.contains("concurrent profile exchange")) {
+            delay(CONCURRENT_RETRY_DELAY_MS)
+            response = runCatching { postExchange(officialToken, profileId) }.getOrElse { cause ->
+                lastFailure = "Could not reach Nuvio Z: ${cause.message ?: "network error"}"
+                return false
+            }
+            body = runCatching { response.bodyAsText() }.getOrDefault("")
+        }
 
-        val body = runCatching { response.bodyAsText() }.getOrDefault("")
         if (!response.status.isSuccess()) {
             // The function distinguishes its refusals, so the status and body together say which
             // step failed rather than collapsing all of them into "unavailable".
@@ -160,7 +164,20 @@ object ZSessionBridge {
         return true
     }
 
+    private suspend fun postExchange(officialToken: String, profileId: String) =
+        http.post("${ZSupabaseConfig.URL}/functions/v1/z-session") {
+            header("apikey", ZSupabaseConfig.PUBLISHABLE_KEY)
+            // Set explicitly: this endpoint authenticates the *official* token, not a Z one, so it
+            // must not carry whatever session the Z client happens to hold.
+            header("Authorization", "Bearer $officialToken")
+            contentType(ContentType.Application.Json)
+            setBody("""{"profile_id":"$profileId"}""")
+        }
+
     private fun currentEpochSeconds(): Long = kotlin.time.Clock.System.now().epochSeconds
+
+    private const val HTTP_CONFLICT = 409
+    private const val CONCURRENT_RETRY_DELAY_MS = 600L
 
     private const val DEFAULT_EXPIRY_SECONDS = 3600L
 }
