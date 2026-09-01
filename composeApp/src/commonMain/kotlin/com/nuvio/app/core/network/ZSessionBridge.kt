@@ -41,6 +41,17 @@ object ZSessionBridge {
 
     private var boundProfileId: String? = null
 
+    /**
+     * Why the last exchange failed, for the UI to show.
+     *
+     * The exchange can fail for reasons the user can act on - not being signed in to Nuvio - and
+     * reasons they cannot, and a bare false told them apart from neither. Every return path below
+     * sets this before giving up.
+     */
+    @Volatile
+    var lastFailure: String? = null
+        private set
+
     /** True when a Z session is currently installed for [profileId]. */
     fun hasSessionFor(profileId: String): Boolean =
         boundProfileId == profileId && ZSupabaseProvider.client.auth.currentSessionOrNull() != null
@@ -54,7 +65,10 @@ object ZSessionBridge {
      * here hides the surface instead of surfacing an error the user cannot act on.
      */
     suspend fun ensureSession(profileId: String): Boolean {
-        if (!ZSupabaseProvider.isConfigured) return false
+        if (!ZSupabaseProvider.isConfigured) {
+            lastFailure = "This build has no Nuvio Z backend configured."
+            return false
+        }
         if (hasSessionFor(profileId)) return true
         return mutex.withLock {
             // Another caller may have completed the exchange while this one waited for the lock.
@@ -79,7 +93,13 @@ object ZSessionBridge {
     private suspend fun exchange(profileId: String): Boolean {
         val officialToken = runCatching {
             SupabaseProvider.client.auth.currentAccessTokenOrNull()
-        }.getOrNull() ?: return false
+        }.getOrNull()
+        if (officialToken.isNullOrBlank()) {
+            // Social identity is the official Nuvio identity, so there is nothing to exchange until
+            // the user has signed in there. This is the one failure they can act on themselves.
+            lastFailure = "Sign in to your Nuvio account to use Social."
+            return false
+        }
 
         val response = runCatching {
             http.post("${ZSupabaseConfig.URL}/functions/v1/z-session") {
@@ -90,15 +110,32 @@ object ZSessionBridge {
                 contentType(ContentType.Application.Json)
                 setBody("""{"profile_id":"$profileId"}""")
             }
-        }.getOrNull() ?: return false
+        }.getOrElse { cause ->
+            lastFailure = "Could not reach Nuvio Z: ${cause.message ?: "network error"}"
+            return false
+        }
 
-        if (!response.status.isSuccess()) return false
+        val body = runCatching { response.bodyAsText() }.getOrDefault("")
+        if (!response.status.isSuccess()) {
+            // The function distinguishes its refusals, so the status and body together say which
+            // step failed rather than collapsing all of them into "unavailable".
+            lastFailure = "Nuvio Z refused the sign-in exchange (${response.status.value}): $body"
+            return false
+        }
 
         val payload = runCatching {
-            json.parseToJsonElement(response.bodyAsText()) as JsonObject
-        }.getOrNull() ?: return false
+            json.parseToJsonElement(body) as JsonObject
+        }.getOrNull()
+        if (payload == null) {
+            lastFailure = "Nuvio Z returned a response that could not be read."
+            return false
+        }
 
-        val accessToken = payload["access_token"]?.jsonPrimitive?.content ?: return false
+        val accessToken = payload["access_token"]?.jsonPrimitive?.content
+        if (accessToken == null) {
+            lastFailure = "Nuvio Z returned no access token."
+            return false
+        }
         val refreshToken = payload["refresh_token"]?.jsonPrimitive?.content.orEmpty()
         val expiresAt = payload["expires_at"]?.jsonPrimitive?.content?.toLongOrNull()
 
@@ -113,9 +150,13 @@ object ZSessionBridge {
                 ),
             )
         }.isSuccess
-        if (!installed) return false
+        if (!installed) {
+            lastFailure = "Could not install the Nuvio Z session."
+            return false
+        }
 
         boundProfileId = profileId
+        lastFailure = null
         return true
     }
 

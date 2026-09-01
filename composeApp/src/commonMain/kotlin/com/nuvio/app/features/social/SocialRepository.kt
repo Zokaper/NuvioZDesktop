@@ -87,7 +87,14 @@ object SocialRepository {
             return
         }
         if (!ZSessionBridge.ensureSession(profileId)) {
-            _uiState.value = current.copy(isLoading = false, isLoadingMore = false)
+            // Hiding the surface is right when the backend is simply not deployed, but a failed
+            // exchange is a fault the user should see - not least because the commonest one is
+            // "you are not signed in", which they can fix.
+            _uiState.value = current.copy(
+                isLoading = false,
+                isLoadingMore = false,
+                errorMessage = ZSessionBridge.lastFailure,
+            )
             return
         }
         val cursor = if (append) current.nextCursor else null
@@ -248,7 +255,9 @@ object SocialRepository {
     private suspend fun <T> socialCall(block: suspend () -> T): Result<T> {
         val profileId = activeProfileId ?: return runCatching { block() }
         if (!ZSessionBridge.ensureSession(profileId)) {
-            return Result.failure(IllegalStateException("Nuvio Z social is unavailable"))
+            return Result.failure(
+                IllegalStateException(ZSessionBridge.lastFailure ?: "Nuvio Z social is unavailable"),
+            )
         }
         val first = runCatching { block() }
         if (first.isSuccess) return first

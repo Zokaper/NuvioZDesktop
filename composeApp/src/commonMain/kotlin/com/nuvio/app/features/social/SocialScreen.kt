@@ -14,12 +14,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -41,6 +44,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -82,9 +88,40 @@ fun SocialScreen(
     var handle by rememberSaveable { mutableStateOf("") }
     var search by rememberSaveable { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<SocialProfileSummary>>(emptyList()) }
+    // Search previously rendered every outcome identically - a failure, an empty result and a query
+    // too short to run all left the screen unchanged, which is indistinguishable from a dead button.
+    var searchMessage by remember { mutableStateOf<String?>(null) }
+    var isSearching by remember { mutableStateOf(false) }
+    var handleMessage by remember { mutableStateOf<String?>(null) }
     var partyCode by rememberSaveable { mutableStateOf("") }
     var shareWatching by rememberSaveable(state.me?.profileId) { mutableStateOf(true) }
     var shareRecent by rememberSaveable(state.me?.profileId) { mutableStateOf(true) }
+
+    // Shared by the search button and the keyboard's search action, so pressing Enter does what the
+    // button does. The server refuses queries under three characters, so that is reported here
+    // rather than sent and silently dropped.
+    val runSearch: () -> Unit = {
+        scope.launch {
+            val query = search.trim()
+            if (query.length < 3) {
+                searchResults = emptyList()
+                searchMessage = "Type at least 3 characters to search"
+            } else {
+                isSearching = true
+                searchMessage = null
+                SocialRepository.searchProfiles(query)
+                    .onSuccess { results ->
+                        searchResults = results
+                        searchMessage = if (results.isEmpty()) "No one is using @$query" else null
+                    }
+                    .onFailure { error ->
+                        searchResults = emptyList()
+                        searchMessage = error.message ?: "Search failed"
+                    }
+                isSearching = false
+            }
+        }
+    }
 
     LaunchedEffect(state.me?.profileId, state.me?.shareWatchingNow, state.me?.shareRecentlyWatched) {
         shareWatching = state.me?.shareWatchingNow ?: true
@@ -95,6 +132,11 @@ fun SocialScreen(
         scrollToTopRequests.collect { listState.animateScrollToItem(0) }
     }
 
+    // Screens here are hosted directly rather than inside a Surface, so LocalContentColor falls back
+    // to black - the app's other screens compensate by naming a colour at every call site. The port
+    // from mobile did not, which left every bare Text and Icon black on the dark background: the
+    // search button was invisible rather than broken. Providing it once covers the whole screen.
+    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxSize(),
@@ -127,10 +169,22 @@ fun SocialScreen(
                         isError = handle.isNotEmpty() && !isValidSocialHandle(handle),
                     )
                     Button(
-                        onClick = { scope.launch { SocialRepository.setupHandle(handle) } },
+                        onClick = {
+                            scope.launch {
+                                // The result was discarded here, so a handle that never saved looked
+                                // exactly like one that did - which is how an empty database went
+                                // unnoticed while the screen appeared to work.
+                                SocialRepository.setupHandle(handle)
+                                    .onFailure { error -> handleMessage = error.message ?: "Could not save that handle" }
+                                    .onSuccess { handleMessage = null }
+                            }
+                        },
                         enabled = isValidSocialHandle(handle),
                     ) { Text(stringResource(Res.string.social_save_handle)) }
                 }
+            }
+            handleMessage?.let { message ->
+                item { SocialMessageCard(message) }
             }
         } else {
             if (state.isOfflineCache) item { SocialMessageCard(stringResource(Res.string.social_offline_cache)) }
@@ -215,15 +269,34 @@ fun SocialScreen(
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                         label = { Text(stringResource(Res.string.social_search_handle)) },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { runSearch() }),
                     )
-                    IconButton(onClick = { scope.launch { searchResults = SocialRepository.searchProfiles(search).getOrDefault(emptyList()) } }) {
-                        Icon(Icons.Rounded.PersonAdd, stringResource(Res.string.social_add_friend))
+                    IconButton(onClick = runSearch, enabled = !isSearching) {
+                        Icon(Icons.Rounded.Search, "Search handles")
                     }
                 }
             }
+            searchMessage?.let { message ->
+                item { Text(message, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 4.dp)) }
+            }
             items(searchResults, key = { "search:${it.profileId}" }) { profile ->
                 SocialPersonRow(profile, subtitle = "@${profile.handle}") {
-                    IconButton(onClick = { scope.launch { SocialRepository.sendFriendRequest(profile.profileId) } }) {
+                    IconButton(onClick = {
+                        scope.launch {
+                            // The result was previously discarded, so a sent request and a refused
+                            // one both looked like a button that did nothing. On success the row is
+                            // dropped, because the request is now pending rather than sendable.
+                            SocialRepository.sendFriendRequest(profile.profileId)
+                                .onSuccess {
+                                    searchResults = searchResults.filterNot { it.profileId == profile.profileId }
+                                    searchMessage = "Friend request sent to @${profile.handle}"
+                                }
+                                .onFailure { error ->
+                                    searchMessage = error.message ?: "Could not send that friend request"
+                                }
+                        }
+                    }) {
                         Icon(Icons.Rounded.PersonAdd, stringResource(Res.string.social_add_friend))
                     }
                 }
@@ -250,6 +323,7 @@ fun SocialScreen(
                 }
             }
         }
+    }
     }
 }
 
