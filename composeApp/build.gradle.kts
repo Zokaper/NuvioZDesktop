@@ -48,9 +48,9 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
      * configuration time, and the updater has to agree with them.
      */
     @get:Input
-    abstract val desktopDebugChannel: Property<Boolean>
-
-    @get:Input
+    abstract val desktopDebugChannel: Property<Boolean>
+
+    @get:Input
     abstract val releaseSerial: Property<Int>
 
     @get:Input
@@ -1341,6 +1341,7 @@ kotlin {
             implementation(libs.supabase.postgrest)
             implementation(libs.supabase.auth)
             implementation(libs.supabase.functions)
+            implementation(libs.supabase.realtime)
             implementation(libs.reorderable)
         }
         commonTest.dependencies {

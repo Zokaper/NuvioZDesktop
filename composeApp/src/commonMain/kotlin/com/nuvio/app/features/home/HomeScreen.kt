@@ -86,6 +86,8 @@ import com.nuvio.app.features.watching.domain.isReleasedBy
 import com.nuvio.app.features.collection.CollectionRepository
 import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.home.components.HomeCollectionRowSection
+import com.nuvio.app.features.social.SocialRepository
+import com.nuvio.app.features.social.homeSocialSections
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -146,6 +148,7 @@ fun HomeScreen(
     val watchProgressUiState by WatchProgressRepository.uiState.collectAsStateWithLifecycle()
     val effectiveWatchProgressSource = watchProgressUiState.source
     val cloudLibraryUiState by CloudLibraryRepository.uiState.collectAsStateWithLifecycle()
+    val socialUiState by SocialRepository.uiState.collectAsStateWithLifecycle()
     val networkStatusUiState by NetworkStatusRepository.uiState.collectAsStateWithLifecycle()
     val trackingSettingsUiState by remember {
         TrackingSettingsRepository.ensureLoaded()
@@ -915,6 +918,9 @@ fun HomeScreen(
                         onItemLongPress = onContinueWatchingLongPress,
                         disintegrationRequest = continueWatchingDisintegrationRequest,
                     )
+                    homeSocialSections(socialUiState.watchingNow, socialUiState.activity, homeSectionPadding) { type, id, title ->
+                        onPosterClick?.invoke(MetaPreview(id = id, type = type, name = title, poster = null))
+                    }
                     item {
                         HomeEmptyStateCard(
                             modifier = Modifier.padding(horizontal = 16.dp),
@@ -939,6 +945,9 @@ fun HomeScreen(
                         onItemLongPress = onContinueWatchingLongPress,
                         disintegrationRequest = continueWatchingDisintegrationRequest,
                     )
+                    homeSocialSections(socialUiState.watchingNow, socialUiState.activity, homeSectionPadding) { type, id, title ->
+                        onPosterClick?.invoke(MetaPreview(id = id, type = type, name = title, poster = null))
+                    }
                     items(3) {
                         HomeSkeletonRow(
                             modifier = Modifier.padding(horizontal = 16.dp),
@@ -948,7 +957,8 @@ fun HomeScreen(
 
                 homeUiState.sections.isEmpty() && homeUiState.heroItems.isEmpty() &&
                     (!continueWatchingPreferences.isVisible || !hasContinueWatchingRows) &&
-                    !hasRenderableCollectionRows -> {
+                    !hasRenderableCollectionRows && socialUiState.watchingNow.isEmpty() &&
+                    socialUiState.activity.isEmpty() -> {
                     item {
                         if (networkStatusUiState.isOfflineLike) {
                             NuvioNetworkOfflineCard(
@@ -985,6 +995,9 @@ fun HomeScreen(
                         onItemLongPress = onContinueWatchingLongPress,
                         disintegrationRequest = continueWatchingDisintegrationRequest,
                     )
+                    homeSocialSections(socialUiState.watchingNow, socialUiState.activity, homeSectionPadding) { type, id, title ->
+                        onPosterClick?.invoke(MetaPreview(id = id, type = type, name = title, poster = null))
+                    }
 
                     keyedEnabledHomeItems.forEach { keyedSettingsItem ->
                         val settingsItem = keyedSettingsItem.value

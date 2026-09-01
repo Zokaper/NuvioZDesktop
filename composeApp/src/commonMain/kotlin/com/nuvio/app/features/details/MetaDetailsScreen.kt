@@ -165,6 +165,7 @@ import com.nuvio.app.features.watchprogress.CurrentDateProvider
 import com.nuvio.app.features.watchprogress.WatchProgressEntry
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import com.nuvio.app.features.watchprogress.buildPlaybackVideoId
+import com.nuvio.app.features.watchparty.PartyContent
 import com.nuvio.app.features.watchprogress.ContinueWatchingPreferencesRepository
 import com.nuvio.app.features.watching.application.WatchingActions
 import com.nuvio.app.features.watching.application.WatchingState
@@ -192,6 +193,7 @@ fun MetaDetailsScreen(
     type: String,
     id: String,
     onBack: () -> Unit,
+    onWatchTogether: ((PartyContent) -> Unit)? = null,
     onPlay: ((type: String, videoId: String, parentMetaId: String, parentMetaType: String, title: String, logo: String?, poster: String?, background: String?, seasonNumber: Int?, episodeNumber: Int?, episodeTitle: String?, episodeThumbnail: String?, pauseDescription: String?, runtimeMinutes: Int?, resumePositionMs: Long?) -> Unit)? = null,
     onPlayManually: ((type: String, videoId: String, parentMetaId: String, parentMetaType: String, title: String, logo: String?, poster: String?, background: String?, seasonNumber: Int?, episodeNumber: Int?, episodeTitle: String?, episodeThumbnail: String?, pauseDescription: String?, runtimeMinutes: Int?, resumePositionMs: Long?) -> Unit)? = null,
     /**
@@ -656,6 +658,22 @@ fun MetaDetailsScreen(
                 val seriesStreamVideoId = remember(seriesAction, seriesActionVideo) {
                     val action = seriesAction ?: return@remember null
                     seriesActionVideo?.id?.takeIf { it.isNotBlank() } ?: action.videoId
+                }
+                val watchPartyContent = remember(meta, seriesAction, seriesActionVideo) {
+                    PartyContent(
+                        contentId = meta.id,
+                        contentType = meta.type,
+                        videoId = if (meta.type.lowercase() in setOf("series", "show", "tv", "tvshow", "anime")) {
+                            seriesAction?.videoId ?: seriesActionVideo?.id ?: meta.id
+                        } else {
+                            meta.id
+                        },
+                        title = meta.name,
+                        poster = meta.poster,
+                        season = seriesAction?.seasonNumber,
+                        episode = seriesAction?.episodeNumber,
+                        episodeTitle = seriesActionVideo?.title,
+                    )
                 }
                 val hasEpisodes = meta.videos.any { it.season != null || it.episode != null }
                 val titleDownloadState = remember(downloadsUiState.items, downloadBatches, meta.id) {
@@ -1132,6 +1150,18 @@ fun MetaDetailsScreen(
                                         onSaveLongClick = openLibraryListPicker,
                                     )
                                 }
+                                if (onWatchTogether != null) {
+                                    item(key = "z-watch-together-entry") {
+                                        Button(
+                                            onClick = { onWatchTogether(watchPartyContent) },
+                                            modifier = Modifier.padding(
+                                                horizontal = contentHorizontalPadding,
+                                                vertical = 8.dp,
+                                            ),
+                                        ) { Text("Watch Together") }
+                                    }
+                                }
+
                                 configuredMetaSectionItems(
                                     settings = metaScreenSettingsUiState.copy(
                                         items = metaScreenSettingsUiState.items.filterNot {
@@ -1300,6 +1330,18 @@ fun MetaDetailsScreen(
                                             heroTrailerFinished = true
                                         },
                                     )
+                                }
+
+                                if (onWatchTogether != null) {
+                                    item(key = "z-watch-together-entry") {
+                                        Button(
+                                            onClick = { onWatchTogether(watchPartyContent) },
+                                            modifier = Modifier.padding(
+                                                horizontal = contentHorizontalPadding,
+                                                vertical = 8.dp,
+                                            ),
+                                        ) { Text("Watch Together") }
+                                    }
                                 }
 
                                 configuredMetaSectionItems(

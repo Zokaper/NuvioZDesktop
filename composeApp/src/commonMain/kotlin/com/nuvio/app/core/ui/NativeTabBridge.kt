@@ -24,6 +24,7 @@ internal enum class NativeNavigationTab {
     Search,
     Library,
     Downloads,
+    Social,
     Settings,
     ;
 

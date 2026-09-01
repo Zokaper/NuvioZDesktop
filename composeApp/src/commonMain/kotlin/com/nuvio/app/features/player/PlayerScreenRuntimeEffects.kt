@@ -54,6 +54,8 @@ private val startupLog = Logger.withTag("PlaybackStartup")
 
 @Composable
 internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
+    BindSocialPresenceEffect()
+    BindWatchPartyEffect()
     val currentFeedback = liveGestureFeedback ?: gestureFeedback
     LaunchedEffect(currentFeedback) {
         if (currentFeedback != null) {
