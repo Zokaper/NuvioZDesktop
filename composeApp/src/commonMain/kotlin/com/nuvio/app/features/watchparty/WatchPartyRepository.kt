@@ -186,16 +186,42 @@ object WatchPartyRepository {
     private suspend fun openChannel(partyId: String) {
         // The party topic is a private channel gated by RLS on realtime.messages, so the socket must
         // carry the Z token rather than the publishable key.
-        _uiState.value.activeProfileId?.let { if (!ZSessionBridge.ensureSession(it)) return }
+        val profileId = _uiState.value.activeProfileId
+        if (profileId != null && !ZSessionBridge.ensureSession(profileId)) {
+            _uiState.value = _uiState.value.copy(
+                connection = PartyConnectionState.disconnected,
+                errorMessage = ZSessionBridge.lastFailure,
+            )
+            return
+        }
         closeChannel()
         _uiState.value = _uiState.value.copy(connection = PartyConnectionState.reconnecting)
-        ZSupabaseProvider.client.realtime.setAuth()
-        val next = ZSupabaseProvider.client.channel("party:$partyId") { isPrivate = true; presence { key = requireProfile() } }
-        collector = next.broadcastFlow<JsonObject>("state").onEach { refresh() }.launchIn(scope)
-        next.subscribe(blockUntilSubscribed = true)
-        next.track(buildJsonObject { put("profile_id", requireProfile()) })
-        channel = next
-        _uiState.value = _uiState.value.copy(connection = PartyConnectionState.connected)
+
+        // `reconnecting` was set before the attempt and cleared only on success, so anything thrown
+        // below left the lobby reporting "Reconnecting" forever with no way to tell why.
+        //
+        // Realtime is an accelerator, not the source of truth: every snapshot still comes from an
+        // RPC, so a party whose channel will not open is degraded rather than broken. Say so, and
+        // carry on.
+        val opened = runCatching {
+            ZSupabaseProvider.client.realtime.setAuth()
+            val next = ZSupabaseProvider.client.channel("party:$partyId") { isPrivate = true; presence { key = requireProfile() } }
+            collector = next.broadcastFlow<JsonObject>("state").onEach { refresh() }.launchIn(scope)
+            next.subscribe(blockUntilSubscribed = true)
+            next.track(buildJsonObject { put("profile_id", requireProfile()) })
+            channel = next
+        }
+
+        opened.onFailure { cause ->
+            closeChannel()
+            _uiState.value = _uiState.value.copy(
+                connection = PartyConnectionState.disconnected,
+                errorMessage = "Live sync unavailable: ${cause.message ?: cause::class.simpleName}",
+            )
+        }.onSuccess {
+            _uiState.value = _uiState.value.copy(connection = PartyConnectionState.connected, errorMessage = null)
+        }
+
         refresh(); measureClockOffset()
     }
 
