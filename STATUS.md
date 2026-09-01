@@ -1,6 +1,24 @@
 # Nuvio Z Status
 
-Last updated: 2026-08-31
+Last updated: 2026-09-01
+
+## Social and Watch Together ported from `nuvio-z` (2026-09-01)
+
+This repository now carries the shared `features/social` and `features/watchparty` packages, a
+`DesktopStorage`-backed `SocialStorage` actual, `Realtime` installed on the Supabase client, the
+`WatchPartyLobbyRoute` and lobby screen, Home social rows, the details and player Watch Together
+entries, and the watched-activity publish/remove hooks. Both backend capabilities default off, so an
+undeployed or older server disables every new surface cleanly.
+
+Three divergences from mobile are deliberate. Social is added *beside* the Downloads sidebar entry
+rather than replacing it, because the desktop sidebar has no slot pressure and Downloads is already
+`AppFeaturePolicy`-gated here; the mobile Library Downloads shortcut is therefore not ported. The
+Watch Together entry is inserted into both of this repository's mutually exclusive detail layouts.
+`iosApp/` is vestigial here (there is no iOS workflow in this repository) and its Swift tab enum was
+left untouched, so `NativeNavigationTab.Social` has no native counterpart on this side.
+
+The full plan is checked in as `Docs/SOCIAL-WATCH-TOGETHER-PLAN.md` in `nuvio-z`. Backend migrations
+are still undeployed and unexecuted, so nothing here has been exercised against a live server.
 
 ## Apple Silicon debug DMG is published on the debug line (2026-08-31)
 
