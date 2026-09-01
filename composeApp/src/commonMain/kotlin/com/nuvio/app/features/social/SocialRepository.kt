@@ -1,6 +1,7 @@
 package com.nuvio.app.features.social
 
-import com.nuvio.app.core.network.SupabaseProvider
+import com.nuvio.app.core.network.ZSessionBridge
+import com.nuvio.app.core.network.ZSupabaseProvider
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.rpc
 import io.github.jan.supabase.realtime.RealtimeChannel
@@ -47,7 +48,7 @@ object SocialRepository {
             if (previousProfileId != null) {
                 publishedPresenceDeviceIds.toList().forEach { deviceId ->
                     runCatching {
-                        SupabaseProvider.client.postgrest.rpc("social_clear_presence", buildJsonObject {
+                        ZSupabaseProvider.client.postgrest.rpc("social_clear_presence", buildJsonObject {
                             put("p_profile_id", previousProfileId); put("p_device_id", deviceId)
                         })
                     }
@@ -85,6 +86,10 @@ object SocialRepository {
             _uiState.value = current.copy(isLoading = false, isLoadingMore = false)
             return
         }
+        if (!ZSessionBridge.ensureSession(profileId)) {
+            _uiState.value = current.copy(isLoading = false, isLoadingMore = false)
+            return
+        }
         val cursor = if (append) current.nextCursor else null
         if (forceLoading) _uiState.value = current.copy(isLoading = !append, isLoadingMore = append, errorMessage = null)
         runCatching {
@@ -94,7 +99,7 @@ object SocialRepository {
                 put("p_limit", SocialPageSize)
                 current.selectedFriendId?.let { put("p_filter_profile_id", it) }
             }
-            SupabaseProvider.client.postgrest.rpc("social_get_state", params).decodeAs<SocialStatePayload>()
+            ZSupabaseProvider.client.postgrest.rpc("social_get_state", params).decodeAs<SocialStatePayload>()
         }.onSuccess { payload ->
             val activity = if (append) (current.activity + payload.activity).distinctBy(RecentActivityRun::runId) else payload.activity
             val next = payload.activity.lastOrNull()?.let { SocialActivityCursor(it.lastEventTime, it.runId) }
@@ -112,7 +117,7 @@ object SocialRepository {
     suspend fun setupHandle(handle: String): Result<SocialProfileSummary> = socialCall {
         require(isValidSocialHandle(handle)) { "Handle must be 3–24 lowercase letters, numbers, or underscores" }
         val profileId = requireActiveProfile()
-        val result = SupabaseProvider.client.postgrest.rpc("social_upsert_profile", buildJsonObject {
+        val result = ZSupabaseProvider.client.postgrest.rpc("social_upsert_profile", buildJsonObject {
             put("p_profile_id", profileId); put("p_handle", normalizeSocialHandle(handle))
         }).decodeAs<SocialProfileSummary>()
         refresh(false)
@@ -121,13 +126,13 @@ object SocialRepository {
 
     suspend fun setPrivacy(shareWatchingNow: Boolean, shareRecentlyWatched: Boolean): Result<Unit> = socialCall {
         val profileId = requireActiveProfile()
-        SupabaseProvider.client.postgrest.rpc("social_set_privacy", buildJsonObject {
+        ZSupabaseProvider.client.postgrest.rpc("social_set_privacy", buildJsonObject {
             put("p_profile_id", profileId); put("p_share_watching_now", shareWatchingNow); put("p_share_recently_watched", shareRecentlyWatched)
         })
     }
 
     suspend fun searchProfiles(query: String): Result<List<SocialProfileSummary>> = socialCall {
-        SupabaseProvider.client.postgrest.rpc("social_search_profiles", buildJsonObject {
+        ZSupabaseProvider.client.postgrest.rpc("social_search_profiles", buildJsonObject {
             put("p_profile_id", requireActiveProfile()); put("p_query", query); put("p_limit", 20)
         }).decodeList()
     }
@@ -151,14 +156,14 @@ object SocialRepository {
     }
 
     suspend fun publishPresence(deviceId: String, entry: SocialPresencePublish): Result<Unit> = socialCall {
-        SupabaseProvider.client.postgrest.rpc("social_publish_presence", buildJsonObject {
+        ZSupabaseProvider.client.postgrest.rpc("social_publish_presence", buildJsonObject {
             put("p_profile_id", requireActiveProfile()); put("p_device_id", deviceId); put("p_entry", json.encodeToJsonElement(entry))
         })
         publishedPresenceDeviceIds += deviceId
     }
 
     suspend fun clearPresence(deviceId: String): Result<Unit> = socialCall {
-        SupabaseProvider.client.postgrest.rpc("social_clear_presence", buildJsonObject {
+        ZSupabaseProvider.client.postgrest.rpc("social_clear_presence", buildJsonObject {
             put("p_profile_id", requireActiveProfile()); put("p_device_id", deviceId)
         })
         publishedPresenceDeviceIds -= deviceId
@@ -175,10 +180,10 @@ object SocialRepository {
         pending.forEach { entry ->
             val result = runCatching {
                 when (entry) {
-                    is SocialOutboxEntry.Publish -> SupabaseProvider.client.postgrest.rpc("social_publish_watched", buildJsonObject {
+                    is SocialOutboxEntry.Publish -> ZSupabaseProvider.client.postgrest.rpc("social_publish_watched", buildJsonObject {
                         put("p_profile_id", profileId); put("p_event", json.encodeToJsonElement(entry.event))
                     })
-                    is SocialOutboxEntry.Remove -> SupabaseProvider.client.postgrest.rpc("social_remove_watched", buildJsonObject {
+                    is SocialOutboxEntry.Remove -> ZSupabaseProvider.client.postgrest.rpc("social_remove_watched", buildJsonObject {
                         put("p_profile_id", profileId); put("p_origin_key", entry.originKey)
                     })
                 }
@@ -190,16 +195,19 @@ object SocialRepository {
     }
 
     private suspend fun refreshCapabilities() {
-        runCatching { SupabaseProvider.client.postgrest.rpc("get_social_capabilities").decodeAs<SocialCapabilities>() }
+        runCatching { ZSupabaseProvider.client.postgrest.rpc("get_social_capabilities").decodeAs<SocialCapabilities>() }
             .onSuccess { _uiState.value = _uiState.value.copy(capabilities = it) }
             .onFailure { _uiState.value = _uiState.value.copy(capabilities = SocialCapabilities(), isLoading = false) }
     }
 
     private suspend fun openRealtime(profileId: String) {
         if (!_uiState.value.capabilities.socialEnabled) return
+        // The social topic is a private channel authorized by RLS on realtime.messages, so the
+        // socket has to carry the Z token rather than the publishable key.
+        if (!ZSessionBridge.ensureSession(profileId)) return
         runCatching {
-            SupabaseProvider.client.realtime.setAuth()
-            val channel = SupabaseProvider.client.channel("social:$profileId") { isPrivate = true }
+            ZSupabaseProvider.client.realtime.setAuth()
+            val channel = ZSupabaseProvider.client.channel("social:$profileId") { isPrivate = true }
             realtimeCollector = channel.broadcastFlow<JsonObject>("invalidate").onEach { refresh(false) }.launchIn(scope)
             channel.subscribe(blockUntilSubscribed = true)
             realtimeChannel = channel
@@ -209,7 +217,7 @@ object SocialRepository {
 
     private suspend fun closeRealtime() {
         realtimeCollector?.cancel(); realtimeCollector = null
-        realtimeChannel?.let { runCatching { SupabaseProvider.client.realtime.removeChannel(it) } }
+        realtimeChannel?.let { runCatching { ZSupabaseProvider.client.realtime.removeChannel(it) } }
         realtimeChannel = null
     }
 
@@ -235,9 +243,22 @@ object SocialRepository {
     private fun saveOutbox(profileId: String, entries: List<SocialOutboxEntry>) = SocialStorage.saveOutbox(profileId, json.encodeToString(entries))
     private fun requireActiveProfile(): String = requireNotNull(activeProfileId) { "No active social profile" }
     private suspend fun socialMutation(rpc: String, params: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit): Result<Unit> = socialCall {
-        SupabaseProvider.client.postgrest.rpc(rpc, buildJsonObject(params)); refresh(false)
+        ZSupabaseProvider.client.postgrest.rpc(rpc, buildJsonObject(params)); refresh(false)
     }
-    private suspend inline fun <T> socialCall(crossinline block: suspend () -> T): Result<T> = runCatching { block() }
+    private suspend fun <T> socialCall(block: suspend () -> T): Result<T> {
+        val profileId = activeProfileId ?: return runCatching { block() }
+        if (!ZSessionBridge.ensureSession(profileId)) {
+            return Result.failure(IllegalStateException("Nuvio Z social is unavailable"))
+        }
+        val first = runCatching { block() }
+        if (first.isSuccess) return first
+        // A rejected Z token is the expected failure once one expires. The official session is the
+        // source of truth and is still live, so re-exchanging is the recovery; retried once so a
+        // genuine server error is still reported rather than looped on.
+        ZSessionBridge.invalidate()
+        if (!ZSessionBridge.ensureSession(profileId)) return first
+        return runCatching { block() }
+    }
 }
 
 @Serializable

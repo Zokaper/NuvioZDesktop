@@ -1,6 +1,7 @@
 package com.nuvio.app.features.watchparty
 
-import com.nuvio.app.core.network.SupabaseProvider
+import com.nuvio.app.core.network.ZSessionBridge
+import com.nuvio.app.core.network.ZSupabaseProvider
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.rpc
 import io.github.jan.supabase.realtime.RealtimeChannel
@@ -57,7 +58,7 @@ object WatchPartyRepository {
     ): Result<String> = call {
         val profileId = requireProfile()
         val code = generateInviteCode()
-        val snapshot = SupabaseProvider.client.postgrest.rpc("party_create", buildJsonObject {
+        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_create", buildJsonObject {
             put("p_host_profile_id", profileId); put("p_invite_code", code)
             put("p_content", json.encodeToJsonElement(content))
             sourceFingerprint?.let { put("p_source_fingerprint", json.encodeToJsonElement(it)) }
@@ -70,7 +71,7 @@ object WatchPartyRepository {
 
     suspend fun join(partyId: String? = null, inviteCode: String? = null): Result<Unit> = call {
         require(partyId != null || !inviteCode.isNullOrBlank()) { "Party ID or invite code required" }
-        val snapshot = SupabaseProvider.client.postgrest.rpc("party_join", buildJsonObject {
+        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_join", buildJsonObject {
             put("p_profile_id", requireProfile())
             partyId?.let { put("p_party_id", it) }
             inviteCode?.let { put("p_invite_code", it) }
@@ -84,7 +85,7 @@ object WatchPartyRepository {
 
     suspend fun updateReady(state: SourceResolutionState, durationMs: Long? = null, error: String? = null): Result<Unit> = call {
         val party = requireParty()
-        val snapshot = SupabaseProvider.client.postgrest.rpc("party_set_ready", buildJsonObject {
+        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_set_ready", buildJsonObject {
             put("p_party_id", party.id); put("p_profile_id", requireProfile()); put("p_ready_state", state.name)
             durationMs?.let { put("p_duration_ms", it) }; error?.let { put("p_error", it) }
         }).decodeAs<WatchPartyState>()
@@ -92,7 +93,7 @@ object WatchPartyRepository {
     }
 
     suspend fun submit(command: WatchPartyCommand): Result<Unit> = call {
-        val snapshot = SupabaseProvider.client.postgrest.rpc("party_submit_command", buildJsonObject {
+        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_submit_command", buildJsonObject {
             put("p_party_id", requireParty().id); put("p_profile_id", requireProfile()); put("p_command_id", command.commandId)
             put("p_command_type", command.type); put("p_payload", buildJsonObject {
                 command.positionMs?.let { put("position_ms", it) }; command.playbackSpeed?.let { put("playback_speed", it) }
@@ -111,7 +112,7 @@ object WatchPartyRepository {
     suspend fun setSpeed(speed: Float) = submit(WatchPartyCommand(Uuid.random().toString(), "speed", playbackSpeed = speed))
 
     suspend fun heartbeat(positionMs: Long, durationMs: Long, speed: Float, status: WatchPartyStatus): Result<Unit> = call {
-        val snapshot = SupabaseProvider.client.postgrest.rpc("party_heartbeat", buildJsonObject {
+        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_heartbeat", buildJsonObject {
             put("p_party_id", requireParty().id); put("p_profile_id", requireProfile()); put("p_position_ms", positionMs)
             put("p_duration_ms", durationMs); put("p_playback_speed", speed); put("p_status", status.name)
         }).decodeAs<WatchPartyState>()
@@ -119,7 +120,7 @@ object WatchPartyRepository {
     }
 
     suspend fun changeContent(content: PartyContent, fingerprint: SourceFingerprint?, qualityIntent: JsonObject? = null): Result<Unit> = call {
-        val snapshot = SupabaseProvider.client.postgrest.rpc("party_change_content", buildJsonObject {
+        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_change_content", buildJsonObject {
             put("p_party_id", requireParty().id); put("p_host_profile_id", requireProfile()); put("p_content", json.encodeToJsonElement(content))
             fingerprint?.let { put("p_source_fingerprint", json.encodeToJsonElement(it)) }; qualityIntent?.let { put("p_quality_intent", it) }
         }).decodeAs<WatchPartyState>()
@@ -127,14 +128,14 @@ object WatchPartyRepository {
     }
 
     suspend fun setControlMode(mode: WatchPartyControlMode): Result<Unit> = call {
-        val snapshot = SupabaseProvider.client.postgrest.rpc("party_set_control_mode", buildJsonObject {
+        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_set_control_mode", buildJsonObject {
             put("p_party_id", requireParty().id); put("p_host_profile_id", requireProfile()); put("p_mode", mode.name)
         }).decodeAs<WatchPartyState>()
         installSnapshot(snapshot, reopenChannel = false)
     }
 
     suspend fun refresh(): Result<Unit> = call {
-        val snapshot = SupabaseProvider.client.postgrest.rpc("party_snapshot", buildJsonObject {
+        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_snapshot", buildJsonObject {
             put("p_party_id", requireParty().id); put("p_profile_id", requireProfile())
         }).decodeAs<WatchPartyState>()
         installSnapshot(snapshot, reopenChannel = false)
@@ -145,7 +146,7 @@ object WatchPartyRepository {
         var bestOffset = 0L
         repeat(3) {
             val started = currentEpochMs()
-            val serverIso = SupabaseProvider.client.postgrest.rpc("party_clock").decodeAs<String>()
+            val serverIso = ZSupabaseProvider.client.postgrest.rpc("party_clock").decodeAs<String>()
             val ended = currentEpochMs()
             val server = parseIsoEpochMs(serverIso) ?: return@repeat
             val rtt = ended - started
@@ -156,7 +157,7 @@ object WatchPartyRepository {
     }
 
     suspend fun claimHostAfterGrace(): Result<Unit> = call {
-        val snapshot = SupabaseProvider.client.postgrest.rpc("party_claim_or_transfer_host", buildJsonObject {
+        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_claim_or_transfer_host", buildJsonObject {
             put("p_party_id", requireParty().id); put("p_requester_profile_id", requireProfile())
         }).decodeAs<WatchPartyState>()
         installSnapshot(snapshot, reopenChannel = false)
@@ -164,14 +165,14 @@ object WatchPartyRepository {
 
     suspend fun end(): Result<Unit> = call {
         val party = requireParty()
-        SupabaseProvider.client.postgrest.rpc("party_end", buildJsonObject { put("p_party_id", party.id); put("p_host_profile_id", requireProfile()) })
+        ZSupabaseProvider.client.postgrest.rpc("party_end", buildJsonObject { put("p_party_id", party.id); put("p_host_profile_id", requireProfile()) })
         closeChannel(); _uiState.value = WatchPartyUiState(activeProfileId = _uiState.value.activeProfileId)
     }
 
     suspend fun leave(): Result<Unit> = runCatching {
         val party = _uiState.value.party
         val profile = _uiState.value.activeProfileId
-        if (party != null && profile != null) SupabaseProvider.client.postgrest.rpc("party_leave", buildJsonObject {
+        if (party != null && profile != null) ZSupabaseProvider.client.postgrest.rpc("party_leave", buildJsonObject {
             put("p_party_id", party.id); put("p_profile_id", profile)
         })
         closeChannel(); _uiState.value = WatchPartyUiState(activeProfileId = profile)
@@ -183,10 +184,13 @@ object WatchPartyRepository {
     }
 
     private suspend fun openChannel(partyId: String) {
+        // The party topic is a private channel gated by RLS on realtime.messages, so the socket must
+        // carry the Z token rather than the publishable key.
+        _uiState.value.activeProfileId?.let { if (!ZSessionBridge.ensureSession(it)) return }
         closeChannel()
         _uiState.value = _uiState.value.copy(connection = PartyConnectionState.reconnecting)
-        SupabaseProvider.client.realtime.setAuth()
-        val next = SupabaseProvider.client.channel("party:$partyId") { isPrivate = true; presence { key = requireProfile() } }
+        ZSupabaseProvider.client.realtime.setAuth()
+        val next = ZSupabaseProvider.client.channel("party:$partyId") { isPrivate = true; presence { key = requireProfile() } }
         collector = next.broadcastFlow<JsonObject>("state").onEach { refresh() }.launchIn(scope)
         next.subscribe(blockUntilSubscribed = true)
         next.track(buildJsonObject { put("profile_id", requireProfile()) })
@@ -197,16 +201,30 @@ object WatchPartyRepository {
 
     private suspend fun closeChannel() {
         collector?.cancel(); collector = null
-        channel?.let { runCatching { SupabaseProvider.client.realtime.removeChannel(it) } }
+        channel?.let { runCatching { ZSupabaseProvider.client.realtime.removeChannel(it) } }
         channel = null
     }
 
     private suspend fun partyCall(name: String, params: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit): Result<Unit> = call {
-        SupabaseProvider.client.postgrest.rpc(name, buildJsonObject(params)); refresh()
+        ZSupabaseProvider.client.postgrest.rpc(name, buildJsonObject(params)); refresh()
     }
-    private suspend inline fun <T> call(crossinline block: suspend () -> T): Result<T> {
+    private suspend fun <T> call(block: suspend () -> T): Result<T> {
         _uiState.value = _uiState.value.copy(isWorking = true, errorMessage = null)
-        return runCatching { block() }.onSuccess { _uiState.value = _uiState.value.copy(isWorking = false) }
+        val profileId = _uiState.value.activeProfileId
+        if (profileId != null && !ZSessionBridge.ensureSession(profileId)) {
+            _uiState.value = _uiState.value.copy(isWorking = false, errorMessage = "Nuvio Z is unavailable")
+            return Result.failure(IllegalStateException("Nuvio Z session unavailable"))
+        }
+        var result = runCatching { block() }
+        if (result.isFailure && profileId != null) {
+            // A rejected Z token is the expected failure once one expires; the official session is
+            // still live, so re-exchanging is the recovery. Retried once, so a real server error is
+            // reported rather than looped on. Party control actions are latency-sensitive, which is
+            // why this recovers in place instead of surfacing a reconnect to the user.
+            ZSessionBridge.invalidate()
+            if (ZSessionBridge.ensureSession(profileId)) result = runCatching { block() }
+        }
+        return result.onSuccess { _uiState.value = _uiState.value.copy(isWorking = false) }
             .onFailure { _uiState.value = _uiState.value.copy(isWorking = false, errorMessage = it.message) }
     }
     private fun requireProfile(): String = requireNotNull(_uiState.value.activeProfileId) { "No active profile" }
