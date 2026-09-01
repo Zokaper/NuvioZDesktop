@@ -5038,7 +5038,23 @@ private fun MainAppContent(
                         route = route,
                         onBack = rememberGuardedPopBackStack(navController, route),
                         onOpenContent = { type, id, title ->
-                            navController.navigate(DetailRoute(type = type, id = id, title = title))
+                            // Leaving the lobby is a hand-off, not a push. The lobby sends everyone
+                            // to the title the moment the party leaves `lobby`, so leaving it on the
+                            // back stack turned backing out of the player into a trap: details, back,
+                            // lobby, thrown forward to details again, with no way out.
+                            //
+                            // The host arrives here from the details screen for the same title, so
+                            // popping to it is the exit; everyone else is pushed onto whatever they
+                            // came from, with the lobby removed.
+                            val beneath = navController.routes
+                                .getOrNull(navController.routes.lastIndex - 1)
+                            if (beneath is DetailRoute && beneath.type == type && beneath.id == id) {
+                                navController.popBackStack(expectedRoute = route)
+                            } else {
+                                navController.navigate(DetailRoute(type = type, id = id, title = title)) {
+                                    popUpTo<WatchPartyLobbyRoute> { inclusive = true }
+                                }
+                            }
                         },
                     )
                 }

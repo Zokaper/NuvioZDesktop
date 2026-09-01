@@ -91,6 +91,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         )
     }
 
+    val watchPartyBanner = rememberWatchPartyStatus().bannerText()
     val currentGestureFeedback = liveGestureFeedback ?: gestureFeedback
     val isP2pPlaybackActive = activeTorrentInfoHash != null
     val p2pConnecting = p2pStreamingState as? P2pStreamingState.Connecting
@@ -427,6 +428,8 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             p2pInitialLoadingMessage
         },
         openingProgress = p2pInitialLoadingProgress,
+        partyBannerVisible = watchPartyBanner != null && !playerControlsLocked,
+        partyBannerText = watchPartyBanner.orEmpty(),
         skipPromptVisible = nativeSkipInterval != null && !playerControlsLocked,
         skipPromptLabel = skipPromptLabel(nativeSkipInterval?.type),
         skipPromptStartMs = ((nativeSkipInterval?.startTime ?: 0.0) * 1000).toLong().coerceAtLeast(0L),
@@ -622,6 +625,10 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             p2pRebufferMessage = p2pRebufferMessage,
             p2pRebufferProgress = p2pRebufferProgress,
             suppressOpeningOverlay = isDesktop && playerSurfaceSourceUrl != null,
+            // Desktop draws its chrome in the native controls layer above the video surface, where
+            // a Compose overlay would be invisible; there the banner is carried by
+            // PlayerControlsState instead.
+            watchPartyBanner = watchPartyBanner.takeUnless { isDesktop },
         )
         RenderPlaybackDiagnosticsHud()
         RenderPlayerModals(displayedPositionMs = displayedPositionMs)
@@ -1591,6 +1598,7 @@ private fun BoxScope.RenderPlaybackOverlays(
     p2pRebufferMessage: String?,
     p2pRebufferProgress: Float?,
     suppressOpeningOverlay: Boolean,
+    watchPartyBanner: String?,
 ) {
     runtime.run {
         val startingEpisode = nextEpisodeTransition
@@ -1629,6 +1637,7 @@ private fun BoxScope.RenderPlaybackOverlays(
             renderedGestureFeedback = renderedGestureFeedback,
             initialLoadCompleted = initialLoadCompleted,
             pausedOverlayVisible = pausedOverlayVisible,
+            watchPartyBanner = watchPartyBanner,
             activeSkipInterval = activeSkipInterval.takeUnless { isDesktop },
             skipIntervalDismissed = skipIntervalDismissed,
             controlsVisible = controlsVisible,

@@ -167,6 +167,13 @@ data class PlayerControlsState(
     val openingTitle: String = "",
     val openingMessage: String? = null,
     val openingProgress: Float? = null,
+    /**
+     * The Watch Together status line, shown whenever the party is holding playback back or has lost
+     * sync. It is deliberately independent of [controlsVisible]: a player that is paused because it
+     * is waiting on somebody else has to say so even when the chrome has faded.
+     */
+    val partyBannerVisible: Boolean = false,
+    val partyBannerText: String = "",
     val skipPromptVisible: Boolean = false,
     val skipPromptLabel: String = "Skip",
     val skipPromptStartMs: Long = 0L,

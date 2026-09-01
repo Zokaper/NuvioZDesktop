@@ -279,6 +279,18 @@ internal class PlayerScreenRuntime(
     var subtitleDelayMs by mutableStateOf(0)
     var subtitleAutoSyncState by mutableStateOf(SubtitleAutoSyncUiState())
 
+    /**
+     * The party generation whose start gate has already been released, or null while it still holds.
+     *
+     * Keyed by party and content generation rather than kept as a bare flag, so a next-episode
+     * transition - which returns the party to a readiness lobby - closes the gate again instead of
+     * inheriting the previous episode's start.
+     */
+    var partyStartReleasedKey by mutableStateOf<String?>(null)
+
+    /** The party generation whose shared position has already replaced this profile's resume point. */
+    var partyStartPositionAppliedKey by mutableStateOf<String?>(null)
+
     var lastSyncedSettingsResizeMode: PlayerResizeMode? = null
     var lastResetPlaybackIdentity: String? = null
     var lastResetVideoIdentity: String? = null

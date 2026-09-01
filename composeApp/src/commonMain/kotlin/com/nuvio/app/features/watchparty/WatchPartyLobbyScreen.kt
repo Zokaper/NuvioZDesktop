@@ -34,9 +34,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import co.touchlab.kermit.Logger
 import com.nuvio.app.features.social.SocialRepository
 import com.nuvio.app.navigation.WatchPartyLobbyRoute
 import kotlinx.coroutines.launch
+
+private val lobbyLog = Logger.withTag("WatchPartyLobby")
 
 @Composable
 fun WatchPartyLobbyScreen(
@@ -60,6 +63,10 @@ fun WatchPartyLobbyScreen(
     LaunchedEffect(partyStatus) {
         val party = state.party ?: return@LaunchedEffect
         if (partyStatus == WatchPartyStatus.lobby || partyStatus == WatchPartyStatus.ended) return@LaunchedEffect
+        lobbyLog.i {
+            "handoff party=${party.id.shortId()} status=$partyStatus " +
+                "content=${party.content.contentType}/${party.content.contentId} video=${party.content.videoId}"
+        }
         onOpenContent(party.content.contentType, party.content.contentId, party.content.title)
     }
 
@@ -74,6 +81,10 @@ fun WatchPartyLobbyScreen(
             !route.inviteCode.isNullOrBlank() -> true
             route.videoId != null -> held.content.videoId == route.videoId
             else -> true
+        }
+        lobbyLog.i {
+            "open route partyId=${route.partyId.shortId()} code=${if (route.inviteCode.isNullOrBlank()) "-" else "****" + route.inviteCode.takeLast(4)} " +
+                "content=${route.contentId} video=${route.videoId} held=${held?.id.shortId()} satisfies=$heldSatisfiesRoute"
         }
         if (heldSatisfiesRoute) return@LaunchedEffect
         if (route.partyId != null) {
@@ -177,14 +188,21 @@ fun WatchPartyLobbyScreen(
             items(party.members, key = WatchPartyParticipant::profileId) { member ->
                 PartyPanel {
                     Text(if (member.profileId == state.activeProfileId) "You" else member.profileId.take(8), fontWeight = FontWeight.SemiBold)
-                    Text("${member.role} · ${member.readyState.name}${member.readyError?.let { " · $it" }.orEmpty()}")
+                    Text("${member.role} · ${member.readyState.lobbyLabel()}${member.readyError?.let { " · $it" }.orEmpty()}")
                 }
             }
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(onClick = { scope.launch { WatchPartyRepository.updateReady(SourceResolutionState.ready) } }) { Text("I'm ready") }
-                    if (party.hostProfileId == state.activeProfileId) {
-                        Button(onClick = { scope.launch { WatchPartyRepository.play(party.positionMs) } }) { Text("Start") }
+            if (party.hostProfileId == state.activeProfileId) {
+                item {
+                    // "I'm ready" used to sit here and mark a member ready from the lobby, where
+                    // nobody has resolved anything yet - it reported a source that did not exist and
+                    // was the one thing that could defeat the host's own readiness gate. Readiness is
+                    // now reported by the player, once a stream is actually open.
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Button(onClick = { scope.launch { WatchPartyRepository.startResolving() } }) { Text("Start") }
+                        Text(
+                            "Everyone picks their own source next. Playback waits until they all have one.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                     }
                 }
             }
@@ -204,4 +222,13 @@ fun WatchPartyLobbyScreen(
     Surface(modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, tonalElevation = 2.dp) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp), content = content)
     }
+}
+
+private fun SourceResolutionState.lobbyLabel(): String = when (this) {
+    SourceResolutionState.joined -> "no source yet"
+    SourceResolutionState.resolving -> "picking a source"
+    SourceResolutionState.buffering -> "buffering"
+    SourceResolutionState.ready -> "ready"
+    SourceResolutionState.failed -> "no source found"
+    SourceResolutionState.left -> "left"
 }

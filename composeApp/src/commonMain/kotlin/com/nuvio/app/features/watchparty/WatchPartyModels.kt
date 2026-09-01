@@ -142,3 +142,87 @@ fun normalizeReleaseFingerprint(value: String): String = value
     .replace(Regex("[^a-z0-9]+"), ".")
     .trim('.')
     .replace(Regex("\\.+"), ".")
+
+/** Why a client is holding playback back while it sits in a party. */
+enum class PartyHoldReason { NONE, WAITING_FOR_PARTICIPANTS, WAITING_FOR_HOST }
+
+data class PartyPlaybackGate(
+    val allowPlayback: Boolean,
+    val reason: PartyHoldReason,
+    val waitingOn: Int = 0,
+)
+
+private val PartyBlockingReadyStates = setOf(
+    SourceResolutionState.joined,
+    SourceResolutionState.resolving,
+    SourceResolutionState.buffering,
+)
+
+/**
+ * Whether this party is the one behind the video currently open in the player.
+ *
+ * Every party action is scoped through this, so it lives beside the state rather than being
+ * re-spelled at each call site - the seek that fires against the wrong title is the one written
+ * out by hand a fourth time.
+ */
+fun WatchPartyState.matchesPlayback(contentId: String, videoId: String?): Boolean =
+    status != WatchPartyStatus.ended &&
+        content.contentId == contentId &&
+        content.videoId == videoId
+
+/**
+ * Members the host is still waiting on before playback can begin.
+ *
+ * A member counts only while they are connected and still working towards a source: someone whose
+ * resolution failed, who left, or whose app is gone cannot be waited for, and treating them as a
+ * blocker is how one closed laptop holds a party hostage forever.
+ */
+fun partyMembersAwaitingSource(
+    party: WatchPartyState,
+    excludeProfileId: String? = null,
+): List<WatchPartyParticipant> = party.members.filter { member ->
+    member.profileId != excludeProfileId &&
+        member.connected &&
+        member.readyState in PartyBlockingReadyStates
+}
+
+/**
+ * Whether this client may play, and what it is waiting for when it may not.
+ *
+ * The host used to begin the moment their own source opened, which started the authoritative clock
+ * while everyone else was still on the source list; by the time a guest had a stream the shared
+ * timeline had run minutes ahead of anything they could show, and the correction policy chased it
+ * with seeks into an unbuffered file. Holding the host until every connected member reports a
+ * resolved source is what makes "everyone starts together" true rather than aspirational.
+ *
+ * [hostStartReleased] is the escape: once the party has genuinely started, the host owns their own
+ * transport again and a mid-film pause must not be mistaken for a fresh start.
+ */
+fun partyPlaybackGate(
+    party: WatchPartyState?,
+    viewerProfileId: String?,
+    hostStartReleased: Boolean,
+): PartyPlaybackGate {
+    if (party == null || party.status == WatchPartyStatus.ended) {
+        return PartyPlaybackGate(allowPlayback = true, reason = PartyHoldReason.NONE)
+    }
+    if (party.status == WatchPartyStatus.playing) {
+        return PartyPlaybackGate(allowPlayback = true, reason = PartyHoldReason.NONE)
+    }
+    if (party.hostProfileId != viewerProfileId) {
+        return PartyPlaybackGate(allowPlayback = false, reason = PartyHoldReason.WAITING_FOR_HOST)
+    }
+    if (hostStartReleased) {
+        return PartyPlaybackGate(allowPlayback = true, reason = PartyHoldReason.NONE)
+    }
+    val waiting = partyMembersAwaitingSource(party, excludeProfileId = viewerProfileId)
+    return if (waiting.isEmpty()) {
+        PartyPlaybackGate(allowPlayback = true, reason = PartyHoldReason.NONE)
+    } else {
+        PartyPlaybackGate(
+            allowPlayback = false,
+            reason = PartyHoldReason.WAITING_FOR_PARTICIPANTS,
+            waitingOn = waiting.size,
+        )
+    }
+}

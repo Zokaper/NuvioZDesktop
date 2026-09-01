@@ -19,6 +19,7 @@ import com.nuvio.app.features.details.MetaScreenSettingsRepository
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.P2pStreamingEngine
 import com.nuvio.app.features.watched.WatchedRepository
+import com.nuvio.app.features.watchparty.WatchPartyRepository
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.compose_player_airs_prefix
@@ -68,6 +69,7 @@ internal fun PlayerScreenContent(args: PlayerScreenArgs) {
     val episodeStreamsRepoState by PlayerStreamsRepository.episodeStreamsState.collectAsStateWithLifecycle()
     val metaUiState by MetaDetailsRepository.uiState.collectAsStateWithLifecycle()
     val addonsUiState by AddonRepository.uiState.collectAsStateWithLifecycle()
+    val watchPartyUiState by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
     val addonSubtitles by SubtitleRepository.addonSubtitles.collectAsStateWithLifecycle()
     val isLoadingAddonSubtitles by SubtitleRepository.isLoading.collectAsStateWithLifecycle()
 
@@ -135,6 +137,9 @@ internal fun PlayerScreenContent(args: PlayerScreenArgs) {
             runtime.lastSyncedSettingsResizeMode = settingsResizeMode
         }
         runtime.resetIdentityStateIfNeeded()
+        // Ordered after the identity reset, which is what restores the launch resume point, and
+        // before the surface below reads the initial position for this composition.
+        runtime.applyWatchPartyStartPosition(watchPartyUiState.party)
 
         val keepScreenAwake = runtime.errorMessage == null &&
             (runtime.playbackSnapshot.isPlaying ||

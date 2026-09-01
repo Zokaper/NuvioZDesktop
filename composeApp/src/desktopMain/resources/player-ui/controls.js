@@ -52,6 +52,8 @@ const openingTitle = document.getElementById("openingTitle");
 const openingSpinner = document.getElementById("openingSpinner");
 const openingStatus = document.getElementById("openingStatus");
 const openingMessage = document.getElementById("openingMessage");
+const partyBanner = document.getElementById("partyBanner");
+const partyBannerText = document.getElementById("partyBannerText");
 const openingProgressTrack = document.getElementById("openingProgressTrack");
 const openingProgressBar = document.getElementById("openingProgressBar");
 const parentalGuide = document.getElementById("parentalGuide");
@@ -273,6 +275,8 @@ let state = {
   openingTitle: "",
   openingMessage: "",
   openingProgress: null,
+  partyBannerVisible: false,
+  partyBannerText: "",
   skipPromptVisible: false,
   skipPromptLabel: "Skip",
   skipPromptStartMs: 0,
@@ -1852,6 +1856,14 @@ const renderOpeningOverlay = suppress => {
   return showOpening;
 };
 
+const renderPartyBanner = suppress => {
+  const messageText = String(state.partyBannerText || "").trim();
+  const show = Boolean(!suppress && state.partyBannerVisible && messageText);
+  partyBannerText.textContent = messageText;
+  partyBanner.classList.toggle("visible", show);
+  partyBanner.setAttribute("aria-hidden", show ? "false" : "true");
+};
+
 const renderPlaybackError = () => {
   const messageText = playbackErrorText();
   const showError = Boolean(messageText);
@@ -2116,6 +2128,7 @@ const renderChrome = () => {
   syncHiddenCursor();
   const showOpening = renderOpeningOverlay(showError);
   renderPauseMetadataOverlay(showOpening || showError);
+  renderPartyBanner(showOpening || showError || Boolean(activeModal));
   syncParentalGuide(showOpening || showError);
 
   title.textContent = state.title || "";

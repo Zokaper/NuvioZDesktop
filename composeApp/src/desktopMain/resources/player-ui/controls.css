@@ -467,6 +467,58 @@ button:disabled {
   font-style: italic;
 }
 
+/* Watch Together status. Sits outside the chrome fade rules on purpose: a player paused because it
+   is waiting on somebody else must keep saying so once the controls have gone. */
+.party-banner {
+  position: absolute;
+  top: calc(72px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 7;
+  display: none;
+  align-items: center;
+  gap: 8px;
+  max-width: min(720px, calc(100% - (var(--hp) * 2)));
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--theme-border-default);
+  background: rgba(0, 0, 0, .72);
+  color: var(--theme-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-align: center;
+  pointer-events: none;
+}
+
+.party-banner.visible {
+  display: flex;
+}
+
+.party-banner-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--theme-accent-strong);
+  animation: party-banner-pulse 1.6s ease-in-out infinite;
+}
+
+.party-banner-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes party-banner-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .party-banner-dot { animation: none; }
+}
+
 .parental-guide {
   position: absolute;
   top: calc(var(--slider-bottom) + env(safe-area-inset-top));
