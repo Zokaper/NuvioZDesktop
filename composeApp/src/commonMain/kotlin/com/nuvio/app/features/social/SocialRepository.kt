@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -28,6 +29,12 @@ import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.put
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
+
+/** How long to wait for the social channel to report itself subscribed before giving up on it. */
+private const val SocialChannelSubscribeTimeoutMs = 12_000L
+
+/** How long to wait for it to be given up, over a socket that may be exactly what failed. */
+private const val SocialChannelCloseTimeoutMs = 3_000L
 
 object SocialRepository {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -216,15 +223,22 @@ object SocialRepository {
             ZSupabaseProvider.client.realtime.setAuth()
             val channel = ZSupabaseProvider.client.channel("social:$profileId") { isPrivate = true }
             realtimeCollector = channel.broadcastFlow<JsonObject>("invalidate").onEach { refresh(false) }.launchIn(scope)
-            channel.subscribe(blockUntilSubscribed = true)
             realtimeChannel = channel
+            // A topic the server refuses is retried in the background and never reports itself
+            // subscribed, so an unbounded wait here is not a wait - it is a coroutine parked for the
+            // life of the app, with the refresh below it never reached.
+            withTimeout(SocialChannelSubscribeTimeoutMs) { channel.subscribe(blockUntilSubscribed = true) }
             refresh(false)
         }
     }
 
     private suspend fun closeRealtime() {
         realtimeCollector?.cancel(); realtimeCollector = null
-        realtimeChannel?.let { runCatching { ZSupabaseProvider.client.realtime.removeChannel(it) } }
+        // Bounded for the same reason the subscription is: leaving a channel talks over the socket
+        // that may be the thing that failed, and this runs on the profile switch path.
+        realtimeChannel?.let {
+            runCatching { withTimeout(SocialChannelCloseTimeoutMs) { ZSupabaseProvider.client.realtime.removeChannel(it) } }
+        }
         realtimeChannel = null
     }
 

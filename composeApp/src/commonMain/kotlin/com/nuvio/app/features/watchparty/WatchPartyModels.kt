@@ -9,6 +9,18 @@ const val WatchPartyMaxParticipants = 8
 const val WatchPartyHostGraceMs = 15_000L
 const val WatchPartySnapshotIntervalMs = 5_000L
 
+/**
+ * How long to wait for the realtime channel to report itself subscribed.
+ *
+ * A topic the server refuses never reaches `SUBSCRIBED`: the client library retries the join in the
+ * background and a caller blocking on the subscription waits for a message that is never coming.
+ * Long enough that a slow socket still connects, short enough that a refused one is reported.
+ */
+const val WatchPartyChannelSubscribeTimeoutMs = 12_000L
+
+/** How long to wait for a channel to be given up, over a socket that may be exactly what failed. */
+const val WatchPartyChannelCloseTimeoutMs = 3_000L
+
 @Serializable
 enum class WatchPartyControlMode { host_only, collaborative }
 

@@ -317,6 +317,10 @@ internal fun WatchPartyPlayerStatus.bannerText(): String? = when {
         "Waiting for $people to pick a source · press play to start anyway"
     }
     gate.reason == PartyHoldReason.WAITING_FOR_HOST -> "Waiting for the host to start"
-    syncDegraded -> "Watch Together sync lost · playing on your own"
+    // Not "playing on your own": the snapshot poll is still running underneath, so a party without
+    // its channel is following along a few seconds at a time rather than not following at all.
+    // Saying the stronger thing sent testers looking for a broken party when what had actually
+    // broken was one socket.
+    syncDegraded -> "Live sync lost · following the party every few seconds"
     else -> null
 }

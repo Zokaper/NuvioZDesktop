@@ -9,10 +9,13 @@ import io.github.jan.supabase.realtime.RealtimeChannel
 import io.github.jan.supabase.realtime.broadcastFlow
 import io.github.jan.supabase.realtime.channel
 import io.github.jan.supabase.realtime.realtime
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -59,6 +62,7 @@ object WatchPartyRepository {
     private val log = Logger.withTag("WatchParty")
     private var lastLoggedState: String? = null
     private var lastLoggedHeartbeatStatus: String? = null
+    private var lastLoggedPollFailure: String? = null
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -67,13 +71,20 @@ object WatchPartyRepository {
     private var channel: RealtimeChannel? = null
     private var collector: Job? = null
     private var pollJob: Job? = null
+    private var channelJob: Job? = null
+    private var channelPartyId: String? = null
+    // Holding a channel is not the same as being subscribed to one: the attempt is held from the
+    // moment it exists so a teardown can remove it, so only this says whether it is carrying state.
+    private var channelSubscribed = false
+    private var clockOffsetPartyId: String? = null
 
     fun setActiveProfile(profileId: String?) {
         if (_uiState.value.activeProfileId == profileId) return
         log.i { "profile from=${_uiState.value.activeProfileId.shortId()} to=${profileId.shortId()}" }
         lastLoggedState = null
         lastLoggedHeartbeatStatus = null
-        scope.launch { if (_uiState.value.party != null) leave() else closeChannel() }
+        lastLoggedPollFailure = null
+        scope.launch { if (_uiState.value.party != null) leave() else stopChannel() }
         _uiState.value = WatchPartyUiState(activeProfileId = profileId)
     }
 
@@ -242,7 +253,8 @@ object WatchPartyRepository {
         val party = requireParty()
         log.i { "end party=${party.id.shortId()} host=${_uiState.value.activeProfileId.shortId()}" }
         ZSupabaseProvider.client.postgrest.rpc("party_end", buildJsonObject { put("p_party_id", party.id); put("p_host_profile_id", requireProfile()) })
-        stopPolling(); closeChannel(); _uiState.value = WatchPartyUiState(activeProfileId = _uiState.value.activeProfileId)
+        stopPolling(); stopChannel(); clockOffsetPartyId = null
+        _uiState.value = WatchPartyUiState(activeProfileId = _uiState.value.activeProfileId)
     }
 
     suspend fun leave(): Result<Unit> = runCatching {
@@ -252,10 +264,11 @@ object WatchPartyRepository {
         if (party != null && profile != null) ZSupabaseProvider.client.postgrest.rpc("party_leave", buildJsonObject {
             put("p_party_id", party.id); put("p_profile_id", profile)
         })
-        stopPolling(); closeChannel(); _uiState.value = WatchPartyUiState(activeProfileId = profile)
+        stopPolling(); stopChannel(); clockOffsetPartyId = null
+        _uiState.value = WatchPartyUiState(activeProfileId = profile)
     }
 
-    private suspend fun installSnapshot(snapshot: WatchPartyState, reopenChannel: Boolean = true) {
+    private fun installSnapshot(snapshot: WatchPartyState, reopenChannel: Boolean = true) {
         // The authoritative state, logged only when it actually moves. This is the line to line up
         // between two machines: same sequence and same state_updated_at means they agree, and a
         // client whose sequence has stopped advancing has lost both realtime and the poll.
@@ -265,8 +278,13 @@ object WatchPartyRepository {
             log.i { "state viewer=${_uiState.value.activeProfileId.shortId()} $signature" }
         }
         _uiState.value = _uiState.value.copy(party = snapshot, isWorking = false, errorMessage = null)
-        if (reopenChannel && channel?.topic != "realtime:party:${snapshot.id}") openChannel(snapshot.id)
+        // The poll is the floor under this whole feature, so nothing may come before it. Opening the
+        // channel used to, and `subscribe(blockUntilSubscribed = true)` never returns for a topic
+        // the server refuses - so a channel that could not be authorized left this line unreached
+        // for the life of the app. The member kept whatever state they joined with, forever: a
+        // lobby that never noticed the party had started.
         startPolling()
+        if (reopenChannel) ensureChannel(snapshot.id)
     }
 
     /**
@@ -287,6 +305,18 @@ object WatchPartyRepository {
                 delay(WatchPartySnapshotIntervalMs)
                 val partyId = _uiState.value.party?.id ?: break
                 val profileId = _uiState.value.activeProfileId ?: break
+                // Drift is measured against the server's clock, so the offset has to be taken for
+                // every party - including one whose channel never opens, which is where this used
+                // to live. Without it a guest corrects towards this machine's idea of now, and two
+                // machines never agree on that to better than a second or two.
+                if (clockOffsetPartyId != partyId) {
+                    clockOffsetPartyId = partyId
+                    runCatching { measureClockOffset() }
+                }
+                // Realtime is worth another attempt whenever it is down: the party is still live,
+                // and the alternative is running the rest of it on this interval. The first attempt
+                // belongs to installSnapshot, so this tick is only ever the retry.
+                if (!channelSubscribed) ensureChannel(partyId)
                 // Deliberately not routed through call(): a background poll must not flip the
                 // working flag or overwrite an error the user is still reading.
                 runCatching {
@@ -299,6 +329,16 @@ object WatchPartyRepository {
                         put("p_party_id", partyId); put("p_profile_id", profileId)
                     }).decodeAs<WatchPartyState>()
                     installSnapshot(snapshot, reopenChannel = false)
+                }.onSuccess { lastLoggedPollFailure = null }.onFailure { cause ->
+                    // Not routed through call(), and so not logged by it either: a poll failing
+                    // every five seconds is the one thing that can strand a member on state that
+                    // never moves again, and it used to leave no trace at all. Logged when the
+                    // reason changes, not on every tick.
+                    val reason = cause.message ?: cause::class.simpleName
+                    if (reason != lastLoggedPollFailure) {
+                        lastLoggedPollFailure = reason
+                        log.w(cause) { "poll failed party=${partyId.shortId()} profile=${profileId.shortId()}" }
+                    }
                 }
             }
             pollJob = null
@@ -307,6 +347,27 @@ object WatchPartyRepository {
 
     private fun stopPolling() {
         pollJob?.cancel(); pollJob = null
+    }
+
+    /**
+     * Opens the party channel without anything waiting on it.
+     *
+     * Realtime is an accelerator over [startPolling], never a prerequisite for it, and the way to
+     * keep that true is to make it structurally impossible for the socket to block a caller: the
+     * subscription runs in its own job on the repository scope, so an RPC path that installs a
+     * snapshot returns whether or not the channel ever comes up.
+     */
+    private fun ensureChannel(partyId: String) {
+        if (channelSubscribed && channel?.topic == "realtime:party:$partyId") return
+        if (channelPartyId == partyId && channelJob?.isActive == true) return
+        channelPartyId = partyId
+        channelJob?.cancel()
+        channelJob = scope.launch { openChannel(partyId) }
+    }
+
+    private suspend fun stopChannel() {
+        channelJob?.cancel(); channelJob = null; channelPartyId = null
+        closeChannel()
     }
 
     private suspend fun openChannel(partyId: String) {
@@ -332,30 +393,46 @@ object WatchPartyRepository {
         val opened = runCatching {
             ZSupabaseProvider.client.realtime.setAuth()
             val next = ZSupabaseProvider.client.channel("party:$partyId") { isPrivate = true; presence { key = requireProfile() } }
-            collector = next.broadcastFlow<JsonObject>("state").onEach { refresh() }.launchIn(scope)
-            next.subscribe(blockUntilSubscribed = true)
-            next.track(buildJsonObject { put("profile_id", requireProfile()) })
+            // Held before it is subscribed, because a channel dropped on the floor is not idle: the
+            // client library goes on retrying its join, and nothing is left holding it to stop.
             channel = next
+            collector = next.broadcastFlow<JsonObject>("state").onEach { refresh() }.launchIn(scope)
+            // A refused topic never reports itself subscribed - the join is retried in the
+            // background and this call simply never returns - so the wait needs a deadline of its
+            // own to be a wait at all rather than a coroutine parked for the life of the app.
+            withTimeout(WatchPartyChannelSubscribeTimeoutMs) { next.subscribe(blockUntilSubscribed = true) }
+            next.track(buildJsonObject { put("profile_id", requireProfile()) })
+            channelSubscribed = true
         }
 
         opened.onFailure { cause ->
-            log.w { "realtime party=${partyId.shortId()} state=disconnected cause=${cause.message ?: cause::class.simpleName}" }
-            closeChannel()
-            _uiState.value = _uiState.value.copy(
-                connection = PartyConnectionState.disconnected,
-                errorMessage = "Live sync unavailable: ${cause.message ?: cause::class.simpleName}",
-            )
+            // A timeout is a channel that will not open and is worth saying so. A plain cancellation
+            // is this party going away underneath the attempt, and a banner written on the way out
+            // would outlive the thing it describes.
+            if (cause !is CancellationException || cause is TimeoutCancellationException) {
+                log.w { "realtime party=${partyId.shortId()} state=disconnected cause=${cause.message ?: cause::class.simpleName}" }
+                closeChannel()
+                _uiState.value = _uiState.value.copy(
+                    connection = PartyConnectionState.disconnected,
+                    errorMessage = "Live sync unavailable: ${cause.message ?: cause::class.simpleName}",
+                )
+            }
         }.onSuccess {
             log.i { "realtime party=${partyId.shortId()} state=connected" }
             _uiState.value = _uiState.value.copy(connection = PartyConnectionState.connected, errorMessage = null)
+            refresh()
         }
-
-        refresh(); measureClockOffset()
     }
 
     private suspend fun closeChannel() {
+        channelSubscribed = false
         collector?.cancel(); collector = null
-        channel?.let { runCatching { ZSupabaseProvider.client.realtime.removeChannel(it) } }
+        // Leaving a channel means sending over the socket that has just failed, so this is bounded
+        // for the same reason the subscription is: `leave()` runs through here from a button press,
+        // and a party that cannot be left is worse than one that cannot be joined.
+        channel?.let {
+            runCatching { withTimeout(WatchPartyChannelCloseTimeoutMs) { ZSupabaseProvider.client.realtime.removeChannel(it) } }
+        }
         channel = null
     }
 
