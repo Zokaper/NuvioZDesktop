@@ -39,10 +39,29 @@ import com.nuvio.app.navigation.WatchPartyLobbyRoute
 import kotlinx.coroutines.launch
 
 @Composable
-fun WatchPartyLobbyScreen(route: WatchPartyLobbyRoute, onBack: () -> Unit, modifier: Modifier = Modifier) {
+fun WatchPartyLobbyScreen(
+    route: WatchPartyLobbyRoute,
+    onBack: () -> Unit,
+    onOpenContent: (contentType: String, contentId: String, title: String) -> Unit = { _, _, _ -> },
+    modifier: Modifier = Modifier,
+) {
     val state by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
     val socialState by SocialRepository.uiState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
+
+    // Start submitted a play command and stopped there, so the party went to `playing` server-side
+    // while everyone sat in the lobby watching nothing happen.
+    //
+    // Playback cannot simply be launched from here: each participant resolves their own source, by
+    // design, so there is no shared stream to open. Leaving the lobby for the title is the honest
+    // transition - from there the usual player flow runs, and BindWatchPartyEffect takes over the
+    // synchronisation once playback starts.
+    val partyStatus = state.party?.status
+    LaunchedEffect(partyStatus) {
+        val party = state.party ?: return@LaunchedEffect
+        if (partyStatus == WatchPartyStatus.lobby || partyStatus == WatchPartyStatus.ended) return@LaunchedEffect
+        onOpenContent(party.content.contentType, party.content.contentId, party.content.title)
+    }
 
     LaunchedEffect(route) {
         // Skipping whenever any party was held meant a stale one from earlier in the session

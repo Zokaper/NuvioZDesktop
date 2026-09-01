@@ -5037,6 +5037,9 @@ private fun MainAppContent(
                     WatchPartyLobbyScreen(
                         route = route,
                         onBack = rememberGuardedPopBackStack(navController, route),
+                        onOpenContent = { type, id, title ->
+                            navController.navigate(DetailRoute(type = type, id = id, title = title))
+                        },
                     )
                 }
                 entry<DownloadsSettingsRoute> { route ->
