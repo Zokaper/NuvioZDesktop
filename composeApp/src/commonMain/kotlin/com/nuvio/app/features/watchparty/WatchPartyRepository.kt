@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -47,6 +48,7 @@ object WatchPartyRepository {
     val uiState: StateFlow<WatchPartyUiState> = _uiState.asStateFlow()
     private var channel: RealtimeChannel? = null
     private var collector: Job? = null
+    private var pollJob: Job? = null
 
     fun setActiveProfile(profileId: String?) {
         if (_uiState.value.activeProfileId == profileId) return
@@ -172,7 +174,7 @@ object WatchPartyRepository {
     suspend fun end(): Result<Unit> = call {
         val party = requireParty()
         ZSupabaseProvider.client.postgrest.rpc("party_end", buildJsonObject { put("p_party_id", party.id); put("p_host_profile_id", requireProfile()) })
-        closeChannel(); _uiState.value = WatchPartyUiState(activeProfileId = _uiState.value.activeProfileId)
+        stopPolling(); closeChannel(); _uiState.value = WatchPartyUiState(activeProfileId = _uiState.value.activeProfileId)
     }
 
     suspend fun leave(): Result<Unit> = runCatching {
@@ -181,12 +183,48 @@ object WatchPartyRepository {
         if (party != null && profile != null) ZSupabaseProvider.client.postgrest.rpc("party_leave", buildJsonObject {
             put("p_party_id", party.id); put("p_profile_id", profile)
         })
-        closeChannel(); _uiState.value = WatchPartyUiState(activeProfileId = profile)
+        stopPolling(); closeChannel(); _uiState.value = WatchPartyUiState(activeProfileId = profile)
     }
 
     private suspend fun installSnapshot(snapshot: WatchPartyState, reopenChannel: Boolean = true) {
         _uiState.value = _uiState.value.copy(party = snapshot, isWorking = false, errorMessage = null)
         if (reopenChannel && channel?.topic != "realtime:party:${snapshot.id}") openChannel(snapshot.id)
+        startPolling()
+    }
+
+    /**
+     * Polls the snapshot while a party is held.
+     *
+     * Party state reached clients only through the realtime broadcast, so a member whose channel was
+     * not working never learned anything had changed. When the host started, they simply stayed in
+     * the lobby while everyone else moved on, with nothing to indicate why.
+     *
+     * Realtime stays the fast path; this is the floor beneath it. `party_snapshot` is the same call
+     * the screen already makes, and it is cheap enough at this interval to be worth never being
+     * wrong for longer than it.
+     */
+    private fun startPolling() {
+        if (pollJob?.isActive == true) return
+        pollJob = scope.launch {
+            while (true) {
+                delay(WatchPartySnapshotIntervalMs)
+                val partyId = _uiState.value.party?.id ?: break
+                val profileId = _uiState.value.activeProfileId ?: break
+                // Deliberately not routed through call(): a background poll must not flip the
+                // working flag or overwrite an error the user is still reading.
+                runCatching {
+                    val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_snapshot", buildJsonObject {
+                        put("p_party_id", partyId); put("p_profile_id", profileId)
+                    }).decodeAs<WatchPartyState>()
+                    installSnapshot(snapshot, reopenChannel = false)
+                }
+            }
+            pollJob = null
+        }
+    }
+
+    private fun stopPolling() {
+        pollJob?.cancel(); pollJob = null
     }
 
     private suspend fun openChannel(partyId: String) {
