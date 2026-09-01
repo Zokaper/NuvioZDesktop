@@ -2,6 +2,36 @@
 
 Last updated: 2026-09-01
 
+## The social surface now talks to Nuvio Z's own backend (2026-09-01)
+
+Nuvio Z has its own Supabase project for social and Watch Together. Accounts, profiles and all base
+user data stay on the **official** Nuvio backend, so a Z install remains cross-compatible with
+vanilla Nuvio. The social schema previously foreign-keyed `public.profiles`, which lives in
+NuvioMedia's project and which we have no administrative relationship to; the feature was only
+deployable by them. See **The Two Backends** in the canonical `AGENTS.md` in `nuvio-z` - the rule
+that matters is that nothing ever deploys to theirs.
+
+Desktop is wired first, deliberately, so one real exchange proves the shape before mobile copies it.
+
+- `ZSupabaseProvider` is a second Supabase client. It installs no fallback-endpoint retry: the
+  official client has one because playback and sign-in are fatal to lose, whereas the social surface
+  degrades to hidden.
+- `ZSessionBridge` performs the token exchange, caches the session per profile, and re-exchanges once
+  when a Z token is rejected. The session is never loaded from disk, because it is derived from
+  whichever official session is live.
+- `SocialRepository` and `WatchPartyRepository` now talk exclusively to the Z client. The official
+  client keeps playback and sign-in.
+- Realtime is gated on a live Z session: both `social:` and `party:` are private channels authorized
+  by RLS on `realtime.messages`, so the socket must carry the Z token rather than the publishable key.
+- `ktor-client-core` is now a `commonMain` dependency. The exchange must set `Authorization` to the
+  *official* token, which a Supabase client would otherwise overwrite with its own.
+
+Endpoints come from the ignored `local.properties` as `NUVIO_Z_SUPABASE_URL` and
+`NUVIO_Z_SUPABASE_PUBLISHABLE_KEY`. Blank leaves `ZSupabaseConfig.isConfigured` false and every social
+surface hidden, so a build without them is valid rather than broken.
+
+Not yet verified: no client has completed a real exchange against the live project.
+
 ## Social and Watch Together ported from `nuvio-z` (2026-09-01)
 
 This repository now carries the shared `features/social` and `features/watchparty` packages, a
