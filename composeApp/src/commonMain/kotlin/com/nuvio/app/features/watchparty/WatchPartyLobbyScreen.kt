@@ -43,10 +43,20 @@ fun WatchPartyLobbyScreen(route: WatchPartyLobbyRoute, onBack: () -> Unit, modif
     val state by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
     val socialState by SocialRepository.uiState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
-    var inviteCode by remember(route) { mutableStateOf<String?>(null) }
 
     LaunchedEffect(route) {
-        if (state.party != null) return@LaunchedEffect
+        // Skipping whenever any party was held meant a stale one from earlier in the session
+        // suppressed creation entirely: the host was shown somebody else's old lobby, with no
+        // invite code, and nothing explained why. Only a party that actually satisfies this route
+        // counts as already open.
+        val held = state.party
+        val heldSatisfiesRoute = held != null && held.status != WatchPartyStatus.ended && when {
+            route.partyId != null -> held.id == route.partyId
+            !route.inviteCode.isNullOrBlank() -> true
+            route.videoId != null -> held.content.videoId == route.videoId
+            else -> true
+        }
+        if (heldSatisfiesRoute) return@LaunchedEffect
         if (route.partyId != null) {
             WatchPartyRepository.join(partyId = route.partyId)
         } else if (!route.inviteCode.isNullOrBlank()) {
@@ -71,7 +81,7 @@ fun WatchPartyLobbyScreen(route: WatchPartyLobbyRoute, onBack: () -> Unit, modif
                         releaseFingerprint = it,
                     )
                 },
-            ).onSuccess { inviteCode = it }
+            )
         }
     }
 
@@ -99,7 +109,7 @@ fun WatchPartyLobbyScreen(route: WatchPartyLobbyRoute, onBack: () -> Unit, modif
                     Text(party.content.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                     party.content.episode?.let { Text("S${party.content.season ?: 1} E$it") }
                     Text("${state.connection.name.replaceFirstChar(Char::uppercase)} · ${party.members.size}/$WatchPartyMaxParticipants")
-                    inviteCode?.let {
+                    state.inviteCode?.let {
                         // Only the last four characters are stored in plaintext, so a code that
                         // cannot be read off this screen cannot be recovered at all. Selectable so
                         // it can be copied rather than transcribed.

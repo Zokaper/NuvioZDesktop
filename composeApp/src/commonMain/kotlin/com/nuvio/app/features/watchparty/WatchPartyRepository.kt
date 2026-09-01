@@ -30,6 +30,10 @@ import kotlin.uuid.Uuid
 data class WatchPartyUiState(
     val activeProfileId: String? = null,
     val party: WatchPartyState? = null,
+    // The host's own invite code. Only the last four characters are stored server-side, so a code
+    // that is not held here is gone for good; it lived in the lobby composition and vanished the
+    // moment the host navigated away.
+    val inviteCode: String? = null,
     val connection: PartyConnectionState = PartyConnectionState.disconnected,
     val serverClockOffsetMs: Long = 0,
     val isWorking: Boolean = false,
@@ -66,10 +70,12 @@ object WatchPartyRepository {
             put("p_control_mode", controlMode.name)
         }).decodeAs<WatchPartyState>()
         installSnapshot(snapshot)
+        _uiState.value = _uiState.value.copy(inviteCode = code)
         code
     }
 
     suspend fun join(partyId: String? = null, inviteCode: String? = null): Result<Unit> = call {
+        _uiState.value = _uiState.value.copy(inviteCode = null)
         require(partyId != null || !inviteCode.isNullOrBlank()) { "Party ID or invite code required" }
         val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_join", buildJsonObject {
             put("p_profile_id", requireProfile())
