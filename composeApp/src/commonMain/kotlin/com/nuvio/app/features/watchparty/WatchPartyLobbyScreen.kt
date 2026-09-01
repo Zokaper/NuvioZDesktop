@@ -9,17 +9,20 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,12 +34,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nuvio.app.features.social.SocialRepository
 import com.nuvio.app.navigation.WatchPartyLobbyRoute
 import kotlinx.coroutines.launch
 
 @Composable
 fun WatchPartyLobbyScreen(route: WatchPartyLobbyRoute, onBack: () -> Unit, modifier: Modifier = Modifier) {
     val state by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
+    val socialState by SocialRepository.uiState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var inviteCode by remember(route) { mutableStateOf<String?>(null) }
 
@@ -71,6 +76,9 @@ fun WatchPartyLobbyScreen(route: WatchPartyLobbyRoute, onBack: () -> Unit, modif
     }
 
     val party = state.party
+    // Hosted outside a Surface, so LocalContentColor falls back to black. Without this the whole
+    // lobby - the invite code included - is black on a dark background.
+    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
@@ -91,7 +99,12 @@ fun WatchPartyLobbyScreen(route: WatchPartyLobbyRoute, onBack: () -> Unit, modif
                     Text(party.content.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                     party.content.episode?.let { Text("S${party.content.season ?: 1} E$it") }
                     Text("${state.connection.name.replaceFirstChar(Char::uppercase)} · ${party.members.size}/$WatchPartyMaxParticipants")
-                    inviteCode?.let { Text("Invite code: $it", fontWeight = FontWeight.Bold) }
+                    inviteCode?.let {
+                        // Only the last four characters are stored in plaintext, so a code that
+                        // cannot be read off this screen cannot be recovered at all. Selectable so
+                        // it can be copied rather than transcribed.
+                        SelectionContainer { Text("Invite code: $it", fontWeight = FontWeight.Bold) }
+                    }
                 }
             }
             item {
@@ -108,6 +121,29 @@ fun WatchPartyLobbyScreen(route: WatchPartyLobbyRoute, onBack: () -> Unit, modif
                     )
                 }
             }
+            // WatchPartyRepository.invite existed with no caller, so the receiving side rendered
+            // invites that nothing could ever send. Only friends can be invited, which
+            // party_invite_friend enforces regardless of what is listed here.
+            val invitableFriends = socialState.friends.filterNot { friend ->
+                party.members.any { it.profileId == friend.profileId }
+            }
+            if (invitableFriends.isNotEmpty()) {
+                item { Text("Invite a friend", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+                items(invitableFriends, key = { "invite:${it.profileId}" }) { friend ->
+                    PartyPanel {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(friend.displayName, fontWeight = FontWeight.SemiBold)
+                                Text("@${friend.handle}")
+                            }
+                            Button(onClick = { scope.launch { WatchPartyRepository.invite(friend.profileId) } }) {
+                                Text("Invite")
+                            }
+                        }
+                    }
+                }
+            }
+
             item { Text("Participants", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
             items(party.members, key = WatchPartyParticipant::profileId) { member ->
                 PartyPanel {
@@ -131,6 +167,7 @@ fun WatchPartyLobbyScreen(route: WatchPartyLobbyRoute, onBack: () -> Unit, modif
                 }
             }
         }
+    }
     }
 }
 

@@ -80,6 +80,9 @@ private fun <T> SocialHomeRow(
             modifier = Modifier.padding(horizontal = sectionPadding),
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
+            // Outside any Surface, so LocalContentColor would fall back to black. The cards below
+            // are Surfaces and set their own, which is why only this heading was invisible.
+            color = MaterialTheme.colorScheme.onBackground,
         )
         LazyRow(
             contentPadding = PaddingValues(horizontal = sectionPadding),
