@@ -35,6 +35,26 @@ import kotlin.math.abs
  * policy do about the position it was handed. Reaches the `DesktopDebugLog` file when desktop is
  * run with `-Dnuvio.debugTools=true`.
  */
+/**
+ * What a client tells the party it is doing.
+ *
+ * [shouldPlay] is the intent, and it is the third case that matters: a player that is starved
+ * rather than paused reports neither playing nor loading, and calling that `paused` publishes a
+ * deliberate pause the user never made - which every other member then obeys, pausing and seeking
+ * to a frozen position. A host whose source stutters must look like a host who is buffering,
+ * because that is what it is.
+ *
+ * A function rather than a value computed in composition, because the heartbeat loop is keyed only
+ * on the party generation: anything it closes over from the composition that launched it is
+ * captured once and never updated again.
+ */
+private fun partyStatusFor(snapshot: PlayerPlaybackSnapshot, shouldPlay: Boolean): WatchPartyStatus = when {
+    snapshot.isLoading -> WatchPartyStatus.buffering
+    snapshot.isPlaying -> WatchPartyStatus.playing
+    shouldPlay -> WatchPartyStatus.buffering
+    else -> WatchPartyStatus.paused
+}
+
 private val partyLog = Logger.withTag("WatchPartyPlayer")
 
 /**
@@ -167,12 +187,9 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
     // deliberate pause the user never made - which every other member then obeyed, pausing and
     // seeking to a frozen position. A host whose source stutters must look like a host who is
     // buffering, because that is what it is.
-    val reportedStatus = when {
-        playbackSnapshot.isLoading -> WatchPartyStatus.buffering
-        playbackSnapshot.isPlaying -> WatchPartyStatus.playing
-        shouldPlay -> WatchPartyStatus.buffering
-        else -> WatchPartyStatus.paused
-    }
+    // Only a key for the immediate-publish effect below. Every heartbeat derives its own status
+    // from the snapshot it just read - see the comment in the periodic loop.
+    val reportedStatus = partyStatusFor(playbackSnapshot, shouldPlay)
 
     LaunchedEffect(generationKey) {
         if (generationKey == null) return@LaunchedEffect
@@ -186,7 +203,14 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
                 positionMs = snapshot.positionMs,
                 durationMs = snapshot.durationMs,
                 speed = snapshot.playbackSpeed,
-                status = reportedStatus,
+                // Derived here, from the snapshot this pass just read, and deliberately not from
+                // the composable-level value: this loop is keyed only on the generation, so a value
+                // computed in the composition that launched it is captured once and never updated.
+                // Latching it pinned the party on whatever the host happened to be doing at the
+                // instant playback started - reliably `buffering`, because `isPlaying` has not
+                // turned true yet - and republished that every five seconds for the rest of the
+                // session. Every guest then sat on WAITING_FOR_HOST forever while the host played on.
+                status = partyStatusFor(snapshot, shouldPlay),
             )
             delay(WatchPartySnapshotIntervalMs)
         }
@@ -211,7 +235,7 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
             positionMs = snapshot.positionMs,
             durationMs = snapshot.durationMs,
             speed = snapshot.playbackSpeed,
-            status = reportedStatus,
+            status = partyStatusFor(snapshot, shouldPlay),
         )
     }
 
