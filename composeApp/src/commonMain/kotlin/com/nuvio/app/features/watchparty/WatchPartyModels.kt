@@ -28,7 +28,39 @@ enum class WatchPartyControlMode { host_only, collaborative }
 enum class WatchPartyStatus { lobby, playing, paused, buffering, ended }
 
 @Serializable
-enum class SourceResolutionState { joined, resolving, buffering, ready, failed, left }
+enum class SourceResolutionState {
+    joined,
+    waiting_for_host,
+    fetching,
+    resolving,
+    choosing_fallback,
+    source_ready,
+    buffering,
+    ready,
+    failed,
+    left,
+    disconnected,
+}
+
+@Serializable
+enum class WatchPartyStage { lobby, waiting_for_host_source, resolving_sources, ready_to_launch, playing }
+
+@Serializable
+enum class PartySourceMatch { exact, alternate }
+
+@Serializable
+data class PartyAddonSignature(
+    val id: String,
+    val version: String,
+)
+
+@Serializable
+data class PartyParticipantProfile(
+    @SerialName("display_name") val displayName: String = "",
+    val handle: String? = null,
+    @SerialName("avatar_url") val avatarUrl: String? = null,
+    @SerialName("avatar_color_hex") val avatarColorHex: String = "#1E88E5",
+)
 
 @Serializable
 enum class PartyConnectionState { connected, reconnecting, disconnected }
@@ -50,7 +82,7 @@ data class SourceFingerprint(
     @SerialName("addon_id") val addonId: String? = null,
     @SerialName("info_hash") val infoHash: String? = null,
     @SerialName("file_index") val fileIndex: Int? = null,
-    @SerialName("release_fingerprint") val releaseFingerprint: String,
+    @SerialName("release_fingerprint") val releaseFingerprint: String = "",
     val resolution: String? = null,
     val quality: String? = null,
     val languages: Set<String> = emptySet(),
@@ -64,6 +96,10 @@ data class WatchPartyParticipant(
     @SerialName("ready_state") val readyState: SourceResolutionState,
     @SerialName("ready_error") val readyError: String? = null,
     @SerialName("resolved_duration_ms") val resolvedDurationMs: Long? = null,
+    val profile: PartyParticipantProfile? = null,
+    @SerialName("addon_signature") val addonSignature: List<PartyAddonSignature> = emptyList(),
+    @SerialName("source_generation") val sourceGeneration: Int = 0,
+    @SerialName("source_match") val sourceMatch: PartySourceMatch? = null,
     val connected: Boolean = true,
     @SerialName("joined_at") val joinedAt: String,
 )
@@ -75,6 +111,8 @@ data class WatchPartyState(
     val status: WatchPartyStatus,
     @SerialName("control_mode") val controlMode: WatchPartyControlMode,
     @SerialName("content_generation") val contentGeneration: Int,
+    @SerialName("source_generation") val sourceGeneration: Int = 0,
+    val stage: WatchPartyStage = WatchPartyStage.lobby,
     val content: PartyContent,
     @SerialName("source_fingerprint") val sourceFingerprint: SourceFingerprint? = null,
     @SerialName("position_ms") val positionMs: Long,
@@ -130,8 +168,13 @@ data class PartyPlaybackGate(
 
 private val PartyBlockingReadyStates = setOf(
     SourceResolutionState.joined,
+    SourceResolutionState.waiting_for_host,
+    SourceResolutionState.fetching,
     SourceResolutionState.resolving,
+    SourceResolutionState.choosing_fallback,
+    SourceResolutionState.source_ready,
     SourceResolutionState.buffering,
+    SourceResolutionState.disconnected,
 )
 
 /**

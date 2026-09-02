@@ -138,6 +138,8 @@ object WatchPartyRepository {
         sourceFingerprint: SourceFingerprint? = null,
         qualityIntent: JsonObject? = null,
         controlMode: WatchPartyControlMode = WatchPartyControlMode.host_only,
+        initialPositionMs: Long = 0L,
+        initialPlaybackSpeed: Float = 1f,
     ): Result<String> = call {
         val profileId = requireProfile()
         val code = generateInviteCode()
@@ -147,6 +149,8 @@ object WatchPartyRepository {
             sourceFingerprint?.let { put("p_source_fingerprint", json.encodeToJsonElement(it)) }
             qualityIntent?.let { put("p_quality_intent", it) }
             put("p_control_mode", controlMode.name)
+            put("p_position_ms", initialPositionMs.coerceAtLeast(0L))
+            put("p_playback_speed", initialPlaybackSpeed.coerceIn(0.25f, 4f))
         }).decodeAs<WatchPartyState>()
         log.i { "create party=${snapshot.id.shortId()} host=${profileId.shortId()} code=****${code.takeLast(4)}" }
         installSnapshot(snapshot)
@@ -173,12 +177,20 @@ object WatchPartyRepository {
         put("p_party_id", requireParty().id); put("p_host_profile_id", requireProfile()); put("p_receiver_profile_id", friendProfileId)
     }
 
-    suspend fun updateReady(state: SourceResolutionState, durationMs: Long? = null, error: String? = null): Result<Unit> = call {
+    suspend fun updateReady(
+        state: SourceResolutionState,
+        durationMs: Long? = null,
+        error: String? = null,
+        sourceGeneration: Int? = null,
+        sourceMatch: PartySourceMatch? = null,
+    ): Result<Unit> = call {
         val party = requireParty()
         log.i { "ready party=${party.id.shortId()} profile=${_uiState.value.activeProfileId.shortId()} state=$state durationMs=$durationMs error=$error" }
         val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_set_ready", buildJsonObject {
             put("p_party_id", party.id); put("p_profile_id", requireProfile()); put("p_ready_state", state.name)
             durationMs?.let { put("p_duration_ms", it) }; error?.let { put("p_error", it) }
+            sourceGeneration?.let { put("p_source_generation", it) }
+            sourceMatch?.let { put("p_source_match", it.name) }
         }).decodeAs<WatchPartyState>()
         installSnapshot(snapshot, reopenChannel = false)
     }
@@ -206,9 +218,39 @@ object WatchPartyRepository {
      * and holds the timeline where it is until a real play command starts it.
      */
     @OptIn(ExperimentalUuidApi::class)
-    suspend fun startResolving(): Result<Unit> = submit(
-        WatchPartyCommand(Uuid.random().toString(), "buffering", _uiState.value.party?.positionMs ?: 0L),
-    )
+    suspend fun beginSourceSelection(addons: List<PartyAddonSignature>): Result<Unit> = call {
+        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_begin_source_selection", buildJsonObject {
+            put("p_party_id", requireParty().id)
+            put("p_host_profile_id", requireProfile())
+            put("p_addon_signature", json.encodeToJsonElement(addons))
+        }).decodeAs<WatchPartyState>()
+        installSnapshot(snapshot, reopenChannel = false)
+    }
+
+    /** Backward source-compatible name for callers that have not adopted the preflight flow yet. */
+    suspend fun startResolving(): Result<Unit> = beginSourceSelection(emptyList())
+
+    suspend fun publishAddonSignature(addons: List<PartyAddonSignature>): Result<Unit> = call {
+        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_set_addon_signature", buildJsonObject {
+            put("p_party_id", requireParty().id)
+            put("p_profile_id", requireProfile())
+            put("p_addon_signature", json.encodeToJsonElement(addons))
+        }).decodeAs<WatchPartyState>()
+        installSnapshot(snapshot, reopenChannel = false)
+    }
+
+    suspend fun selectSource(
+        fingerprint: SourceFingerprint,
+        expectedSourceGeneration: Int,
+    ): Result<Unit> = call {
+        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_select_source", buildJsonObject {
+            put("p_party_id", requireParty().id)
+            put("p_host_profile_id", requireProfile())
+            put("p_expected_source_generation", expectedSourceGeneration)
+            put("p_source_fingerprint", json.encodeToJsonElement(fingerprint))
+        }).decodeAs<WatchPartyState>()
+        installSnapshot(snapshot, reopenChannel = false)
+    }
 
     suspend fun submit(command: WatchPartyCommand): Result<Unit> = call {
         log.i {
@@ -464,6 +506,12 @@ object WatchPartyRepository {
         val updatedAtMs = parseIsoEpochMs(updatedAt) ?: return false
         val generation = payload["content_generation"]?.jsonPrimitive?.intOrNull ?: return false
         if (generation != held.contentGeneration) return false
+        // The selected fingerprint is intentionally excluded from realtime. A generation move is
+        // therefore an invalidation: refresh once to obtain the new sanitized fingerprint instead
+        // of applying a payload that can only describe half of the preflight transition.
+        val sourceGeneration = payload["source_generation"]?.jsonPrimitive?.intOrNull
+            ?: held.sourceGeneration
+        if (sourceGeneration != held.sourceGeneration) return false
         val status = str("status")?.let { name -> runCatching { WatchPartyStatus.valueOf(name) }.getOrNull() }
             ?: return false
         val positionMs = payload["position_ms"]?.jsonPrimitive?.longOrNull ?: return false
@@ -495,6 +543,10 @@ object WatchPartyRepository {
                 controlMode = str("control_mode")
                     ?.let { name -> runCatching { WatchPartyControlMode.valueOf(name) }.getOrNull() }
                     ?: held.controlMode,
+                sourceGeneration = sourceGeneration,
+                stage = str("stage")
+                    ?.let { name -> runCatching { WatchPartyStage.valueOf(name) }.getOrNull() }
+                    ?: held.stage,
             ),
         )
         return true

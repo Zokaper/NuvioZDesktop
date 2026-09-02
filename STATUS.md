@@ -2,6 +2,95 @@
 
 Last updated: 2026-09-02
 
+## Watch Together and Social desktop UX overhaul (2026-09-02)
+
+Desktop Watch Together now has an additive source-preflight model: explicit lobby/preflight
+stages, source generations, exact/alternate source reporting, presentation-safe participant data,
+and enabled stream-addon signatures containing manifest ID/version only. New host RPC seams begin
+selection and commit/reselect a credential-free fingerprint with an expected generation; older
+snapshots continue to decode through defaults. The externally maintained Supabase project must
+deploy the documented additive fields and RPC behavior before this UI is released.
+
+The party room now shows artwork and episode identity, a prominent invite code, addon mismatch
+warnings, participant cards with role/connection/source state, and a stage-aware host action. Start
+opens the configured Classic, Streamlined, or Instant source path directly, without returning
+through details. Guests resolve the host fingerprint locally, then fall back through their own
+playback mode; cached-link and external-player shortcuts are disabled for party launches. Starting
+a party from active playback captures its safe source fingerprint, position, and speed.
+
+Desktop player controls now receive party membership, role/status, control mode, connection state,
+and transport permission. A right-side party panel follows control visibility; host-only guests see
+transport, seek, speed, and episode navigation disabled while local subtitle/audio/recovery and exit
+actions stay available. The old floating player action and standalone detail-page party buttons are
+gone; details use the Play overflow and the native player header owns the in-player action.
+
+Social now has a profile header, bounded responsive desktop layout, a two-column Watching Now /
+Recent activity dashboard at wide widths, and shared artwork-rich episode/activity chips reused on
+Home. Existing inbox, invitations, friend search/management, privacy, offline, error, and empty-state
+surfaces remain integrated below it.
+
+**Verified:** `:composeApp:compileKotlinDesktop` succeeds; targeted desktop tests for addon privacy,
+fingerprint/readiness behavior, disconnect blocking, and launch gating pass; native controls
+JavaScript passes `node --check`. A complete `:composeApp:desktopTest` run was attempted but its
+test worker did not terminate, so the targeted suite was run cleanly after stopping only that stale
+worker.
+
+## A guest was seeked to the end of its own film and pinned there (2026-09-02)
+
+Second run, after the flapping fixes. Sync held; the seeks landed exactly - `seek landed
+targetMs=1708767 landedMs=1708767 tookMs=2` and the same for 2616248 and 4855987. Then, while the
+host scrubbed around, **the guest's player jumped to the end of the movie and stayed there.** The
+guest was on another machine, so its log is not here; the host's is
+`nuvio-debug-20260902-204023.log` and it settles two of the three faults on its own.
+
+**1. Every party position was clamped into `0..durationMs - 1`.** Seven call sites did it, and the
+clamp is the bug: it turns "the party is somewhere this copy does not reach" into "go to the last
+frame", and the last frame is where a player stops. Worse, it is self-confirming - the drift
+correction then compares a position clamped to the end against a target clamped to the same end,
+measures no error, and agrees forever. A guest whose file is a different cut, or whose duration has
+not settled on a stream that is still opening, was therefore parked on the credits with the
+correction loop insisting it was in sync. A position past the end is not a position; it is now
+refused and logged (`position unreachable targetMs=... durationMs=... overMs=...`), and the player
+holds where it is under a banner.
+
+**2. Nothing ever compared the members' durations.** `arePartyDurationsCompatible` has been in
+`WatchPartyModels.kt` since the feature landed, with a test and **no caller**, and
+`resolvedDurationMs` is reported by every member and read by nobody. Sources are resolved
+independently by design, so a member on a different cut is an ordinary outcome and was completely
+unflagged until a seek dumped them at the end. The player now compares its own duration against the
+host's resolved one and says so.
+
+**3. A seek resumed a paused party.** `partyBarrierPlan` returned `playAfter = true` unconditionally
+for play *and* seek - the field was a constant - and `executePartyBarrier` ignored it and played
+anyway. So scrubbing a paused film started it again on every member, which is what looking for a
+scene does over and over. In the log: `pause src=user positionMs=7841` at 20:41:52.2, `issue
+kind=seek posMs=1708767` at 20:41:53.9, and `play` at 20:41:54.2. `PartyCommand` now carries
+`playAfter` on the wire (defaulting true, so a command from a build without it behaves as that build
+did), a paused seek skips the barrier lead and the overshoot it was carrying, and the executor obeys
+it.
+
+**Also, from the same log:** the host played and then paused 268ms later - `gate released ... by=allReady`
+at 20:41:35.326, `play src=gate`, then `waiting for f662ef78` at 20:41:35.608. The guest had reported
+`buffering` for the ten seconds it spent resolving its own source, which is what the readiness gate
+is for and is not a stall; left in the window it became a hold the instant the gate opened.
+`WatchPartySync.resetStallWatch()` now clears that evidence when the party starts playing.
+
+**And two bounds that were missing:** the desktop `skipInterval` handler seeked to a marker's end
+time unclamped, while the shared overlay's own handler has always clamped - marker data from a
+different cut routinely runs past the file. And `submitPartySeek` now bounds every position it
+broadcasts by the sender's own duration, because a scrub bar, a skip marker and a ten second step off
+the end all pass through it and one overshoot is sent to every member.
+
+**Verified:** `:composeApp:desktopTest` passes, no failures. New coverage for a paused seek not
+resuming, a paused seek ignoring the delivery overshoot, the wire default for a command without the
+field, and the field surviving a round trip.
+
+**Not** verified: no run against these changes, and the guest half of the diagnosis is inference -
+the clamp and the missing duration check are proved by reading, the resume-on-seek by the host's log,
+but *which* of them put that particular guest on the last frame is not. The guest's
+`nuvio-debug-*.log` from that session would say: look for `position unreachable`, or for a
+`barrier kind=seek` whose `seekToMs` equals its `durationMs - 1`.
+
 ## The guest flapped because four separate things below the sync layer were wrong (2026-09-02)
 
 The first two-instance run against the rebuilt timing plane. The timing plane itself is fine - the

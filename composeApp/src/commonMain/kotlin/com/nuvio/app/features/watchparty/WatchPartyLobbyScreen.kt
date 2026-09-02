@@ -1,12 +1,18 @@
 package com.nuvio.app.features.watchparty
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -31,13 +37,24 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import co.touchlab.kermit.Logger
+import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.social.SocialRepository
+import com.nuvio.app.core.ui.NuvioAsyncImage
 import com.nuvio.app.navigation.WatchPartyLobbyRoute
 import kotlinx.coroutines.launch
+import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.watch_party_addon_differences
+import nuvio.composeapp.generated.resources.watch_party_choose_source
+import nuvio.composeapp.generated.resources.watch_party_resolve_source
+import nuvio.composeapp.generated.resources.watch_party_source_explanation
+import nuvio.composeapp.generated.resources.watch_party_title
+import org.jetbrains.compose.resources.stringResource
 
 private val lobbyLog = Logger.withTag("WatchPartyLobby")
 
@@ -46,11 +63,13 @@ fun WatchPartyLobbyScreen(
     route: WatchPartyLobbyRoute,
     onBack: () -> Unit,
     onOpenContent: (contentType: String, contentId: String, title: String) -> Unit = { _, _, _ -> },
+    onChooseSource: (WatchPartyState) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
     val syncState by WatchPartySync.state.collectAsStateWithLifecycle()
     val socialState by SocialRepository.uiState.collectAsStateWithLifecycle()
+    val addonsState by AddonRepository.uiState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
     // Start submitted a play command and stopped there, so the party went to `playing` server-side
@@ -60,15 +79,28 @@ fun WatchPartyLobbyScreen(
     // design, so there is no shared stream to open. Leaving the lobby for the title is the honest
     // transition - from there the usual player flow runs, and BindWatchPartyEffect takes over the
     // synchronisation once playback starts.
-    val partyStatus = state.party?.status
-    LaunchedEffect(partyStatus) {
+    val addonSignature = remember(addonsState.addons) { watchPartyAddonSignature(addonsState.addons) }
+    var handedOffSourceGeneration by remember(route) { mutableStateOf<Int?>(null) }
+
+    LaunchedEffect(state.party?.id, addonSignature) {
+        if (state.party != null) WatchPartyRepository.publishAddonSignature(addonSignature)
+    }
+
+    LaunchedEffect(state.party?.sourceGeneration, state.party?.sourceFingerprint) {
         val party = state.party ?: return@LaunchedEffect
-        if (partyStatus == WatchPartyStatus.lobby || partyStatus == WatchPartyStatus.ended) return@LaunchedEffect
-        lobbyLog.i {
-            "handoff party=${party.id.shortId()} status=$partyStatus " +
-                "content=${party.content.contentType}/${party.content.contentId} video=${party.content.videoId}"
-        }
-        onOpenContent(party.content.contentType, party.content.contentId, party.content.title)
+        val isHost = party.hostProfileId == state.activeProfileId
+        if (
+            isHost ||
+            party.sourceFingerprint == null ||
+            party.effectiveStage() !in setOf(
+                WatchPartyStage.resolving_sources,
+                WatchPartyStage.ready_to_launch,
+                WatchPartyStage.playing,
+            )
+        ) return@LaunchedEffect
+        if (handedOffSourceGeneration == party.sourceGeneration) return@LaunchedEffect
+        handedOffSourceGeneration = party.sourceGeneration
+        onChooseSource(party)
     }
 
     LaunchedEffect(route) {
@@ -112,6 +144,8 @@ fun WatchPartyLobbyScreen(
                         releaseFingerprint = it,
                     )
                 },
+                initialPositionMs = route.initialPositionMs,
+                initialPlaybackSpeed = route.initialPlaybackSpeed,
             )
         }
     }
@@ -121,14 +155,14 @@ fun WatchPartyLobbyScreen(
     // lobby - the invite code included - is black on a dark background.
     CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
     LazyColumn(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize().widthIn(max = 1040.dp),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null) }
-                Text("Watch Together", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text(stringResource(Res.string.watch_party_title), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             }
         }
         state.errorMessage?.let { item { PartyPanel { Text(it, color = MaterialTheme.colorScheme.error) } } }
@@ -137,15 +171,45 @@ fun WatchPartyLobbyScreen(
         } else {
             item {
                 PartyPanel {
-                    Text(party.content.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                    party.content.episode?.let { Text("S${party.content.season ?: 1} E$it") }
-                    Text("${state.connection.name.replaceFirstChar(Char::uppercase)} · ${party.members.size}/$WatchPartyMaxParticipants")
-                    Text(partySyncLabel(state.connection, syncState), style = MaterialTheme.typography.bodySmall)
-                    state.inviteCode?.let {
-                        // Only the last four characters are stored in plaintext, so a code that
-                        // cannot be read off this screen cannot be recovered at all. Selectable so
-                        // it can be copied rather than transcribed.
-                        SelectionContainer { Text("Invite code: $it", fontWeight = FontWeight.Bold) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        party.content.poster?.let { poster ->
+                            NuvioAsyncImage(
+                                model = poster,
+                                contentDescription = null,
+                                modifier = Modifier.size(width = 92.dp, height = 132.dp).clip(RoundedCornerShape(14.dp)),
+                                contentScale = ContentScale.Crop,
+                            )
+                        }
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Text(party.content.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                            party.content.episode?.let { Text("S${party.content.season ?: 1} E$it · ${party.content.episodeTitle.orEmpty()}") }
+                            Text(
+                                party.effectiveStage().name.replace('_', ' ').replaceFirstChar(Char::uppercase),
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text("${state.connection.name.replaceFirstChar(Char::uppercase)} · ${party.members.size}/$WatchPartyMaxParticipants")
+                            Text(partySyncLabel(state.connection, syncState), style = MaterialTheme.typography.bodySmall)
+                            state.inviteCode?.let {
+                                SelectionContainer { Text("Invite code  $it", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+                            }
+                        }
+                    }
+                }
+            }
+            val hostSignature = party.members.firstOrNull { it.profileId == party.hostProfileId }?.addonSignature.orEmpty()
+            val addonMismatches = party.members.filter { member ->
+                member.connected && member.profileId != party.hostProfileId &&
+                    comparePartyAddonSignatures(hostSignature, member.addonSignature).differs
+            }
+            if (addonMismatches.isNotEmpty()) {
+                item {
+                    PartyPanel {
+                        Text(stringResource(Res.string.watch_party_addon_differences), fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.tertiary)
+                        Text(
+                            "${addonMismatches.size} ${if (addonMismatches.size == 1) "person has" else "people have"} a different set of stream addons. You can continue; an alternate source may be needed.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                     }
                 }
             }
@@ -208,8 +272,28 @@ fun WatchPartyLobbyScreen(
             item { Text("Participants", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
             items(party.members, key = WatchPartyParticipant::profileId) { member ->
                 PartyPanel {
-                    Text(if (member.profileId == state.activeProfileId) "You" else member.profileId.take(8), fontWeight = FontWeight.SemiBold)
-                    Text("${member.role} · ${member.readyState.lobbyLabel()}${member.readyError?.let { " · $it" }.orEmpty()}")
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier.size(38.dp).clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primaryContainer),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(member.displayName(state.activeProfileId).take(1).uppercase(), fontWeight = FontWeight.Bold)
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(member.displayName(state.activeProfileId), fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "${member.role.replaceFirstChar(Char::uppercase)} · ${member.readyState.lobbyLabel()}${member.sourceMatch?.let { " · ${it.name}" }.orEmpty()}",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            member.readyError?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+                        }
+                        Box(
+                            Modifier.size(9.dp).clip(CircleShape).background(
+                                if (member.connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                            ),
+                        )
+                    }
                 }
             }
             if (party.hostProfileId == state.activeProfileId) {
@@ -219,9 +303,33 @@ fun WatchPartyLobbyScreen(
                     // was the one thing that could defeat the host's own readiness gate. Readiness is
                     // now reported by the player, once a stream is actually open.
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Button(onClick = { scope.launch { WatchPartyRepository.startResolving() } }) { Text("Start") }
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    val retainedFingerprint = party.sourceFingerprint
+                                    WatchPartyRepository.beginSourceSelection(addonSignature).onSuccess {
+                                        val selectingParty = WatchPartyRepository.uiState.value.party
+                                        if (retainedFingerprint == null || selectingParty == null) {
+                                            selectingParty?.let(onChooseSource)
+                                        } else {
+                                            WatchPartyRepository.selectSource(
+                                                fingerprint = retainedFingerprint,
+                                                expectedSourceGeneration = selectingParty.sourceGeneration,
+                                            ).onSuccess {
+                                                WatchPartyRepository.uiState.value.party?.let(onChooseSource)
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                        ) {
+                            Text(
+                                if (party.sourceFingerprint == null) stringResource(Res.string.watch_party_choose_source)
+                                else stringResource(Res.string.watch_party_resolve_source),
+                            )
+                        }
                         Text(
-                            "Everyone picks their own source next. Playback waits until they all have one.",
+                            stringResource(Res.string.watch_party_source_explanation),
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
@@ -262,9 +370,14 @@ private fun partySyncLabel(connection: PartyConnectionState, sync: WatchPartySyn
 
 private fun SourceResolutionState.lobbyLabel(): String = when (this) {
     SourceResolutionState.joined -> "no source yet"
+    SourceResolutionState.waiting_for_host -> "waiting for host"
+    SourceResolutionState.fetching -> "finding the host source"
     SourceResolutionState.resolving -> "picking a source"
+    SourceResolutionState.choosing_fallback -> "choosing an alternate"
+    SourceResolutionState.source_ready -> "source ready"
     SourceResolutionState.buffering -> "buffering"
     SourceResolutionState.ready -> "ready"
     SourceResolutionState.failed -> "no source found"
     SourceResolutionState.left -> "left"
+    SourceResolutionState.disconnected -> "disconnected"
 }

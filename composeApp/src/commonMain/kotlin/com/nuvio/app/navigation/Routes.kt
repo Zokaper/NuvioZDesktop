@@ -62,6 +62,8 @@ data class WatchPartyLobbyRoute(
     val sourceInfoHash: String? = null,
     val sourceFileIndex: Int? = null,
     val sourceReleaseFingerprint: String? = null,
+    val initialPositionMs: Long = 0L,
+    val initialPlaybackSpeed: Float = 1f,
 ) : AppRoute
 
 @Serializable

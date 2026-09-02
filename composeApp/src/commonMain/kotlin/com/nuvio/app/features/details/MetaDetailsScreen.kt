@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistAddCheckCircle
+import androidx.compose.material.icons.rounded.People
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
@@ -1148,18 +1149,10 @@ fun MetaDetailsScreen(
                                         onWatchedClick = toggleWatched,
                                         onSaveClick = toggleSaved,
                                         onSaveLongClick = openLibraryListPicker,
+                                        onWatchTogetherClick = onWatchTogether?.let { callback ->
+                                            { callback(watchPartyContent) }
+                                        },
                                     )
-                                }
-                                if (onWatchTogether != null) {
-                                    item(key = "z-watch-together-entry") {
-                                        Button(
-                                            onClick = { onWatchTogether(watchPartyContent) },
-                                            modifier = Modifier.padding(
-                                                horizontal = contentHorizontalPadding,
-                                                vertical = 8.dp,
-                                            ),
-                                        ) { Text("Watch Together") }
-                                    }
                                 }
 
                                 configuredMetaSectionItems(
@@ -1332,17 +1325,6 @@ fun MetaDetailsScreen(
                                     )
                                 }
 
-                                if (onWatchTogether != null) {
-                                    item(key = "z-watch-together-entry") {
-                                        Button(
-                                            onClick = { onWatchTogether(watchPartyContent) },
-                                            modifier = Modifier.padding(
-                                                horizontal = contentHorizontalPadding,
-                                                vertical = 8.dp,
-                                            ),
-                                        ) { Text("Watch Together") }
-                                    }
-                                }
 
                                 configuredMetaSectionItems(
                                     settings = metaScreenSettingsUiState,

@@ -2592,4 +2592,15 @@
     <string name="social_remove_friend">Remove friend</string>
     <string name="social_share_watching">Share Watching Now</string>
     <string name="social_share_recent">Share Recently Watched</string>
+
+    <!-- Nuvio Z Watch Together desktop UX. -->
+    <string name="watch_party_title">Watch Together</string>
+    <string name="watch_party_choose_source">Choose source</string>
+    <string name="watch_party_resolve_source">Resolve source</string>
+    <string name="watch_party_source_explanation">You choose the preferred source. Everyone resolves it locally before playback starts.</string>
+    <string name="watch_party_addon_differences">Addon differences</string>
+    <string name="watch_party_host_controls">Host controls</string>
+    <string name="watch_party_collaborative">Collaborative</string>
+    <string name="watch_party_host_source_unavailable">The host source is unavailable. Choose an alternate source.</string>
+    <string name="watch_party_recent_status">Recently watched</string>
 </resources>

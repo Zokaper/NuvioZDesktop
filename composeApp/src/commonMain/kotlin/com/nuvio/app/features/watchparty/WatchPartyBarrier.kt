@@ -129,6 +129,16 @@ data class PartyCommand(
     /** The party instant at which to be at [startPositionMs]. Ignored for [PartyCommandKind.pause]. */
     val startAtPartyMs: Long,
     val playbackSpeed: Float,
+    /**
+     * Whether playback runs once the barrier is reached.
+     *
+     * Carried rather than assumed, and it is a [PartyCommandKind.seek] that needs it: scrubbing a
+     * *paused* party is the ordinary way of finding a scene, and a seek that resumes everybody
+     * turns it into a scrub-and-play. It reached the field - the host paused, dragged the bar, and
+     * the film started again on every member. Defaults true so a command from a build that does not
+     * send it behaves the way that build's own barrier did.
+     */
+    val playAfter: Boolean = true,
 )
 
 /**
@@ -185,13 +195,19 @@ fun partyBarrierPlan(
             speed = speed,
         )
     }
-    val target = command.startPositionMs + (overshoot.toDouble() * speed.toDouble()).toLong()
+    // A seek that is not going to resume is not late in any meaningful sense - nothing is running
+    // for the overshoot to have advanced - so it lands exactly where it was aimed.
+    val target = if (command.playAfter) {
+        command.startPositionMs + (overshoot.toDouble() * speed.toDouble()).toLong()
+    } else {
+        command.startPositionMs
+    }
     val aligned = kotlin.math.abs(localPositionMs - target) <= WatchPartyBarrierAlignToleranceMs
     return PartyBarrierPlan(
         kind = command.kind,
         seekToMs = if (aligned) null else target,
         holdMs = hold,
-        playAfter = true,
+        playAfter = command.playAfter,
         speed = speed,
     )
 }

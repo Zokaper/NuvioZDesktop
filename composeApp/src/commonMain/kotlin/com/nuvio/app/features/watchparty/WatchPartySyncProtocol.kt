@@ -2,6 +2,7 @@ package com.nuvio.app.features.watchparty
 
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.intOrNull
@@ -133,6 +134,7 @@ fun encodePartySyncMessage(message: PartySyncMessage): JsonObject = buildJsonObj
             put("pos", message.command.startPositionMs)
             put("at", message.command.startAtPartyMs)
             put("spd", message.command.playbackSpeed)
+            put("run", message.command.playAfter)
         }
         is PartyClockPingMessage -> {
             put("t", TypeClockPing)
@@ -165,6 +167,7 @@ fun decodePartySyncMessage(payload: JsonObject): PartySyncMessage? {
     fun long(key: String) = payload[key]?.jsonPrimitive?.longOrNull
     fun int(key: String) = payload[key]?.jsonPrimitive?.intOrNull
     fun float(key: String) = payload[key]?.jsonPrimitive?.floatOrNull
+    fun bool(key: String) = payload[key]?.jsonPrimitive?.booleanOrNull
 
     val version = int("v") ?: return null
     if (version > WatchPartySyncProtocolVersion) return null
@@ -198,6 +201,8 @@ fun decodePartySyncMessage(payload: JsonObject): PartySyncMessage? {
                 startPositionMs = long("pos") ?: return null,
                 startAtPartyMs = long("at") ?: return null,
                 playbackSpeed = float("spd") ?: 1f,
+                // Absent from a build that predates the field, and there it always resumed.
+                playAfter = bool("run") ?: true,
             ),
         )
         TypeClockPing -> PartyClockPingMessage(

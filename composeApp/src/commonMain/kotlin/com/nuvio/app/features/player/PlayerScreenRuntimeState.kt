@@ -335,6 +335,16 @@ internal class PlayerScreenRuntime(
     /** How often this host has held the party for a stalled guest, per content generation. */
     var partyStallHoldBudget: StallHoldBudget = StallHoldBudget()
 
+    /**
+     * Whether the party is somewhere this client's own file does not reach.
+     *
+     * Its source is resolved independently of everyone else's, so it can genuinely be a shorter cut -
+     * or a stream whose duration has not settled yet. Held as state because the answer is a banner:
+     * a player parked while the rest of the party watches on is otherwise indistinguishable from a
+     * player that has broken.
+     */
+    var partyPositionUnreachable by mutableStateOf(false)
+
     /** The last status this client told the party about itself, so only changes are published. */
     var partyReportedPeerStatus: WatchPartyStatus? = null
 

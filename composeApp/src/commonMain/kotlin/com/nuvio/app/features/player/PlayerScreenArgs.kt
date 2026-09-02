@@ -22,7 +22,7 @@ internal data class PlayerScreenArgs(
     val onOpenExternalUrl: ((String) -> Unit)?,
     val onFatalPlaybackError: (() -> Unit)? = null,
     val onPlaybackStarted: (() -> Unit)? = null,
-    val onStartWatchTogether: ((PartyContent, SourceFingerprint) -> Unit)? = null,
+    val onStartWatchTogether: ((PartyContent, SourceFingerprint, Long, Float) -> Unit)? = null,
     val modifier: Modifier,
     val logo: String?,
     val poster: String?,

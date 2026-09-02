@@ -14,11 +14,17 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.features.watchparty.PartyContent
 import com.nuvio.app.features.watchparty.SourceFingerprint
+import com.nuvio.app.features.watchparty.WatchPartyControlMode
+import com.nuvio.app.features.watchparty.WatchPartyRepository
+import com.nuvio.app.features.watchparty.displayName
+import com.nuvio.app.features.watchparty.matchesPlayback
 import com.nuvio.app.features.watchparty.normalizeReleaseFingerprint
 import androidx.compose.ui.layout.onSizeChanged
 import co.touchlab.kermit.Logger
@@ -66,6 +72,7 @@ private val playerControlsLog = Logger.withTag("PlayerControls")
 @Composable
 internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     val runtime = this
+    val watchPartyUiState by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
     val isInPip = rememberIsInPictureInPicture()
     val displayedPositionMs = scrubbingPositionMs ?: playbackSnapshot.positionMs
     val seasonNumber = activeSeasonNumber
@@ -92,6 +99,12 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     }
 
     val watchPartyBanner = rememberWatchPartyStatus().bannerText()
+    val activeParty = watchPartyUiState.party?.takeIf {
+        it.matchesPlayback(parentMetaId, playbackSession.videoId)
+    }
+    val partyMayControl = activeParty == null ||
+        activeParty.hostProfileId == watchPartyUiState.activeProfileId ||
+        activeParty.controlMode == WatchPartyControlMode.collaborative
     val currentGestureFeedback = liveGestureFeedback ?: gestureFeedback
     val isP2pPlaybackActive = activeTorrentInfoHash != null
     val p2pConnecting = p2pStreamingState as? P2pStreamingState.Connecting
@@ -289,6 +302,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         unlockLabel = stringResource(Res.string.compose_player_unlock_controls),
         submitIntroLabel = stringResource(Res.string.submit_intro_action),
         videoSettingsLabel = stringResource(Res.string.player_action_video_settings),
+        watchTogetherLabel = stringResource(Res.string.watch_party_title),
         tapToUnlockLabel = stringResource(Res.string.compose_player_tap_to_unlock),
         playbackErrorTitle = stringResource(Res.string.compose_player_playback_error),
         playbackErrorMessage = errorMessage.orEmpty(),
@@ -377,6 +391,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             playerSettingsUiState.introDbApiKey.isNotBlank() &&
             !activeSubmitIntroImdbId().isNullOrBlank(),
         showVideoSettings = isIos,
+        showWatchTogether = activeParty == null && args.onStartWatchTogether != null,
         showSources = activeVideoId != null,
         showEpisodes = isSeries,
         showNextEpisode = nextEpisodeInfo?.hasAired == true,
@@ -430,6 +445,22 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         openingProgress = p2pInitialLoadingProgress,
         partyBannerVisible = watchPartyBanner != null && !playerControlsLocked,
         partyBannerText = watchPartyBanner.orEmpty(),
+        partyPanelVisible = activeParty != null && controlsVisible && !playerControlsLocked,
+        partyControlModeLabel = when (activeParty?.controlMode) {
+            WatchPartyControlMode.host_only -> stringResource(Res.string.watch_party_host_controls)
+            WatchPartyControlMode.collaborative -> stringResource(Res.string.watch_party_collaborative)
+            null -> ""
+        },
+        partyTransportEnabled = partyMayControl,
+        partyMembers = activeParty?.members.orEmpty().map { member ->
+            PlayerPartyMember(
+                name = member.displayName(watchPartyUiState.activeProfileId),
+                role = member.role,
+                status = member.readyState.name.replace('_', ' ').replaceFirstChar(Char::uppercase),
+                avatarUrl = member.profile?.avatarUrl,
+                connected = member.connected,
+            )
+        },
         skipPromptVisible = nativeSkipInterval != null && !playerControlsLocked,
         skipPromptLabel = skipPromptLabel(nativeSkipInterval?.type),
         skipPromptStartMs = ((nativeSkipInterval?.startTime ?: 0.0) * 1000).toLong().coerceAtLeast(0L),
@@ -566,33 +597,6 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                     failPlaybackFatally(message)
                 },
             )
-        }
-
-        if (controlsVisible && !playerControlsLocked && args.onStartWatchTogether != null) {
-            Button(
-                onClick = {
-                    playerController?.pause()
-                    args.onStartWatchTogether?.invoke(
-                        PartyContent(
-                            contentId = parentMetaId,
-                            contentType = parentMetaType,
-                            videoId = playbackSession.videoId,
-                            title = title,
-                            poster = poster,
-                            season = activeSeasonNumber,
-                            episode = activeEpisodeNumber,
-                            episodeTitle = activeEpisodeTitle,
-                        ),
-                        SourceFingerprint(
-                            addonId = activeProviderAddonId,
-                            infoHash = activeTorrentInfoHash,
-                            fileIndex = activeTorrentFileIdx,
-                            releaseFingerprint = normalizeReleaseFingerprint(activeStreamTitle),
-                        ),
-                    )
-                },
-                modifier = Modifier.align(Alignment.TopEnd).padding(top = 52.dp, end = 20.dp),
-            ) { Text("Watch Together") }
         }
 
         AnimatedVisibility(
@@ -832,6 +836,7 @@ private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControl
         PlayerControlsAction.SubmitIntro -> {
             submitIntroStatusMessage = null
         }
+        PlayerControlsAction.WatchTogether -> startWatchTogetherFromCurrentPlayback()
         PlayerControlsAction.LockToggle -> {
             if (playerControlsLocked) unlockPlayerControls() else lockPlayerControls()
         }
@@ -849,6 +854,31 @@ private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControl
         }
     }
     return true
+}
+
+private fun PlayerScreenRuntime.startWatchTogetherFromCurrentPlayback() {
+    val callback = args.onStartWatchTogether ?: return
+    playerController?.pause()
+    callback(
+        PartyContent(
+            contentId = parentMetaId,
+            contentType = parentMetaType,
+            videoId = playbackSession.videoId,
+            title = title,
+            poster = poster,
+            season = activeSeasonNumber,
+            episode = activeEpisodeNumber,
+            episodeTitle = activeEpisodeTitle,
+        ),
+        SourceFingerprint(
+            addonId = activeProviderAddonId,
+            infoHash = activeTorrentInfoHash,
+            fileIndex = activeTorrentFileIdx,
+            releaseFingerprint = normalizeReleaseFingerprint(activeStreamTitle),
+        ),
+        playbackSnapshot.positionMs,
+        playbackSnapshot.playbackSpeed,
+    )
 }
 
 private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: Double): Boolean {
@@ -945,7 +975,12 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
         "submitIntroCommit" -> submitIntroFromPlayerControls()
         "skipInterval" -> {
             val interval = activeSkipInterval ?: return true
-            val targetPositionMs = (interval.endTime * 1000).toLong()
+            // Clamped, like the shared overlay's own skip handler has always been. Marker data comes
+            // from a different cut often enough that an end time past this file is ordinary, and
+            // seeking past the end lands on the last frame, which is where playback stops.
+            val rawMs = (interval.endTime * 1000).toLong()
+            val durationMs = playbackSnapshot.durationMs
+            val targetPositionMs = if (durationMs > 0L) rawMs.coerceAtMost(durationMs - 1) else rawMs
             if (!submitPartySeek(targetPositionMs)) playerController?.seekTo(targetPositionMs)
             scheduleProgressSyncAfterSeek()
             skipIntervalDismissed = true

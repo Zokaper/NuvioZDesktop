@@ -17,6 +17,7 @@ import com.nuvio.app.features.player.PlayerControlsAction
 import com.nuvio.app.features.player.PlayerControlsState
 import com.nuvio.app.features.player.PlayerEngineController
 import com.nuvio.app.features.player.PlayerPlaybackSnapshot
+import com.nuvio.app.features.player.PlayerPartyMember
 import com.nuvio.app.features.player.PlayerResizeMode
 import com.nuvio.app.features.player.SUBTITLE_DELAY_MAX_MS
 import com.nuvio.app.features.player.SUBTITLE_DELAY_MIN_MS
@@ -758,6 +759,7 @@ private fun String.toPlayerControlsAction(): PlayerControlsAction? =
         "nextEpisode" -> PlayerControlsAction.NextEpisode
         "external" -> PlayerControlsAction.OpenExternalPlayer
         "submitIntro" -> PlayerControlsAction.SubmitIntro
+        "watchTogether" -> PlayerControlsAction.WatchTogether
         "videoSettings" -> PlayerControlsAction.VideoSettings
         else -> null
     }
@@ -817,6 +819,8 @@ private fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
         appendJsonField("submitIntroLabel", submitIntroLabel)
         append(',')
         appendJsonField("videoSettingsLabel", videoSettingsLabel)
+        append(',')
+        appendJsonField("watchTogetherLabel", watchTogetherLabel)
         append(',')
         appendJsonField("playbackErrorTitle", playbackErrorTitle)
         append(',')
@@ -994,6 +998,14 @@ private fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
         append(',')
         appendJsonField("partyBannerText", partyBannerText)
         append(',')
+        appendJsonField("partyPanelVisible", partyPanelVisible)
+        append(',')
+        appendJsonField("partyControlModeLabel", partyControlModeLabel)
+        append(',')
+        appendJsonField("partyTransportEnabled", partyTransportEnabled)
+        append(',')
+        appendJsonArrayField("partyMembers", partyMembers) { appendPartyMemberJson(it) }
+        append(',')
         appendJsonField("skipPromptVisible", skipPromptVisible)
         append(',')
         appendJsonField("skipPromptLabel", skipPromptLabel)
@@ -1021,6 +1033,8 @@ private fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
         appendJsonField("showSubmitIntro", showSubmitIntro)
         append(',')
         appendJsonField("showVideoSettings", showVideoSettings)
+        append(',')
+        appendJsonField("showWatchTogether", showWatchTogether)
         append(',')
         appendJsonField("showSources", showSources)
         append(',')
@@ -1183,6 +1197,20 @@ private fun StringBuilder.appendSeasonItemJson(item: PlayerControlSeasonItem) {
     appendJsonField("label", item.label)
     append(',')
     appendJsonField("isSelected", item.isSelected)
+    append('}')
+}
+
+private fun StringBuilder.appendPartyMemberJson(item: PlayerPartyMember) {
+    append('{')
+    appendJsonField("name", item.name)
+    append(',')
+    appendJsonField("role", item.role)
+    append(',')
+    appendJsonField("status", item.status)
+    append(',')
+    appendJsonField("avatarUrl", item.avatarUrl.orEmpty())
+    append(',')
+    appendJsonField("connected", item.connected)
     append('}')
 }
 

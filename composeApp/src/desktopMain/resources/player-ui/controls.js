@@ -38,6 +38,7 @@ const episodesLabel = document.getElementById("episodesLabel");
 const nextEpisodeLabel = document.getElementById("nextEpisodeLabel");
 const submitIntroButton = document.getElementById("submitIntroButton");
 const videoSettingsButton = document.getElementById("videoSettingsButton");
+const watchTogetherButton = document.getElementById("watchTogetherButton");
 const backButton = document.getElementById("backButton");
 const openingOverlay = document.getElementById("openingOverlay");
 const openingArtwork = document.getElementById("openingArtwork");
@@ -54,6 +55,9 @@ const openingStatus = document.getElementById("openingStatus");
 const openingMessage = document.getElementById("openingMessage");
 const partyBanner = document.getElementById("partyBanner");
 const partyBannerText = document.getElementById("partyBannerText");
+const partyPanel = document.getElementById("partyPanel");
+const partyControlMode = document.getElementById("partyControlMode");
+const partyMemberList = document.getElementById("partyMemberList");
 const openingProgressTrack = document.getElementById("openingProgressTrack");
 const openingProgressBar = document.getElementById("openingProgressBar");
 const parentalGuide = document.getElementById("parentalGuide");
@@ -189,6 +193,7 @@ let state = {
   closeLabel: "Close player",
   submitIntroLabel: "Submit Intro",
   videoSettingsLabel: "Video settings",
+  watchTogetherLabel: "Watch Together",
   playbackErrorTitle: "Playback error",
   playbackErrorMessage: "",
   playbackErrorActionLabel: "Go back",
@@ -277,6 +282,10 @@ let state = {
   openingProgress: null,
   partyBannerVisible: false,
   partyBannerText: "",
+  partyPanelVisible: false,
+  partyControlModeLabel: "",
+  partyTransportEnabled: true,
+  partyMembers: [],
   skipPromptVisible: false,
   skipPromptLabel: "Skip",
   skipPromptStartMs: 0,
@@ -291,6 +300,7 @@ let state = {
   nextEpisodePlayable: false,
   showSubmitIntro: false,
   showVideoSettings: false,
+  showWatchTogether: false,
   showSources: false,
   showEpisodes: false,
   showNextEpisode: false,
@@ -1864,6 +1874,32 @@ const renderPartyBanner = suppress => {
   partyBanner.setAttribute("aria-hidden", show ? "false" : "true");
 };
 
+const renderPartyPanel = suppress => {
+  const show = Boolean(!suppress && state.partyPanelVisible && Array.isArray(state.partyMembers));
+  partyPanel.classList.toggle("visible", show);
+  partyPanel.setAttribute("aria-hidden", show ? "false" : "true");
+  partyControlMode.textContent = state.partyControlModeLabel || "";
+  partyMemberList.replaceChildren();
+  (state.partyMembers || []).forEach(member => {
+    const row = document.createElement("div");
+    row.className = `party-member${member.connected ? "" : " offline"}`;
+    const avatar = document.createElement("span");
+    avatar.className = "party-member-avatar";
+    avatar.textContent = String(member.name || "?").trim().slice(0, 1).toUpperCase();
+    const copy = document.createElement("span");
+    copy.className = "party-member-copy";
+    const name = document.createElement("div");
+    name.className = "party-member-name";
+    name.textContent = `${member.name || "Guest"}${member.role === "host" ? " · Host" : ""}`;
+    const status = document.createElement("div");
+    status.className = "party-member-status";
+    status.textContent = member.connected ? (member.status || "Connected") : "Disconnected";
+    copy.append(name, status);
+    row.append(avatar, copy);
+    partyMemberList.append(row);
+  });
+};
+
 const renderPlaybackError = () => {
   const messageText = playbackErrorText();
   const showError = Boolean(messageText);
@@ -2129,6 +2165,12 @@ const renderChrome = () => {
   const showOpening = renderOpeningOverlay(showError);
   renderPauseMetadataOverlay(showOpening || showError);
   renderPartyBanner(showOpening || showError || Boolean(activeModal));
+  renderPartyPanel(showOpening || showError || Boolean(activeModal));
+  const partyTransportLocked = state.partyPanelVisible && !state.partyTransportEnabled;
+  root.classList.toggle("party-transport-locked", partyTransportLocked);
+  [toggle, seek, ...document.querySelectorAll('[data-command="seekBack"], [data-command="seekForward"], [data-command="speed"], [data-command="nextEpisode"]')]
+    .filter(Boolean)
+    .forEach(control => { control.disabled = partyTransportLocked; });
   syncParentalGuide(showOpening || showError);
 
   title.textContent = state.title || "";
@@ -2155,6 +2197,7 @@ const renderChrome = () => {
 
   setVisible(submitIntroButton, Boolean(state.showSubmitIntro));
   setVisible(videoSettingsButton, Boolean(state.showVideoSettings));
+  setVisible(watchTogetherButton, Boolean(state.showWatchTogether));
   setVisible(sourcesButton, Boolean(state.showSources));
   setVisible(episodesButton, Boolean(state.showEpisodes));
   setVisible(nextEpisodeButton, Boolean(state.showNextEpisode));
@@ -2174,6 +2217,7 @@ const renderChrome = () => {
   backButton.setAttribute("aria-label", state.closeLabel || "Close player");
   submitIntroButton.setAttribute("aria-label", state.submitIntroLabel || "Submit Intro");
   videoSettingsButton.setAttribute("aria-label", state.videoSettingsLabel || "Video settings");
+  watchTogetherButton.setAttribute("aria-label", state.watchTogetherLabel || "Watch Together");
   setProgress(positionMs, durationMs);
   if (showError) {
     skipPrompt.classList.remove("visible", "show-progress");

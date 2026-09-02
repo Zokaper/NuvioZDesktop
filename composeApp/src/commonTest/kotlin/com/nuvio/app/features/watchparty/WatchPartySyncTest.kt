@@ -511,6 +511,48 @@ class WatchPartyBarrierTest {
     }
 }
 
+class WatchPartySeekWhilePausedTest {
+
+    /**
+     * Scrubbing a paused party must move everybody and start nobody.
+     *
+     * The plan returned `playAfter = true` unconditionally for play *and* seek, and the executor
+     * ignored the field and played anyway - so dragging the bar on a paused film started it again on
+     * every member, which is what a host looking for a scene does over and over.
+     */
+    @Test fun aSeekOnAPausedPartyDoesNotResumeIt() {
+        val paused = command(PartyCommandKind.seek, startPositionMs = 60_000, startAtPartyMs = 1_000)
+            .copy(playAfter = false)
+        val plan = partyBarrierPlan(paused, localPositionMs = 0, partyNowMs = 900)
+        assertFalse(plan.playAfter)
+        assertEquals(60_000, plan.seekToMs)
+
+        val playing = command(PartyCommandKind.seek, startPositionMs = 60_000, startAtPartyMs = 1_000)
+        assertTrue(partyBarrierPlan(playing, localPositionMs = 0, partyNowMs = 900).playAfter)
+    }
+
+    /**
+     * A late command carries its overshoot into the target so the client lands where the party is
+     * *now* - but nothing is running to overshoot when the seek is not going to resume, and adding
+     * the delivery delay there would put every paused scrub a few hundred milliseconds past its mark.
+     */
+    @Test fun aPausedSeekIgnoresTheDeliveryOvershoot() {
+        val late = command(PartyCommandKind.seek, startPositionMs = 60_000, startAtPartyMs = 1_000)
+            .copy(playAfter = false)
+        assertEquals(60_000, partyBarrierPlan(late, localPositionMs = 0, partyNowMs = 4_000).seekToMs)
+
+        val latePlaying = command(PartyCommandKind.seek, startPositionMs = 60_000, startAtPartyMs = 1_000)
+        assertEquals(63_000, partyBarrierPlan(latePlaying, localPositionMs = 0, partyNowMs = 4_000).seekToMs)
+    }
+
+    /** A build that predates the field always resumed, so a command without it still does. */
+    @Test fun aCommandWithoutTheFieldStillResumes() {
+        assertTrue(
+            command(PartyCommandKind.seek, startPositionMs = 0, startAtPartyMs = 0).playAfter,
+        )
+    }
+}
+
 class WatchPartyPendingSeekTest {
 
     /** Nothing is measured or issued while the position being measured is the pre-seek one. */
@@ -546,6 +588,12 @@ class WatchPartySyncProtocolTest {
         val messages = listOf(
             PartyTickMessage("host", tick(positionMs = 1_234, capturedAtPartyMs = 99_000, speed = 1.5f)),
             PartyCommandMessage("party", command(PartyCommandKind.seek, 4_000, 5_000, counter = 7)),
+            // The paused scrub, which is the case the flag exists for: it has to survive the wire,
+            // because a guest cannot tell it from a scrub-while-playing by looking at its own player.
+            PartyCommandMessage(
+                "party",
+                command(PartyCommandKind.seek, 4_000, 5_000, counter = 8).copy(playAfter = false),
+            ),
             PartyClockPingMessage("party", "guest", exchangeId = "x1", sentAtMs = 10),
             PartyClockPongMessage("party", "host", toProfileId = "guest", exchangeId = "x1", sentAtMs = 10, hostAtMs = 4_010),
             PartyPeerStatusMessage("party", "guest", WatchPartyStatus.buffering, atPartyMs = 500, rttMs = 42),

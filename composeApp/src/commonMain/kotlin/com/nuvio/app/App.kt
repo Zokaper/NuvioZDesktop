@@ -205,6 +205,10 @@ import com.nuvio.app.features.social.SocialRepository
 import com.nuvio.app.features.social.SocialScreen
 import com.nuvio.app.features.watchparty.WatchPartyRepository
 import com.nuvio.app.features.watchparty.WatchPartyLobbyScreen
+import com.nuvio.app.features.watchparty.SourceFingerprint
+import com.nuvio.app.features.watchparty.SourceResolutionState
+import com.nuvio.app.features.watchparty.normalizeReleaseFingerprint
+import com.nuvio.app.features.watchparty.sourceFingerprintMatchScore
 import com.nuvio.app.features.library.LibrarySortOption
 import com.nuvio.app.features.library.LibrarySourceMode
 import com.nuvio.app.features.library.librarySectionItemKey
@@ -272,6 +276,7 @@ import com.nuvio.app.features.streams.StreamBehaviorHints
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamLaunch
 import com.nuvio.app.features.streams.StreamLaunchStore
+import com.nuvio.app.features.streams.PartyStreamLaunchContext
 import com.nuvio.app.features.streams.StreamLinkCacheRepository
 import com.nuvio.app.features.streams.StreamsRepository
 import com.nuvio.app.features.streams.StreamsScreen
@@ -2800,6 +2805,43 @@ private fun MainAppContent(
                     }
                     val pauseDescription = launch.pauseDescription
                     val streamRouteScope = rememberCoroutineScope()
+                    var partySelectionCommitted by rememberSaveable(route.launchId) { mutableStateOf(false) }
+                    var partyExactMatchHandled by rememberSaveable(route.launchId) { mutableStateOf(false) }
+
+                    fun StreamItem.partyFingerprint(): SourceFingerprint = SourceFingerprint(
+                        addonId = addonId,
+                        infoHash = p2pInfoHash,
+                        fileIndex = p2pFileIdx,
+                        releaseFingerprint = normalizeReleaseFingerprint(streamLabel),
+                        resolution = streamData?.parsedFile?.resolution ?: clientResolve?.stream?.raw?.parsed?.resolution,
+                        quality = streamData?.parsedFile?.quality ?: clientResolve?.stream?.raw?.parsed?.quality,
+                        languages = streamData?.parsedFile?.languages.orEmpty().toSet(),
+                    )
+
+                    fun commitPartySelection(stream: StreamItem) {
+                        val context = launch.partyContext ?: return
+                        if (partySelectionCommitted) return
+                        partySelectionCommitted = true
+                        val fingerprint = stream.partyFingerprint()
+                        streamRouteScope.launch {
+                            if (context.isHost && context.targetFingerprint == null) {
+                                WatchPartyRepository.selectSource(fingerprint, context.sourceGeneration)
+                            }
+                            WatchPartyRepository.updateReady(
+                                state = SourceResolutionState.resolving,
+                                sourceGeneration = WatchPartyRepository.uiState.value.party?.sourceGeneration,
+                            )
+                        }
+                    }
+
+                    LaunchedEffect(launch.partyContext) {
+                        if (launch.partyContext != null) {
+                            WatchPartyRepository.updateReady(
+                                SourceResolutionState.fetching,
+                                sourceGeneration = launch.partyContext.sourceGeneration,
+                            )
+                        }
+                    }
                     var resolvingDebridStream by rememberSaveable(route.launchId) { mutableStateOf(false) }
                     var pendingP2pStreamOpen by remember { mutableStateOf<PendingP2pStreamOpen?>(null) }
                     var pendingUncachedStream by remember { mutableStateOf<StreamItem?>(null) }
@@ -3023,6 +3065,7 @@ private fun MainAppContent(
                         resolvedResumeProgressFraction: Float?,
                         replaceStreamRoute: Boolean,
                     ) {
+                        commitPartySelection(stream)
                         val infoHash = stream.p2pInfoHash ?: return
                         val sentinelUrl = p2pSentinelUrl(infoHash, stream.p2pFileIdx)
                         if (playerSettings.streamReuseLastLinkEnabled) {
@@ -3253,7 +3296,7 @@ private fun MainAppContent(
                             episode = launch.episodeNumber,
                         )
                         val maxAgeMs = playerSettings.streamReuseLastLinkCacheHours * 60L * 60L * 1000L
-                        val cached = if (playerSettings.streamReuseLastLinkEnabled) {
+                        val cached = if (playerSettings.streamReuseLastLinkEnabled && launch.partyContext == null) {
                             StreamLinkCacheRepository.getValid(cacheKey, maxAgeMs)
                         } else {
                             null
@@ -3264,8 +3307,8 @@ private fun MainAppContent(
                                 manualSelection = launch.manualSelection,
                                 // Completed downloads are consumed before StreamRoute is created.
                                 hasCompletedLocalDownload = false,
-                                reuseLastLinkEnabled = playerSettings.streamReuseLastLinkEnabled,
-                                hasValidCachedLink = cached != null,
+                                reuseLastLinkEnabled = playerSettings.streamReuseLastLinkEnabled && launch.partyContext == null,
+                                hasValidCachedLink = cached != null && launch.partyContext == null,
                             ),
                         )
                         playbackRouteDecision = decision
@@ -3486,6 +3529,9 @@ private fun MainAppContent(
                             playerSettings.playbackMode != PlaybackMode.CLASSIC &&
                                 autoPlaybackStarting
                         if (!isClassicAutoPlay && !hasFailureChain) return@LaunchedEffect
+                        if (launch.partyContext?.targetFingerprint != null && !partyExactMatchHandled) {
+                            return@LaunchedEffect
+                        }
                         if (reuseNavigated) return@LaunchedEffect
                         if (autoPlayHandled && !hasFailureChain) return@LaunchedEffect
                         if (streamsUiState.requestToken != expectedStreamsRequestToken) return@LaunchedEffect
@@ -3534,6 +3580,7 @@ private fun MainAppContent(
                         } else {
                             selectedStream
                         }
+                        commitPartySelection(stream)
                         val sourceUrl = stream.playableDirectUrl
                         if (sourceUrl == null && stream.needsLocalDebridResolve && stream.p2pInfoHash != null) {
                             autoPlayHandled = true
@@ -3662,7 +3709,7 @@ private fun MainAppContent(
                         // complaint about the previous candidate into the overlay of the one
                         // that is now working.
                         autoPickFailure = null
-                        if (externalPlayerSupported && playerSettings.externalPlayerEnabled) {
+                        if (launch.partyContext == null && externalPlayerSupported && playerSettings.externalPlayerEnabled) {
                             playbackHandedOff = true
                             openExternalPlayback(playerLaunch)
                             if (!hasFailureChain) StreamsRepository.consumeAutoPlay()
@@ -3698,6 +3745,7 @@ private fun MainAppContent(
                         forceExternal: Boolean,
                         forceInternal: Boolean,
                     ) {
+                        commitPartySelection(stream)
                         if (DirectDebridPlaybackResolver.shouldResolveToPlayableStream(stream)) {
                             if (resolvingDebridStream) return
                             streamRouteScope.launch {
@@ -3803,7 +3851,12 @@ private fun MainAppContent(
                             initialProgressFraction = resolvedResumeProgressFraction,
                         )
 
-                        if (!forceInternal && externalPlayerSupported && (forceExternal || playerSettings.externalPlayerEnabled)) {
+                        if (
+                            launch.partyContext == null &&
+                            !forceInternal &&
+                            externalPlayerSupported &&
+                            (forceExternal || playerSettings.externalPlayerEnabled)
+                        ) {
                             streamRouteScope.launch {
                                 playbackHandedOff = true
                                 openExternalPlayback(playerLaunch)
@@ -3823,6 +3876,45 @@ private fun MainAppContent(
                         navController.navigate(
                             PlayerRoute(launchId = launchId, title = playerLaunch.title)
                         )
+                    }
+
+                    LaunchedEffect(
+                        launch.partyContext?.sourceGeneration,
+                        streamsUiState.requestToken,
+                        streamsUiState.isAnyLoading,
+                        playbackCandidates,
+                    ) {
+                        val context = launch.partyContext ?: return@LaunchedEffect
+                        val target = context.targetFingerprint ?: return@LaunchedEffect
+                        if (partyExactMatchHandled) return@LaunchedEffect
+                        if (streamsUiState.requestToken != expectedStreamsRequestToken || streamsUiState.isAnyLoading) {
+                            return@LaunchedEffect
+                        }
+                        val match = playbackCandidates
+                            .map { candidate -> candidate.stream to sourceFingerprintMatchScore(target, candidate.stream.partyFingerprint()) }
+                            .filter { (_, score) -> score >= 4_000 }
+                            .maxByOrNull { (_, score) -> score }
+                            ?.first
+                        partyExactMatchHandled = true
+                        if (match != null) {
+                            openSelectedStream(
+                                stream = match,
+                                resolvedResumePositionMs = launch.resumePositionMs,
+                                resolvedResumeProgressFraction = launch.resumeProgressFraction,
+                                forceExternal = false,
+                                forceInternal = true,
+                            )
+                        } else {
+                            partySelectionCommitted = false
+                            WatchPartyRepository.updateReady(
+                                SourceResolutionState.choosing_fallback,
+                                error = "The host source is unavailable; choose an alternate",
+                                sourceGeneration = context.sourceGeneration,
+                            )
+                            if (playerSettings.playbackMode == PlaybackMode.CLASSIC) {
+                                giveUpToSourceList(reason = "The host source is unavailable. Choose an alternate source.")
+                            }
+                        }
                     }
 
                     /**
@@ -4839,7 +4931,7 @@ private fun MainAppContent(
                         initialProgressFraction = launch.initialProgressFraction,
                         contentLanguage = launch.contentLanguage,
                         onBack = onBackToDetails,
-                        onStartWatchTogether = { content, fingerprint ->
+                        onStartWatchTogether = { content, fingerprint, positionMs, playbackSpeed ->
                             navController.navigate(
                                 WatchPartyLobbyRoute(
                                     contentId = content.contentId,
@@ -4853,7 +4945,11 @@ private fun MainAppContent(
                                     sourceAddonId = fingerprint.addonId,
                                     sourceInfoHash = fingerprint.infoHash,
                                     sourceFileIndex = fingerprint.fileIndex,
-                                    sourceReleaseFingerprint = fingerprint.releaseFingerprint,
+                                    sourceReleaseFingerprint = fingerprint.releaseFingerprint.takeIf {
+                                        it.isNotBlank() || fingerprint.infoHash != null
+                                    },
+                                    initialPositionMs = positionMs,
+                                    initialPlaybackSpeed = playbackSpeed,
                                 ),
                             )
                         },
@@ -5037,6 +5133,31 @@ private fun MainAppContent(
                     WatchPartyLobbyScreen(
                         route = route,
                         onBack = rememberGuardedPopBackStack(navController, route),
+                        onChooseSource = { party ->
+                            val content = party.content
+                            val streamLaunchId = StreamLaunchStore.put(
+                                StreamLaunch(
+                                    profileId = activePlaybackProfileId,
+                                    type = content.contentType,
+                                    videoId = content.videoId,
+                                    parentMetaId = content.contentId,
+                                    parentMetaType = content.contentType,
+                                    title = content.title,
+                                    poster = content.poster,
+                                    seasonNumber = content.season,
+                                    episodeNumber = content.episode,
+                                    episodeTitle = content.episodeTitle,
+                                    resumePositionMs = party.positionMs.takeIf { it > 0L },
+                                    partyContext = PartyStreamLaunchContext(
+                                        partyId = party.id,
+                                        isHost = party.hostProfileId == WatchPartyRepository.uiState.value.activeProfileId,
+                                        sourceGeneration = party.sourceGeneration,
+                                        targetFingerprint = party.sourceFingerprint,
+                                    ),
+                                ),
+                            )
+                            navController.navigate(StreamRoute(streamLaunchId, content.title))
+                        },
                         onOpenContent = { type, id, title ->
                             // Leaving the lobby is a hand-off, not a push. The lobby sends everyone
                             // to the title the moment the party leaves `lobby`, so leaving it on the

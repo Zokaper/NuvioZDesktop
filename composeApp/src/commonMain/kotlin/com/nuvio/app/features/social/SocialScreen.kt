@@ -2,6 +2,7 @@ package com.nuvio.app.features.social
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -137,9 +139,11 @@ fun SocialScreen(
     // from mobile did not, which left every bare Text and Icon black on the dark background: the
     // search button was invisible rather than broken. Providing it once covers the whole screen.
     CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+    val wideDashboard = maxWidth >= 1040.dp
     LazyColumn(
         state = listState,
-        modifier = modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().widthIn(max = 1280.dp),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 110.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -187,6 +191,33 @@ fun SocialScreen(
                 item { SocialMessageCard(message) }
             }
         } else {
+            state.me?.let { me ->
+                item {
+                    SocialPanel {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = androidx.compose.foundation.shape.CircleShape,
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                            ) {
+                                androidx.compose.foundation.layout.Box(
+                                    modifier = Modifier.padding(16.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(me.displayName.take(1).uppercase(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                            Column(Modifier.padding(start = 14.dp).weight(1f)) {
+                                Text(me.displayName, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                                Text("@${me.handle}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    "${state.friends.size} friends · ${state.watchingNow.size} watching now",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
             if (state.isOfflineCache) item { SocialMessageCard(stringResource(Res.string.social_offline_cache)) }
             state.errorMessage?.let { error -> item { SocialMessageCard(error) } }
 
@@ -230,28 +261,82 @@ fun SocialScreen(
                 }
             }
 
-            if (state.watchingNow.isNotEmpty()) {
-                item { SocialSectionTitle(stringResource(Res.string.social_watching_now)) }
-                items(state.watchingNow, key = { "watching:${it.profile.profileId}:${it.videoId}" }) { item ->
-                    SocialPanel(
-                        modifier = Modifier.clickable { onOpenContent(item.contentType, item.contentId, item.title) },
-                    ) {
-                        Text("${item.profile.displayName} · ${if (item.state == SocialPlaybackState.playing) "Playing" else "Paused"}", style = MaterialTheme.typography.labelLarge)
-                        Text(item.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        item.episode?.let { Text("S${item.season ?: 1} E$it${item.episodeTitle?.let { title -> " · $title" }.orEmpty()}") }
-                        LinearProgressIndicator(progress = { item.progressFraction }, modifier = Modifier.fillMaxWidth())
-                        Text("${item.roundedProgressPercent}%", style = MaterialTheme.typography.labelMedium)
+            if (wideDashboard) {
+                item {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        SocialActivityColumn(
+                            title = stringResource(Res.string.social_watching_now),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            state.watchingNow.forEach { watching ->
+                                SocialActivityChip(
+                                    profile = watching.profile,
+                                    title = watching.title,
+                                    poster = watching.poster,
+                                    season = watching.season,
+                                    episode = watching.episode,
+                                    episodeTitle = watching.episodeTitle,
+                                    status = if (watching.state == SocialPlaybackState.playing) "Playing" else "Paused",
+                                    progress = watching.progressFraction,
+                                    trailing = "${watching.roundedProgressPercent}%",
+                                    onClick = { onOpenContent(watching.contentType, watching.contentId, watching.title) },
+                                )
+                            }
+                            if (state.watchingNow.isEmpty()) Text(stringResource(Res.string.social_no_activity))
+                        }
+                        SocialActivityColumn(
+                            title = stringResource(Res.string.social_recently_watched),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            state.activity.forEach { run ->
+                                SocialActivityChip(
+                                    profile = run.profile,
+                                    title = run.title,
+                                    poster = run.poster,
+                                    season = run.season,
+                                    episode = run.episode,
+                                    episodeTitle = run.episodeTitle,
+                                    status = "Recently watched",
+                                    trailing = if (run.eventCount > 1) "${run.eventCount} episodes" else null,
+                                    onClick = { onOpenContent(run.contentType, run.contentId, run.title) },
+                                )
+                            }
+                            if (state.activity.isEmpty() && !state.isLoading) Text(stringResource(Res.string.social_no_activity))
+                        }
                     }
                 }
-            }
-
-            item { SocialSectionTitle(stringResource(Res.string.social_recently_watched)) }
-            if (state.activity.isEmpty() && !state.isLoading) item { SocialMessageCard(stringResource(Res.string.social_no_activity)) }
-            items(state.activity, key = { "activity:${it.runId}" }) { run ->
-                SocialPanel(modifier = Modifier.clickable { onOpenContent(run.contentType, run.contentId, run.title) }) {
-                    Text(run.profile.displayName, style = MaterialTheme.typography.labelLarge)
-                    Text(run.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    run.episode?.let { Text("S${run.season ?: 1} E$it${if (run.eventCount > 1) " · ${run.eventCount} episodes" else ""}") }
+            } else {
+                if (state.watchingNow.isNotEmpty()) {
+                    item { SocialSectionTitle(stringResource(Res.string.social_watching_now)) }
+                    items(state.watchingNow, key = { "watching:${it.profile.profileId}:${it.videoId}" }) { watching ->
+                        SocialActivityChip(
+                            profile = watching.profile,
+                            title = watching.title,
+                            poster = watching.poster,
+                            season = watching.season,
+                            episode = watching.episode,
+                            episodeTitle = watching.episodeTitle,
+                            status = if (watching.state == SocialPlaybackState.playing) "Playing" else "Paused",
+                            progress = watching.progressFraction,
+                            trailing = "${watching.roundedProgressPercent}%",
+                            onClick = { onOpenContent(watching.contentType, watching.contentId, watching.title) },
+                        )
+                    }
+                }
+                item { SocialSectionTitle(stringResource(Res.string.social_recently_watched)) }
+                if (state.activity.isEmpty() && !state.isLoading) item { SocialMessageCard(stringResource(Res.string.social_no_activity)) }
+                items(state.activity, key = { "activity:${it.runId}" }) { run ->
+                    SocialActivityChip(
+                        profile = run.profile,
+                        title = run.title,
+                        poster = run.poster,
+                        season = run.season,
+                        episode = run.episode,
+                        episodeTitle = run.episodeTitle,
+                        status = "Recently watched",
+                        trailing = if (run.eventCount > 1) "${run.eventCount} episodes" else null,
+                        onClick = { onOpenContent(run.contentType, run.contentId, run.title) },
+                    )
                 }
             }
             if (state.nextCursor != null) item {
@@ -325,6 +410,7 @@ fun SocialScreen(
         }
     }
     }
+    }
 }
 
 @Composable private fun SocialSectionTitle(title: String, count: Int? = null) {
@@ -334,6 +420,18 @@ fun SocialScreen(
 @Composable private fun SocialPanel(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     Surface(modifier = modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, tonalElevation = 2.dp) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
+    }
+}
+
+@Composable
+private fun SocialActivityColumn(
+    title: String,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    SocialPanel(modifier) {
+        SocialSectionTitle(title)
+        content()
     }
 }
 

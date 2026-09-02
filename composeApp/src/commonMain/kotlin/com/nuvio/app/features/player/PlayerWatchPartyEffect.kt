@@ -15,6 +15,8 @@ import com.nuvio.app.features.watchparty.PartyHoldReason
 import com.nuvio.app.features.watchparty.PartyPlaybackGate
 import com.nuvio.app.features.watchparty.PartyTick
 import com.nuvio.app.features.watchparty.SourceResolutionState
+import com.nuvio.app.features.watchparty.PartySourceMatch
+import com.nuvio.app.features.watchparty.SourceFingerprint
 import com.nuvio.app.features.watchparty.StallHoldBudget
 import com.nuvio.app.features.watchparty.WatchPartyControlMode
 import com.nuvio.app.features.watchparty.WatchPartyHostGraceMs
@@ -28,9 +30,12 @@ import com.nuvio.app.features.watchparty.WatchPartyState
 import com.nuvio.app.features.watchparty.WatchPartyStatus
 import com.nuvio.app.features.watchparty.WatchPartySync
 import com.nuvio.app.features.watchparty.WatchPartyTickIntervalMs
+import com.nuvio.app.features.watchparty.arePartyDurationsCompatible
 import com.nuvio.app.features.watchparty.currentEpochMs
 import com.nuvio.app.features.watchparty.expectedPartyPositionMs
 import com.nuvio.app.features.watchparty.matchesPlayback
+import com.nuvio.app.features.watchparty.normalizeReleaseFingerprint
+import com.nuvio.app.features.watchparty.sourceFingerprintMatchScore
 import com.nuvio.app.features.watchparty.partyBarrierPlan
 import com.nuvio.app.features.watchparty.partyFallbackDriftCorrection
 import com.nuvio.app.features.watchparty.partyMembersAwaitingSource
@@ -195,6 +200,7 @@ internal data class WatchPartyPlayerStatus(
     val syncDegraded: Boolean,
     val hostBuffering: Boolean,
     val timelinePlaying: Boolean,
+    val positionUnreachable: Boolean,
 )
 
 @Composable
@@ -220,7 +226,32 @@ internal fun PlayerScreenRuntime.rememberWatchPartyStatus(): WatchPartyPlayerSta
         // that the timeline has already started plays on under a banner still telling them to wait
         // for the host - which is the feature reporting itself broken while it works.
         timelinePlaying = syncState.tickStatus == WatchPartyStatus.playing,
+        // A player standing still while the party watches on has to say why, or it reads as broken.
+        //
+        // Deliberately the refusal and not the duration comparison. Two releases of the same film
+        // routinely differ by more than the compatibility tolerance without it ever mattering -
+        // every position the party visits is inside both of them - and a banner that is up for the
+        // whole film because the credits are a minute longer is a banner people learn to ignore.
+        // The mismatch is logged and on the HUD; it earns the banner when it actually bites.
+        positionUnreachable = party != null && partyPositionUnreachable,
     )
+}
+
+/**
+ * Whether this player's file is a different length from the host's, past what a party can absorb.
+ *
+ * Only ever answered against the *host's* resolved duration, because the host is the one the shared
+ * position means something in. Unknown on either side is not a mismatch: a stream that is still
+ * opening reports nothing, and accusing it would flag every join.
+ *
+ * `arePartyDurationsCompatible` was written for this and had no caller at all, so a member who had
+ * resolved a different cut - which is ordinary, since sources are chosen independently - found out
+ * only when a seek landed them on their own last frame.
+ */
+internal fun WatchPartyState.hostDurationMismatch(localDurationMs: Long): Boolean {
+    if (localDurationMs <= 0L) return false
+    val hostDurationMs = members.firstOrNull { it.profileId == hostProfileId }?.resolvedDurationMs ?: return false
+    return !arePartyDurationsCompatible(hostDurationMs, localDurationMs)
 }
 
 @Composable
@@ -269,9 +300,45 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
     LaunchedEffect(generationKey, mediaLoaded) {
         if (generationKey == null) return@LaunchedEffect
         if (mediaLoaded) {
-            WatchPartyRepository.updateReady(SourceResolutionState.ready, playbackSnapshot.durationMs)
+            val localFingerprint = SourceFingerprint(
+                addonId = activeProviderAddonId,
+                infoHash = activeTorrentInfoHash,
+                fileIndex = activeTorrentFileIdx,
+                releaseFingerprint = normalizeReleaseFingerprint(activeStreamTitle),
+            )
+            val match = matchingParty?.sourceFingerprint?.let { target ->
+                if (sourceFingerprintMatchScore(target, localFingerprint) >= 4_000) {
+                    PartySourceMatch.exact
+                } else {
+                    PartySourceMatch.alternate
+                }
+            }
+            WatchPartyRepository.updateReady(
+                SourceResolutionState.ready,
+                playbackSnapshot.durationMs,
+                sourceGeneration = matchingParty?.sourceGeneration,
+                sourceMatch = match,
+            )
         } else {
-            WatchPartyRepository.updateReady(SourceResolutionState.resolving)
+            WatchPartyRepository.updateReady(
+                SourceResolutionState.resolving,
+                sourceGeneration = matchingParty?.sourceGeneration,
+            )
+        }
+    }
+
+    // Said once, when it becomes true. Not a banner - two releases of the same film differ by more
+    // than the tolerance often enough that one would be up for the whole film without anything ever
+    // going wrong - but it is the first thing to look for when a member cannot follow the party, so
+    // it belongs in the log rather than only on the HUD.
+    val durationMismatch = matchingParty?.hostDurationMismatch(playbackSnapshot.durationMs) == true
+    LaunchedEffect(generationKey, durationMismatch) {
+        val state = matchingParty ?: return@LaunchedEffect
+        if (!durationMismatch) return@LaunchedEffect
+        val hostMs = state.members.firstOrNull { it.profileId == state.hostProfileId }?.resolvedDurationMs
+        partyLog.w {
+            "duration mismatch localMs=${playbackSnapshot.durationMs} hostMs=$hostMs - " +
+                "this source is a different cut, positions past its end cannot be followed"
         }
     }
 
@@ -285,6 +352,7 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
                 partyReportedPeerStatus = null
                 partyHoldingForBarrier = false
                 partyPendingSeek = null
+                partyPositionUnreachable = false
                 // Per content generation: a new episode is a new stream, and it deserves the
                 // benefit of the doubt rather than inheriting the previous one's exhausted budget.
                 partyStallHoldBudget = StallHoldBudget()
@@ -484,11 +552,13 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
         val updatedAt = runCatching { kotlin.time.Instant.parse(state.stateUpdatedAt).toEpochMilliseconds() }
             .getOrNull() ?: return@LaunchedEffect
         val serverNow = currentEpochMs() + partyUi.serverClockOffsetMs
-        // A position past the end of this file is not a position. Clamping keeps a host on a longer
-        // cut - or a shared clock that has run on without anyone playing - from seeking a guest into
-        // empty space and leaving them there.
+        // A position past the end of this file is not a position, and the answer is to refuse it
+        // rather than to clamp: clamping turns "the party is somewhere this copy does not reach"
+        // into "go to the last frame", which is where a player stops. This is the anchor most able
+        // to produce one - its `elapsed` is however long the row has been stale, so a party left
+        // `playing` in the database runs it past the end of any film.
         val raw = expectedPartyPositionMs(state.positionMs, updatedAt, serverNow, state.status, state.playbackSpeed)
-        val expected = raw.coerceIn(0L, durationMs - 1L)
+        val expected = partyPositionInThisFile(raw, durationMs) ?: return@LaunchedEffect
         // Same guard as the tick path, for the same reason: the position this whole effect is
         // measured against is the pre-seek one while a seek is in flight, and a correction taken
         // against that is a correction for a gap that has already been answered.
@@ -515,7 +585,8 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
                         // the end of this branch starts it again.
                         controller.pause()
                         seekPartyToExact(
-                            targetMs = correction.targetPositionMs.coerceIn(0L, durationMs - 1L),
+                            targetMs = partyPositionInThisFile(correction.targetPositionMs, durationMs)
+                                ?: return@LaunchedEffect,
                             reason = "fallback-drift",
                         )
                     } finally {
@@ -615,9 +686,12 @@ private suspend fun PlayerScreenRuntime.executePartyBarrier(command: PartyComman
             // keyframe seek can never satisfy the tolerance that decides whether to align at all,
             // which had a paused guest re-seeking to the same position every tick forever.
             plan.seekToMs?.let {
+                // `return@let` and not `return`: the speed below still has to be restored, because a
+                // nudge left running into a pause drifts the guest straight back out of it.
+                val target = partyPositionInThisFile(it, durationMs) ?: return@let
                 partyHoldingForBarrier = true
                 try {
-                    seekPartyToExact(it.coerceIn(0L, durationMs - 1L), reason = "pause-align")
+                    seekPartyToExact(target, reason = "pause-align")
                 } finally {
                     partyHoldingForBarrier = false
                 }
@@ -642,20 +716,53 @@ private suspend fun PlayerScreenRuntime.executePartyBarrier(command: PartyComman
             partyHoldingForBarrier = true
             try {
                 if (plan.seekToMs != null) {
+                    val target = partyPositionInThisFile(plan.seekToMs, durationMs) ?: return
                     controller.pause()
-                    seekPartyToExact(plan.seekToMs.coerceIn(0L, durationMs - 1L), reason = "barrier")
+                    seekPartyToExact(target, reason = "barrier")
                 } else if (plan.holdMs > 0L) {
                     controller.pause()
                 }
                 controller.setPlaybackSpeed(plan.speed)
-                if (clockUsable) awaitPartyInstant(command.startAtPartyMs)
+                if (plan.playAfter && clockUsable) awaitPartyInstant(command.startAtPartyMs)
             } finally {
                 partyHoldingForBarrier = false
+            }
+            // A scrub on a paused party moves everybody and starts nobody.
+            if (!plan.playAfter) {
+                shouldPlay = false
+                controller.pause()
+                return
             }
             shouldPlay = true
             controller.play()
         }
     }
+}
+
+/**
+ * The party's position, expressed in this file, or null when this file does not have one.
+ *
+ * Every party position used to be clamped into `0..durationMs - 1`, which quietly turns "the party
+ * is somewhere this copy does not reach" into "go to the last frame" - and the last frame is where
+ * the player stops. A guest whose source is shorter than the host's, or whose duration has not
+ * settled yet on a stream that is still opening, was therefore seeked to the end of its own file and
+ * pinned there: the correction then measured no drift, because both the target and the position were
+ * the same clamped end, and agreed forever.
+ *
+ * Refusing is the honest answer. A position past the end is not a position, and a guest that cannot
+ * follow the party should say so rather than sit on the credits.
+ */
+private fun PlayerScreenRuntime.partyPositionInThisFile(positionMs: Long, durationMs: Long): Long? {
+    if (positionMs <= durationMs - 1L) {
+        partyPositionUnreachable = false
+        return positionMs.coerceAtLeast(0L)
+    }
+    partyLog.w {
+        "position unreachable targetMs=$positionMs durationMs=$durationMs " +
+            "overMs=${positionMs - durationMs} - refusing to seek to the end"
+    }
+    partyPositionUnreachable = true
+    return null
 }
 
 /**
@@ -693,7 +800,8 @@ private suspend fun PlayerScreenRuntime.followPartyTick(tick: PartyTick, tracker
     if (tick.isStale(partyNow)) return tracker
 
     if (tick.status == WatchPartyStatus.playing) {
-        val expected = tick.expectedPositionMs(partyNow).coerceIn(0L, durationMs - 1L)
+        val expected = tick.expectedPositionMs(partyNow).let { partyPositionInThisFile(it, durationMs) }
+            ?: return tracker
         val local = samplePlaybackPosition().positionMs
         val outcome = tracker.next(local, expected, tick.playbackSpeed)
         partyLog.i {
@@ -716,7 +824,8 @@ private suspend fun PlayerScreenRuntime.followPartyTick(tick: PartyTick, tracker
                 partyHoldingForBarrier = true
                 try {
                     controller.pause()
-                    seekPartyToExact(plan.seekToMs.coerceIn(0L, durationMs - 1L), reason = "drift")
+                    val target = partyPositionInThisFile(plan.seekToMs, durationMs)
+                    if (target != null) seekPartyToExact(target, reason = "drift")
                     awaitPartyInstant(plan.resumeAtPartyMs)
                 } finally {
                     partyHoldingForBarrier = false
@@ -745,7 +854,8 @@ private suspend fun PlayerScreenRuntime.followPartyTick(tick: PartyTick, tracker
             // tick for as long as the party stayed paused.
             partyHoldingForBarrier = true
             try {
-                seekPartyToExact(tick.positionMs.coerceIn(0L, durationMs - 1L), reason = "paused-align")
+                val target = partyPositionInThisFile(tick.positionMs, durationMs)
+                if (target != null) seekPartyToExact(target, reason = "paused-align")
             } finally {
                 partyHoldingForBarrier = false
             }
@@ -848,6 +958,10 @@ private fun PlayerScreenRuntime.startPartyPlayback(positionMs: Long, source: Str
         // asking it to, and "who" is the difference between a user, a readiness gate and a stall
         // guard that has decided a guest has recovered.
         partyLog.i { "play src=$source positionMs=$positionMs" }
+        // A stall recorded before the party was playing is not evidence about the party playing. The
+        // ten seconds a guest spends resolving its own source is reported as `buffering`, and left in
+        // the window it made the party's first act a play followed instantly by a hold.
+        WatchPartySync.resetStallWatch()
         val startAt = WatchPartySync.partyNowMs() + WatchPartySync.barrierLeadMs()
         WatchPartySync.issueCommand(
             kind = PartyCommandKind.play,
@@ -913,15 +1027,27 @@ internal fun PlayerScreenRuntime.submitPartyPlayPause(isPlaying: Boolean, positi
 internal fun PlayerScreenRuntime.submitPartySeek(positionMs: Long): Boolean {
     if (!partyOwnsTransport()) return false
     if (!mayControlParty()) return refusePartyControl()
+    // Scrubbing a paused party is how anybody finds a scene, and the barrier used to resume everyone
+    // when it landed - so dragging the bar on a paused film started it again, on every member. The
+    // seek carries what the party was doing, because a guest cannot tell a scrub-while-paused from a
+    // scrub-while-playing by looking at its own player.
+    val resumeAfter = playbackSnapshot.isPlaying || shouldPlay
+    // Nobody may ask the party to go somewhere this file does not reach. Every caller here is a
+    // position from somewhere else - a scrub bar, a skip marker from a different cut, a ten second
+    // step off the end - and one that overshoots is sent to every member, who each land on their own
+    // last frame and stop. Bounded once, at the one place they all pass through.
+    val durationMs = playbackSnapshot.durationMs
+    val targetMs = if (durationMs > 0L) positionMs.coerceIn(0L, durationMs - 1L) else positionMs.coerceAtLeast(0L)
     scope.launch {
         val startAt = WatchPartySync.partyNowMs() + WatchPartySync.barrierLeadMs()
         WatchPartySync.issueCommand(
             kind = PartyCommandKind.seek,
-            startPositionMs = positionMs,
+            startPositionMs = targetMs,
             startAtPartyMs = startAt,
             playbackSpeed = playbackSnapshot.playbackSpeed,
+            playAfter = resumeAfter,
         )
-        WatchPartyRepository.seek(positionMs)
+        WatchPartyRepository.seek(targetMs)
     }
     return true
 }
@@ -964,9 +1090,15 @@ internal fun PlayerScreenRuntime.partyDiagnosticsLine(): String? {
         append("offsetMs=${sync.clockOffsetMs} locked=${sync.clockLocked} rttMs=${sync.bestRttMs} ")
         append("tickAgeMs=${WatchPartySync.tickAgeMs()} tickStatus=${sync.tickStatus} ")
         append("leadMs=${WatchPartySync.barrierLeadMs()} precise=${WatchPartySync.isPrecise()}")
-        // The three states that explain a player which is not moving when the party is. Without
-        // them a held client and a stuck one look identical on screen.
+        // Everything that explains a player which is not moving when the party is. Without these a
+        // client held on purpose, one on a source that cannot reach the party, and one that has
+        // simply broken all look identical on screen.
         if (partyHoldingForBarrier) append(" holding")
+        if (party.hostDurationMismatch(playbackSnapshot.durationMs)) {
+            val hostMs = party.members.firstOrNull { it.profileId == party.hostProfileId }?.resolvedDurationMs
+            append(" durationMismatch=${playbackSnapshot.durationMs}vs$hostMs")
+        }
+        if (partyPositionUnreachable) append(" unreachable")
         partyPendingSeek?.let { append(" seekTo=${it.targetMs}") }
         if (sync.holdingProfiles.isNotEmpty()) {
             append(" waitingOn=${sync.holdingProfiles.joinToString { it.shortId() }}")
@@ -980,6 +1112,9 @@ internal fun PlayerScreenRuntime.partyDiagnosticsLine(): String? {
 
 /** The one line the player shows while a party is holding playback back, or has lost sync. */
 internal fun WatchPartyPlayerStatus.bannerText(): String? = when {
+    // First, because it outranks every other reason this player is not moving: the others resolve
+    // themselves and this one does not until somebody picks a different source.
+    positionUnreachable -> "Your source is shorter than the host's · pick another one to follow along"
     gate.reason == PartyHoldReason.WAITING_FOR_PARTICIPANTS -> {
         val people = if (gate.waitingOn == 1) "1 person" else "${gate.waitingOn} people"
         "Waiting for $people to pick a source · press play to start anyway"

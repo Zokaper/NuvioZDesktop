@@ -71,11 +71,20 @@ enum class PlayerControlsAction {
     NextEpisode,
     OpenExternalPlayer,
     SubmitIntro,
+    WatchTogether,
     LockToggle,
     VideoSettings,
     DoubleTapSeekBack,
     DoubleTapSeekForward,
 }
+
+data class PlayerPartyMember(
+    val name: String,
+    val role: String,
+    val status: String,
+    val avatarUrl: String? = null,
+    val connected: Boolean = true,
+)
 
 data class PlayerControlsState(
     val title: String = "",
@@ -103,6 +112,7 @@ data class PlayerControlsState(
     val unlockLabel: String = "Unlock player controls",
     val submitIntroLabel: String = "Submit Intro",
     val videoSettingsLabel: String = "Video settings",
+    val watchTogetherLabel: String = "Watch Together",
     val tapToUnlockLabel: String = "Tap to unlock",
     val playbackErrorTitle: String = "Playback error",
     val playbackErrorMessage: String = "",
@@ -199,6 +209,10 @@ data class PlayerControlsState(
      */
     val partyBannerVisible: Boolean = false,
     val partyBannerText: String = "",
+    val partyPanelVisible: Boolean = false,
+    val partyControlModeLabel: String = "",
+    val partyTransportEnabled: Boolean = true,
+    val partyMembers: List<PlayerPartyMember> = emptyList(),
     val skipPromptVisible: Boolean = false,
     val skipPromptLabel: String = "Skip",
     val skipPromptStartMs: Long = 0L,
@@ -213,6 +227,7 @@ data class PlayerControlsState(
     val nextEpisodePlayable: Boolean = false,
     val showSubmitIntro: Boolean = false,
     val showVideoSettings: Boolean = false,
+    val showWatchTogether: Boolean = false,
     val showSources: Boolean = false,
     val showEpisodes: Boolean = false,
     val showNextEpisode: Boolean = false,

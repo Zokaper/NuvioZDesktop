@@ -1,5 +1,14 @@
 package com.nuvio.app.features.streams
 
+import com.nuvio.app.features.watchparty.SourceFingerprint
+
+data class PartyStreamLaunchContext(
+    val partyId: String,
+    val isHost: Boolean,
+    val sourceGeneration: Int,
+    val targetFingerprint: SourceFingerprint? = null,
+)
+
 data class StreamLaunch(
     val profileId: Int,
     val type: String,
@@ -28,6 +37,8 @@ data class StreamLaunch(
      * discarding the intent behind the button that was actually pressed.
      */
     val downloadIntent: Boolean = false,
+    /** Party preflight keeps selection in this route instead of immediately opening the player. */
+    val partyContext: PartyStreamLaunchContext? = null,
 )
 
 object StreamLaunchStore {

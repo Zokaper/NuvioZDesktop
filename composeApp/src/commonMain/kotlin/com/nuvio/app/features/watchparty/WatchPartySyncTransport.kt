@@ -152,6 +152,20 @@ internal object WatchPartySync {
 
     fun holdingProfiles(): List<String> = advanceBufferWatch()
 
+    /**
+     * Forgets what everyone was doing before the party started playing.
+     *
+     * A guest reports `buffering` for the whole time it is resolving its own source, which is
+     * routinely ten seconds and is not a stall - the readiness gate is what that phase is for. Left
+     * in the window it became a hold the instant the gate released, so the party's first act was to
+     * play and immediately pause again for somebody who was already ready.
+     */
+    fun resetStallWatch() {
+        if (bufferWatch == GuestBufferingWatch()) return
+        bufferWatch = GuestBufferingWatch()
+        publishState()
+    }
+
     fun attach(channel: RealtimeChannel, partyId: String) {
         if (boundPartyId == partyId && collector?.isActive == true) return
         detach()
@@ -225,6 +239,7 @@ internal object WatchPartySync {
         startPositionMs: Long,
         startAtPartyMs: Long,
         playbackSpeed: Float,
+        playAfter: Boolean = true,
     ): PartyCommand? {
         val ui = WatchPartyRepository.uiState.value
         val party = ui.party ?: return null
@@ -240,10 +255,12 @@ internal object WatchPartySync {
             startPositionMs = startPositionMs,
             startAtPartyMs = startAtPartyMs,
             playbackSpeed = playbackSpeed,
+            playAfter = playAfter,
         )
         log.i {
             "issue party=${party.id.shortId()} kind=$kind posMs=$startPositionMs " +
-                "startAtMs=$startAtPartyMs leadMs=${startAtPartyMs - partyNowMs()} n=$commandCounter"
+                "startAtMs=$startAtPartyMs leadMs=${startAtPartyMs - partyNowMs()} n=$commandCounter " +
+                "playAfter=$playAfter"
         }
         commandLog = commandLog.record(command)
         send(PartyCommandMessage(partyId = party.id, command = command))

@@ -39,10 +39,17 @@ fun LazyListScope.homeSocialSections(
                 items = watchingNow.take(SocialHomeItemLimit),
                 key = { "${it.profile.profileId}:${it.videoId}" },
             ) { item ->
-                SocialHomeCard(
+                SocialActivityChip(
+                    profile = item.profile,
                     title = item.title,
-                    subtitle = "${item.profile.displayName} · ${item.roundedProgressPercent}%",
+                    poster = item.poster,
+                    season = item.season,
+                    episode = item.episode,
+                    episodeTitle = item.episodeTitle,
+                    status = if (item.state == SocialPlaybackState.playing) "Playing" else "Paused",
                     progress = item.progressFraction,
+                    trailing = "${item.roundedProgressPercent}%",
+                    compact = true,
                     onClick = { onOpenContent(item.contentType, item.contentId, item.title) },
                 )
             }
@@ -56,9 +63,16 @@ fun LazyListScope.homeSocialSections(
                 items = activity.take(SocialHomeItemLimit),
                 key = RecentActivityRun::runId,
             ) { run ->
-                SocialHomeCard(
+                SocialActivityChip(
+                    profile = run.profile,
                     title = run.title,
-                    subtitle = "${run.profile.displayName}${if (run.eventCount > 1) " · ${run.eventCount} episodes" else ""}",
+                    poster = run.poster,
+                    season = run.season,
+                    episode = run.episode,
+                    episodeTitle = run.episodeTitle,
+                    status = "Recently watched",
+                    trailing = if (run.eventCount > 1) "${run.eventCount} episodes" else null,
+                    compact = true,
                     onClick = { onOpenContent(run.contentType, run.contentId, run.title) },
                 )
             }

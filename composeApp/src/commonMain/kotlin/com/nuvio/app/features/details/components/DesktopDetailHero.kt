@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CheckCircleOutline
+import androidx.compose.material.icons.rounded.People
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -59,6 +60,7 @@ import nuvio.composeapp.generated.resources.hero_add_to_library
 import nuvio.composeapp.generated.resources.hero_mark_unwatched
 import nuvio.composeapp.generated.resources.hero_mark_watched
 import nuvio.composeapp.generated.resources.hero_remove_from_library
+import nuvio.composeapp.generated.resources.watch_party_title
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
@@ -85,6 +87,7 @@ fun DesktopDetailHero(
     onWatchedClick: () -> Unit,
     onSaveClick: () -> Unit,
     onSaveLongClick: (() -> Unit)?,
+    onWatchTogetherClick: (() -> Unit)? = null,
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val bottomGradientColor = heroGradientColor ?: colorScheme.background
@@ -289,6 +292,14 @@ fun DesktopDetailHero(
                         onClick = onSaveClick,
                         onLongClick = onSaveLongClick,
                     ),
+                ) + listOfNotNull(
+                    onWatchTogetherClick?.let { action ->
+                        DetailSecondaryAction(
+                            label = stringResource(Res.string.watch_party_title),
+                            icon = Icons.Rounded.People,
+                            onClick = action,
+                        )
+                    },
                 ),
                 isTablet = true,
                 onPlayClick = onPlayClick,

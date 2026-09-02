@@ -25,7 +25,7 @@ fun PlayerScreen(
     onOpenExternalUrl: ((String) -> Unit)? = null,
     onFatalPlaybackError: (() -> Unit)? = null,
     onPlaybackStarted: (() -> Unit)? = null,
-    onStartWatchTogether: ((PartyContent, SourceFingerprint) -> Unit)? = null,
+    onStartWatchTogether: ((PartyContent, SourceFingerprint, Long, Float) -> Unit)? = null,
     modifier: Modifier = Modifier,
     logo: String? = null,
     poster: String? = null,
