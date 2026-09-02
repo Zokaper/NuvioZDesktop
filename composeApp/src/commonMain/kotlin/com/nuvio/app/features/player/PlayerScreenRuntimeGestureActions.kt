@@ -150,50 +150,55 @@ internal fun PlayerScreenRuntime.showVolumeFeedback(level: PlayerAudioLevel) {
 }
 
 internal fun PlayerScreenRuntime.togglePlayback() {
-    if (playbackSnapshot.isPlaying) {
-        shouldPlay = false
-        playerController?.pause()
-        submitPartyPlayPause(isPlaying = false, positionMs = playbackSnapshot.positionMs)
-    } else {
-        if (playbackSnapshot.isEnded) {
-            playerController?.seekTo(0L)
+    val nextIsPlaying = !playbackSnapshot.isPlaying
+    val positionMs = if (nextIsPlaying && playbackSnapshot.isEnded) 0L else playbackSnapshot.positionMs
+    // The party performs the transport itself, at an instant every member reaches together, so
+    // doing it here as well would start this player early and then have the barrier move it again.
+    if (!submitPartyPlayPause(isPlaying = nextIsPlaying, positionMs = positionMs)) {
+        if (nextIsPlaying) {
+            if (playbackSnapshot.isEnded) playerController?.seekTo(0L)
+            shouldPlay = true
+            playerController?.play()
+        } else {
+            shouldPlay = false
+            playerController?.pause()
         }
-        shouldPlay = true
-        playerController?.play()
-        submitPartyPlayPause(isPlaying = true, positionMs = if (playbackSnapshot.isEnded) 0L else playbackSnapshot.positionMs)
     }
     controlsVisible = true
 }
 
-internal fun PlayerScreenRuntime.prepareTogglePlaybackForNativeFallback(revealControls: Boolean = true) {
+internal fun PlayerScreenRuntime.prepareTogglePlaybackForNativeFallback(revealControls: Boolean = true): Boolean {
     val nextIsPlaying = !playbackSnapshot.isPlaying
-    shouldPlay = nextIsPlaying
+    if (!partyOwnsTransport()) shouldPlay = nextIsPlaying
     // This is the play/pause the desktop user actually presses - the on-screen button and the
     // spacebar both arrive here, and the native controls layer performs the transport itself.
     // `togglePlayback` is the only other way to reach the party, and nothing on desktop calls it,
     // so a host pausing here told the party nothing at all: the change reached the other members
     // only when the next five second heartbeat happened to carry the new status, which is where
     // the whole "Watch Together is five seconds behind" report came from.
-    submitPartyPlayPause(isPlaying = nextIsPlaying, positionMs = playbackSnapshot.positionMs)
+    val claimed = submitPartyPlayPause(isPlaying = nextIsPlaying, positionMs = playbackSnapshot.positionMs)
     if (revealControls) {
         controlsVisible = true
     }
+    return claimed
 }
 
 internal fun PlayerScreenRuntime.seekBy(offsetMs: Long) {
-    playerController?.seekBy(offsetMs)
-    submitPartySeek((playbackSnapshot.positionMs + offsetMs).coerceAtLeast(0L))
+    if (!submitPartySeek((playbackSnapshot.positionMs + offsetMs).coerceAtLeast(0L))) {
+        playerController?.seekBy(offsetMs)
+    }
     applySeekByControlFeedback(offsetMs)
 }
 
 internal fun PlayerScreenRuntime.prepareSeekByForNativeFallback(
     offsetMs: Long,
     revealControls: Boolean = true,
-) {
+): Boolean {
     // Same omission as the toggle above, on the same path: `seekBy` submits and nothing on desktop
     // calls it, so a host skipping forward moved only itself until the next heartbeat.
-    submitPartySeek((playbackSnapshot.positionMs + offsetMs).coerceAtLeast(0L))
+    val claimed = submitPartySeek((playbackSnapshot.positionMs + offsetMs).coerceAtLeast(0L))
     applySeekByControlFeedback(offsetMs, revealControls)
+    return claimed
 }
 
 private fun PlayerScreenRuntime.applySeekByControlFeedback(
@@ -214,14 +219,13 @@ internal fun PlayerScreenRuntime.handleDoubleTapSeek(direction: PlayerSeekDirect
     handleDoubleTapSeek(direction, sendToController = true)
 }
 
-internal fun PlayerScreenRuntime.prepareDoubleTapSeekForNativeFallback(direction: PlayerSeekDirection) {
+internal fun PlayerScreenRuntime.prepareDoubleTapSeekForNativeFallback(direction: PlayerSeekDirection): Boolean =
     handleDoubleTapSeek(direction, sendToController = false)
-}
 
 private fun PlayerScreenRuntime.handleDoubleTapSeek(
     direction: PlayerSeekDirection,
     sendToController: Boolean,
-) {
+): Boolean {
     val currentPositionMs = playbackSnapshot.positionMs.coerceAtLeast(0L)
     val currentSeekState = accumulatedSeekState
     val nextState = if (currentSeekState?.direction == direction) {
@@ -245,14 +249,15 @@ private fun PlayerScreenRuntime.handleDoubleTapSeek(
             maxDurationMs?.let { unclamped.coerceAtMost(it) } ?: unclamped
         }
     }
-    if (sendToController) {
+    // The party submit comes first and outside any branch, deliberately: `sendToController = false`
+    // is the native-fallback caller, where the controls layer performs the seek itself unless this
+    // returns true. Sitting inside the branch meant a host double-tapping to skip moved only itself
+    // - the same omission the play button and the seek-by button both had, and the indentation is
+    // how it stayed hidden.
+    val claimed = submitPartySeek(targetPositionMs)
+    if (sendToController && !claimed) {
         playerController?.seekTo(targetPositionMs)
     }
-    // Outside the branch, and deliberately: `sendToController = false` is the native-fallback
-    // caller, where the controls layer performs the seek itself. Sitting inside the branch meant a
-    // host double-tapping to skip moved only itself - the same omission the play button and the
-    // seek-by button both had, and the indentation is how it stayed hidden.
-    submitPartySeek(targetPositionMs)
     scheduleProgressSyncAfterSeek()
     showSeekFeedback(direction, nextState.amountMs)
 
@@ -261,6 +266,7 @@ private fun PlayerScreenRuntime.handleDoubleTapSeek(
         delay(PlayerDoubleTapSeekResetDelayMs)
         accumulatedSeekState = null
     }
+    return claimed
 }
 
 internal fun PlayerScreenRuntime.cycleResizeMode() {
@@ -283,14 +289,16 @@ internal fun PlayerScreenRuntime.cyclePlaybackSpeed() {
     val speeds = listOf(1f, 1.25f, 1.5f, 2f)
     val current = playbackSnapshot.playbackSpeed
     val next = speeds.firstOrNull { it > current + 0.01f } ?: speeds.first()
-    playerController?.setPlaybackSpeed(next)
-    submitPartySpeed(next)
+    if (!submitPartySpeed(next)) playerController?.setPlaybackSpeed(next)
     showGestureMessage(formatPlaybackSpeedLabel(next))
     controlsVisible = true
 }
 
 internal fun PlayerScreenRuntime.activateHoldToSpeed() {
     if (!playerSettingsUiState.holdToSpeedEnabled) return
+    // A private speed boost is a private drift. The party's speed is shared state, and hold-to-speed
+    // is by definition not shared, so it is simply unavailable while a party owns this playback.
+    if (partyOwnsTransport()) return
     val controller = playerController ?: return
     if (speedBoostRestoreSpeed != null) return
 
@@ -366,8 +374,7 @@ internal fun PlayerScreenRuntime.rememberSurfaceGestureCallbacks(): PlayerSurfac
         currentPositionMs = rememberUpdatedState(playbackSnapshot.positionMs.coerceAtLeast(0L)),
         currentDurationMs = rememberUpdatedState(playbackSnapshot.durationMs),
         commitHorizontalSeek = rememberUpdatedState { targetPositionMs: Long ->
-            playerController?.seekTo(targetPositionMs)
-            submitPartySeek(targetPositionMs)
+            if (!submitPartySeek(targetPositionMs)) playerController?.seekTo(targetPositionMs)
             scheduleProgressSyncAfterSeek()
         },
     )

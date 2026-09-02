@@ -459,6 +459,17 @@ internal class NativePlayerController(
         handle.takeIf { it != 0L }?.let { NativePlayerBridge.setPaused(it, true) }
     }
 
+    /**
+     * The same read [snapshot] makes, without waiting for the 500ms loop that calls it.
+     *
+     * Deliberately not logged: Watch Together calls this twice a second for the whole film.
+     */
+    override fun samplePositionMs(): Long? {
+        val current = handle
+        if (current == 0L) return null
+        return runCatching { NativePlayerBridge.positionMs(current) }.getOrNull()
+    }
+
     override fun seekTo(positionMs: Long) {
         log.d { "seekTo positionMs=$positionMs handle=$handle" }
         handle.takeIf { it != 0L }?.let { NativePlayerBridge.seekTo(it, positionMs) }

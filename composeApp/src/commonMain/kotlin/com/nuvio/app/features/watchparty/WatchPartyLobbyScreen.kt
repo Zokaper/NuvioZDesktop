@@ -49,6 +49,7 @@ fun WatchPartyLobbyScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
+    val syncState by WatchPartySync.state.collectAsStateWithLifecycle()
     val socialState by SocialRepository.uiState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
@@ -139,6 +140,7 @@ fun WatchPartyLobbyScreen(
                     Text(party.content.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                     party.content.episode?.let { Text("S${party.content.season ?: 1} E$it") }
                     Text("${state.connection.name.replaceFirstChar(Char::uppercase)} · ${party.members.size}/$WatchPartyMaxParticipants")
+                    Text(partySyncLabel(state.connection, syncState), style = MaterialTheme.typography.bodySmall)
                     state.inviteCode?.let {
                         // Only the last four characters are stored in plaintext, so a code that
                         // cannot be read off this screen cannot be recovered at all. Selectable so
@@ -159,6 +161,25 @@ fun WatchPartyLobbyScreen(
                         onClick = { scope.launch { WatchPartyRepository.setControlMode(WatchPartyControlMode.collaborative) } },
                         label = { Text("Collaborative") },
                     )
+                }
+            }
+            if (party.hostProfileId == state.activeProfileId) {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FilterChip(
+                            selected = state.waitForEveryone,
+                            onClick = { WatchPartyRepository.setWaitForEveryone(!state.waitForEveryone) },
+                            label = { Text("Wait for everyone") },
+                        )
+                        Text(
+                            if (state.waitForEveryone) {
+                                "Playback pauses for anyone whose stream stalls, and starts again together."
+                            } else {
+                                "Playback carries on when someone's stream stalls; they catch up on their own."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                 }
             }
             // WatchPartyRepository.invite existed with no caller, so the receiving side rendered
@@ -222,6 +243,21 @@ fun WatchPartyLobbyScreen(
     Surface(modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, tonalElevation = 2.dp) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp), content = content)
     }
+}
+
+/**
+ * What the party's synchronisation is actually doing.
+ *
+ * The connection line above says whether the channel is up, which is not the same question: a
+ * channel can be up while the shared clock is still being measured, and during those first few
+ * seconds the party is following the database anchor rather than the host's timeline. Saying so is
+ * the difference between "it is warming up" and "it is broken".
+ */
+private fun partySyncLabel(connection: PartyConnectionState, sync: WatchPartySyncState): String = when {
+    connection != PartyConnectionState.connected -> "Following the party every few seconds"
+    !sync.clockLocked -> "Measuring the shared clock…"
+    sync.bestRttMs < 0 -> "Live sync"
+    else -> "Live sync · ${sync.bestRttMs} ms round trip"
 }
 
 private fun SourceResolutionState.lobbyLabel(): String = when (this) {

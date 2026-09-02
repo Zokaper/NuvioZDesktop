@@ -50,6 +50,15 @@ data class WatchPartyUiState(
     val inviteCode: String? = null,
     val connection: PartyConnectionState = PartyConnectionState.disconnected,
     val serverClockOffsetMs: Long = 0,
+    /**
+     * Whether the host holds the party for a guest whose stream has stalled.
+     *
+     * Host-side and this session only. It is a host's judgement about the party it is running -
+     * one guest on a bad line should not be able to stop the film for five other people - so it is
+     * deliberately not a party setting the server has to carry, and there is no settings surface
+     * for a party to persist it into yet.
+     */
+    val waitForEveryone: Boolean = true,
     val isWorking: Boolean = false,
     val errorMessage: String? = null,
 )
@@ -116,6 +125,12 @@ object WatchPartyRepository {
         lastLoggedPollFailure = null
         scope.launch { if (_uiState.value.party != null) leave() else stopChannel() }
         _uiState.value = WatchPartyUiState(activeProfileId = profileId)
+    }
+
+    fun setWaitForEveryone(enabled: Boolean) {
+        if (_uiState.value.waitForEveryone == enabled) return
+        log.i { "waitForEveryone=$enabled party=${_uiState.value.party?.id.shortId()}" }
+        _uiState.value = _uiState.value.copy(waitForEveryone = enabled)
     }
 
     suspend fun create(
@@ -218,7 +233,24 @@ object WatchPartyRepository {
     @OptIn(ExperimentalUuidApi::class)
     suspend fun setSpeed(speed: Float) = submit(WatchPartyCommand(Uuid.random().toString(), "speed", playbackSpeed = speed))
 
-    suspend fun heartbeat(positionMs: Long, durationMs: Long, speed: Float, status: WatchPartyStatus): Result<Unit> = call {
+    /**
+     * The durable position, aged forward to roughly when the server will write it.
+     *
+     * This row is the anchor for the degraded ladder - a client whose socket is down, or whose peer
+     * is on an older build - and it carried the same bias the whole feature did: the position was
+     * sampled from a 500ms polling loop and then stamped with the server's `now()` at commit, so a
+     * guest reading it ran behind by the sample's age. [positionCapturedAtMs] closes the part of
+     * that gap this client can actually measure. The uplink is deliberately not guessed at: it is
+     * the smaller term and nothing here has measured it, and a made-up correction would be worse
+     * than a known-small one.
+     */
+    suspend fun heartbeat(
+        positionMs: Long,
+        durationMs: Long,
+        speed: Float,
+        status: WatchPartyStatus,
+        positionCapturedAtMs: Long = 0L,
+    ): Result<Unit> = call {
         heartbeatMutex.withLock {
             // Every five seconds forever, so only the transitions are worth a line.
             if (lastLoggedHeartbeatStatus != status.name) {
@@ -228,8 +260,14 @@ object WatchPartyRepository {
                         "status=$status positionMs=$positionMs durationMs=$durationMs speed=$speed"
                 }
             }
+            val aged = if (positionCapturedAtMs > 0L && status == WatchPartyStatus.playing) {
+                val age = (currentEpochMs() - positionCapturedAtMs).coerceIn(0L, WatchPartySnapshotIntervalMs)
+                positionMs + (age.toDouble() * speed.toDouble()).toLong()
+            } else {
+                positionMs
+            }
             val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_heartbeat", buildJsonObject {
-                put("p_party_id", requireParty().id); put("p_profile_id", requireProfile()); put("p_position_ms", positionMs)
+                put("p_party_id", requireParty().id); put("p_profile_id", requireProfile()); put("p_position_ms", aged)
                 put("p_duration_ms", durationMs); put("p_playback_speed", speed); put("p_status", status.name)
             }).decodeAs<WatchPartyState>()
             installSnapshot(snapshot, reopenChannel = false)
@@ -462,6 +500,18 @@ object WatchPartyRepository {
         return true
     }
 
+    /**
+     * Asks for a snapshot without waiting for one.
+     *
+     * The timing plane calls this when a broadcast is about a content generation this client has
+     * not seen: the payload cannot say what changed, and the RPC can. Coalesced like every other
+     * refresh, so a burst of them costs one round trip.
+     */
+    internal fun requestRefresh() {
+        if (_uiState.value.party == null) return
+        refreshRequests.tryEmit(Unit)
+    }
+
     private fun stopPolling() {
         pollJob?.cancel(); pollJob = null
     }
@@ -528,6 +578,11 @@ object WatchPartyRepository {
             withTimeout(WatchPartyChannelSubscribeTimeoutMs) { next.subscribe(blockUntilSubscribed = true) }
             next.track(buildJsonObject { put("profile_id", requireProfile()) })
             channelSubscribed = true
+            // The timing plane rides this channel and nothing else, so it starts here and stops in
+            // `closeChannel`. It is an accelerator over the poll in exactly the way the channel
+            // itself is: a party whose socket will not open still follows along, five seconds at a
+            // time, on the anchor the database carries.
+            WatchPartySync.attach(next, partyId)
         }
 
         opened.onFailure { cause ->
@@ -551,6 +606,7 @@ object WatchPartyRepository {
 
     private suspend fun closeChannel() {
         channelSubscribed = false
+        WatchPartySync.detach()
         collector?.cancel(); collector = null
         refreshJob?.cancel(); refreshJob = null
         // Leaving a channel means sending over the socket that has just failed, so this is bounded
@@ -621,6 +677,6 @@ private fun WatchPartyState.logSignature(): String = buildString {
     append("]")
 }
 
-private fun currentEpochMs(): Long = kotlin.time.Clock.System.now().toEpochMilliseconds()
+internal fun currentEpochMs(): Long = kotlin.time.Clock.System.now().toEpochMilliseconds()
 
 private fun parseIsoEpochMs(value: String): Long? = runCatching { kotlin.time.Instant.parse(value).toEpochMilliseconds() }.getOrNull()

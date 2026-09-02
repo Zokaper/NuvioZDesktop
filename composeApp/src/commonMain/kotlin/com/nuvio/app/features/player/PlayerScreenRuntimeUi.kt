@@ -524,6 +524,9 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                 onSnapshot = { snapshot ->
                     val wasPlaying = playbackSnapshot.isPlaying
                     playbackSnapshot = snapshot
+                    // Stamped where it arrives, because nothing downstream can recover the age of a
+                    // sample once it has been handed on without one.
+                    playbackSnapshotAtMs = kotlin.time.Clock.System.now().toEpochMilliseconds()
                     if (!wasPlaying && snapshot.isPlaying) args.onPlaybackStarted?.invoke()
                     if (!snapshot.isLoading) {
                         initialLoadCompleted = true
@@ -753,8 +756,10 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
             onScrubFinished = { positionMs ->
                 isScrubbingTimeline = false
                 scrubbingPositionMs = null
-                playerController?.seekTo(positionMs)
-                submitPartySeek(positionMs)
+                // The party seeks everyone at one instant, this player included, so performing the
+                // seek here as well would move it twice - once to the scrub target and once to
+                // wherever the barrier says the party will be.
+                if (!submitPartySeek(positionMs)) playerController?.seekTo(positionMs)
                 scheduleProgressSyncAfterSeek()
             },
             horizontalSafePadding = horizontalSafePadding,
@@ -778,29 +783,27 @@ private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControl
             flushWatchProgress()
             args.onBack()
         }
+        // Returning true is what stops the native controls layer performing the transport itself
+        // (`NativePlayerController.handleFallbackAction`). While a party owns this playback it has
+        // to: a host must not start before the instant it just scheduled for everybody else, and a
+        // guest without control must not move its own player at all.
         PlayerControlsAction.TogglePlayback -> {
-            prepareTogglePlaybackForNativeFallback()
-            return false
+            return prepareTogglePlaybackForNativeFallback()
         }
         PlayerControlsAction.KeyboardTogglePlayback -> {
-            prepareTogglePlaybackForNativeFallback(revealControls = false)
-            return false
+            return prepareTogglePlaybackForNativeFallback(revealControls = false)
         }
         PlayerControlsAction.SeekBack -> {
-            prepareSeekByForNativeFallback(-10_000L)
-            return false
+            return prepareSeekByForNativeFallback(-10_000L)
         }
         PlayerControlsAction.KeyboardSeekBack -> {
-            prepareSeekByForNativeFallback(-10_000L, revealControls = false)
-            return false
+            return prepareSeekByForNativeFallback(-10_000L, revealControls = false)
         }
         PlayerControlsAction.SeekForward -> {
-            prepareSeekByForNativeFallback(10_000L)
-            return false
+            return prepareSeekByForNativeFallback(10_000L)
         }
         PlayerControlsAction.KeyboardSeekForward -> {
-            prepareSeekByForNativeFallback(10_000L, revealControls = false)
-            return false
+            return prepareSeekByForNativeFallback(10_000L, revealControls = false)
         }
         PlayerControlsAction.KeyboardVolumeDown,
         PlayerControlsAction.KeyboardVolumeUp -> {
@@ -839,12 +842,10 @@ private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControl
             }
         }
         PlayerControlsAction.DoubleTapSeekBack -> {
-            prepareDoubleTapSeekForNativeFallback(PlayerSeekDirection.Backward)
-            return false
+            return prepareDoubleTapSeekForNativeFallback(PlayerSeekDirection.Backward)
         }
         PlayerControlsAction.DoubleTapSeekForward -> {
-            prepareDoubleTapSeekForNativeFallback(PlayerSeekDirection.Forward)
-            return false
+            return prepareDoubleTapSeekForNativeFallback(PlayerSeekDirection.Forward)
         }
     }
     return true
@@ -937,8 +938,7 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
         "skipInterval" -> {
             val interval = activeSkipInterval ?: return true
             val targetPositionMs = (interval.endTime * 1000).toLong()
-            playerController?.seekTo(targetPositionMs)
-            submitPartySeek(targetPositionMs)
+            if (!submitPartySeek(targetPositionMs)) playerController?.seekTo(targetPositionMs)
             scheduleProgressSyncAfterSeek()
             skipIntervalDismissed = true
         }
@@ -1206,8 +1206,7 @@ private fun PlayerScreenRuntime.handlePlayerControlsScrubFinished(positionMs: Lo
     playerControlsLog.d { "scrubFinished positionMs=$positionMs controller=${playerController != null} ${playerControlLogContext()}" }
     isScrubbingTimeline = false
     scrubbingPositionMs = null
-    playerController?.seekTo(positionMs)
-    submitPartySeek(positionMs)
+    if (!submitPartySeek(positionMs)) playerController?.seekTo(positionMs)
     scheduleProgressSyncAfterSeek()
 }
 
@@ -1648,8 +1647,7 @@ private fun BoxScope.RenderPlaybackOverlays(
                 val rawMs = (interval.endTime * 1000.0).toLong()
                 val durationMs = playbackSnapshot.durationMs
                 val seekMs = if (durationMs > 0L) rawMs.coerceAtMost(durationMs - 1) else rawMs
-                playerController?.seekTo(seekMs)
-                submitPartySeek(seekMs)
+                if (!submitPartySeek(seekMs)) playerController?.seekTo(seekMs)
                 scheduleProgressSyncAfterSeek()
                 skipIntervalDismissed = true
             },

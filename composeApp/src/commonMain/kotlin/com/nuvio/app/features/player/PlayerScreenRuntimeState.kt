@@ -21,6 +21,7 @@ import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamsUiState
 import com.nuvio.app.features.tracking.TrackingMediaReference
 import com.nuvio.app.features.watched.WatchedUiState
+import com.nuvio.app.features.watchparty.WatchPartyStatus
 import com.nuvio.app.features.watchprogress.WatchProgressUiState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -131,6 +132,16 @@ internal class PlayerScreenRuntime(
     var resizeMode by mutableStateOf(playerSettingsUiState.resizeMode.supportedOnCurrentPlatform())
     var layoutSize by mutableStateOf(IntSize.Zero)
     var playbackSnapshot by mutableStateOf(PlayerPlaybackSnapshot())
+
+    /**
+     * When [playbackSnapshot] was received, in epoch milliseconds.
+     *
+     * The snapshot itself does not know its own age, and for Watch Together that age *is* the sync
+     * error: a position sampled up to a polling interval ago and stamped with the current time
+     * puts the whole of that interval into every guest's arithmetic. Engines that can be asked
+     * directly use `PlayerEngineController.samplePositionMs`; this is what the rest pair with.
+     */
+    var playbackSnapshotAtMs by mutableStateOf(0L)
 
     /**
      * Instant's auto source-swap trigger state, carried across snapshots.
@@ -290,6 +301,27 @@ internal class PlayerScreenRuntime(
 
     /** The party generation whose shared position has already replaced this profile's resume point. */
     var partyStartPositionAppliedKey by mutableStateOf<String?>(null)
+
+    /**
+     * The party instant this client is parked for, while a barrier is being executed.
+     *
+     * Zero when none is. The drift correction reads it and stands off: a barrier is already putting
+     * this player exactly where it is meant to be, and a correction firing into that hold would be
+     * measuring a position the client is deliberately holding.
+     */
+    var partyBarrierHoldUntilMs by mutableStateOf(0L)
+
+    /** The last status this client told the party about itself, so only changes are published. */
+    var partyReportedPeerStatus: WatchPartyStatus? = null
+
+    /**
+     * The stalled guests this host paused the party for, empty when it did not.
+     *
+     * Held so the resume is owned by the same rule that took the pause: without it, a host that
+     * paused for a stalled guest and then had them recover would either never start again or would
+     * start again over a pause the *user* had taken in the meantime.
+     */
+    var partyAutoPausedForGuests: List<String> = emptyList()
 
     var lastSyncedSettingsResizeMode: PlayerResizeMode? = null
     var lastResetPlaybackIdentity: String? = null

@@ -94,12 +94,19 @@ data class PartyClockPongMessage(
     val hostAtMs: Long,
 ) : PartySyncMessage
 
-/** What a member other than the host is doing, so the host can decide whether to wait for them. */
+/**
+ * What a member other than the host is doing, so the host can decide whether to wait for them.
+ *
+ * [rttMs] rides along because the host cannot measure it: a ping carries the *guest's* clock, and
+ * the host has no offset for it. The barrier lead is sized from the worst round trip in the party,
+ * so the party has to be told what those are. -1 means not measured yet.
+ */
 data class PartyPeerStatusMessage(
     override val partyId: String,
     override val fromProfileId: String,
     val status: WatchPartyStatus,
     val atPartyMs: Long,
+    val rttMs: Long = -1L,
 ) : PartySyncMessage
 
 fun encodePartySyncMessage(message: PartySyncMessage): JsonObject = buildJsonObject {
@@ -143,6 +150,7 @@ fun encodePartySyncMessage(message: PartySyncMessage): JsonObject = buildJsonObj
             put("t", TypePeerStatus)
             put("s", message.status.name)
             put("at", message.atPartyMs)
+            put("rtt", message.rttMs)
         }
     }
 }
@@ -212,6 +220,7 @@ fun decodePartySyncMessage(payload: JsonObject): PartySyncMessage? {
             status = str("s")?.let { name -> runCatching { WatchPartyStatus.valueOf(name) }.getOrNull() }
                 ?: return null,
             atPartyMs = long("at") ?: return null,
+            rttMs = long("rtt") ?: -1L,
         )
         else -> null
     }

@@ -148,6 +148,30 @@ fun expectedPartyPositionMs(
         .coerceAtLeast(0L)
 }
 
+/**
+ * The bands used against the database anchor, which is the wider, older, biased one.
+ *
+ * Two policies for two qualities of evidence, and the difference between them is not a preference.
+ * The tick knows when it was taken, so a 200ms gap measured against it is a 200ms gap. The database
+ * row does not: its position and its timestamp were taken at different instants, and the difference
+ * between them - a host sample age plus an uplink - is baked into every reading. Correcting a
+ * measurement that is systematically wrong by several hundred milliseconds to a tolerance of two
+ * hundred is how a guest ends up seeking at every poll. These are the values the feature shipped
+ * with, kept for the path they were right for.
+ */
+const val WatchPartyFallbackDeadbandMs = 750L
+const val WatchPartyFallbackSeekThresholdMs = 4_000L
+
+/**
+ * How far ahead of the party a corrective seek aims **on the fallback path only**.
+ *
+ * Seeking to where the party is now lands the guest where the party was by the time the reload
+ * finishes: the shared clock runs on through it. On the tick path this is solved by scheduling the
+ * resume instead of guessing; here there is nothing accurate enough to schedule against, so the old
+ * estimate stands.
+ */
+const val WatchPartyFallbackSeekLeadMs = 2_500L
+
 enum class DriftCorrectionKind { NONE, TEMPORARY_SPEED, SEEK }
 
 data class DriftCorrection(
@@ -234,4 +258,37 @@ fun DriftTracker.next(localPositionMs: Long, expectedPositionMs: Long, sharedSpe
         )
     }
     return DriftOutcome(correction, DriftTracker(seekStreak = 0))
+}
+
+/**
+ * The correction taken against the database anchor when no timeline is arriving.
+ *
+ * Reached when the socket is down, or when the other end is an older build that publishes no ticks.
+ * A party in this state is following along a few seconds at a time rather than not following at
+ * all, and the bands say so.
+ */
+fun partyFallbackDriftCorrection(
+    localPositionMs: Long,
+    expectedPositionMs: Long,
+    sharedSpeed: Float,
+): DriftCorrection {
+    val drift = expectedPositionMs - localPositionMs
+    val magnitude = abs(drift)
+    return when {
+        magnitude <= WatchPartyFallbackDeadbandMs ->
+            DriftCorrection(DriftCorrectionKind.NONE, expectedPositionMs, restoreSpeed = sharedSpeed)
+        magnitude <= WatchPartyFallbackSeekThresholdMs -> DriftCorrection(
+            kind = DriftCorrectionKind.TEMPORARY_SPEED,
+            targetPositionMs = expectedPositionMs,
+            temporarySpeed = partyNudgeSpeed(drift, sharedSpeed),
+            restoreSpeed = sharedSpeed,
+        )
+        // Only lead when behind. A guest that is ahead is about to lose time to the stall anyway,
+        // so leading it further would overshoot in the direction it is already going.
+        else -> DriftCorrection(
+            kind = DriftCorrectionKind.SEEK,
+            targetPositionMs = expectedPositionMs + if (drift > 0) WatchPartyFallbackSeekLeadMs else 0L,
+            restoreSpeed = sharedSpeed,
+        )
+    }
 }

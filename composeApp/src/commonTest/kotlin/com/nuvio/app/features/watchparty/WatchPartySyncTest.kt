@@ -226,6 +226,30 @@ class WatchPartyTimelineTest {
      * retransmit - and a seek taken on it costs the stream its buffer for an error that was not
      * there. Nudged as hard as the policy allows while the gap is being confirmed.
      */
+    /**
+     * The fallback anchor is biased by construction - its position and its timestamp were taken at
+     * different instants - so correcting it to the tick path's tolerance would seek at every poll.
+     * The two policies exist because the evidence is of two different qualities.
+     */
+    @Test fun theFallbackPolicyKeepsTheWiderBandsItWasRightFor() {
+        assertEquals(DriftCorrectionKind.NONE, partyFallbackDriftCorrection(0, 700, 1f).kind)
+        assertEquals(DriftCorrectionKind.TEMPORARY_SPEED, partyFallbackDriftCorrection(0, 3_000, 1f).kind)
+        assertEquals(DriftCorrectionKind.SEEK, partyFallbackDriftCorrection(0, 5_000, 1f).kind)
+        // The same two gaps on the tick path: what the fallback ignores, an unbiased anchor nudges,
+        // and what the fallback nudges, an unbiased anchor treats as a real stall and seeks for.
+        assertEquals(DriftCorrectionKind.TEMPORARY_SPEED, partyDriftCorrection(0, 700, 1f).kind)
+        assertEquals(DriftCorrectionKind.SEEK, partyDriftCorrection(0, 3_000, 1f).kind)
+    }
+
+    /** Nothing schedules the resume on the fallback path, so the old estimate of the reload stands. */
+    @Test fun theFallbackSeekStillLeadsTheTargetWhenBehind() {
+        assertEquals(
+            5_000 + WatchPartyFallbackSeekLeadMs,
+            partyFallbackDriftCorrection(0, 5_000, 1f).targetPositionMs,
+        )
+        assertEquals(0, partyFallbackDriftCorrection(5_000, 0, 1f).targetPositionMs)
+    }
+
     @Test fun aSeekIsTakenOnlyAfterTheGapHasBeenSeenTwice() {
         val first = DriftTracker().next(0, 3_000, 1f)
         assertEquals(DriftCorrectionKind.TEMPORARY_SPEED, first.correction.kind)
@@ -321,6 +345,20 @@ class WatchPartyBarrierTest {
         assertEquals(1_000 + 10_000 + WatchPartySeekRecoveryLeadMs, plan.seekToMs)
     }
 
+    /**
+     * A client that has exchanged nothing with the host has no offset, and an offset of zero is the
+     * absence of an estimate rather than a good one. Reading the command as though it arrived
+     * exactly on time collapses the barrier to what the transport did before barriers existed: go
+     * to the position, act now - which is the right answer when there is no shared instant.
+     */
+    @Test fun aBarrierReadAsOnTimeCollapsesToActingNow() {
+        val issued = command(PartyCommandKind.play, startPositionMs = 5_000, startAtPartyMs = 1_700_000_000_000)
+        val plan = partyBarrierPlan(issued, localPositionMs = 2_000, partyNowMs = issued.startAtPartyMs)
+        assertEquals(0, plan.holdMs)
+        assertEquals(5_000, plan.seekToMs)
+        assertTrue(plan.playAfter)
+    }
+
     @Test fun aCommandIsObeyedOnceAndOlderOnesAreDropped() {
         val first = command(PartyCommandKind.play, 0, 0, counter = 4)
         val log = PartyCommandLog().also { assertTrue(it.accepts(first)) }.record(first)
@@ -369,7 +407,7 @@ class WatchPartySyncProtocolTest {
             PartyCommandMessage("party", command(PartyCommandKind.seek, 4_000, 5_000, counter = 7)),
             PartyClockPingMessage("party", "guest", exchangeId = "x1", sentAtMs = 10),
             PartyClockPongMessage("party", "host", toProfileId = "guest", exchangeId = "x1", sentAtMs = 10, hostAtMs = 4_010),
-            PartyPeerStatusMessage("party", "guest", WatchPartyStatus.buffering, atPartyMs = 500),
+            PartyPeerStatusMessage("party", "guest", WatchPartyStatus.buffering, atPartyMs = 500, rttMs = 42),
         )
         messages.forEach { message ->
             assertEquals(message, decodePartySyncMessage(encodePartySyncMessage(message)))

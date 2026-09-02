@@ -6,6 +6,19 @@ import androidx.compose.ui.Modifier
 interface PlayerEngineController {
     fun play()
     fun pause()
+
+    /**
+     * The player's position, read now, or null when this engine cannot be asked.
+     *
+     * `PlayerPlaybackSnapshot` is produced by a polling loop - every 500ms on desktop, every ~250ms
+     * on Android - so its position is up to a full interval old before anything reads it. That is
+     * invisible for a progress bar and fatal for Watch Together, where the host's position has to
+     * be paired with the instant it was taken: a stale sample stamped with the current time *is*
+     * the sync error. Engines that can answer synchronously answer here; the rest fall back to the
+     * snapshot and the instant it was received.
+     */
+    fun samplePositionMs(): Long? = null
+
     fun seekTo(positionMs: Long)
     fun seekBy(offsetMs: Long)
     fun retry()
