@@ -8,7 +8,6 @@ import kotlin.math.max
 const val WatchPartyMaxParticipants = 8
 const val WatchPartyHostGraceMs = 15_000L
 const val WatchPartySnapshotIntervalMs = 5_000L
-const val WatchPartyBufferingHoldDeadlineMs = 12_000L
 
 /**
  * How long to wait for the realtime channel to report itself subscribed.

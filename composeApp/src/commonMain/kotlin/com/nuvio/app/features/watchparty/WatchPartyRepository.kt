@@ -25,6 +25,8 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.Json
@@ -84,6 +86,9 @@ object WatchPartyRepository {
     // moment it exists so a teardown can remove it, so only this says whether it is carrying state.
     private var channelSubscribed = false
     private var refreshJob: Job? = null
+    // The periodic and transition heartbeats sample playback independently. If their requests are
+    // allowed to overlap, an older sample can finish last and overwrite the newer host state.
+    private val heartbeatMutex = Mutex()
 
     /**
      * Coalesces broadcast-driven refreshes.
@@ -214,19 +219,21 @@ object WatchPartyRepository {
     suspend fun setSpeed(speed: Float) = submit(WatchPartyCommand(Uuid.random().toString(), "speed", playbackSpeed = speed))
 
     suspend fun heartbeat(positionMs: Long, durationMs: Long, speed: Float, status: WatchPartyStatus): Result<Unit> = call {
-        // Every five seconds forever, so only the transitions are worth a line.
-        if (lastLoggedHeartbeatStatus != status.name) {
-            lastLoggedHeartbeatStatus = status.name
-            log.i {
-                "heartbeat party=${_uiState.value.party?.id.shortId()} profile=${_uiState.value.activeProfileId.shortId()} " +
-                    "status=$status positionMs=$positionMs durationMs=$durationMs speed=$speed"
+        heartbeatMutex.withLock {
+            // Every five seconds forever, so only the transitions are worth a line.
+            if (lastLoggedHeartbeatStatus != status.name) {
+                lastLoggedHeartbeatStatus = status.name
+                log.i {
+                    "heartbeat party=${_uiState.value.party?.id.shortId()} profile=${_uiState.value.activeProfileId.shortId()} " +
+                        "status=$status positionMs=$positionMs durationMs=$durationMs speed=$speed"
+                }
             }
+            val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_heartbeat", buildJsonObject {
+                put("p_party_id", requireParty().id); put("p_profile_id", requireProfile()); put("p_position_ms", positionMs)
+                put("p_duration_ms", durationMs); put("p_playback_speed", speed); put("p_status", status.name)
+            }).decodeAs<WatchPartyState>()
+            installSnapshot(snapshot, reopenChannel = false)
         }
-        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_heartbeat", buildJsonObject {
-            put("p_party_id", requireParty().id); put("p_profile_id", requireProfile()); put("p_position_ms", positionMs)
-            put("p_duration_ms", durationMs); put("p_playback_speed", speed); put("p_status", status.name)
-        }).decodeAs<WatchPartyState>()
-        installSnapshot(snapshot, reopenChannel = false)
     }
 
     suspend fun changeContent(content: PartyContent, fingerprint: SourceFingerprint?, qualityIntent: JsonObject? = null): Result<Unit> = call {

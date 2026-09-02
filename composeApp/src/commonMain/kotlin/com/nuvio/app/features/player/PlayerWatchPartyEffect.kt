@@ -12,7 +12,6 @@ import com.nuvio.app.features.watchparty.PartyHoldReason
 import com.nuvio.app.features.watchparty.PartyPlaybackGate
 import com.nuvio.app.features.watchparty.SourceResolutionState
 import com.nuvio.app.features.watchparty.WatchPartyControlMode
-import com.nuvio.app.features.watchparty.WatchPartyBufferingHoldDeadlineMs
 import com.nuvio.app.features.watchparty.WatchPartyHostGraceMs
 import com.nuvio.app.features.watchparty.WatchPartyRepository
 import com.nuvio.app.features.watchparty.WatchPartySnapshotIntervalMs
@@ -67,14 +66,6 @@ private val partyLog = Logger.withTag("WatchPartyPlayer")
  */
 private fun WatchPartyState.generationKey(): String = "$id:$contentGeneration"
 
-/**
- * One uninterrupted buffering episode, ignoring heartbeat timestamp churn. A latched host can keep
- * rewriting `state_updated_at` every five seconds without advancing either the command sequence or
- * the state, so using the timestamp here would restart the safety deadline forever.
- */
-private fun WatchPartyState.bufferingKey(): String? =
-    if (status == WatchPartyStatus.buffering) "${generationKey()}:$sequence" else null
-
 internal data class WatchPartyPlayerStatus(
     val gate: PartyPlaybackGate,
     val isHost: Boolean,
@@ -90,7 +81,7 @@ internal fun PlayerScreenRuntime.rememberWatchPartyStatus(): WatchPartyPlayerSta
             party = party,
             viewerProfileId = partyUi.activeProfileId,
             hostStartReleased = party != null && partyStartReleasedKey == party.generationKey(),
-            hostBufferingReleased = party?.bufferingKey() == partyBufferingReleasedKey,
+            hostBufferingReleased = false,
         ),
         isHost = party != null && party.hostProfileId == partyUi.activeProfileId,
         syncDegraded = party != null && partyUi.connection != PartyConnectionState.connected,
@@ -102,14 +93,13 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
     val partyUi by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
     val matchingParty = partyUi.party?.takeIf { it.matchesPlayback(parentMetaId, playbackSession.videoId) }
     val generationKey = matchingParty?.generationKey()
-    val bufferingKey = matchingParty?.bufferingKey()
     val isHost = matchingParty != null && matchingParty.hostProfileId == partyUi.activeProfileId
     val mediaLoaded = playbackSnapshot.durationMs > 0L
     val gate = partyPlaybackGate(
         party = matchingParty,
         viewerProfileId = partyUi.activeProfileId,
         hostStartReleased = generationKey != null && partyStartReleasedKey == generationKey,
-        hostBufferingReleased = bufferingKey != null && partyBufferingReleasedKey == bufferingKey,
+        hostBufferingReleased = false,
     )
 
     // A party that is held but does not match this playback is silent by design and indistinguishable
@@ -137,26 +127,6 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
         if (generationKey != null && matchingParty?.status == WatchPartyStatus.playing) {
             partyStartReleasedKey = generationKey
         }
-        if (matchingParty?.status != WatchPartyStatus.buffering) {
-            partyBufferingReleasedKey = null
-        }
-    }
-
-    // A guest follows a real host stall briefly, but never forever. This key deliberately excludes
-    // state_updated_at: a broken host can continue publishing the same buffering state on every
-    // heartbeat, and timestamp churn must not buy it another twelve seconds each time.
-    LaunchedEffect(generationKey, bufferingKey, isHost) {
-        if (generationKey == null || bufferingKey == null || isHost) return@LaunchedEffect
-        delay(WatchPartyBufferingHoldDeadlineMs)
-        val current = WatchPartyRepository.uiState.value.party
-            ?.takeIf { it.matchesPlayback(parentMetaId, playbackSession.videoId) }
-            ?: return@LaunchedEffect
-        if (current.bufferingKey() != bufferingKey) return@LaunchedEffect
-        partyLog.w {
-            "buffering deadline party=${current.id.shortId()} seq=${current.sequence} " +
-                "positionMs=${current.positionMs}; guest resuming until host state advances"
-        }
-        partyBufferingReleasedKey = bufferingKey
     }
 
     // Readiness is what the host's gate waits on, so it has to be reported both ways: a stream that
@@ -276,7 +246,6 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
         matchingParty?.stateUpdatedAt,
         partyUi.serverClockOffsetMs,
         mediaLoaded,
-        partyBufferingReleasedKey,
     ) {
         val state = matchingParty ?: return@LaunchedEffect
         if (state.hostProfileId == partyUi.activeProfileId) return@LaunchedEffect
@@ -316,16 +285,9 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
             shouldPlay = true
             controller.play()
         } else if (state.status == WatchPartyStatus.paused || state.status == WatchPartyStatus.buffering || state.status == WatchPartyStatus.lobby) {
-            val bufferingReleased = state.bufferingKey() == partyBufferingReleasedKey
             partyLog.i {
                 "hold seq=${state.sequence} status=${state.status} localMs=${playbackSnapshot.positionMs} " +
-                    "expectedMs=$expected durationMs=$durationMs released=$bufferingReleased"
-            }
-            if (state.status == WatchPartyStatus.buffering && bufferingReleased) {
-                controller.setPlaybackSpeed(state.playbackSpeed)
-                shouldPlay = true
-                controller.play()
-                return@LaunchedEffect
+                    "expectedMs=$expected durationMs=$durationMs"
             }
             // `buffering` is the host stalling, not a position anyone chose. The host publishes it
             // from its own `isLoading`, `expectedPartyPositionMs` freezes at the last written

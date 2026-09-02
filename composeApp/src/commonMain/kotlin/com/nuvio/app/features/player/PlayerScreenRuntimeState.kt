@@ -288,9 +288,6 @@ internal class PlayerScreenRuntime(
      */
     var partyStartReleasedKey by mutableStateOf<String?>(null)
 
-    /** A guest may resume after one unchanged host-buffering episode exceeds its safety deadline. */
-    var partyBufferingReleasedKey by mutableStateOf<String?>(null)
-
     /** The party generation whose shared position has already replaced this profile's resume point. */
     var partyStartPositionAppliedKey by mutableStateOf<String?>(null)
 
