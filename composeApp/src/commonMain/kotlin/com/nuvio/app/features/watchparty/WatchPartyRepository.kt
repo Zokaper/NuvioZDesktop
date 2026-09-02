@@ -274,12 +274,27 @@ object WatchPartyRepository {
         installSnapshot(snapshot, reopenChannel = false)
     }
 
-    suspend fun end(): Result<Unit> = call {
-        val party = requireParty()
-        log.i { "end party=${party.id.shortId()} host=${_uiState.value.activeProfileId.shortId()}" }
-        ZSupabaseProvider.client.postgrest.rpc("party_end", buildJsonObject { put("p_party_id", party.id); put("p_host_profile_id", requireProfile()) })
+    suspend fun end(): Result<Unit> = runCatching {
+        val party = _uiState.value.party
+            ?: throw IllegalStateException("No active party")
+        val profile = _uiState.value.activeProfileId
+            ?: throw IllegalStateException("No active profile")
+        log.i { "end party=${party.id.shortId()} host=${profile.shortId()}" }
+        // Local teardown comes first. `call` can return before its block when the Z session cannot
+        // be refreshed, and an RPC itself can wait on the dead network; neither may keep the host
+        // held in a party they have already ended.
         stopPolling(); stopChannel(); clockOffsetPartyId = null
-        _uiState.value = WatchPartyUiState(activeProfileId = _uiState.value.activeProfileId)
+        _uiState.value = WatchPartyUiState(activeProfileId = profile)
+        scope.launch {
+            runCatching {
+                withTimeout(WatchPartyChannelCloseTimeoutMs) {
+                    ZSupabaseProvider.client.postgrest.rpc("party_end", buildJsonObject {
+                        put("p_party_id", party.id); put("p_host_profile_id", profile)
+                    })
+                }
+            }.onFailure { log.w(it) { "end rpc failed party=${party.id.shortId()}, already dropped locally" } }
+        }
+        Unit
     }
 
     suspend fun leave(): Result<Unit> = runCatching {
@@ -292,13 +307,17 @@ object WatchPartyRepository {
         // party still held in memory. The lobby route then read that held party and dragged the
         // user back to its content on every navigation, including to a different show, and no new
         // party could be created because one was already held. Only a restart cleared it.
-        runCatching {
-            if (party != null && profile != null) ZSupabaseProvider.client.postgrest.rpc("party_leave", buildJsonObject {
-                put("p_party_id", party.id); put("p_profile_id", profile)
-            })
-        }.onFailure { log.w(it) { "leave rpc failed party=${party?.id.shortId()}, dropping it locally anyway" } }
         stopPolling(); stopChannel(); clockOffsetPartyId = null
         _uiState.value = WatchPartyUiState(activeProfileId = profile)
+        if (party != null && profile != null) scope.launch {
+            runCatching {
+                withTimeout(WatchPartyChannelCloseTimeoutMs) {
+                    ZSupabaseProvider.client.postgrest.rpc("party_leave", buildJsonObject {
+                        put("p_party_id", party.id); put("p_profile_id", profile)
+                    })
+                }
+            }.onFailure { log.w(it) { "leave rpc failed party=${party.id.shortId()}, already dropped locally" } }
+        }
     }
 
     private fun installSnapshot(snapshot: WatchPartyState, reopenChannel: Boolean = true) {

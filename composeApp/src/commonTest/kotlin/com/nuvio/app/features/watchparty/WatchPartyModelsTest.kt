@@ -142,12 +142,30 @@ class WatchPartyModelsTest {
         assertTrue(partyPlaybackGate(party, "host", hostStartReleased = true).allowPlayback)
     }
 
-    @Test fun guestsWaitForTheHostAndFollowOnce() {
+    @Test fun guestsDistinguishHostBufferingFromWaitingToStartAndEventuallyRecover() {
         val members = listOf(member("host", SourceResolutionState.ready), member("guest", SourceResolutionState.ready))
         val waiting = party(hostProfileId = "host", status = WatchPartyStatus.buffering, members = members)
-        assertEquals(PartyHoldReason.WAITING_FOR_HOST, partyPlaybackGate(waiting, "guest", false).reason)
+        assertEquals(PartyHoldReason.HOST_BUFFERING, partyPlaybackGate(waiting, "guest", false).reason)
+        assertTrue(partyPlaybackGate(waiting, "guest", false, hostBufferingReleased = true).allowPlayback)
+        assertEquals(
+            PartyHoldReason.WAITING_FOR_HOST,
+            partyPlaybackGate(waiting.copy(status = WatchPartyStatus.paused), "guest", false).reason,
+        )
         val playing = waiting.copy(status = WatchPartyStatus.playing)
         assertTrue(partyPlaybackGate(playing, "guest", false).allowPlayback)
+    }
+
+    @Test fun expectedPositionKeepsMillisecondPrecisionForLongContent() {
+        assertEquals(
+            100_000_002L,
+            expectedPartyPositionMs(
+                statePositionMs = 100_000_001L,
+                stateUpdatedAtEpochMs = 1_000L,
+                serverNowEpochMs = 1_001L,
+                status = WatchPartyStatus.playing,
+                playbackSpeed = 1f,
+            ),
+        )
     }
 
     @Test fun aPartyForAnotherVideoIsNotThisPlayback() {

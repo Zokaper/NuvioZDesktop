@@ -8,6 +8,7 @@ import kotlin.math.max
 const val WatchPartyMaxParticipants = 8
 const val WatchPartyHostGraceMs = 15_000L
 const val WatchPartySnapshotIntervalMs = 5_000L
+const val WatchPartyBufferingHoldDeadlineMs = 12_000L
 
 /**
  * How long to wait for the realtime channel to report itself subscribed.
@@ -139,7 +140,11 @@ fun expectedPartyPositionMs(
 ): Long {
     if (status != WatchPartyStatus.playing) return statePositionMs.coerceAtLeast(0L)
     val elapsed = (serverNowEpochMs - stateUpdatedAtEpochMs).coerceAtLeast(0L)
-    return (statePositionMs + elapsed * playbackSpeed).toLong().coerceAtLeast(0L)
+    // Keep the position in Double precision. Adding a Float promotes the Long position to Float,
+    // which starts quantising millisecond values after roughly 4h39m of playback.
+    return (statePositionMs.toDouble() + elapsed.toDouble() * playbackSpeed.toDouble())
+        .toLong()
+        .coerceAtLeast(0L)
 }
 
 /**
@@ -217,7 +222,7 @@ fun normalizeReleaseFingerprint(value: String): String = value
     .replace(Regex("\\.+"), ".")
 
 /** Why a client is holding playback back while it sits in a party. */
-enum class PartyHoldReason { NONE, WAITING_FOR_PARTICIPANTS, WAITING_FOR_HOST }
+enum class PartyHoldReason { NONE, WAITING_FOR_PARTICIPANTS, WAITING_FOR_HOST, HOST_BUFFERING }
 
 data class PartyPlaybackGate(
     val allowPlayback: Boolean,
@@ -275,6 +280,7 @@ fun partyPlaybackGate(
     party: WatchPartyState?,
     viewerProfileId: String?,
     hostStartReleased: Boolean,
+    hostBufferingReleased: Boolean = false,
 ): PartyPlaybackGate {
     if (party == null || party.status == WatchPartyStatus.ended) {
         return PartyPlaybackGate(allowPlayback = true, reason = PartyHoldReason.NONE)
@@ -283,7 +289,14 @@ fun partyPlaybackGate(
         return PartyPlaybackGate(allowPlayback = true, reason = PartyHoldReason.NONE)
     }
     if (party.hostProfileId != viewerProfileId) {
-        return PartyPlaybackGate(allowPlayback = false, reason = PartyHoldReason.WAITING_FOR_HOST)
+        return when {
+            party.status == WatchPartyStatus.buffering && hostBufferingReleased ->
+                PartyPlaybackGate(allowPlayback = true, reason = PartyHoldReason.NONE)
+            party.status == WatchPartyStatus.buffering ->
+                PartyPlaybackGate(allowPlayback = false, reason = PartyHoldReason.HOST_BUFFERING)
+            else ->
+                PartyPlaybackGate(allowPlayback = false, reason = PartyHoldReason.WAITING_FOR_HOST)
+        }
     }
     if (hostStartReleased) {
         return PartyPlaybackGate(allowPlayback = true, reason = PartyHoldReason.NONE)

@@ -247,8 +247,12 @@ private fun PlayerScreenRuntime.handleDoubleTapSeek(
     }
     if (sendToController) {
         playerController?.seekTo(targetPositionMs)
-    submitPartySeek(targetPositionMs)
     }
+    // Outside the branch, and deliberately: `sendToController = false` is the native-fallback
+    // caller, where the controls layer performs the seek itself. Sitting inside the branch meant a
+    // host double-tapping to skip moved only itself - the same omission the play button and the
+    // seek-by button both had, and the indentation is how it stayed hidden.
+    submitPartySeek(targetPositionMs)
     scheduleProgressSyncAfterSeek()
     showSeekFeedback(direction, nextState.amountMs)
 
@@ -363,6 +367,7 @@ internal fun PlayerScreenRuntime.rememberSurfaceGestureCallbacks(): PlayerSurfac
         currentDurationMs = rememberUpdatedState(playbackSnapshot.durationMs),
         commitHorizontalSeek = rememberUpdatedState { targetPositionMs: Long ->
             playerController?.seekTo(targetPositionMs)
+            submitPartySeek(targetPositionMs)
             scheduleProgressSyncAfterSeek()
         },
     )

@@ -936,7 +936,9 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
         "submitIntroCommit" -> submitIntroFromPlayerControls()
         "skipInterval" -> {
             val interval = activeSkipInterval ?: return true
-            playerController?.seekTo((interval.endTime * 1000).toLong())
+            val targetPositionMs = (interval.endTime * 1000).toLong()
+            playerController?.seekTo(targetPositionMs)
+            submitPartySeek(targetPositionMs)
             scheduleProgressSyncAfterSeek()
             skipIntervalDismissed = true
         }
@@ -1205,6 +1207,7 @@ private fun PlayerScreenRuntime.handlePlayerControlsScrubFinished(positionMs: Lo
     isScrubbingTimeline = false
     scrubbingPositionMs = null
     playerController?.seekTo(positionMs)
+    submitPartySeek(positionMs)
     scheduleProgressSyncAfterSeek()
 }
 
@@ -1646,6 +1649,7 @@ private fun BoxScope.RenderPlaybackOverlays(
                 val durationMs = playbackSnapshot.durationMs
                 val seekMs = if (durationMs > 0L) rawMs.coerceAtMost(durationMs - 1) else rawMs
                 playerController?.seekTo(seekMs)
+                submitPartySeek(seekMs)
                 scheduleProgressSyncAfterSeek()
                 skipIntervalDismissed = true
             },
