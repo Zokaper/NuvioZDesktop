@@ -20,6 +20,18 @@ interface PlayerEngineController {
     fun samplePositionMs(): Long? = null
 
     fun seekTo(positionMs: Long)
+
+    /**
+     * Seek to exactly [positionMs], rather than to whatever the engine finds cheapest nearby.
+     *
+     * Desktop's mpv runs with `hr-seek=no` and seeks `absolute+keyframes`, which lands on the
+     * nearest *earlier* keyframe - eight or nine seconds early on a long-GOP release. That trade is
+     * right for a scrub or a ten second skip, where nothing measures the landing. It is fatal for
+     * Watch Together, which measures the gap between where a guest is and where the party is: a
+     * corrective seek that lands seconds short is re-measured as the same gap and seeked for again,
+     * and the guest never converges. Engines whose ordinary seek is already exact inherit it here.
+     */
+    fun seekToExact(positionMs: Long) = seekTo(positionMs)
     fun seekBy(offsetMs: Long)
     fun retry()
     fun setPlaybackSpeed(speed: Float)

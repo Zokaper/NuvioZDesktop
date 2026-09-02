@@ -21,6 +21,8 @@ import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamsUiState
 import com.nuvio.app.features.tracking.TrackingMediaReference
 import com.nuvio.app.features.watched.WatchedUiState
+import com.nuvio.app.features.watchparty.PendingPartySeek
+import com.nuvio.app.features.watchparty.StallHoldBudget
 import com.nuvio.app.features.watchparty.WatchPartyStatus
 import com.nuvio.app.features.watchprogress.WatchProgressUiState
 import kotlinx.coroutines.CoroutineScope
@@ -313,6 +315,25 @@ internal class PlayerScreenRuntime(
      * behind its own command, and obeying one captured before the barrier would undo it.
      */
     var partyBarrierAtMs by mutableStateOf(0L)
+
+    /**
+     * Whether the party is deliberately parking this player: waiting out a barrier, or waiting for a
+     * corrective seek to land.
+     *
+     * Distinct from both "paused" and "starved", and it has to be, because two different things read
+     * it. Desktop drives the engine off `shouldPlay` through a `LaunchedEffect`, so flipping that to
+     * `true` at the top of a barrier started playback the moment the state changed rather than at the
+     * instant the barrier named. And a client parked on purpose must not tell the party it is
+     * buffering, because the host's stall guard would then hold the party for a client that is doing
+     * exactly what it was told.
+     */
+    var partyHoldingForBarrier by mutableStateOf(false)
+
+    /** The seek this client has issued and is waiting to see land, or null. Expires on its own. */
+    var partyPendingSeek: PendingPartySeek? = null
+
+    /** How often this host has held the party for a stalled guest, per content generation. */
+    var partyStallHoldBudget: StallHoldBudget = StallHoldBudget()
 
     /** The last status this client told the party about itself, so only changes are published. */
     var partyReportedPeerStatus: WatchPartyStatus? = null

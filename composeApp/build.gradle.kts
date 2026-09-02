@@ -1023,7 +1023,27 @@ val buildWindowsPlayerBridge = tasks.register<Exec>("buildWindowsPlayerBridge") 
     outputs.file(windowsPlayerBridgeOutput)
     outputs.file(windowsPlayerBridgeImportLib)
     outputs.file(windowsPlayerBridgePdb)
-    onlyIf { !windowsPlayerBridgeOutput.get().asFile.exists() }
+    // Skipped when a DLL is already there, because a Kotlin-only working session on a machine with
+    // no MSVC toolchain has to be able to run the app - and that is most of them.
+    //
+    // What it must not do is skip *silently*. It did, and the cost is a local `desktopRun` that
+    // compiles, packages and runs an older `player_bridge.cpp` than the one on disk, with nothing
+    // anywhere saying so; a native fix then looks like a fix that did not work. CI never sees it,
+    // because a clean checkout has no DLL to skip past. So the skip stays and says what it is
+    // hiding.
+    onlyIf {
+        val output = windowsPlayerBridgeOutput.get().asFile
+        if (!output.exists()) return@onlyIf true
+        if (windowsPlayerBridgeSource.asFile.lastModified() > output.lastModified()) {
+            logger.warn(
+                "WARNING: composeApp/build/native/windows/player_bridge.dll is OLDER than " +
+                    "player_bridge.cpp. This build runs the stale bridge. Delete the DLL to rebuild " +
+                    "it (needs the MSVC C++ toolchain), or test the change through the debug MSI, " +
+                    "which is built from a clean checkout.",
+            )
+        }
+        false
+    }
     commandLine(windowsPlayerBridgeCommand)
 }
 

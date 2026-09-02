@@ -2836,9 +2836,33 @@ window.playerControls = nextState => {
   }
 };
 
+// The click that raises the window is delivered to whatever is under the pointer, and for this
+// player that is the video surface - so alt-tabbing back to Nuvio by clicking it paused the film.
+// Harmless on its own and not harmless in a watch party, where the host's pause is everybody's.
+// The play button and the spacebar are unaffected: only the bare surface toggle is suppressed, and
+// only for the click that did the activating.
+// Armed by the blur, not by the focus, so it only ever fires for a window that had actually been
+// left - and bounded in time as well, so a focus this page never hears about cannot leave the
+// suppression latched over a deliberate click minutes later.
+let surfaceClickSuppressedUntilMs = 0;
+let windowWasBlurred = false;
+const ACTIVATION_CLICK_GRACE_MS = 400;
+window.addEventListener("blur", () => {
+  windowWasBlurred = true;
+});
+window.addEventListener("focus", () => {
+  if (!windowWasBlurred) return;
+  windowWasBlurred = false;
+  surfaceClickSuppressedUntilMs = Date.now() + ACTIVATION_CLICK_GRACE_MS;
+});
+
 root.addEventListener("click", event => {
   if (playbackErrorText()) return;
   if (event.target.closest("button,input")) return;
+  if (Date.now() < surfaceClickSuppressedUntilMs) {
+    surfaceClickSuppressedUntilMs = 0;
+    return;
+  }
   window.clearTimeout(tapTimer);
   tapTimer = window.setTimeout(() => {
     requestPlaybackState("setPlaybackStateQuiet", false);

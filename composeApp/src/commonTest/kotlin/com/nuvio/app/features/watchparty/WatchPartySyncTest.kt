@@ -196,20 +196,68 @@ class WatchPartyTimelineTest {
      * visible; it was the width of the error, so the policy called the fault "in sync".
      */
     @Test fun theDriftBandsAreDeadbandNudgeAndSeek() {
-        assertEquals(DriftCorrectionKind.NONE, partyDriftCorrection(1_000, 1_150, 1f).kind)
+        assertEquals(DriftCorrectionKind.NONE, partyDriftCorrection(1_000, 1_050, 1f).kind)
         assertEquals(DriftCorrectionKind.TEMPORARY_SPEED, partyDriftCorrection(1_000, 1_800, 1f).kind)
         assertEquals(DriftCorrectionKind.SEEK, partyDriftCorrection(1_000, 3_000, 1f).kind)
+    }
+
+    /**
+     * The whole reason the field run sat at 199ms for seconds at a time.
+     *
+     * A proportional nudge against one hard band settles *at* the band: every pass concluded the
+     * error was tolerable, and the error it was tolerating was the width of the tolerance. A guest
+     * that has started correcting has to come back under the narrower band before it stops, so the
+     * steady state is the exit band rather than the entry.
+     */
+    @Test fun aGuestAlreadyNudgingKeepsGoingUntilItIsBackUnderTheNarrowBand() {
+        val gap = (WatchPartyDriftDeadbandMs + WatchPartyDriftNudgeEntryMs) / 2
+        assertEquals(DriftCorrectionKind.NONE, partyDriftCorrection(0, gap, 1f, alreadyNudging = false).kind)
+        assertEquals(
+            DriftCorrectionKind.TEMPORARY_SPEED,
+            partyDriftCorrection(0, gap, 1f, alreadyNudging = true).kind,
+        )
+        assertEquals(
+            DriftCorrectionKind.NONE,
+            partyDriftCorrection(0, WatchPartyDriftDeadbandMs, 1f, alreadyNudging = true).kind,
+        )
+    }
+
+    /** Carried on the tracker, so a run of ticks converges instead of chattering at one threshold. */
+    @Test fun theTrackerRemembersThatItIsNudging() {
+        val entered = DriftTracker().next(0, WatchPartyDriftNudgeEntryMs + 1, 1f)
+        assertEquals(DriftCorrectionKind.TEMPORARY_SPEED, entered.correction.kind)
+        assertTrue(entered.tracker.nudging)
+
+        val stillClosing = entered.tracker.next(0, WatchPartyDriftNudgeEntryMs - 1, 1f)
+        assertEquals(DriftCorrectionKind.TEMPORARY_SPEED, stillClosing.correction.kind)
+
+        val settled = stillClosing.tracker.next(0, WatchPartyDriftDeadbandMs - 1, 1f)
+        assertEquals(DriftCorrectionKind.NONE, settled.correction.kind)
+        assertFalse(settled.tracker.nudging)
     }
 
     /** The rate is chosen for the gap, and clamped where the pitch shift starts to be audible. */
     @Test fun theNudgeRateIsProportionalAndCapped() {
         val tolerance = 1e-4f
-        assertEquals(1.05f, partyNudgeSpeed(250, 1f), tolerance)
-        assertEquals(0.95f, partyNudgeSpeed(-250, 1f), tolerance)
+        assertEquals(1.05f, partyNudgeSpeed(125, 1f), tolerance)
+        assertEquals(0.95f, partyNudgeSpeed(-125, 1f), tolerance)
         assertEquals(1.1f, partyNudgeSpeed(2_000, 1f), tolerance)
         assertEquals(0.9f, partyNudgeSpeed(-2_000, 1f), tolerance)
         // Proportional to the shared speed, so a party watching at 1.5x is nudged by the same share.
         assertEquals(1.65f, partyNudgeSpeed(2_000, 1.5f), tolerance)
+    }
+
+    /**
+     * The window and the cap have to agree, or the window is not describing the correction.
+     *
+     * At the old 5s window a gap of more than 500ms could not be closed inside it at all, because
+     * the cap bit first - so the constant that was supposed to say "closed in five seconds" said
+     * nothing. Everything the nudge is now responsible for closes inside its window.
+     */
+    @Test fun theNudgeCanActuallyCloseTheWholeBandItOwns() {
+        val worstGapMs = WatchPartySeekThresholdMs
+        val closedPerWindowMs = (WatchPartyMaxNudgeRate * WatchPartyNudgeWindowMs).toLong()
+        assertTrue(worstGapMs <= closedPerWindowMs * 4)
     }
 
     /**
@@ -262,7 +310,7 @@ class WatchPartyTimelineTest {
 
     @Test fun aGapThatClosesOnItsOwnNeverCostsASeek() {
         val first = DriftTracker().next(0, 3_000, 1f)
-        val second = first.tracker.next(0, 100, 1f)
+        val second = first.tracker.next(0, WatchPartyDriftDeadbandMs - 1, 1f)
         assertEquals(DriftCorrectionKind.NONE, second.correction.kind)
         assertEquals(0, second.tracker.seekStreak)
     }
@@ -381,22 +429,115 @@ class WatchPartyBarrierTest {
 
     /** A routine one-second rebuffer must not stop the film for everyone else. */
     @Test fun theHostWaitsOnlyForAGuestStalledPastTheGrace() {
-        val watch = GuestBufferingWatch().observe("guest", buffering = true, partyNowMs = 0)
-        assertEquals(emptyList(), watch.holdingProfiles(WatchPartyGuestBufferingGraceMs - 1))
-        assertEquals(listOf("guest"), watch.holdingProfiles(WatchPartyGuestBufferingGraceMs))
+        val watch = GuestBufferingWatch().observe("guest", WatchPartyStatus.buffering, partyNowMs = 0)
+        assertEquals(emptyList(), watch.advance(WatchPartyGuestBufferingGraceMs - 1).holdingProfiles)
+        assertEquals(listOf("guest"), watch.advance(WatchPartyGuestBufferingGraceMs).holdingProfiles)
         assertEquals(
             emptyList(),
-            watch.observe("guest", buffering = false, partyNowMs = 900)
-                .holdingProfiles(WatchPartyGuestBufferingGraceMs),
+            watch.observe("guest", WatchPartyStatus.playing, partyNowMs = 900)
+                .advance(WatchPartyGuestBufferingGraceMs)
+                .holdingProfiles,
         )
     }
 
     /** A member who goes on stalling keeps the instant they started, not the instant last seen. */
     @Test fun aContinuingStallKeepsItsStartingInstant() {
         val watch = GuestBufferingWatch()
-            .observe("guest", buffering = true, partyNowMs = 0)
-            .observe("guest", buffering = true, partyNowMs = 1_000)
-        assertEquals(listOf("guest"), watch.holdingProfiles(WatchPartyGuestBufferingGraceMs))
+            .observe("guest", WatchPartyStatus.buffering, partyNowMs = 0)
+            .observe("guest", WatchPartyStatus.buffering, partyNowMs = 1_000)
+        assertEquals(listOf("guest"), watch.advance(WatchPartyGuestBufferingGraceMs).holdingProfiles)
+    }
+
+    /**
+     * The grace has to outlast the longest hold a guest takes on its own account.
+     *
+     * Both were 1500ms, so a guest realigning reported `buffering` for exactly the grace and the host
+     * held the party every single time - four pause/resume pairs in thirty seconds of the
+     * 2026-09-02 run, with nothing actually wrong with anybody's stream.
+     */
+    @Test fun theGraceOutlastsAGuestsOwnCorrectiveHold() {
+        assertTrue(WatchPartyGuestBufferingGraceMs > WatchPartySeekRecoveryLeadMs)
+    }
+
+    /** A guest parked on the right frame is not yet playing, and reading that as recovery flaps. */
+    @Test fun aHoldEndsOnlyOnceTheGuestIsPlayingAgain() {
+        val held = GuestBufferingWatch()
+            .observe("guest", WatchPartyStatus.buffering, partyNowMs = 0)
+            .advance(WatchPartyGuestBufferingGraceMs)
+        assertEquals(listOf("guest"), held.holdingProfiles)
+
+        // Paused on the aligned frame: no longer stalling, not yet recovered.
+        val aligned = held.observe("guest", WatchPartyStatus.paused, partyNowMs = WatchPartyGuestBufferingGraceMs)
+        assertEquals(listOf("guest"), aligned.advance(WatchPartyGuestBufferingGraceMs + 10).holdingProfiles)
+
+        val resumed = aligned.observe("guest", WatchPartyStatus.playing, partyNowMs = WatchPartyGuestBufferingGraceMs)
+        assertEquals(
+            listOf("guest"),
+            resumed.advance(WatchPartyGuestBufferingGraceMs + WatchPartyStallRecoverySettleMs - 1).holdingProfiles,
+        )
+        assertEquals(
+            emptyList(),
+            resumed.advance(WatchPartyGuestBufferingGraceMs + WatchPartyStallRecoverySettleMs).holdingProfiles,
+        )
+    }
+
+    /** One silent member must not be able to hold the party for the length of the film. */
+    @Test fun aHoldIsAbandonedOnceItHasOutlastedTheWindow() {
+        val held = GuestBufferingWatch()
+            .observe("guest", WatchPartyStatus.buffering, partyNowMs = 0)
+            .advance(WatchPartyGuestBufferingGraceMs)
+            .observe("guest", WatchPartyStatus.paused, partyNowMs = WatchPartyGuestBufferingGraceMs)
+        assertEquals(
+            emptyList(),
+            held.advance(WatchPartyGuestBufferingGraceMs + WatchPartyStallHoldMaxMs).holdingProfiles,
+        )
+    }
+
+    /** A source that flaps must not be able to stop and start the party indefinitely. */
+    @Test fun theHostStopsHoldingAfterTooManyHoldsInAWindow() {
+        var budget = StallHoldBudget()
+        assertTrue(budget.mayHold(0))
+        budget = budget.record(0)
+        // Inside the cooldown, however loudly the guest reports a stall.
+        assertFalse(budget.mayHold(WatchPartyStallHoldCooldownMs - 1))
+        assertTrue(budget.mayHold(WatchPartyStallHoldCooldownMs))
+
+        budget = budget.record(WatchPartyStallHoldCooldownMs)
+        budget = budget.record(2 * WatchPartyStallHoldCooldownMs)
+        assertTrue(budget.exhausted(2 * WatchPartyStallHoldCooldownMs))
+        assertFalse(budget.mayHold(3 * WatchPartyStallHoldCooldownMs))
+        // The window is what releases it, so a party that settles down gets the behaviour back.
+        assertFalse(budget.exhausted(WatchPartyStallHoldWindowMs + 2 * WatchPartyStallHoldCooldownMs))
+    }
+}
+
+class WatchPartyPendingSeekTest {
+
+    /** Nothing is measured or issued while the position being measured is the pre-seek one. */
+    @Test fun aSeekIsOutstandingUntilThePositionArrives() {
+        val pending = pendingPartySeek(targetMs = 30_000, nowMs = 0)
+        assertTrue(pending.isOutstanding(nowMs = 100, positionMs = 27_027))
+        assertFalse(pending.isOutstanding(nowMs = 100, positionMs = 30_000))
+        assertFalse(
+            pending.isOutstanding(nowMs = 100, positionMs = 30_000 - WatchPartySeekLandedToleranceMs),
+        )
+        assertTrue(
+            pending.isOutstanding(nowMs = 100, positionMs = 30_000 - WatchPartySeekLandedToleranceMs - 1),
+        )
+    }
+
+    /**
+     * It expires rather than waiting to be cleared.
+     *
+     * A flag some path has to remember to clear is a wedged party the first time a content change or
+     * a released player skips the clear.
+     */
+    @Test fun aSeekThatCannotLandTimesOutRatherThanHoldingForever() {
+        val pending = pendingPartySeek(targetMs = 30_000, nowMs = 0)
+        assertTrue(pending.isOutstanding(nowMs = WatchPartySeekLandingTimeoutMs - 1, positionMs = 0))
+        assertFalse(pending.isOutstanding(nowMs = WatchPartySeekLandingTimeoutMs, positionMs = 0))
+        assertTrue(pending.timedOut(nowMs = WatchPartySeekLandingTimeoutMs, positionMs = 0))
+        assertFalse(pending.timedOut(nowMs = WatchPartySeekLandingTimeoutMs, positionMs = 30_000))
     }
 }
 

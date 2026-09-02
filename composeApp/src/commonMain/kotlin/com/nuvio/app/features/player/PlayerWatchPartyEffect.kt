@@ -15,11 +15,13 @@ import com.nuvio.app.features.watchparty.PartyHoldReason
 import com.nuvio.app.features.watchparty.PartyPlaybackGate
 import com.nuvio.app.features.watchparty.PartyTick
 import com.nuvio.app.features.watchparty.SourceResolutionState
+import com.nuvio.app.features.watchparty.StallHoldBudget
 import com.nuvio.app.features.watchparty.WatchPartyControlMode
 import com.nuvio.app.features.watchparty.WatchPartyHostGraceMs
 import com.nuvio.app.features.watchparty.WatchPartyIdleTickIntervalMs
 import com.nuvio.app.features.watchparty.WatchPartyPausedAlignToleranceMs
 import com.nuvio.app.features.watchparty.WatchPartyRepository
+import com.nuvio.app.features.watchparty.WatchPartySeekLandingPollMs
 import com.nuvio.app.features.watchparty.WatchPartySnapshotIntervalMs
 import com.nuvio.app.features.watchparty.WatchPartyStatusSettleMs
 import com.nuvio.app.features.watchparty.WatchPartyState
@@ -34,6 +36,7 @@ import com.nuvio.app.features.watchparty.partyFallbackDriftCorrection
 import com.nuvio.app.features.watchparty.partyMembersAwaitingSource
 import com.nuvio.app.features.watchparty.partyPlaybackGate
 import com.nuvio.app.features.watchparty.partySeekPlan
+import com.nuvio.app.features.watchparty.pendingPartySeek
 import com.nuvio.app.features.watchparty.shortId
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -62,7 +65,19 @@ import kotlin.math.abs
  * only on the party generation: anything they close over from the composition that launched them is
  * captured once and never updated again.
  */
-private fun partyStatusFor(snapshot: PlayerPlaybackSnapshot, shouldPlay: Boolean): WatchPartyStatus = when {
+private fun partyStatusFor(
+    snapshot: PlayerPlaybackSnapshot,
+    shouldPlay: Boolean,
+    holding: Boolean = false,
+): WatchPartyStatus = when {
+    // A client parked for a barrier, or waiting for its own corrective seek to land, is neither
+    // paused nor starved: it is doing what the party told it to and it will be playing again at an
+    // instant that is already decided. `buffering` is right for the *timeline* - the position is
+    // frozen and stale by construction, which is exactly what that status means - and wrong for the
+    // guest's peer status, so the publisher below simply does not send one while a hold is on. The
+    // two being the same fact is what held the party on every correction: the hold and the stall
+    // guard's grace were the same length, so the guard fired every single time.
+    holding -> WatchPartyStatus.buffering
     snapshot.isLoading -> WatchPartyStatus.buffering
     snapshot.isPlaying -> WatchPartyStatus.playing
     shouldPlay -> WatchPartyStatus.buffering
@@ -103,6 +118,52 @@ private fun PlayerScreenRuntime.samplePlaybackPosition(): SampledPosition {
     } else {
         SampledPosition(playbackSnapshot.positionMs, playbackSnapshotAtMs.takeIf { it > 0L } ?: currentEpochMs())
     }
+}
+
+/** The player's position now, for callers outside this file that only want the number. */
+internal fun PlayerScreenRuntime.partyPositionNowMs(): Long = samplePlaybackPosition().positionMs
+
+/**
+ * Seeks to exactly [targetMs] and waits until the player is actually there.
+ *
+ * Two faults in one. The seek was a keyframe seek, so on a long-GOP release it landed up to nine
+ * seconds early - the 2026-09-02 run has three consecutive corrections aiming at 20988, 23488 and
+ * 25991 and landing at 18185 every time. And nothing waited for it, so the next pass half a second
+ * later measured the *pre-seek* position, called it a fresh gap, and seeked again further ahead.
+ * Seven corrective seeks and twenty engine seeks in two minutes, and the guest never converged.
+ *
+ * The wait is bounded and the record expires on its own, so a source that genuinely cannot serve the
+ * position costs a slower correction rather than a wedged party.
+ */
+private suspend fun PlayerScreenRuntime.seekPartyToExact(targetMs: Long, reason: String) {
+    val controller = playerController ?: return
+    val issuedAtMs = currentEpochMs()
+    partyPendingSeek = pendingPartySeek(targetMs = targetMs, nowMs = issuedAtMs)
+    partyLog.i { "seek issue reason=$reason targetMs=$targetMs fromMs=${samplePlaybackPosition().positionMs}" }
+    controller.seekToExact(targetMs)
+    awaitPartySeekLanded()
+}
+
+/** Whether a seek this client issued is still in flight, clearing the record when it is not. */
+private fun PlayerScreenRuntime.partySeekOutstanding(): Boolean {
+    val pending = partyPendingSeek ?: return false
+    val nowMs = currentEpochMs()
+    val positionMs = samplePlaybackPosition().positionMs
+    if (pending.isOutstanding(nowMs, positionMs)) return true
+    partyPendingSeek = null
+    val tookMs = nowMs - pending.issuedAtMs
+    if (pending.timedOut(nowMs, positionMs)) {
+        // Not an error on its own - an unbuffered position on a cold source takes what it takes -
+        // but it is the line that names a seek that cannot land, so it is a warning.
+        partyLog.w { "seek timeout targetMs=${pending.targetMs} landedMs=$positionMs tookMs=$tookMs" }
+    } else {
+        partyLog.i { "seek landed targetMs=${pending.targetMs} landedMs=$positionMs tookMs=$tookMs" }
+    }
+    return false
+}
+
+private suspend fun PlayerScreenRuntime.awaitPartySeekLanded() {
+    while (partySeekOutstanding()) delay(WatchPartySeekLandingPollMs)
 }
 
 /**
@@ -222,6 +283,11 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
                 WatchPartyRepository.updateReadyDetached(SourceResolutionState.resolving)
                 partyBarrierAtMs = 0L
                 partyReportedPeerStatus = null
+                partyHoldingForBarrier = false
+                partyPendingSeek = null
+                // Per content generation: a new episode is a new stream, and it deserves the
+                // benefit of the doubt rather than inheriting the previous one's exhausted budget.
+                partyStallHoldBudget = StallHoldBudget()
             }
         }
     }
@@ -259,7 +325,7 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
             val sample = samplePlaybackPosition()
             partyLog.i { "gate released $generationKey by=allReady positionMs=${sample.positionMs}" }
             partyStartReleasedKey = generationKey
-            startPartyPlayback(sample.positionMs)
+            startPartyPlayback(sample.positionMs, source = "gate")
         }
     }
 
@@ -280,7 +346,7 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
                 // Derived here, from the snapshot this pass just read, and deliberately not from
                 // the composable-level value: this loop is keyed only on the generation, so a value
                 // computed in the composition that launched it is captured once and never updated.
-                status = partyStatusFor(snapshot, shouldPlay),
+                status = partyStatusFor(snapshot, shouldPlay, partyHoldingForBarrier),
                 positionCapturedAtMs = sample.atEpochMs,
             )
             delay(WatchPartySnapshotIntervalMs)
@@ -300,7 +366,7 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
             val live = WatchPartyRepository.uiState.value.party
             if (live == null || live.status == WatchPartyStatus.ended) break
             val snapshot = playbackSnapshot
-            val status = partyStatusFor(snapshot, shouldPlay)
+            val status = partyStatusFor(snapshot, shouldPlay, partyHoldingForBarrier)
             if (snapshot.durationMs > 0L) {
                 val sample = samplePlaybackPosition()
                 WatchPartySync.publishTick(
@@ -326,7 +392,7 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
      * playing ticks on the idle interval - so the recovery, which is the moment everyone is waiting
      * for, was the slowest thing in the feature.
      */
-    val hostStatus = partyStatusFor(playbackSnapshot, shouldPlay)
+    val hostStatus = partyStatusFor(playbackSnapshot, shouldPlay, partyHoldingForBarrier)
     LaunchedEffect(generationKey, isHost, hostStatus) {
         if (generationKey == null || !isHost) return@LaunchedEffect
         if (playbackSnapshot.durationMs <= 0L) return@LaunchedEffect
@@ -335,7 +401,7 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
         val snapshot = playbackSnapshot
         val sample = samplePlaybackPosition()
         WatchPartySync.publishTick(
-            status = partyStatusFor(snapshot, shouldPlay),
+            status = partyStatusFor(snapshot, shouldPlay, partyHoldingForBarrier),
             positionMs = sample.positionMs,
             capturedAtPartyMs = partyInstantOf(sample.atEpochMs),
             playbackSpeed = snapshot.playbackSpeed,
@@ -345,12 +411,27 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
 
     // What a guest is doing, published the moment it changes rather than at the next heartbeat: the
     // host's grace for a stalled guest is shorter than any polling interval this feature has.
+    //
+    // Deliberately *not* holding-aware: a guest parked for a barrier or waiting for its own
+    // corrective seek is doing what the party asked, and telling the host it is buffering is what
+    // made the stall guard hold the party on every single correction. The host already knows a
+    // barrier is in flight - it sent it - so silence here is the accurate answer, not a missing one.
     val peerStatus = partyStatusFor(playbackSnapshot, shouldPlay)
-    LaunchedEffect(generationKey, isHost, peerStatus) {
+    LaunchedEffect(generationKey, isHost, peerStatus, partyHoldingForBarrier) {
         if (generationKey == null || isHost) return@LaunchedEffect
-        if (partyReportedPeerStatus == peerStatus) return@LaunchedEffect
-        partyReportedPeerStatus = peerStatus
-        WatchPartySync.publishPeerStatus(peerStatus)
+        if (partyHoldingForBarrier) return@LaunchedEffect
+        // Keyed on the status, so a flap cancels the pending publish rather than adding to it - the
+        // same debounce the host's status gets, and for a sharper reason here: the snapshot poll is
+        // up to a full interval behind the player, so the first read after a hold ends still says
+        // "not playing". Publishing that would be a stall report for a client that has this instant
+        // been told to resume. The host's grace is measured in seconds; two hundred milliseconds of
+        // honesty costs nothing against it.
+        delay(WatchPartyStatusSettleMs)
+        if (partyHoldingForBarrier) return@LaunchedEffect
+        val settled = partyStatusFor(playbackSnapshot, shouldPlay)
+        if (partyReportedPeerStatus == settled) return@LaunchedEffect
+        partyReportedPeerStatus = settled
+        WatchPartySync.publishPeerStatus(settled)
     }
 
     // Every transport action, host and guest alike, through one path and one instant.
@@ -408,6 +489,10 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
         // empty space and leaving them there.
         val raw = expectedPartyPositionMs(state.positionMs, updatedAt, serverNow, state.status, state.playbackSpeed)
         val expected = raw.coerceIn(0L, durationMs - 1L)
+        // Same guard as the tick path, for the same reason: the position this whole effect is
+        // measured against is the pre-seek one while a seek is in flight, and a correction taken
+        // against that is a correction for a gap that has already been answered.
+        if (partySeekOutstanding()) return@LaunchedEffect
         val local = samplePlaybackPosition().positionMs
         if (state.status == WatchPartyStatus.playing) {
             val correction = partyFallbackDriftCorrection(local, expected, state.playbackSpeed)
@@ -422,7 +507,20 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
             when (correction.kind) {
                 DriftCorrectionKind.NONE -> controller.setPlaybackSpeed(state.playbackSpeed)
                 DriftCorrectionKind.SEEK -> {
-                    controller.seekTo(correction.targetPositionMs.coerceIn(0L, durationMs - 1L))
+                    partyHoldingForBarrier = true
+                    try {
+                        // Paused across the seek so the landing is a fixed number to compare
+                        // against: a player still running would move past the target while the
+                        // seek was completing and never look like it had arrived. The `play` at
+                        // the end of this branch starts it again.
+                        controller.pause()
+                        seekPartyToExact(
+                            targetMs = correction.targetPositionMs.coerceIn(0L, durationMs - 1L),
+                            reason = "fallback-drift",
+                        )
+                    } finally {
+                        partyHoldingForBarrier = false
+                    }
                     controller.setPlaybackSpeed(state.playbackSpeed)
                 }
                 DriftCorrectionKind.TEMPORARY_SPEED ->
@@ -437,13 +535,19 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
             partyLog.i { "fallbackHold seq=${state.sequence} status=${state.status} localMs=$local expectedMs=$expected" }
             // `buffering` is the host stalling, not a position anyone chose, and the position it
             // froze at is stale by construction.
-            if (state.status != WatchPartyStatus.buffering && abs(local - expected) > 500L) {
-                controller.seekTo(expected)
-            }
             // A nudge left running into a pause would drift the guest right back out again.
             controller.setPlaybackSpeed(state.playbackSpeed)
             shouldPlay = false
             controller.pause()
+            if (state.status != WatchPartyStatus.buffering && abs(local - expected) > 500L) {
+                partyHoldingForBarrier = true
+                try {
+                    seekPartyToExact(targetMs = expected, reason = "fallback-align")
+                } finally {
+                    partyHoldingForBarrier = false
+                }
+                controller.pause()
+            }
         }
     }
 
@@ -507,8 +611,21 @@ private suspend fun PlayerScreenRuntime.executePartyBarrier(command: PartyComman
             shouldPlay = false
             controller.pause()
             // Aligned *while paused*, where closing a gap costs one frame rather than the visible
-            // jump the same correction makes against a running player.
-            plan.seekToMs?.let { controller.seekTo(it.coerceIn(0L, durationMs - 1L)) }
+            // jump the same correction makes against a running player - and exactly, because a
+            // keyframe seek can never satisfy the tolerance that decides whether to align at all,
+            // which had a paused guest re-seeking to the same position every tick forever.
+            plan.seekToMs?.let {
+                partyHoldingForBarrier = true
+                try {
+                    seekPartyToExact(it.coerceIn(0L, durationMs - 1L), reason = "pause-align")
+                } finally {
+                    partyHoldingForBarrier = false
+                }
+                // Said again rather than assumed: a seek can leave a paused player running on some
+                // engines, and a guest that quietly resumes under a party pause is the worst of the
+                // failures this feature can have.
+                controller.pause()
+            }
             controller.setPlaybackSpeed(plan.speed)
         }
         PartyCommandKind.speed -> {
@@ -517,17 +634,25 @@ private suspend fun PlayerScreenRuntime.executePartyBarrier(command: PartyComman
         }
         PartyCommandKind.play, PartyCommandKind.seek -> {
             partyBarrierAtMs = command.startAtPartyMs
-            // Intent, not state: a client parked on a frame waiting for the barrier is a client
-            // that means to be playing, so it reports `buffering` rather than a pause nobody made.
-            shouldPlay = true
-            if (plan.seekToMs != null) {
-                controller.pause()
-                controller.seekTo(plan.seekToMs.coerceIn(0L, durationMs - 1L))
-            } else if (plan.holdMs > 0L) {
-                controller.pause()
+            // Held, not "playing". Desktop drives the engine off `shouldPlay` through its own
+            // effect, so setting the intent here started this player the moment the state changed
+            // rather than at the instant the barrier names - which is the whole point of a barrier.
+            // The flag carries the intent to the status publishers instead, and `shouldPlay` is
+            // flipped where it means something: at the instant.
+            partyHoldingForBarrier = true
+            try {
+                if (plan.seekToMs != null) {
+                    controller.pause()
+                    seekPartyToExact(plan.seekToMs.coerceIn(0L, durationMs - 1L), reason = "barrier")
+                } else if (plan.holdMs > 0L) {
+                    controller.pause()
+                }
+                controller.setPlaybackSpeed(plan.speed)
+                if (clockUsable) awaitPartyInstant(command.startAtPartyMs)
+            } finally {
+                partyHoldingForBarrier = false
             }
-            controller.setPlaybackSpeed(plan.speed)
-            if (clockUsable) awaitPartyInstant(command.startAtPartyMs)
+            shouldPlay = true
             controller.play()
         }
     }
@@ -551,6 +676,10 @@ private suspend fun PlayerScreenRuntime.followPartyTick(tick: PartyTick, tracker
     // imperfect answers, and its effect below is doing the work; two correction paths acting on one
     // player is how a guest gets seeked twice for the same gap.
     if (!WatchPartySync.isPrecise()) return tracker
+    // A seek this client issued is still in flight, so the position everything below would be
+    // measured against is the one from *before* it. Correcting against that is what turned one
+    // corrective seek into a cascade of them, each aimed further ahead than the last.
+    if (partySeekOutstanding()) return tracker
     val partyNow = WatchPartySync.partyNowMs()
     // A barrier is already putting this player exactly where it should be. Measuring against a
     // position it is deliberately holding would produce a correction for a gap that is intentional.
@@ -583,15 +712,27 @@ private suspend fun PlayerScreenRuntime.followPartyTick(tick: PartyTick, tracker
                 val plan = partySeekPlan(tick, partyNow)
                 partyBarrierAtMs = plan.resumeAtPartyMs
                 applyPartySpeed(tick.playbackSpeed)
-                controller.pause()
-                controller.seekTo(plan.seekToMs.coerceIn(0L, durationMs - 1L))
-                awaitPartyInstant(plan.resumeAtPartyMs)
+                // Held for the party's own reasons, so the host is not told this client is stalling.
+                partyHoldingForBarrier = true
+                try {
+                    controller.pause()
+                    seekPartyToExact(plan.seekToMs.coerceIn(0L, durationMs - 1L), reason = "drift")
+                    awaitPartyInstant(plan.resumeAtPartyMs)
+                } finally {
+                    partyHoldingForBarrier = false
+                }
             }
         }
         resumePartyPlayback()
         return outcome.tracker
     }
 
+    // A nudge left running into a pause would drift the guest right back out again. Restored, and
+    // the player stopped, before the align below, so the seek is not racing a rate change or a
+    // position that is still moving under it.
+    applyPartySpeed(tick.playbackSpeed)
+    shouldPlay = false
+    controller.pause()
     // `buffering` is the host stalling, not a position anyone chose. The host publishes it from its
     // own `isLoading` and the timeline freezes at the last written position, so aligning to it would
     // seek every guest to a position that is stale by construction - and on torrent and debrid
@@ -599,13 +740,20 @@ private suspend fun PlayerScreenRuntime.followPartyTick(tick: PartyTick, tracker
     if (tick.status != WatchPartyStatus.buffering) {
         val local = samplePlaybackPosition().positionMs
         if (abs(local - tick.positionMs) > WatchPartyPausedAlignToleranceMs) {
-            controller.seekTo(tick.positionMs.coerceIn(0L, durationMs - 1L))
+            // Exact, and waited for. A keyframe seek could not land inside the tolerance that
+            // decides whether to align at all, so a paused guest re-issued the same seek on every
+            // tick for as long as the party stayed paused.
+            partyHoldingForBarrier = true
+            try {
+                seekPartyToExact(tick.positionMs.coerceIn(0L, durationMs - 1L), reason = "paused-align")
+            } finally {
+                partyHoldingForBarrier = false
+            }
+            // The align is a seek, and a seek on a paused player can leave it unpaused on some
+            // engines; say it again rather than assume.
+            controller.pause()
         }
     }
-    // A nudge left running into a pause would drift the guest right back out again.
-    applyPartySpeed(tick.playbackSpeed)
-    shouldPlay = false
-    controller.pause()
     return DriftTracker()
 }
 
@@ -617,15 +765,29 @@ private suspend fun PlayerScreenRuntime.followPartyTick(tick: PartyTick, tracker
  */
 private suspend fun PlayerScreenRuntime.reactToStalledGuests(holding: List<String>) {
     if (!WatchPartyRepository.uiState.value.waitForEveryone) return
+    val partyNow = WatchPartySync.partyNowMs()
     if (holding.isNotEmpty() && partyAutoPausedForGuests.isEmpty()) {
         if (!playbackSnapshot.isPlaying) return
+        // A hold that has just been taken, or one taken too many times, is not taken again. A source
+        // that flaps would otherwise produce a hold, a resume and another hold indefinitely, and a
+        // party spent stopping and starting is worse than one member being a second behind.
+        if (!partyStallHoldBudget.mayHold(partyNow)) {
+            if (partyStallHoldBudget.exhausted(partyNow)) {
+                partyLog.w {
+                    "stall holds exhausted, playing on without " +
+                        holding.joinToString { it.shortId() }
+                }
+            }
+            return
+        }
+        partyStallHoldBudget = partyStallHoldBudget.record(partyNow)
         partyAutoPausedForGuests = holding
         partyLog.i { "waiting for ${holding.joinToString { it.shortId() }}" }
-        pausePartyPlayback(samplePlaybackPosition().positionMs)
+        pausePartyPlayback(samplePlaybackPosition().positionMs, source = "stall-guard")
     } else if (holding.isEmpty() && partyAutoPausedForGuests.isNotEmpty()) {
         partyAutoPausedForGuests = emptyList()
         partyLog.i { "stalled guests recovered, resuming" }
-        startPartyPlayback(samplePlaybackPosition().positionMs)
+        startPartyPlayback(samplePlaybackPosition().positionMs, source = "stall-guard")
     }
 }
 
@@ -680,8 +842,12 @@ private fun PlayerScreenRuntime.refusePartyControl(): Boolean {
 }
 
 /** Starts, or restarts, shared playback at an instant everyone can reach. */
-private fun PlayerScreenRuntime.startPartyPlayback(positionMs: Long) {
+private fun PlayerScreenRuntime.startPartyPlayback(positionMs: Long, source: String) {
     scope.launch {
+        // Named for the same reason a pause is: a party that starts and stops has to say who kept
+        // asking it to, and "who" is the difference between a user, a readiness gate and a stall
+        // guard that has decided a guest has recovered.
+        partyLog.i { "play src=$source positionMs=$positionMs" }
         val startAt = WatchPartySync.partyNowMs() + WatchPartySync.barrierLeadMs()
         WatchPartySync.issueCommand(
             kind = PartyCommandKind.play,
@@ -695,14 +861,20 @@ private fun PlayerScreenRuntime.startPartyPlayback(positionMs: Long) {
     }
 }
 
-private fun PlayerScreenRuntime.pausePartyPlayback(positionMs: Long) {
+private fun PlayerScreenRuntime.pausePartyPlayback(positionMs: Long, source: String) {
     scope.launch {
+        // Every pause names where it came from. A pause with no origin is exactly what the
+        // 2026-09-02 run could not explain: the host's player stopped, no command was issued, and
+        // the guests learned about it only from the timeline's status.
+        partyLog.i { "pause src=$source positionMs=$positionMs" }
         WatchPartySync.issueCommand(
             kind = PartyCommandKind.pause,
             startPositionMs = positionMs,
             // Pause carries no lead. Pausing 60ms apart is worth far more than pausing together and
-            // late, and the alignment that follows is paid while paused.
-            startAtPartyMs = 0L,
+            // late, and the alignment that follows is paid while paused. Stamped with now rather
+            // than zero so the `leadMs` beside it is a number a person can read - the plan is what
+            // ignores the instant for a pause, not the sender.
+            startAtPartyMs = WatchPartySync.partyNowMs(),
             playbackSpeed = playbackSnapshot.playbackSpeed,
         )
         WatchPartyRepository.pause(positionMs)
@@ -726,7 +898,15 @@ internal fun PlayerScreenRuntime.submitPartyPlayPause(isPlaying: Boolean, positi
         partyLog.i { "gate released ${party.generationKey()} by=forceStart positionMs=$positionMs" }
     }
     if (isPlaying) partyStartReleasedKey = party.generationKey()
-    if (isPlaying) startPartyPlayback(positionMs) else pausePartyPlayback(positionMs)
+    // The user has taken the transport back. Without this, a guest recovering later would have the
+    // stall guard resume over a pause a person made in the meantime - the guard would be undoing a
+    // decision it did not take.
+    partyAutoPausedForGuests = emptyList()
+    if (isPlaying) {
+        startPartyPlayback(positionMs, source = "user")
+    } else {
+        pausePartyPlayback(positionMs, source = "user")
+    }
     return true
 }
 
@@ -784,9 +964,17 @@ internal fun PlayerScreenRuntime.partyDiagnosticsLine(): String? {
         append("offsetMs=${sync.clockOffsetMs} locked=${sync.clockLocked} rttMs=${sync.bestRttMs} ")
         append("tickAgeMs=${WatchPartySync.tickAgeMs()} tickStatus=${sync.tickStatus} ")
         append("leadMs=${WatchPartySync.barrierLeadMs()} precise=${WatchPartySync.isPrecise()}")
+        // The three states that explain a player which is not moving when the party is. Without
+        // them a held client and a stuck one look identical on screen.
+        if (partyHoldingForBarrier) append(" holding")
+        partyPendingSeek?.let { append(" seekTo=${it.targetMs}") }
         if (sync.holdingProfiles.isNotEmpty()) {
             append(" waitingOn=${sync.holdingProfiles.joinToString { it.shortId() }}")
         }
+        // How many times this host has stopped the party for somebody. Rising while the film plays
+        // is the signature of a guard that is firing on its own corrections rather than on stalls.
+        val holds = partyStallHoldBudget.holdsAtMs.size
+        if (isHost && holds > 0) append(" holds=$holds")
     }
 }
 

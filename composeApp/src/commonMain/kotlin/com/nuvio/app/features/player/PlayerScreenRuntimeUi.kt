@@ -871,7 +871,15 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
         }
         "setPlaybackState",
         "setPlaybackStateQuiet" -> {
-            shouldPlay = value >= 0.5
+            // This, not `PlayerControlsAction.TogglePlayback`, is where every desktop play/pause
+            // actually arrives: `controls.js` sends these two for the play button, the surface click
+            // and the spacebar, and they are consumed here before `toPlayerControlsAction` ever sees
+            // them - which is why routing the *action* through the party left the desktop host
+            // pausing silently, its guests learning about it only from the next timeline tick.
+            val nextIsPlaying = value >= 0.5
+            if (!submitPartyPlayPause(isPlaying = nextIsPlaying, positionMs = partyPositionNowMs())) {
+                shouldPlay = nextIsPlaying
+            }
             if (type == "setPlaybackState") {
                 controlsVisible = true
             }

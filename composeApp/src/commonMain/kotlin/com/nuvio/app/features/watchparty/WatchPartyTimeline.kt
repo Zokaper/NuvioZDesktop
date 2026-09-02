@@ -47,27 +47,49 @@ const val WatchPartyStatusSettleMs = 200L
 const val WatchPartyTickStaleMs = 4_000L
 
 /**
- * Drift the guest lives with: below this, correcting is more visible than the error.
+ * Drift the guest settles at: below this, correcting is more visible than the error.
  *
- * Was 750ms, which was never a judgement about what is visible - it was the width of the bias
- * above, so the policy defined the fault as being in sync. With an anchor that carries its own
- * timestamp the steady-state error is tens of milliseconds, and 200ms is comfortably outside it
- * while still being under the threshold at which two rooms sound out of step.
+ * Was 750ms, then 200ms, and the 200 was measured in the field doing exactly what a plain deadband
+ * does - **a proportional nudge against a hard band settles at the band.** The two-client run of
+ * 2026-09-02 shows `driftMs=197..199 action=NONE` held for seconds at a time: every pass concluded
+ * the error was tolerable, and the error it was tolerating was the width of the tolerance.
+ *
+ * The fix is hysteresis rather than a smaller number: nudging starts at
+ * [WatchPartyDriftNudgeEntryMs] and continues until the gap is back under this, so the steady state
+ * is this value rather than the entry. See [partyDriftCorrection].
  */
-const val WatchPartyDriftDeadbandMs = 200L
+const val WatchPartyDriftDeadbandMs = 60L
+
+/**
+ * The gap at which a guest that is *not* already correcting starts to.
+ *
+ * Wider than the exit band on purpose. Chattering a nudge on and off around one threshold is a
+ * pitch-corrected speed change every half second for the length of a film, which is audible in a way
+ * that being sixty milliseconds out is not.
+ */
+const val WatchPartyDriftNudgeEntryMs = 120L
 
 /**
  * Above this a nudge cannot close the gap in reasonable time, so the guest takes the stall and
  * seeks.
  *
- * Was 4s, chosen when a seek was the expensive escalation from a nudge that could not close
- * anything. A seek is now scheduled - see [PartySeekPlan] - so it lands exactly instead of landing
- * behind, which makes it affordable enough to use on the gaps that actually matter.
+ * Was 4s, then 1.5s. At the ±10% cap a nudge closes a hundred milliseconds a second, so 1.5s of gap
+ * took fifteen seconds to close and the guest was measurably out for all of them. A seek is now
+ * scheduled *and exact* - see [PartySeekPlan] and `PlayerEngineController.seekToExact` - so it lands
+ * where it was aimed rather than on the keyframe before it, which is what makes a seek cheap enough
+ * to be the answer for anything a nudge would spend more than a few seconds on.
  */
-const val WatchPartySeekThresholdMs = 1_500L
+const val WatchPartySeekThresholdMs = 1_000L
 
-/** How long a speed nudge is given to close the gap it was chosen for. */
-const val WatchPartyNudgeWindowMs = 5_000L
+/**
+ * How long a speed nudge is given to close the gap it was chosen for.
+ *
+ * Was 5s against a ±10% cap, which is a contradiction: the cap alone means a gap of more than 500ms
+ * cannot be closed inside the window, so the window was not describing the correction it sized. At
+ * 2.5s the requested rate reaches the cap at 250ms and the whole band below the seek threshold
+ * closes inside a few seconds.
+ */
+const val WatchPartyNudgeWindowMs = 2_500L
 
 /**
  * Bound on the nudge, as a fraction of the party's shared speed. The player preserves pitch, so
@@ -200,11 +222,21 @@ data class DriftCorrection(
  * party actually reaches the position it seeked to. Being wrong about how long a reload takes then
  * costs a slightly longer or shorter pause, never a position error.
  */
-fun partyDriftCorrection(localPositionMs: Long, expectedPositionMs: Long, sharedSpeed: Float): DriftCorrection {
+fun partyDriftCorrection(
+    localPositionMs: Long,
+    expectedPositionMs: Long,
+    sharedSpeed: Float,
+    /**
+     * Whether this guest is already nudging. The band it has to fall back under is narrower than the
+     * one that started it, which is what stops the correction settling at its own threshold.
+     */
+    alreadyNudging: Boolean = false,
+): DriftCorrection {
     val drift = expectedPositionMs - localPositionMs
     val magnitude = abs(drift)
+    val releaseBand = if (alreadyNudging) WatchPartyDriftDeadbandMs else WatchPartyDriftNudgeEntryMs
     return when {
-        magnitude <= WatchPartyDriftDeadbandMs ->
+        magnitude <= releaseBand ->
             DriftCorrection(DriftCorrectionKind.NONE, expectedPositionMs, restoreSpeed = sharedSpeed)
         magnitude <= WatchPartySeekThresholdMs -> DriftCorrection(
             kind = DriftCorrectionKind.TEMPORARY_SPEED,
@@ -237,7 +269,7 @@ internal fun partyNudgeSpeed(driftMs: Long, sharedSpeed: Float): Float {
  * Carries the one thing a correction decision cannot read off a single sample: whether the gap is
  * still there.
  */
-data class DriftTracker(val seekStreak: Int = 0) {
+data class DriftTracker(val seekStreak: Int = 0, val nudging: Boolean = false) {
     /**
      * The correction for this tick, with the seek held back until the gap has been seen twice.
      *
@@ -249,9 +281,20 @@ data class DriftTracker(val seekStreak: Int = 0) {
      * made the compiler do the first time this was written.
      */
     fun next(localPositionMs: Long, expectedPositionMs: Long, sharedSpeed: Float): DriftOutcome {
-        val correction = partyDriftCorrection(localPositionMs, expectedPositionMs, sharedSpeed)
+        val correction = partyDriftCorrection(
+            localPositionMs = localPositionMs,
+            expectedPositionMs = expectedPositionMs,
+            sharedSpeed = sharedSpeed,
+            alreadyNudging = nudging,
+        )
         if (correction.kind != DriftCorrectionKind.SEEK) {
-            return DriftOutcome(correction, DriftTracker(seekStreak = 0))
+            return DriftOutcome(
+                correction = correction,
+                tracker = DriftTracker(
+                    seekStreak = 0,
+                    nudging = correction.kind == DriftCorrectionKind.TEMPORARY_SPEED,
+                ),
+            )
         }
         val streak = seekStreak + 1
         if (streak < WatchPartySeekStreakToCorrect) {
@@ -264,10 +307,13 @@ data class DriftTracker(val seekStreak: Int = 0) {
                     temporarySpeed = partyNudgeSpeed(expectedPositionMs - localPositionMs, sharedSpeed),
                     restoreSpeed = sharedSpeed,
                 ),
-                tracker = DriftTracker(seekStreak = streak),
+                tracker = DriftTracker(seekStreak = streak, nudging = true),
             )
         }
-        return DriftOutcome(correction, DriftTracker(seekStreak = 0))
+        // The seek restores the shared speed on the way through, so the next pass starts from a
+        // player that is not nudging - saying otherwise would hand it the narrow release band for a
+        // correction it is not making.
+        return DriftOutcome(correction, DriftTracker(seekStreak = 0, nudging = false))
     }
 }
 

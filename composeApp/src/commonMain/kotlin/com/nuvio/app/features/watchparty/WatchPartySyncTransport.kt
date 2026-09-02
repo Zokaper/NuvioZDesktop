@@ -91,6 +91,7 @@ internal object WatchPartySync {
     private var bufferWatch = GuestBufferingWatch()
     private var tick: PartyTick? = null
     private val guestRttMs = mutableMapOf<String, Long>()
+    private val guestStatus = mutableMapOf<String, WatchPartyStatus>()
     private val outstandingPings = mutableMapOf<String, Long>()
     private var commandCounter = 0L
     private var peerStatus: WatchPartyStatus? = null
@@ -137,8 +138,19 @@ internal object WatchPartySync {
         return watchPartyBarrierLeadMs(worstRtt / 2)
     }
 
-    /** Members the host is holding the party for, when the party waits for everyone. */
-    fun holdingProfiles(): List<String> = bufferWatch.holdingProfiles(partyNowMs())
+    /**
+     * Members the host is holding the party for, when the party waits for everyone.
+     *
+     * [GuestBufferingWatch.advance] is where both edges are decided - a stall becoming a hold when
+     * the grace runs out, a hold ending when the guest has been playing again for the settle - and
+     * neither of those is a message, so it has to be driven from a read rather than from `observe`.
+     */
+    private fun advanceBufferWatch(): List<String> {
+        bufferWatch = bufferWatch.advance(partyNowMs())
+        return bufferWatch.holdingProfiles
+    }
+
+    fun holdingProfiles(): List<String> = advanceBufferWatch()
 
     fun attach(channel: RealtimeChannel, partyId: String) {
         if (boundPartyId == partyId && collector?.isActive == true) return
@@ -163,6 +175,7 @@ internal object WatchPartySync {
         tick = null
         _ticks.resetReplayCache()
         guestRttMs.clear()
+        guestStatus.clear()
         outstandingPings.clear()
         commandCounter = 0
         peerStatus = null
@@ -244,6 +257,11 @@ internal object WatchPartySync {
         val party = ui.party ?: return
         val profileId = ui.activeProfileId ?: return
         if (profileId == party.hostProfileId) return
+        // Only when it changes: the clock exchange re-sends the held one for liveness, and logging
+        // every one of those would bury the transitions that decide whether the host holds.
+        if (peerStatus != status) {
+            log.i { "peer publish party=${party.id.shortId()} status=$status" }
+        }
         peerStatus = status
         send(
             PartyPeerStatusMessage(
@@ -353,13 +371,24 @@ internal object WatchPartySync {
     private fun acceptPeerStatus(message: PartyPeerStatusMessage) {
         if (!isHost()) return
         if (message.rttMs >= 0) guestRttMs[message.fromProfileId] = message.rttMs
-        val before = bufferWatch.holdingProfiles(partyNowMs())
+        val before = advanceBufferWatch()
         bufferWatch = bufferWatch.observe(
             profileId = message.fromProfileId,
-            buffering = message.status == WatchPartyStatus.buffering,
+            status = message.status,
             partyNowMs = partyNowMs(),
         )
-        if (before != bufferWatch.holdingProfiles(partyNowMs())) publishState()
+        val after = advanceBufferWatch()
+        // The decisive input to the whole "wait for everyone" behaviour, and it was invisible: the
+        // 2026-09-02 run showed the host pausing for a guest with nothing in either log saying what
+        // the guest had reported. Logged on the guest's *transitions* rather than per message - the
+        // clock exchange re-sends the held status for liveness, and a line each would bury them.
+        if (guestStatus.put(message.fromProfileId, message.status) != message.status || before != after) {
+            log.i {
+                "peer status from=${message.fromProfileId.shortId()} status=${message.status} " +
+                    "rttMs=${message.rttMs} holding=[${after.joinToString { it.shortId() }}]"
+            }
+        }
+        if (before != after) publishState()
     }
 
     /**
@@ -400,7 +429,7 @@ internal object WatchPartySync {
             clockOffsetMs = if (isHost()) 0L else clock.offsetMs,
             bestRttMs = clock.bestRttMs,
             tickStatus = held?.status,
-            holdingProfiles = bufferWatch.holdingProfiles(partyNowMs()),
+            holdingProfiles = advanceBufferWatch(),
         )
     }
 

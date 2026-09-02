@@ -475,6 +475,18 @@ internal class NativePlayerController(
         handle.takeIf { it != 0L }?.let { NativePlayerBridge.seekTo(it, positionMs) }
     }
 
+    /**
+     * The seek that lands where it was asked to, for Watch Together.
+     *
+     * [seekTo] is a keyframe seek under `hr-seek=no`, so it lands on the nearest *earlier* keyframe -
+     * eight or nine seconds early on a long-GOP release. That is invisible for a scrub and fatal for
+     * a party, whose whole correction is measured against where the guest actually landed.
+     */
+    override fun seekToExact(positionMs: Long) {
+        log.d { "seekToExact positionMs=$positionMs handle=$handle" }
+        handle.takeIf { it != 0L }?.let { NativePlayerBridge.seekToExact(it, positionMs) }
+    }
+
     override fun seekBy(offsetMs: Long) {
         log.d { "seekBy offsetMs=$offsetMs handle=$handle" }
         handle.takeIf { it != 0L }?.let { NativePlayerBridge.seekBy(it, offsetMs) }

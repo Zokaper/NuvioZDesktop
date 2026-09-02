@@ -58,12 +58,57 @@ const val WatchPartySeekRecoveryLeadMs = 1_500L
 const val WatchPartyCommandLogSize = 64
 
 /**
+ * How close a seek has to land before it counts as having happened.
+ *
+ * An exact seek lands within a frame, so this is slack for the position read rather than for the
+ * seek: on desktop the position comes from mpv's `time-pos`, which does not advance while a seek is
+ * in flight, and a playing party has moved on by a poll interval by the time it does.
+ */
+const val WatchPartySeekLandedToleranceMs = 250L
+
+/** How long a seek is given to land before the correction gives up and lets the nudge have it. */
+const val WatchPartySeekLandingTimeoutMs = 3_000L
+
+/** How often the landing is checked. Short, because everything downstream is waiting on it. */
+const val WatchPartySeekLandingPollMs = 50L
+
+/**
  * How long a guest may be buffering before the host holds the party for it.
  *
  * Short enough that nobody watches on alone through someone else's stall, long enough that a
  * routine one-second rebuffer on a torrent source does not stop the film for everyone.
+ *
+ * **Strictly greater than the longest hold a guest takes on its own account**
+ * ([WatchPartySeekRecoveryLeadMs] plus a landing), because those two being equal is what made the
+ * host pause and resume the party on every corrective seek: the guest reported `buffering` for
+ * exactly the grace, so the guard fired every time and cleared ~300ms later.
  */
-const val WatchPartyGuestBufferingGraceMs = 1_500L
+const val WatchPartyGuestBufferingGraceMs = 2_500L
+
+/**
+ * How long a guest has to be *playing* again - not merely "no longer buffering" - before the host
+ * starts the party back up.
+ *
+ * A guest that has finished aligning is paused on the right frame and not yet running, and reading
+ * that as recovery is what turned one stall into a pause, a resume, and another stall.
+ */
+const val WatchPartyStallRecoverySettleMs = 400L
+
+/** The least time between two automatic holds, so one flapping source cannot machine-gun the party. */
+const val WatchPartyStallHoldCooldownMs = 5_000L
+
+/** Holds inside [WatchPartyStallHoldWindowMs] after which the host stops holding for this content. */
+const val WatchPartyStallHoldLimit = 3
+const val WatchPartyStallHoldWindowMs = 30_000L
+
+/**
+ * The longest a single member may hold the party before the party goes on without them.
+ *
+ * A member that stops answering - a closed laptop, a socket that died without a close - is
+ * indistinguishable from one that is buffering, and waiting for it forever is a dead party rather
+ * than a considerate one.
+ */
+const val WatchPartyStallHoldMaxMs = 30_000L
 
 enum class PartyCommandKind { play, pause, seek, speed }
 
@@ -193,25 +238,141 @@ data class PartyCommandLog(
 }
 
 /**
+ * A seek this client has issued and is waiting to see land.
+ *
+ * The position a correction is measured against comes from the engine, and on desktop that is mpv's
+ * `time-pos`, which does not advance while a seek is in flight and can read *backwards* to a sample
+ * from seconds ago. Evaluating drift against it is how one corrective seek became seven: each pass
+ * measured the pre-seek position, called it a fresh gap, and seeked again to a target further ahead
+ * than the last one. Nothing is measured or issued while one of these is outstanding.
+ *
+ * It expires on its own. The alternative - a flag some path has to remember to clear - is a wedged
+ * party the first time an exception, a content change or a released player skips the clear.
+ */
+data class PendingPartySeek(
+    val targetMs: Long,
+    val issuedAtMs: Long,
+    val deadlineAtMs: Long,
+) {
+    fun hasLanded(positionMs: Long): Boolean =
+        kotlin.math.abs(positionMs - targetMs) <= WatchPartySeekLandedToleranceMs
+
+    fun isOutstanding(nowMs: Long, positionMs: Long): Boolean =
+        nowMs < deadlineAtMs && !hasLanded(positionMs)
+
+    fun timedOut(nowMs: Long, positionMs: Long): Boolean =
+        nowMs >= deadlineAtMs && !hasLanded(positionMs)
+}
+
+fun pendingPartySeek(
+    targetMs: Long,
+    nowMs: Long,
+    timeoutMs: Long = WatchPartySeekLandingTimeoutMs,
+): PendingPartySeek = PendingPartySeek(
+    targetMs = targetMs,
+    issuedAtMs = nowMs,
+    deadlineAtMs = nowMs + timeoutMs,
+)
+
+/**
  * Who the host is waiting for, when the party waits for everyone.
  *
  * A guest that stalls used to be left behind and then dragged back by a seek, which on a torrent or
  * debrid source is most of what a party feels like. Holding for them instead costs the people who
  * are fine a pause they can see the reason for.
+ *
+ * The transition is in [advance] rather than in the query, because both edges are about elapsed time
+ * rather than about a message: a stall becomes a hold when the grace runs out, and a hold ends when
+ * the guest has been *playing* again for the settle. Reading "no longer buffering" as recovery is
+ * what made one stall produce a pause, a resume, and another stall a moment later - the guest was
+ * parked on the right frame and not yet running, which is neither.
  */
-data class GuestBufferingWatch(val bufferingSinceByProfile: Map<String, Long> = emptyMap()) {
-    fun observe(profileId: String, buffering: Boolean, partyNowMs: Long): GuestBufferingWatch = when {
-        !buffering -> GuestBufferingWatch(bufferingSinceByProfile - profileId)
-        bufferingSinceByProfile.containsKey(profileId) -> this
-        else -> GuestBufferingWatch(bufferingSinceByProfile + (profileId to partyNowMs))
+data class GuestBufferingWatch(
+    val bufferingSinceByProfile: Map<String, Long> = emptyMap(),
+    val playingSinceByProfile: Map<String, Long> = emptyMap(),
+    val heldSinceByProfile: Map<String, Long> = emptyMap(),
+) {
+    /** Members the host is holding the party for right now. */
+    val holdingProfiles: List<String> get() = heldSinceByProfile.keys.sorted()
+
+    fun observe(profileId: String, status: WatchPartyStatus, partyNowMs: Long): GuestBufferingWatch =
+        when (status) {
+            WatchPartyStatus.buffering -> copy(
+                bufferingSinceByProfile = if (bufferingSinceByProfile.containsKey(profileId)) {
+                    bufferingSinceByProfile
+                } else {
+                    bufferingSinceByProfile + (profileId to partyNowMs)
+                },
+                playingSinceByProfile = playingSinceByProfile - profileId,
+            )
+            WatchPartyStatus.playing -> copy(
+                bufferingSinceByProfile = bufferingSinceByProfile - profileId,
+                playingSinceByProfile = if (playingSinceByProfile.containsKey(profileId)) {
+                    playingSinceByProfile
+                } else {
+                    playingSinceByProfile + (profileId to partyNowMs)
+                },
+            )
+            // A deliberate pause, a lobby, an ended party: not a stall, and not a recovery either.
+            // A member sitting here keeps an existing hold alive until [WatchPartyStallHoldWindowMs]
+            // releases it, rather than ending one it has not actually come back from.
+            else -> copy(
+                bufferingSinceByProfile = bufferingSinceByProfile - profileId,
+                playingSinceByProfile = playingSinceByProfile - profileId,
+            )
+        }
+
+    /**
+     * Promotes stalls that have outlasted the grace into holds, and releases holds that have
+     * recovered - or that have gone quiet for so long that holding for them is just a dead party.
+     */
+    fun advance(partyNowMs: Long): GuestBufferingWatch {
+        val next = heldSinceByProfile.toMutableMap()
+        for ((profileId, since) in bufferingSinceByProfile) {
+            if (partyNowMs - since < WatchPartyGuestBufferingGraceMs) continue
+            if (!next.containsKey(profileId)) next[profileId] = partyNowMs
+        }
+        val released = next.keys.filter { profileId ->
+            if (bufferingSinceByProfile.containsKey(profileId)) return@filter false
+            val playingSince = playingSinceByProfile[profileId]
+            val settled = playingSince != null && partyNowMs - playingSince >= WatchPartyStallRecoverySettleMs
+            // A member that answers nothing at all cannot be waited for forever; the party is worth
+            // more than one silent client.
+            val abandoned = partyNowMs - (next[profileId] ?: partyNowMs) >= WatchPartyStallHoldMaxMs
+            settled || abandoned
+        }
+        released.forEach { next.remove(it) }
+        return if (next == heldSinceByProfile) this else copy(heldSinceByProfile = next)
     }
 
-    fun forget(profileId: String): GuestBufferingWatch =
-        GuestBufferingWatch(bufferingSinceByProfile - profileId)
+    fun forget(profileId: String): GuestBufferingWatch = copy(
+        bufferingSinceByProfile = bufferingSinceByProfile - profileId,
+        playingSinceByProfile = playingSinceByProfile - profileId,
+        heldSinceByProfile = heldSinceByProfile - profileId,
+    )
+}
 
-    /** Members stalled for longer than the grace, so a flap costs the party nothing. */
-    fun holdingProfiles(partyNowMs: Long): List<String> = bufferingSinceByProfile
-        .filterValues { since -> partyNowMs - since >= WatchPartyGuestBufferingGraceMs }
-        .keys
-        .sorted()
+/**
+ * How often a host has held the party for a stalled guest, and whether it should keep doing it.
+ *
+ * Off is already a legitimate answer to "wait for everyone", and this is what turns it off on the
+ * host's behalf when the answer stops helping: a source that flaps produces a hold, a resume, and
+ * another hold, and a party spent stopping and starting is worse than one member being a second
+ * behind. Deliberately per content generation - a new episode is a new stream and deserves the
+ * benefit of the doubt again.
+ */
+data class StallHoldBudget(val holdsAtMs: List<Long> = emptyList()) {
+    fun mayHold(partyNowMs: Long): Boolean {
+        val recent = holdsAtMs.filter { partyNowMs - it < WatchPartyStallHoldWindowMs }
+        if (recent.size >= WatchPartyStallHoldLimit) return false
+        val last = recent.maxOrNull() ?: return true
+        return partyNowMs - last >= WatchPartyStallHoldCooldownMs
+    }
+
+    fun exhausted(partyNowMs: Long): Boolean =
+        holdsAtMs.count { partyNowMs - it < WatchPartyStallHoldWindowMs } >= WatchPartyStallHoldLimit
+
+    fun record(partyNowMs: Long): StallHoldBudget = StallHoldBudget(
+        holdsAtMs = (holdsAtMs + partyNowMs).filter { partyNowMs - it < WatchPartyStallHoldWindowMs },
+    )
 }

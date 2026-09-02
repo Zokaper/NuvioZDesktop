@@ -232,6 +232,7 @@ java -cp "$WORK/out-watchparty:$CP_RUN:$CP_JSON" org.junit.runner.JUnitCore \
   com.nuvio.app.features.watchparty.WatchPartyClockTest \
   com.nuvio.app.features.watchparty.WatchPartyTimelineTest \
   com.nuvio.app.features.watchparty.WatchPartyBarrierTest \
+  com.nuvio.app.features.watchparty.WatchPartyPendingSeekTest \
   com.nuvio.app.features.watchparty.WatchPartySyncProtocolTest 2>&1 | grep -v "Picked up JAVA_TOOL"
 
 # Deliberately not run here, and CI is the gate for all three:

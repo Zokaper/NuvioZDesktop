@@ -2,6 +2,117 @@
 
 Last updated: 2026-09-02
 
+## The guest flapped because four separate things below the sync layer were wrong (2026-09-02)
+
+The first two-instance run against the rebuilt timing plane. The timing plane itself is fine - the
+guest locked the host clock in three exchanges, `tickAgeMs` held around 130ms and `offsetMs` stayed
+within +-2ms all session - and the guest still paused and resumed continuously and never converged.
+Four faults, none of them in the arithmetic. Host log `nuvio-debug-20260902-184136.log`, guest
+`nuvio-debug-20260902-184143.log`.
+
+**1. On desktop the user's play/pause never reached the party at all.** The previous entry says the
+button and the spacebar "both arrive at `prepareTogglePlaybackForNativeFallback`". They do not.
+`controls.js` sends `setPlaybackState` (button, `toggle.pointerdown`) and `setPlaybackStateQuiet`
+(surface click, spacebar), and `handlePlayerControlsEvent` consumes both with `shouldPlay = value >=
+0.5` and returns `true` - so `handlePlayerEvent` returns before `toPlayerControlsAction` is ever
+consulted, and neither string is in that map anyway. `PlayerControlsAction.TogglePlayback` is not
+produced for play/pause on desktop, so routing *the action* through the party fixed a path the
+platform does not take. The log shows it exactly: `18:43:14.185 (NativePlayerControls) pause` with no
+`issue`, no `command`, and `18:43:18.434 play`, equally silent. Guests learned about both only from
+the timeline's `status`, with no barrier and no shared instant, and obeyed by seeking to the host's
+frozen position and pausing. The event path now submits to the party first and falls back to
+`shouldPlay` only when the party declines it.
+
+Adjacent, and how the pause got taken in the first place: it lands 43ms after
+`(SyncManager) Foreground sync started`, i.e. the window had just been activated. The bare video
+surface toggled playback on **any** click, including the click that raises the window - so
+alt-tabbing back to Nuvio by clicking it paused the film. The surface toggle now ignores the first
+click after a blur/focus pair, bounded to 400ms so a focus the page never hears about cannot leave
+the suppression latched; the play button and the spacebar are untouched.
+
+**2. Corrective seeks landed seconds short, so the guest could not converge.** Both native bridges
+seek `absolute+keyframes` under `hr-seek=no`, which lands on the nearest *earlier* keyframe - eight
+or nine seconds early on this release. Three consecutive corrections aimed at 20988, 23488 and 25991
+and landed at 18185 every time; the landing points across the session cluster at 9843 / 18185 /
+27027 / 32766. Worse, `WatchPartyPausedAlignToleranceMs` is 100ms, which a keyframe seek can never
+satisfy, so a paused guest re-issued the same seek on every tick forever - `seekTo 34034` at
+18:43:35.760, 35.790 and 37.791. `PlayerEngineController.seekToExact` is new and issues
+`absolute+exact`; Watch Together is its only caller, so scrubbing and the ten second skips keep the
+cheap keyframe seek on cold network sources.
+
+**3. Drift was measured against a position that is stale across a seek.** mpv's `time-pos` does not
+advance while a seek is in flight and reads *backwards* to an older sample - `drift localMs` goes
+17017 -> 9843 and 27561 -> 27027 in the log. Nothing tracked an outstanding seek, so each pass half a
+second later measured the pre-seek position, called it a fresh gap, and seeked again further ahead:
+seven corrective seeks and twenty engine seeks in two minutes. `PendingPartySeek` now records the
+target and a deadline; every correction path stands down while one is outstanding and waits for the
+landing, and the record expires on its own rather than needing to be cleared.
+
+**4. A guest's own corrective hold tripped the host's stall guard.** `WatchPartySeekRecoveryLeadMs`
+and `WatchPartyGuestBufferingGraceMs` were both 1500ms, and during the hold the guest reported
+`buffering` - for exactly the grace. So the guard fired on every single correction and cleared
+~300ms later: `waiting for d3397924` / `stalled guests recovered, resuming` at 58.490/58.806,
+01.023/01.340, 05.529/05.597 and 27.610/27.638. **That pair is the flapping.** Four fixes: a client
+held by the party no longer publishes a peer status at all, the grace is 2500ms and is now documented
+as having to outlast the longest self-inflicted hold, a hold ends only once the guest has been
+*playing* again for 400ms rather than merely no longer buffering, and a host may take at most three
+holds in thirty seconds with five seconds between them before it plays on and says so.
+
+**And the standing 200ms error was the deadband.** A proportional nudge against one hard band settles
+*at* the band, which is why the log sits at `driftMs=197..199 action=NONE` for seconds at a time.
+Nudging now starts at 120ms and continues until the gap is back under 60ms, the nudge window is 2.5s
+rather than a 5s that the +-10% cap made unreachable, and the seek threshold is 1s now that a seek
+lands where it was aimed.
+
+Every pause the host takes now names its origin - `pause src=user|stall-guard` - and the guest's peer
+status and the host's acceptance of it are both logged on change. A pause with no origin is what cost
+this session most of its time.
+
+**Verified:** `:composeApp:desktopTest` passes, no failures - including the six watchparty suites
+(barrier 15, timeline 15, clock 9, models 8, pending-seek 2, protocol 2). New coverage for the drift
+hysteresis converging below the entry band, the nudge window actually being able to close the band it
+owns, the grace outlasting a corrective hold, a hold ending only on a settled `playing`, a hold being
+abandoned after 30s, the hold budget's cooldown and limit, and the pending-seek landing and timeout.
+`WatchedItemsStoreTest` did not flake in this run.
+
+**Not** verified: no two-instance run against these changes yet. macOS carries the same
+`seekToMillisecondsExact`, but its `positionMs` returns an optimistic cached value written at seek
+time, so the landing check passes instantly there rather than measuring - the guard is correct but
+inert on that platform until that cache is driven from `time-pos`.
+
+**Test it from the debug MSI, not from `desktopRun`.** The exact seek is in `player_bridge.cpp`, and
+this machine has no MSVC C++ toolchain, so the local bridge cannot be rebuilt - `desktopRun` would
+load the DLL sitting in `build/native/windows`, which is from 2026-08-17. That skip was silent:
+`buildWindowsPlayerBridge` carried `onlyIf { !output.exists() }`, so **any** change to the bridge has
+been invisible to every local run since. It now prints a warning naming the stale DLL when the source
+is newer. The debug workflow builds from a clean checkout, so debug build 37 has the real bridge.
+
+**Next:** two instances of the debug MSI, with **separate data directories**, because both instances
+currently share `%APPDATA%\Nuvio Z Debug` and race on the same `nuvio_*.properties`. Launch the second
+from a shell with `APPDATA` moved - `DesktopStorage.resolveAppDataDir()` reads it:
+
+```powershell
+# Seed the guest's store from the host's so it starts signed in, then launch it there.
+# The host launches normally from the Start menu.
+Copy-Item "$env:APPDATA\Nuvio Z Debug" "C:\Temp\NuvioZGuest\Nuvio Z Debug" -Recurse -Force
+$env:APPDATA = "C:\Temp\NuvioZGuest"
+& "C:\Program Files\Nuvio Z Debug\Nuvio Z Debug.exe"
+```
+
+The guest then writes its log to `C:\Temp\NuvioZGuest\Nuvio Z Debug\logs\` and cannot race the host
+over a settings file. Switch it to the second profile in-app so the two are different members.
+
+What the logs have to show: an `issue`/`command` pair for every host play/pause and no
+`NativePlayerControls pause` without one; `seek landed` within 250ms of its target and no repeated
+seek to the same position; no `waiting for` / `recovered` pair unless a stream genuinely stalls; and
+`driftMs` settling under 120ms with `action=NONE` dominating. The HUD's `errMs` is the same number
+live.
+
+One thing the logs cannot settle: the activating-click suppression is armed by the WebView's own
+`blur`/`focus` pair, and if the embedded controls never see those events it is inert rather than
+wrong. Check it by hand - click away to the other window, click back onto the *video*, and the film
+must keep playing; clicking the play button or pressing space must still work immediately.
+
 ## Watch Together was five seconds behind, and the play button was why (2026-09-02)
 
 The first real two-device run worked: party created, both clients joined, each resolved its own
