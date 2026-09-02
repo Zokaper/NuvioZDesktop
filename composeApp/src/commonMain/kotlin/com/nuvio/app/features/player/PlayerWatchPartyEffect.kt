@@ -105,6 +105,26 @@ private fun PlayerScreenRuntime.samplePlaybackPosition(): SampledPosition {
     }
 }
 
+/**
+ * Applies a playback rate only when it is not the one already running.
+ *
+ * The tick path evaluates a correction twice a second for the length of a film, and most of those
+ * evaluations conclude "no change". Handing mpv the rate it is already at, 7,200 times over two
+ * hours, is a filter-chain reconfiguration per call for nothing. The snapshot behind this can be up
+ * to a polling interval stale, which costs at worst an occasional redundant call - the case this
+ * exists to remove is the steady one, not the racing one.
+ */
+private fun PlayerScreenRuntime.applyPartySpeed(speed: Float) {
+    if (abs(playbackSnapshot.playbackSpeed - speed) < 0.001f) return
+    playerController?.setPlaybackSpeed(speed)
+}
+
+/** Same argument as [applyPartySpeed]: a player that is already playing does not need telling. */
+private fun PlayerScreenRuntime.resumePartyPlayback() {
+    shouldPlay = true
+    if (!playbackSnapshot.isPlaying) playerController?.play()
+}
+
 /** The same instant, read in the party's terms. */
 private fun partyInstantOf(epochMs: Long): Long = WatchPartySync.partyNowMs() - (currentEpochMs() - epochMs)
 
@@ -113,6 +133,7 @@ internal data class WatchPartyPlayerStatus(
     val isHost: Boolean,
     val syncDegraded: Boolean,
     val hostBuffering: Boolean,
+    val timelinePlaying: Boolean,
 )
 
 @Composable
@@ -134,6 +155,10 @@ internal fun PlayerScreenRuntime.rememberWatchPartyStatus(): WatchPartyPlayerSta
         hostBuffering = party != null &&
             party.hostProfileId != partyUi.activeProfileId &&
             syncState.tickStatus == WatchPartyStatus.buffering,
+        // The gate reads the database row, which is up to five seconds behind. Without this a guest
+        // that the timeline has already started plays on under a banner still telling them to wait
+        // for the host - which is the feature reporting itself broken while it works.
+        timelinePlaying = syncState.tickStatus == WatchPartyStatus.playing,
     )
 }
 
@@ -548,23 +573,22 @@ private suspend fun PlayerScreenRuntime.followPartyTick(tick: PartyTick, tracker
                 "tickAgeMs=${partyNow - tick.capturedAtPartyMs}"
         }
         when (outcome.correction.kind) {
-            DriftCorrectionKind.NONE -> controller.setPlaybackSpeed(tick.playbackSpeed)
+            DriftCorrectionKind.NONE -> applyPartySpeed(tick.playbackSpeed)
             DriftCorrectionKind.TEMPORARY_SPEED ->
-                controller.setPlaybackSpeed(outcome.correction.temporarySpeed ?: tick.playbackSpeed)
+                applyPartySpeed(outcome.correction.temporarySpeed ?: tick.playbackSpeed)
             DriftCorrectionKind.SEEK -> {
                 // Scheduled, like a host's seek: park on where the party *will* be and start when
                 // it gets there. Nothing has to predict the reload cost, so being wrong about it
                 // costs a slightly longer hold instead of the standing error a fixed lead left.
                 val plan = partySeekPlan(tick, partyNow)
                 partyBarrierAtMs = plan.resumeAtPartyMs
-                controller.setPlaybackSpeed(tick.playbackSpeed)
+                applyPartySpeed(tick.playbackSpeed)
                 controller.pause()
                 controller.seekTo(plan.seekToMs.coerceIn(0L, durationMs - 1L))
                 awaitPartyInstant(plan.resumeAtPartyMs)
             }
         }
-        shouldPlay = true
-        controller.play()
+        resumePartyPlayback()
         return outcome.tracker
     }
 
@@ -579,7 +603,7 @@ private suspend fun PlayerScreenRuntime.followPartyTick(tick: PartyTick, tracker
         }
     }
     // A nudge left running into a pause would drift the guest right back out again.
-    controller.setPlaybackSpeed(tick.playbackSpeed)
+    applyPartySpeed(tick.playbackSpeed)
     shouldPlay = false
     controller.pause()
     return DriftTracker()
@@ -773,7 +797,7 @@ internal fun WatchPartyPlayerStatus.bannerText(): String? = when {
         "Waiting for $people to pick a source · press play to start anyway"
     }
     hostBuffering || gate.reason == PartyHoldReason.HOST_BUFFERING -> "Host is buffering"
-    gate.reason == PartyHoldReason.WAITING_FOR_HOST -> "Waiting for the host to start"
+    gate.reason == PartyHoldReason.WAITING_FOR_HOST && !timelinePlaying -> "Waiting for the host to start"
     // Not "playing on your own": the snapshot poll is still running underneath, so a party without
     // its channel is following along a few seconds at a time rather than not following at all.
     // Saying the stronger thing sent testers looking for a broken party when what had actually
