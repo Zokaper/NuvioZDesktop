@@ -205,6 +205,35 @@ java -cp "$WORK/out-debrid:$CP_RUN:$CP_JSON:$CP_COROUTINES" org.junit.runner.JUn
   com.nuvio.app.features.debrid.DebridSettingsTest \
   com.nuvio.app.features.debrid.DebridStreamPresentationTest 2>&1 | grep -v "Picked up JAVA_TOOL"
 
+# --- Group 6: the Watch Together timing plane -----------------------------------------------
+# No stubs at all: WatchPartyModels.kt imports nothing but kotlinx.serialization and kotlin.math,
+# and the three files that carry the timing decisions are import-free on purpose so they can be
+# executed here rather than only parser-checked. That matters more for this feature than for any
+# other in the app - two clients disagreeing about a clock is not something a single-machine build
+# can find, and every previous round of Watch Together sync work was verified by reading.
+#
+# `@Serializable` on the wire types is the only reason this group needs the compiler plugin, and
+# the JSON runtime is for WatchPartySyncProtocol.kt, which is hand-rolled over JsonObject so that
+# the encoder can be executed against the decoder instead of trusted to agree with it.
+rm -rf "$WORK/out-watchparty"
+kotlinc -nowarn -cp "$CP_BUILD:$CP_JSON" -Xplugin="$WORK/serialization-plugin.jar" \
+  -d "$WORK/out-watchparty" \
+  "$M/features/watchparty/WatchPartyModels.kt" \
+  "$M/features/watchparty/WatchPartyClock.kt" \
+  "$M/features/watchparty/WatchPartyTimeline.kt" \
+  "$M/features/watchparty/WatchPartyBarrier.kt" \
+  "$M/features/watchparty/WatchPartySyncProtocol.kt" \
+  "$T/features/watchparty/WatchPartyModelsTest.kt" \
+  "$T/features/watchparty/WatchPartySyncTest.kt" \
+  2>&1 | grep -v "^warning:" | grep -v "Picked up JAVA" || true
+
+java -cp "$WORK/out-watchparty:$CP_RUN:$CP_JSON" org.junit.runner.JUnitCore \
+  com.nuvio.app.features.watchparty.WatchPartyModelsTest \
+  com.nuvio.app.features.watchparty.WatchPartyClockTest \
+  com.nuvio.app.features.watchparty.WatchPartyTimelineTest \
+  com.nuvio.app.features.watchparty.WatchPartyBarrierTest \
+  com.nuvio.app.features.watchparty.WatchPartySyncProtocolTest 2>&1 | grep -v "Picked up JAVA_TOOL"
+
 # Deliberately not run here, and CI is the gate for all three:
 #   PlaybackSourceSelectorTest  - reaches the real AIO types
 #   AutoPlayFailoverTest        - reaches the real StreamItem and StreamsRepository
