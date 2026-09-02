@@ -286,9 +286,17 @@ object WatchPartyRepository {
         val party = _uiState.value.party
         val profile = _uiState.value.activeProfileId
         log.i { "leave party=${party?.id.shortId()} profile=${profile.shortId()}" }
-        if (party != null && profile != null) ZSupabaseProvider.client.postgrest.rpc("party_leave", buildJsonObject {
-            put("p_party_id", party.id); put("p_profile_id", profile)
-        })
+        // Telling the server is best effort; forgetting the party locally is not. These used to sit
+        // after the RPC inside one runCatching, so a party_leave that threw - an expired session, a
+        // dropped connection, the very conditions someone leaves a broken party under - left the
+        // party still held in memory. The lobby route then read that held party and dragged the
+        // user back to its content on every navigation, including to a different show, and no new
+        // party could be created because one was already held. Only a restart cleared it.
+        runCatching {
+            if (party != null && profile != null) ZSupabaseProvider.client.postgrest.rpc("party_leave", buildJsonObject {
+                put("p_party_id", party.id); put("p_profile_id", profile)
+            })
+        }.onFailure { log.w(it) { "leave rpc failed party=${party?.id.shortId()}, dropping it locally anyway" } }
         stopPolling(); stopChannel(); clockOffsetPartyId = null
         _uiState.value = WatchPartyUiState(activeProfileId = profile)
     }
