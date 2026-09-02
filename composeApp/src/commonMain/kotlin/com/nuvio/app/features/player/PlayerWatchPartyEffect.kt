@@ -21,6 +21,7 @@ import com.nuvio.app.features.watchparty.WatchPartyIdleTickIntervalMs
 import com.nuvio.app.features.watchparty.WatchPartyPausedAlignToleranceMs
 import com.nuvio.app.features.watchparty.WatchPartyRepository
 import com.nuvio.app.features.watchparty.WatchPartySnapshotIntervalMs
+import com.nuvio.app.features.watchparty.WatchPartyStatusSettleMs
 import com.nuvio.app.features.watchparty.WatchPartyState
 import com.nuvio.app.features.watchparty.WatchPartyStatus
 import com.nuvio.app.features.watchparty.WatchPartySync
@@ -194,7 +195,7 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
         onDispose {
             if (generationKey != null) {
                 WatchPartyRepository.updateReadyDetached(SourceResolutionState.resolving)
-                partyBarrierHoldUntilMs = 0L
+                partyBarrierAtMs = 0L
                 partyReportedPeerStatus = null
             }
         }
@@ -289,6 +290,32 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
                 if (status == WatchPartyStatus.playing) WatchPartyTickIntervalMs else WatchPartyIdleTickIntervalMs,
             )
         }
+    }
+
+    /**
+     * The host's status, published out of turn when it changes.
+     *
+     * The periodic loop alone is not enough at either end of a stall. Entering one it would be up
+     * to half a second late, and every guest spends that half second playing on past a host that
+     * has stopped. Leaving one it would be up to *two* seconds late, because a host that is not
+     * playing ticks on the idle interval - so the recovery, which is the moment everyone is waiting
+     * for, was the slowest thing in the feature.
+     */
+    val hostStatus = partyStatusFor(playbackSnapshot, shouldPlay)
+    LaunchedEffect(generationKey, isHost, hostStatus) {
+        if (generationKey == null || !isHost) return@LaunchedEffect
+        if (playbackSnapshot.durationMs <= 0L) return@LaunchedEffect
+        // Keyed on the status, so a flap cancels the pending publish rather than adding to it.
+        if (hostStatus != WatchPartyStatus.buffering) delay(WatchPartyStatusSettleMs)
+        val snapshot = playbackSnapshot
+        val sample = samplePlaybackPosition()
+        WatchPartySync.publishTick(
+            status = partyStatusFor(snapshot, shouldPlay),
+            positionMs = sample.positionMs,
+            capturedAtPartyMs = partyInstantOf(sample.atEpochMs),
+            playbackSpeed = snapshot.playbackSpeed,
+            durationMs = snapshot.durationMs,
+        )
     }
 
     // What a guest is doing, published the moment it changes rather than at the next heartbeat: the
@@ -464,7 +491,7 @@ private suspend fun PlayerScreenRuntime.executePartyBarrier(command: PartyComman
             controller.setPlaybackSpeed(plan.speed)
         }
         PartyCommandKind.play, PartyCommandKind.seek -> {
-            partyBarrierHoldUntilMs = command.startAtPartyMs
+            partyBarrierAtMs = command.startAtPartyMs
             // Intent, not state: a client parked on a frame waiting for the barrier is a client
             // that means to be playing, so it reports `buffering` rather than a pause nobody made.
             shouldPlay = true
@@ -477,7 +504,6 @@ private suspend fun PlayerScreenRuntime.executePartyBarrier(command: PartyComman
             controller.setPlaybackSpeed(plan.speed)
             if (clockUsable) awaitPartyInstant(command.startAtPartyMs)
             controller.play()
-            partyBarrierHoldUntilMs = 0L
         }
     }
 }
@@ -503,7 +529,11 @@ private suspend fun PlayerScreenRuntime.followPartyTick(tick: PartyTick, tracker
     val partyNow = WatchPartySync.partyNowMs()
     // A barrier is already putting this player exactly where it should be. Measuring against a
     // position it is deliberately holding would produce a correction for a gap that is intentional.
-    if (partyNow < partyBarrierHoldUntilMs) return tracker
+    if (partyNow < partyBarrierAtMs) return tracker
+    // And a timeline captured before that barrier is about the party as it was *before* the command
+    // everyone just obeyed. The host's next tick is up to half a second behind its own pause, so
+    // without this a guest resumes at the barrier and is put straight back by the tick in flight.
+    if (tick.capturedAtPartyMs < partyBarrierAtMs) return tracker
     // Checked against the tick in hand rather than relying on the one the transport happens to
     // hold, so this reads correctly wherever it is called from.
     if (tick.isStale(partyNow)) return tracker
@@ -526,12 +556,11 @@ private suspend fun PlayerScreenRuntime.followPartyTick(tick: PartyTick, tracker
                 // it gets there. Nothing has to predict the reload cost, so being wrong about it
                 // costs a slightly longer hold instead of the standing error a fixed lead left.
                 val plan = partySeekPlan(tick, partyNow)
-                partyBarrierHoldUntilMs = plan.resumeAtPartyMs
+                partyBarrierAtMs = plan.resumeAtPartyMs
                 controller.setPlaybackSpeed(tick.playbackSpeed)
                 controller.pause()
                 controller.seekTo(plan.seekToMs.coerceIn(0L, durationMs - 1L))
                 awaitPartyInstant(plan.resumeAtPartyMs)
-                partyBarrierHoldUntilMs = 0L
             }
         }
         shouldPlay = true

@@ -303,13 +303,16 @@ internal class PlayerScreenRuntime(
     var partyStartPositionAppliedKey by mutableStateOf<String?>(null)
 
     /**
-     * The party instant this client is parked for, while a barrier is being executed.
+     * The party instant of the most recent barrier this client executed, zero when there has been
+     * none.
      *
-     * Zero when none is. The drift correction reads it and stands off: a barrier is already putting
-     * this player exactly where it is meant to be, and a correction firing into that hold would be
-     * measuring a position the client is deliberately holding.
+     * It answers two questions, and it is one field because they are one fact. While the instant is
+     * still ahead, this player is parked for it and the drift correction stands off - a barrier is
+     * already putting it exactly where it is meant to be. Once the instant has passed, it is the
+     * line before which a timeline is about the past: the host's next tick is up to half a second
+     * behind its own command, and obeying one captured before the barrier would undo it.
      */
-    var partyBarrierHoldUntilMs by mutableStateOf(0L)
+    var partyBarrierAtMs by mutableStateOf(0L)
 
     /** The last status this client told the party about itself, so only changes are published. */
     var partyReportedPeerStatus: WatchPartyStatus? = null

@@ -29,6 +29,16 @@ const val WatchPartyTickIntervalMs = 500L
 const val WatchPartyIdleTickIntervalMs = 2_000L
 
 /**
+ * How long a status has to hold before the host publishes it out of turn.
+ *
+ * A stall is published the instant it starts, because that is what tells every guest to hold, and
+ * being late with it costs them a seek each. Coming *out* of one is debounced: a source that has
+ * "recovered" for eighty milliseconds has not, and a host whose stream is flapping would otherwise
+ * spend a message on every flap and start the party over and over.
+ */
+const val WatchPartyStatusSettleMs = 200L
+
+/**
  * Past this a tick is not evidence about now.
  *
  * Four idle intervals' worth of silence, so a paused party at 2s ticks is never mistaken for a host
@@ -91,40 +101,39 @@ data class PartyTick(
     val capturedAtPartyMs: Long,
     val playbackSpeed: Float,
     val durationMs: Long,
-)
+) {
+    /**
+     * Where the party is at [partyNowMs].
+     *
+     * Only a playing party advances. Everything else holds at the position it stopped at, which is
+     * why a host that stutters must publish `buffering` and not `paused`: both freeze here, but
+     * only one of them tells a guest that the frozen position is stale by construction.
+     */
+    fun expectedPositionMs(partyNowMs: Long): Long {
+        if (status != WatchPartyStatus.playing) return positionMs.coerceAtLeast(0L)
+        val elapsed = (partyNowMs - capturedAtPartyMs).coerceAtLeast(0L)
+        // Double, not Float: adding a Float promotes the Long position to Float, which starts
+        // quantising millisecond values after roughly 4h39m of playback.
+        return (positionMs.toDouble() + elapsed.toDouble() * playbackSpeed.toDouble())
+            .toLong()
+            .coerceAtLeast(0L)
+    }
 
-/**
- * Where the party is at [partyNowMs].
- *
- * Only a playing party advances. Everything else holds at the position it stopped at, which is why
- * a host that stutters must publish `buffering` and not `paused`: both freeze here, but only one of
- * them tells a guest that the frozen position is stale by construction.
- */
-fun PartyTick.expectedPositionMs(partyNowMs: Long): Long {
-    if (status != WatchPartyStatus.playing) return positionMs.coerceAtLeast(0L)
-    val elapsed = (partyNowMs - capturedAtPartyMs).coerceAtLeast(0L)
-    // Double, not Float: adding a Float promotes the Long position to Float, which starts
-    // quantising millisecond values after roughly 4h39m of playback.
-    return (positionMs.toDouble() + elapsed.toDouble() * playbackSpeed.toDouble())
-        .toLong()
-        .coerceAtLeast(0L)
-}
+    fun isStale(partyNowMs: Long): Boolean = partyNowMs - capturedAtPartyMs > WatchPartyTickStaleMs
 
-fun PartyTick.isStale(partyNowMs: Long): Boolean =
-    partyNowMs - capturedAtPartyMs > WatchPartyTickStaleMs
-
-/**
- * Whether this tick says anything the held one does not.
- *
- * Ordered on the capture instant rather than on [sequence], because `party_heartbeat` moves the
- * host's position without bumping a sequence and ticks do not touch the database at all. A socket
- * can deliver two ticks out of order; the older one is then simply dropped.
- */
-fun PartyTick.supersedes(held: PartyTick?): Boolean = when {
-    held == null -> true
-    held.partyId != partyId -> true
-    contentGeneration != held.contentGeneration -> contentGeneration > held.contentGeneration
-    else -> capturedAtPartyMs > held.capturedAtPartyMs
+    /**
+     * Whether this tick says anything the held one does not.
+     *
+     * Ordered on the capture instant rather than on [sequence], because `party_heartbeat` moves the
+     * host's position without bumping a sequence and ticks do not touch the database at all. A
+     * socket can deliver two ticks out of order; the older one is then simply dropped.
+     */
+    fun supersedes(held: PartyTick?): Boolean = when {
+        held == null -> true
+        held.partyId != partyId -> true
+        contentGeneration != held.contentGeneration -> contentGeneration > held.contentGeneration
+        else -> capturedAtPartyMs > held.capturedAtPartyMs
+    }
 }
 
 /**
@@ -228,37 +237,41 @@ internal fun partyNudgeSpeed(driftMs: Long, sharedSpeed: Float): Float {
  * Carries the one thing a correction decision cannot read off a single sample: whether the gap is
  * still there.
  */
-data class DriftTracker(val seekStreak: Int = 0)
-
-data class DriftOutcome(val correction: DriftCorrection, val tracker: DriftTracker)
-
-/**
- * The correction for this tick, with the seek held back until the gap has been seen twice.
- *
- * A gap wide enough to seek for that closes on its own by the next tick was a measurement, not a
- * drift, and seeking for it costs the stream its buffer for nothing.
- */
-fun DriftTracker.next(localPositionMs: Long, expectedPositionMs: Long, sharedSpeed: Float): DriftOutcome {
-    val correction = partyDriftCorrection(localPositionMs, expectedPositionMs, sharedSpeed)
-    if (correction.kind != DriftCorrectionKind.SEEK) {
+data class DriftTracker(val seekStreak: Int = 0) {
+    /**
+     * The correction for this tick, with the seek held back until the gap has been seen twice.
+     *
+     * A gap wide enough to seek for that closes on its own by the next tick was a measurement, not
+     * a drift, and seeking for it costs the stream its buffer for nothing.
+     *
+     * A member rather than an extension, so a caller cannot reach it without the receiver and
+     * cannot resolve `next` to something else entirely - which is exactly what a missing import
+     * made the compiler do the first time this was written.
+     */
+    fun next(localPositionMs: Long, expectedPositionMs: Long, sharedSpeed: Float): DriftOutcome {
+        val correction = partyDriftCorrection(localPositionMs, expectedPositionMs, sharedSpeed)
+        if (correction.kind != DriftCorrectionKind.SEEK) {
+            return DriftOutcome(correction, DriftTracker(seekStreak = 0))
+        }
+        val streak = seekStreak + 1
+        if (streak < WatchPartySeekStreakToCorrect) {
+            // Nudge as hard as the policy allows meanwhile, so the half second spent confirming the
+            // gap is not also spent ignoring it.
+            return DriftOutcome(
+                correction = DriftCorrection(
+                    kind = DriftCorrectionKind.TEMPORARY_SPEED,
+                    targetPositionMs = expectedPositionMs,
+                    temporarySpeed = partyNudgeSpeed(expectedPositionMs - localPositionMs, sharedSpeed),
+                    restoreSpeed = sharedSpeed,
+                ),
+                tracker = DriftTracker(seekStreak = streak),
+            )
+        }
         return DriftOutcome(correction, DriftTracker(seekStreak = 0))
     }
-    val streak = seekStreak + 1
-    if (streak < WatchPartySeekStreakToCorrect) {
-        // Nudge as hard as the policy allows meanwhile, so the half second spent confirming the gap
-        // is not also spent ignoring it.
-        return DriftOutcome(
-            correction = DriftCorrection(
-                kind = DriftCorrectionKind.TEMPORARY_SPEED,
-                targetPositionMs = expectedPositionMs,
-                temporarySpeed = partyNudgeSpeed(expectedPositionMs - localPositionMs, sharedSpeed),
-                restoreSpeed = sharedSpeed,
-            ),
-            tracker = DriftTracker(seekStreak = streak),
-        )
-    }
-    return DriftOutcome(correction, DriftTracker(seekStreak = 0))
 }
+
+data class DriftOutcome(val correction: DriftCorrection, val tracker: DriftTracker)
 
 /**
  * The correction taken against the database anchor when no timeline is arriving.
