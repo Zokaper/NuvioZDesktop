@@ -160,6 +160,20 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
         }
     }
 
+    // What this client will tell the party it is doing.
+    //
+    // `shouldPlay` is the intent, and it is the third case that matters: a player that is starved
+    // rather than paused reports neither playing nor loading, and calling that `paused` published a
+    // deliberate pause the user never made - which every other member then obeyed, pausing and
+    // seeking to a frozen position. A host whose source stutters must look like a host who is
+    // buffering, because that is what it is.
+    val reportedStatus = when {
+        playbackSnapshot.isLoading -> WatchPartyStatus.buffering
+        playbackSnapshot.isPlaying -> WatchPartyStatus.playing
+        shouldPlay -> WatchPartyStatus.buffering
+        else -> WatchPartyStatus.paused
+    }
+
     LaunchedEffect(generationKey) {
         if (generationKey == null) return@LaunchedEffect
         while (true) {
@@ -172,14 +186,33 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
                 positionMs = snapshot.positionMs,
                 durationMs = snapshot.durationMs,
                 speed = snapshot.playbackSpeed,
-                status = when {
-                    snapshot.isLoading -> WatchPartyStatus.buffering
-                    snapshot.isPlaying -> WatchPartyStatus.playing
-                    else -> WatchPartyStatus.paused
-                },
+                status = reportedStatus,
             )
             delay(WatchPartySnapshotIntervalMs)
         }
+    }
+
+    /**
+     * Publishes a status change as soon as it happens, rather than at the next heartbeat tick.
+     *
+     * Commands are the fast path and this is the floor beneath them, for the same reason the poll
+     * is the floor beneath the broadcast: a transport that only runs every five seconds is a
+     * five second worst case for anything that does not go through a command. The short delay
+     * coalesces a stutter - a source flapping between playing and starved must not spend a
+     * request on every flap - while still landing a real pause inside a round trip.
+     */
+    LaunchedEffect(generationKey, reportedStatus) {
+        if (generationKey == null) return@LaunchedEffect
+        delay(250L)
+        val live = WatchPartyRepository.uiState.value.party
+        if (live == null || live.status == WatchPartyStatus.ended) return@LaunchedEffect
+        val snapshot = playbackSnapshot
+        WatchPartyRepository.heartbeat(
+            positionMs = snapshot.positionMs,
+            durationMs = snapshot.durationMs,
+            speed = snapshot.playbackSpeed,
+            status = reportedStatus,
+        )
     }
 
     LaunchedEffect(
@@ -215,11 +248,13 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
             when (correction.kind) {
                 DriftCorrectionKind.NONE -> controller.setPlaybackSpeed(state.playbackSpeed)
                 DriftCorrectionKind.SEEK -> { controller.seekTo(correction.targetPositionMs); controller.setPlaybackSpeed(state.playbackSpeed) }
-                DriftCorrectionKind.TEMPORARY_SPEED -> {
+                // The restore path is the NONE branch above: once the gap is back inside the
+                // dead-band the next pass puts the shared speed back. That used to be done by
+                // sleeping ten seconds here, which meant every snapshot arriving during the sleep
+                // was skipped - the guest stopped correcting for exactly as long as it was busy
+                // correcting, and the poll only delivers one snapshot every five.
+                DriftCorrectionKind.TEMPORARY_SPEED ->
                     controller.setPlaybackSpeed(correction.temporarySpeed ?: state.playbackSpeed)
-                    delay(10_000L)
-                    controller.setPlaybackSpeed(state.playbackSpeed)
-                }
             }
             shouldPlay = true
             controller.play()
@@ -228,7 +263,20 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
                 "hold seq=${state.sequence} status=${state.status} localMs=${playbackSnapshot.positionMs} " +
                     "expectedMs=$expected durationMs=$durationMs"
             }
-            if (abs(playbackSnapshot.positionMs - expected) > 500L) controller.seekTo(expected)
+            // `buffering` is the host stalling, not a position anyone chose. The host publishes it
+            // from its own `isLoading`, `expectedPartyPositionMs` freezes at the last written
+            // position for any non-playing status, and the 500ms test below then passes almost
+            // every time - so on torrent and debrid sources, where the host rebuffers routinely,
+            // every host stall cost every guest a seek and a stall of its own. Hold position and
+            // wait: it is a transient the host leaves within seconds, and the position it froze at
+            // is stale by construction.
+            if (state.status != WatchPartyStatus.buffering &&
+                abs(playbackSnapshot.positionMs - expected) > 500L
+            ) {
+                controller.seekTo(expected)
+            }
+            // A nudge left running into a pause would drift the guest right back out again.
+            controller.setPlaybackSpeed(state.playbackSpeed)
             shouldPlay = false
             controller.pause()
         }

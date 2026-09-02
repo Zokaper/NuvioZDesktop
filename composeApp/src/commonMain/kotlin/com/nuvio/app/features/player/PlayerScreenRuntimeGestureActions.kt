@@ -166,7 +166,15 @@ internal fun PlayerScreenRuntime.togglePlayback() {
 }
 
 internal fun PlayerScreenRuntime.prepareTogglePlaybackForNativeFallback(revealControls: Boolean = true) {
-    shouldPlay = !playbackSnapshot.isPlaying
+    val nextIsPlaying = !playbackSnapshot.isPlaying
+    shouldPlay = nextIsPlaying
+    // This is the play/pause the desktop user actually presses - the on-screen button and the
+    // spacebar both arrive here, and the native controls layer performs the transport itself.
+    // `togglePlayback` is the only other way to reach the party, and nothing on desktop calls it,
+    // so a host pausing here told the party nothing at all: the change reached the other members
+    // only when the next five second heartbeat happened to carry the new status, which is where
+    // the whole "Watch Together is five seconds behind" report came from.
+    submitPartyPlayPause(isPlaying = nextIsPlaying, positionMs = playbackSnapshot.positionMs)
     if (revealControls) {
         controlsVisible = true
     }
@@ -182,6 +190,9 @@ internal fun PlayerScreenRuntime.prepareSeekByForNativeFallback(
     offsetMs: Long,
     revealControls: Boolean = true,
 ) {
+    // Same omission as the toggle above, on the same path: `seekBy` submits and nothing on desktop
+    // calls it, so a host skipping forward moved only itself until the next heartbeat.
+    submitPartySeek((playbackSnapshot.positionMs + offsetMs).coerceAtLeast(0L))
     applySeekByControlFeedback(offsetMs, revealControls)
 }
 

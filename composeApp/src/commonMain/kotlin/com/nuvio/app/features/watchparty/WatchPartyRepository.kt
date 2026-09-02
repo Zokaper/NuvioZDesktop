@@ -16,6 +16,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,6 +30,11 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.floatOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import kotlin.time.TimeSource
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
@@ -76,6 +83,24 @@ object WatchPartyRepository {
     // Holding a channel is not the same as being subscribed to one: the attempt is held from the
     // moment it exists so a teardown can remove it, so only this says whether it is carrying state.
     private var channelSubscribed = false
+    private var refreshJob: Job? = null
+
+    /**
+     * Coalesces broadcast-driven refreshes.
+     *
+     * The broadcast carried no state, so every one of them meant a `party_snapshot` RPC - and they
+     * arrived in bursts, four to six inside a second, because a member heartbeat broadcast as
+     * loudly as a real command. `onEach { refresh() }` collects sequentially, so those RPCs queued,
+     * and the newest command - the pause someone is waiting on - sat at the back of a queue whose
+     * depth *was* the latency. Dropping the oldest keeps at most one refresh in flight and one
+     * pending: a burst of six costs two round trips instead of six, and the newest always wins
+     * because every refresh fetches current state anyway.
+     */
+    private val refreshRequests = MutableSharedFlow<Unit>(
+        replay = 0,
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
     private var clockOffsetPartyId: String? = null
 
     fun setActiveProfile(profileId: String?) {
@@ -345,6 +370,64 @@ object WatchPartyRepository {
         }
     }
 
+    /**
+     * Applies a broadcast that carries the party's playback state, and reports whether it did.
+     *
+     * Returns false only when this payload cannot stand in for a snapshot - a different party, a
+     * content generation this client has not seen, a field missing because the server predates the
+     * payload - so the caller falls back to the RPC. A *stale* payload returns true: dropping it is
+     * a successful outcome, not a reason to go and ask again.
+     *
+     * `content` and `members` are deliberately not carried, so the held values are kept. Neither is
+     * on the latency path, and a change to either moves `content_generation`, which sends this
+     * whole payload to the fallback.
+     */
+    private fun applyBroadcastState(payload: JsonObject): Boolean {
+        fun str(key: String) = payload[key]?.jsonPrimitive?.contentOrNull
+
+        val held = _uiState.value.party ?: return false
+        if (str("party_id") != held.id) return false
+        val sequence = payload["sequence"]?.jsonPrimitive?.longOrNull ?: return false
+        val updatedAt = str("state_updated_at") ?: return false
+        val updatedAtMs = parseIsoEpochMs(updatedAt) ?: return false
+        val generation = payload["content_generation"]?.jsonPrimitive?.intOrNull ?: return false
+        if (generation != held.contentGeneration) return false
+        val status = str("status")?.let { name -> runCatching { WatchPartyStatus.valueOf(name) }.getOrNull() }
+            ?: return false
+        val positionMs = payload["position_ms"]?.jsonPrimitive?.longOrNull ?: return false
+
+        // `party_heartbeat` moves the host's position and `state_updated_at` *without* bumping
+        // `sequence`, so a strict `sequence >` guard would drop every running-position update and
+        // leave a guest correcting against a clock that never moved. The order is lexicographic
+        // over the pair, and the timestamps are compared as epoch millis because Postgres trims
+        // trailing zeros from fractional seconds - the ISO strings do not sort correctly as text.
+        val heldUpdatedAtMs = parseIsoEpochMs(held.stateUpdatedAt) ?: Long.MIN_VALUE
+        val newer = sequence > held.sequence || (sequence == held.sequence && updatedAtMs > heldUpdatedAtMs)
+
+        val serverTimeMs = str("server_time")?.let { parseIsoEpochMs(it) }
+        log.i {
+            val age = serverTimeMs?.let { currentEpochMs() + _uiState.value.serverClockOffsetMs - it }
+            "broadcast party=${held.id.shortId()} seq=$sequence status=$status ageMs=${age ?: -1} applied=$newer"
+        }
+        if (!newer) return true
+
+        _uiState.value = _uiState.value.copy(
+            party = held.copy(
+                sequence = sequence,
+                status = status,
+                positionMs = positionMs,
+                stateUpdatedAt = updatedAt,
+                durationMs = payload["duration_ms"]?.jsonPrimitive?.longOrNull ?: held.durationMs,
+                playbackSpeed = payload["playback_speed"]?.jsonPrimitive?.floatOrNull ?: held.playbackSpeed,
+                hostProfileId = str("host_profile_id") ?: held.hostProfileId,
+                controlMode = str("control_mode")
+                    ?.let { name -> runCatching { WatchPartyControlMode.valueOf(name) }.getOrNull() }
+                    ?: held.controlMode,
+            ),
+        )
+        return true
+    }
+
     private fun stopPolling() {
         pollJob?.cancel(); pollJob = null
     }
@@ -396,7 +479,15 @@ object WatchPartyRepository {
             // Held before it is subscribed, because a channel dropped on the floor is not idle: the
             // client library goes on retrying its join, and nothing is left holding it to stop.
             channel = next
-            collector = next.broadcastFlow<JsonObject>("state").onEach { refresh() }.launchIn(scope)
+            // A broadcast that carries the state is applied here and now; one that does not - a
+            // member change, an older server, a payload this build cannot read - falls through to
+            // the snapshot RPC. The fallback is what keeps this an optimisation rather than a
+            // second source of truth.
+            collector = next.broadcastFlow<JsonObject>("state")
+                .onEach { payload -> if (!applyBroadcastState(payload)) refreshRequests.tryEmit(Unit) }
+                .launchIn(scope)
+            refreshJob?.cancel()
+            refreshJob = refreshRequests.onEach { refresh() }.launchIn(scope)
             // A refused topic never reports itself subscribed - the join is retried in the
             // background and this call simply never returns - so the wait needs a deadline of its
             // own to be a wait at all rather than a coroutine parked for the life of the app.
@@ -427,6 +518,7 @@ object WatchPartyRepository {
     private suspend fun closeChannel() {
         channelSubscribed = false
         collector?.cancel(); collector = null
+        refreshJob?.cancel(); refreshJob = null
         // Leaving a channel means sending over the socket that has just failed, so this is bounded
         // for the same reason the subscription is: `leave()` runs through here from a button press,
         // and a party that cannot be left is worse than one that cannot be joined.

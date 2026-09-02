@@ -1,6 +1,67 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-01
+Last updated: 2026-09-02
+
+## Watch Together was five seconds behind, and the play button was why (2026-09-02)
+
+The first real two-device run worked: party created, both clients joined, each resolved its own
+source, both waited, playback started. It was also about five seconds out of sync in both senses -
+a pause took that long to reach the other member, and the two streams sat that far apart.
+
+The guest-side debug log settles what it was, and it is not what it looked like. The channel was
+healthy the whole time:
+
+    realtime party=44f8bcca state=connected
+    clock offsetMs=-369 bestRttMs=284
+
+So realtime was up, the server clock offset was measured, and the round trip was 284ms. But across
+the whole session the party sequence goes 0, 1, 2 and then never moves again - while the status
+keeps changing, `playing` to `paused` to `playing` to `paused`. A status change with no sequence
+bump can only come from `party_heartbeat`, which does `status = coalesce(p_status, status)`.
+
+**The host was pressing pause and no command was being sent.** On desktop the play/pause button and
+the spacebar both arrive at `prepareTogglePlaybackForNativeFallback`, which flipped `shouldPlay` and
+returned - the native controls layer performs the transport itself. `togglePlayback` is the only
+function that ever called `submitPartyPlayPause`, and nothing on desktop calls it. The host's pause
+therefore reached the party only when its next five second heartbeat happened to carry the new
+status: 0-5s, mean 2.5s. That is the whole report. `prepareSeekByForNativeFallback` had the same
+omission, so a host skipping forward moved only itself.
+
+Three further faults the same log shows, all of which made it worse:
+
+- **A stalled host published a deliberate pause.** The heartbeat mapped "neither playing nor
+  loading" to `paused`, so a starved source told every member to pause and seek to a frozen
+  position. It now reports the *intent*: `shouldPlay` and not playing is `buffering`, not `paused`.
+- **A guest seeked on every host stutter.** The `buffering` branch realigned whenever it was more
+  than 500ms out, and `expectedPartyPositionMs` freezes for any non-playing status, so that test
+  passed almost every time. It now holds position and waits.
+- **The drift policy could not converge.** A fixed 1.03x recovered 300ms over its ten second hold
+  against a band admitting 2,500ms, so every drift that mattered escalated to a seek - and the log
+  shows exactly that, drift climbing 192, 2152, 7249, 8219 rather than closing. The nudge is now
+  proportional to the gap and capped at +-10%, the band reaches 4s, the blocking hold is gone, and
+  a corrective seek leads by the resume cost so it does not land where the party already was.
+
+Also landed: the broadcast now carries the playback state so a guest applies it without a second
+round trip, refreshes are coalesced so a burst cannot build a queue whose depth is the latency, and
+a status change publishes within a round trip instead of at the next tick.
+
+Server side, `202609020001_party_broadcast_state.sql` puts `sequence`, `status`, `position_ms`,
+`playback_speed`, `state_updated_at` and a `server_time` stamp in the payload - projected field by
+field so no `invite_code_hash` can reach the wire - and splits the member trigger so a bare
+`last_seen_at` bump broadcasts nothing. That bump was 83% of all party broadcast traffic measured
+against the live project: 2,336 of 2,800 messages, arriving in bursts of four to six per second.
+
+**Verified:** `:composeApp:desktopTest` passes apart from the known `WatchedItemsStoreTest`
+concurrency flake, which fails at HEAD on its own and is untouched by this work. New coverage for
+the drift bands, the proportional nudge and its cap, and the seek lead applying only when behind.
+
+**Not** verified: the migration has not been run - Docker was unavailable, so `scripts/test-db.sh`
+could not reset a local stack - and it is not pushed, so the broadcast payload path is inert until
+it is. No two-device run has happened against these changes.
+
+**Next:** run `scripts/test-db.sh`, push the migration, then a two-device run in both directions.
+`ageMs` on the new broadcast line is the propagation latency; a `command` line on the host log is
+the thing whose absence caused this.
 
 ## The social surface now talks to Nuvio Z's own backend (2026-09-01)
 
