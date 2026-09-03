@@ -482,11 +482,33 @@ internal class NativePlayerController(
      * [seekTo] is a keyframe seek under `hr-seek=no`, so it lands on the nearest *earlier* keyframe -
      * eight or nine seconds early on a long-GOP release. That is invisible for a scrub and fatal for
      * a party, whose whole correction is measured against where the guest actually landed.
+     *
+     * **The bridge may not have this entry point.** `player_bridge.dll` is built by a separate C++
+     * toolchain from the one that builds this file, so a machine without MSVC runs whatever DLL it
+     * last obtained - and against a bridge from before `seekToExact` existed, the JNI lookup throws
+     * `UnsatisfiedLinkError` from inside a party barrier. That surfaced as a modal error dialog over
+     * the film, once per correction, on a party that was otherwise playing perfectly in sync. A
+     * missing refinement is not a reason to stop: fall back to the keyframe seek, which is what the
+     * party did before this method existed, and say so once.
      */
     override fun seekToExact(positionMs: Long) {
         log.d { "seekToExact positionMs=$positionMs handle=$handle" }
-        handle.takeIf { it != 0L }?.let { NativePlayerBridge.seekToExact(it, positionMs) }
+        val current = handle.takeIf { it != 0L } ?: return
+        if (exactSeekUnsupported) return seekTo(positionMs)
+        try {
+            NativePlayerBridge.seekToExact(current, positionMs)
+        } catch (missing: UnsatisfiedLinkError) {
+            exactSeekUnsupported = true
+            log.w(missing) {
+                "this player_bridge has no seekToExact - falling back to keyframe seeks, so party " +
+                    "corrections will land on the nearest earlier keyframe"
+            }
+            seekTo(positionMs)
+        }
     }
+
+    /** Latched on the first miss: the lookup fails identically every time, and it is not free. */
+    private var exactSeekUnsupported = false
 
     override fun seekBy(offsetMs: Long) {
         log.d { "seekBy offsetMs=$offsetMs handle=$handle" }
