@@ -63,6 +63,8 @@ data class WatchPartyUiState(
     val errorMessage: String? = null,
 )
 
+enum class PartyDepartureMode { LEAVE_AND_TRANSFER, END_PARTY }
+
 object WatchPartyRepository {
     /**
      * The transport half of the Watch Together trace.
@@ -361,51 +363,39 @@ object WatchPartyRepository {
         installSnapshot(snapshot, reopenChannel = false)
     }
 
-    suspend fun end(): Result<Unit> = runCatching {
+    suspend fun depart(mode: PartyDepartureMode): Result<Unit> = runCatching {
         val party = _uiState.value.party
             ?: throw IllegalStateException("No active party")
         val profile = _uiState.value.activeProfileId
             ?: throw IllegalStateException("No active profile")
-        log.i { "end party=${party.id.shortId()} host=${profile.shortId()}" }
-        // Local teardown comes first. `call` can return before its block when the Z session cannot
-        // be refreshed, and an RPC itself can wait on the dead network; neither may keep the host
-        // held in a party they have already ended.
+        log.i { "depart mode=$mode party=${party.id.shortId()} profile=${profile.shortId()}" }
+        // Local teardown is unconditional. The caller still awaits the bounded RPC so normal
+        // navigation and window shutdown give host transfer/end a chance to complete.
         stopPolling(); stopChannel(); clockOffsetPartyId = null
         _uiState.value = WatchPartyUiState(activeProfileId = profile)
-        scope.launch {
-            runCatching {
-                withTimeout(WatchPartyChannelCloseTimeoutMs) {
+        try {
+            withTimeout(WatchPartyChannelCloseTimeoutMs) {
+                when (mode) {
+                    PartyDepartureMode.END_PARTY ->
                     ZSupabaseProvider.client.postgrest.rpc("party_end", buildJsonObject {
                         put("p_party_id", party.id); put("p_host_profile_id", profile)
                     })
-                }
-            }.onFailure { log.w(it) { "end rpc failed party=${party.id.shortId()}, already dropped locally" } }
-        }
-        Unit
-    }
-
-    suspend fun leave(): Result<Unit> = runCatching {
-        val party = _uiState.value.party
-        val profile = _uiState.value.activeProfileId
-        log.i { "leave party=${party?.id.shortId()} profile=${profile.shortId()}" }
-        // Telling the server is best effort; forgetting the party locally is not. These used to sit
-        // after the RPC inside one runCatching, so a party_leave that threw - an expired session, a
-        // dropped connection, the very conditions someone leaves a broken party under - left the
-        // party still held in memory. The lobby route then read that held party and dragged the
-        // user back to its content on every navigation, including to a different show, and no new
-        // party could be created because one was already held. Only a restart cleared it.
-        stopPolling(); stopChannel(); clockOffsetPartyId = null
-        _uiState.value = WatchPartyUiState(activeProfileId = profile)
-        if (party != null && profile != null) scope.launch {
-            runCatching {
-                withTimeout(WatchPartyChannelCloseTimeoutMs) {
+                    PartyDepartureMode.LEAVE_AND_TRANSFER ->
                     ZSupabaseProvider.client.postgrest.rpc("party_leave", buildJsonObject {
                         put("p_party_id", party.id); put("p_profile_id", profile)
                     })
                 }
-            }.onFailure { log.w(it) { "leave rpc failed party=${party.id.shortId()}, already dropped locally" } }
+            }
+        } catch (failure: Throwable) {
+            log.w(failure) { "departure rpc failed party=${party.id.shortId()}, already dropped locally" }
+            throw failure
         }
+        Unit
     }
+
+    suspend fun end(): Result<Unit> = depart(PartyDepartureMode.END_PARTY)
+
+    suspend fun leave(): Result<Unit> = depart(PartyDepartureMode.LEAVE_AND_TRANSFER)
 
     private fun installSnapshot(snapshot: WatchPartyState, reopenChannel: Boolean = true) {
         // The authoritative state, logged only when it actually moves. This is the line to line up

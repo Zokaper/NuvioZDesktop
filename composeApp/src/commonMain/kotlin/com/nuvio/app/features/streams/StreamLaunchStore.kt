@@ -2,11 +2,19 @@ package com.nuvio.app.features.streams
 
 import com.nuvio.app.features.watchparty.SourceFingerprint
 
+enum class PartyStreamLaunchPurpose {
+    /** The host is choosing a credential-free fingerprint; no media may be resolved or opened. */
+    SELECT_SOURCE,
+    /** Every member is resolving the already-selected fingerprint for synchronized playback. */
+    RESOLVE_PLAYBACK,
+}
+
 data class PartyStreamLaunchContext(
     val partyId: String,
     val isHost: Boolean,
     val sourceGeneration: Int,
     val targetFingerprint: SourceFingerprint? = null,
+    val purpose: PartyStreamLaunchPurpose = PartyStreamLaunchPurpose.RESOLVE_PLAYBACK,
 )
 
 data class StreamLaunch(

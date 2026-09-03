@@ -39,10 +39,14 @@ import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.settings.AppIconRepository
 import com.nuvio.app.features.settings.applyDesktopRendererPreference
 import com.nuvio.app.features.settings.previewResource
+import com.nuvio.app.features.watchparty.PartyDepartureMode
+import com.nuvio.app.features.watchparty.WatchPartyRepository
 import java.awt.Desktop
 import javax.imageio.ImageIO
 import java.awt.Color as AwtColor
 import javax.swing.JComponent
+import javax.swing.JOptionPane
+import kotlinx.coroutines.runBlocking
 
 private val NuvioDesktopNativeBackground = AwtColor(0x0D, 0x0D, 0x0D)
 private const val MacosDarkAquaAppearance = "NSAppearanceNameDarkAqua"
@@ -116,6 +120,33 @@ fun main(args: Array<String>) {
 
         Window(
             onCloseRequest = {
+                val partyState = WatchPartyRepository.uiState.value
+                val party = partyState.party
+                if (party != null) {
+                    val isHost = party.hostProfileId == partyState.activeProfileId
+                    val options = if (isHost) {
+                        arrayOf("Leave and transfer", "End party", "Cancel")
+                    } else {
+                        arrayOf("Leave party", "Cancel")
+                    }
+                    val answer = JOptionPane.showOptionDialog(
+                        null,
+                        if (isHost) "Transfer hosting to the next person, or end the party for everyone."
+                        else "You will leave this Watch Together party.",
+                        "Leave Watch Together?",
+                        JOptionPane.DEFAULT_OPTION,
+                        JOptionPane.QUESTION_MESSAGE,
+                        null,
+                        options,
+                        options.last(),
+                    )
+                    val mode = when {
+                        answer == 0 -> PartyDepartureMode.LEAVE_AND_TRANSFER
+                        isHost && answer == 1 -> PartyDepartureMode.END_PARTY
+                        else -> return@Window
+                    }
+                    runBlocking { WatchPartyRepository.depart(mode) }
+                }
                 P2pStreamingEngine.shutdown()
                 DiscordPresenceManager.shutdown()
                 SentryInitializer.close()

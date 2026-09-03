@@ -3,6 +3,7 @@ package com.nuvio.app.features.watchparty
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,9 +24,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Check
@@ -33,6 +37,7 @@ import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.PriorityHigh
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -43,6 +48,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -72,9 +78,22 @@ import co.touchlab.kermit.Logger
 import com.nuvio.app.core.ui.NuvioAsyncImage
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.features.addons.AddonRepository
+import com.nuvio.app.features.details.MetaDetails
+import com.nuvio.app.features.details.MetaDetailsRepository
+import com.nuvio.app.features.details.MetaScreenSettingsRepository
+import com.nuvio.app.features.details.MetaVideo
+import com.nuvio.app.features.details.components.DetailCastSection
+import com.nuvio.app.features.details.components.DetailRatingsRow
+import com.nuvio.app.features.details.components.desktopSeasonCountLabel
+import com.nuvio.app.features.details.components.desktopYearLabel
+import com.nuvio.app.features.details.formatRuntimeForDisplay
+import com.nuvio.app.features.watched.WatchedRepository
+import com.nuvio.app.features.watching.application.WatchingState
+import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import com.nuvio.app.features.profiles.parseHexColor
 import com.nuvio.app.features.social.SocialProfileSummary
 import com.nuvio.app.features.social.SocialRepository
+import com.nuvio.app.features.streams.PartyStreamLaunchPurpose
 import com.nuvio.app.navigation.WatchPartyLobbyRoute
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -105,12 +124,30 @@ private val PartyWorkingColor = Color(0xFFE0A458)
  */
 private val PartyReadyColor = Color(0xFF6FD08C)
 
+/**
+ * Where the title stops sharing the window with the party.
+ *
+ * Below this the rail would squeeze the participant tiles into a single column, so the title folds
+ * back into [PartyHero] and the lobby is the one scrolling column it used to be everywhere.
+ */
+private val PartyTwoPaneMinWidth = 1180.dp
+
+/** Narrow enough that a full party - eight tiles - stays on one row beside the title rail. */
+private val PartyTileWidth = 156.dp
+
+/**
+ * The details screen blurs an unwatched still by 18.dp over a card roughly twice this wide.
+ * Scaled down with the still so the effect is the same one, not a lighter version of it that
+ * leaves a recognisable frame behind.
+ */
+private val EpisodeStillBlur = 12.dp
+
 @Composable
 fun WatchPartyLobbyScreen(
     route: WatchPartyLobbyRoute,
     onBack: () -> Unit,
     onOpenContent: (contentType: String, contentId: String, title: String) -> Unit = { _, _, _ -> },
-    onChooseSource: (WatchPartyState) -> Unit = {},
+    onChooseSource: (WatchPartyState, PartyStreamLaunchPurpose) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val state by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
@@ -118,6 +155,7 @@ fun WatchPartyLobbyScreen(
     val socialState by SocialRepository.uiState.collectAsStateWithLifecycle()
     val addonsState by AddonRepository.uiState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
+    var showDepartureDialog by remember { mutableStateOf(false) }
 
     // Start submitted a play command and stopped there, so the party went to `playing` server-side
     // while everyone sat in the lobby watching nothing happen.
@@ -147,7 +185,7 @@ fun WatchPartyLobbyScreen(
         ) return@LaunchedEffect
         if (handedOffSourceGeneration == party.sourceGeneration) return@LaunchedEffect
         handedOffSourceGeneration = party.sourceGeneration
-        onChooseSource(party)
+        onChooseSource(party, PartyStreamLaunchPurpose.RESOLVE_PLAYBACK)
     }
 
     LaunchedEffect(route) {
@@ -199,6 +237,7 @@ fun WatchPartyLobbyScreen(
 
     val party = state.party
     val isHost = party != null && party.hostProfileId == state.activeProfileId
+    val requestDeparture = { showDepartureDialog = true }
 
     // Hosted outside a Surface, so LocalContentColor falls back to black. Without this the whole
     // lobby - the invite code included - is black on a dark background.
@@ -208,49 +247,144 @@ fun WatchPartyLobbyScreen(
             // the settings-screen background. The art is most of what makes it a lobby, not a form.
             PartyLobbyBackdrop(party?.content?.poster)
 
-            // `widthIn` without a centring parent pinned the whole lobby to the left edge of a wide
-            // monitor, which is what "1040dp max width" quietly meant here. The social screen got
-            // its BoxWithConstraints; this one never did.
-            BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                // A centred `widthIn(max = 1040.dp)` column read as a document with a dead margin
+                // down either side of a desktop window, and still ran off the bottom. Given the
+                // width, the party takes the left and the title takes a rail on the right: the two
+                // panes meet, so none of the window is spent on margins, and nothing scrolls.
+                val twoPane = maxWidth >= PartyTwoPaneMinWidth
                 val wide = maxWidth >= 900.dp
+
+                if (party == null) {
+                    PartyLobbyOpening(
+                        onBack = onBack,
+                        errorMessage = state.errorMessage,
+                        isWorking = state.isWorking,
+                    )
+                    return@BoxWithConstraints
+                }
+
+                val hostSignature = party.members
+                    .firstOrNull { it.profileId == party.hostProfileId }?.addonSignature.orEmpty()
+                val addonMismatches = party.members.filter { member ->
+                    member.connected && member.profileId != party.hostProfileId &&
+                        comparePartyAddonSignatures(hostSignature, member.addonSignature).differs
+                }
+                val addonNotice = if (addonMismatches.isEmpty()) {
+                    null
+                } else {
+                    stringResource(Res.string.watch_party_addon_differences) + " — " +
+                        "${addonMismatches.size} ${if (addonMismatches.size == 1) "person has" else "people have"} " +
+                        "a different set of stream addons. You can continue; an alternate source may be needed."
+                }
+
+                // "I'm ready" used to sit in the action bar and mark a member ready from the lobby,
+                // where nobody has resolved anything yet - it reported a source that did not exist
+                // and was the one thing that could defeat the host's own readiness gate. Readiness
+                // is now reported by the player, once a stream is actually open.
+                val onPrimary: () -> Unit = {
+                    scope.launch {
+                        val retainedFingerprint = party.sourceFingerprint
+                        if (retainedFingerprint == null) {
+                            onChooseSource(party, PartyStreamLaunchPurpose.SELECT_SOURCE)
+                            return@launch
+                        }
+                        WatchPartyRepository.beginSourceSelection(addonSignature).onSuccess {
+                            val selectingParty = WatchPartyRepository.uiState.value.party
+                            if (selectingParty != null) {
+                                WatchPartyRepository.selectSource(
+                                    fingerprint = retainedFingerprint,
+                                    expectedSourceGeneration = selectingParty.sourceGeneration,
+                                ).onSuccess {
+                                    WatchPartyRepository.uiState.value.party?.let {
+                                        onChooseSource(it, PartyStreamLaunchPurpose.RESOLVE_PLAYBACK)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                val onLeave: () -> Unit = {
+                    requestDeparture()
+                }
+                val invitableFriends = socialState.friends.filterNot { friend ->
+                    party.members.any { it.profileId == friend.profileId }
+                }
+                val onInvite: (String) -> Unit = { profileId ->
+                    scope.launch { WatchPartyRepository.invite(profileId) }
+                }
+                val onControlMode: (WatchPartyControlMode) -> Unit = { mode ->
+                    scope.launch { WatchPartyRepository.setControlMode(mode) }
+                }
+
+                if (twoPane) {
+                    // A share of the window rather than a fixed rail: the left pane takes whatever
+                    // is left, so the two panes always meet.
+                    val railWidth = (maxWidth * 0.30f).coerceIn(400.dp, 560.dp)
+                    Row(Modifier.fillMaxSize()) {
+                        Column(
+                            Modifier.weight(1f).fillMaxHeight()
+                                .padding(start = 40.dp, end = 24.dp, top = 20.dp, bottom = 28.dp),
+                        ) {
+                            Column(
+                                Modifier.weight(1f).verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(16.dp),
+                            ) {
+                                PartyLobbyHeader(requestDeparture)
+                                state.errorMessage?.let { message ->
+                                    PartyNotice(message, MaterialTheme.colorScheme.error)
+                                }
+                                PartyStatusBand(
+                                    party = party,
+                                    inviteCode = state.inviteCode,
+                                    connection = state.connection,
+                                    sync = syncState,
+                                )
+                                PartyStageRail(party.effectiveStage())
+                                addonNotice?.let { PartyNotice(it, PartyWorkingColor) }
+                                PartyParticipants(
+                                    party = party,
+                                    viewerProfileId = state.activeProfileId,
+                                    invitableFriends = invitableFriends,
+                                    onInvite = onInvite,
+                                )
+                                if (isHost) {
+                                    PartyHostSettings(
+                                        controlMode = party.controlMode,
+                                        onControlMode = onControlMode,
+                                        waitForEveryone = state.waitForEveryone,
+                                        onWaitForEveryone = { WatchPartyRepository.setWaitForEveryone(it) },
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(16.dp))
+                            PartyActionBar(
+                                isHost = isHost,
+                                hasSource = party.sourceFingerprint != null,
+                                onPrimary = onPrimary,
+                                onLeave = onLeave,
+                            )
+                        }
+                        PartyTitleRail(
+                            content = party.content,
+                            modifier = Modifier
+                                .width(railWidth)
+                                .fillMaxHeight()
+                                .padding(end = 40.dp, top = 20.dp, bottom = 28.dp),
+                        )
+                    }
+                    return@BoxWithConstraints
+                }
+
                 LazyColumn(
                     modifier = Modifier.fillMaxHeight().widthIn(max = 1040.dp),
                     contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 20.dp, bottom = 88.dp),
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                 ) {
-                    item {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                stringResource(Res.string.watch_party_title),
-                                style = MaterialTheme.typography.headlineSmall,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        }
-                    }
+                    item { PartyLobbyHeader(requestDeparture) }
 
                     state.errorMessage?.let { message ->
                         item { PartyNotice(message, MaterialTheme.colorScheme.error) }
-                    }
-
-                    if (party == null) {
-                        item {
-                            PartyPanel {
-                                if (state.isWorking) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                    ) {
-                                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                                        Text("Opening the session…")
-                                    }
-                                } else {
-                                    Text("Unable to open this session.")
-                                }
-                            }
-                        }
-                        return@LazyColumn
                     }
 
                     item {
@@ -265,31 +399,16 @@ fun WatchPartyLobbyScreen(
 
                     item { PartyStageRail(party.effectiveStage()) }
 
-                    val hostSignature = party.members
-                        .firstOrNull { it.profileId == party.hostProfileId }?.addonSignature.orEmpty()
-                    val addonMismatches = party.members.filter { member ->
-                        member.connected && member.profileId != party.hostProfileId &&
-                            comparePartyAddonSignatures(hostSignature, member.addonSignature).differs
-                    }
-                    if (addonMismatches.isNotEmpty()) {
-                        item {
-                            PartyNotice(
-                                stringResource(Res.string.watch_party_addon_differences) + " — " +
-                                    "${addonMismatches.size} ${if (addonMismatches.size == 1) "person has" else "people have"} " +
-                                    "a different set of stream addons. You can continue; an alternate source may be needed.",
-                                PartyWorkingColor,
-                            )
-                        }
+                    addonNotice?.let { notice ->
+                        item { PartyNotice(notice, PartyWorkingColor) }
                     }
 
                     item {
                         PartyParticipants(
                             party = party,
                             viewerProfileId = state.activeProfileId,
-                            invitableFriends = socialState.friends.filterNot { friend ->
-                                party.members.any { it.profileId == friend.profileId }
-                            },
-                            onInvite = { profileId -> scope.launch { WatchPartyRepository.invite(profileId) } },
+                            invitableFriends = invitableFriends,
+                            onInvite = onInvite,
                         )
                     }
 
@@ -297,9 +416,7 @@ fun WatchPartyLobbyScreen(
                         item {
                             PartyHostSettings(
                                 controlMode = party.controlMode,
-                                onControlMode = { mode ->
-                                    scope.launch { WatchPartyRepository.setControlMode(mode) }
-                                },
+                                onControlMode = onControlMode,
                                 waitForEveryone = state.waitForEveryone,
                                 onWaitForEveryone = { WatchPartyRepository.setWaitForEveryone(it) },
                             )
@@ -310,39 +427,403 @@ fun WatchPartyLobbyScreen(
                         PartyActionBar(
                             isHost = isHost,
                             hasSource = party.sourceFingerprint != null,
-                            // "I'm ready" used to sit here and mark a member ready from the lobby,
-                            // where nobody has resolved anything yet - it reported a source that did
-                            // not exist and was the one thing that could defeat the host's own
-                            // readiness gate. Readiness is now reported by the player, once a stream
-                            // is actually open.
-                            onPrimary = {
-                                scope.launch {
-                                    val retainedFingerprint = party.sourceFingerprint
-                                    WatchPartyRepository.beginSourceSelection(addonSignature).onSuccess {
-                                        val selectingParty = WatchPartyRepository.uiState.value.party
-                                        if (retainedFingerprint == null || selectingParty == null) {
-                                            selectingParty?.let(onChooseSource)
-                                        } else {
-                                            WatchPartyRepository.selectSource(
-                                                fingerprint = retainedFingerprint,
-                                                expectedSourceGeneration = selectingParty.sourceGeneration,
-                                            ).onSuccess {
-                                                WatchPartyRepository.uiState.value.party?.let(onChooseSource)
-                                            }
-                                        }
-                                    }
-                                }
-                            },
-                            onLeave = {
-                                scope.launch {
-                                    if (isHost) WatchPartyRepository.end() else WatchPartyRepository.leave()
-                                    onBack()
-                                }
-                            },
+                            onPrimary = onPrimary,
+                            onLeave = onLeave,
                         )
                     }
                 }
             }
+        }
+    }
+
+    if (party != null && showDepartureDialog) {
+        fun depart(mode: PartyDepartureMode) {
+            showDepartureDialog = false
+            scope.launch {
+                WatchPartyRepository.depart(mode)
+                onBack()
+            }
+        }
+        AlertDialog(
+            onDismissRequest = { showDepartureDialog = false },
+            title = { Text(if (isHost) "Leave Watch Together?" else "Leave party?") },
+            text = {
+                Text(
+                    if (isHost) "Transfer hosting to the next person, or end the party for everyone."
+                    else "You will leave this Watch Together party.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { depart(PartyDepartureMode.LEAVE_AND_TRANSFER) }) {
+                    Text(if (isHost) "Leave and transfer" else "Leave party")
+                }
+            },
+            dismissButton = {
+                Row {
+                    if (isHost) {
+                        TextButton(onClick = { depart(PartyDepartureMode.END_PARTY) }) { Text("End party") }
+                    }
+                    TextButton(onClick = { showDepartureDialog = false }) { Text("Cancel") }
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun PartyLobbyHeader(onBack: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
+        Spacer(Modifier.width(4.dp))
+        Text(
+            stringResource(Res.string.watch_party_title),
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+/** Before there is a party to lay out - the same in either pane arrangement. */
+@Composable
+private fun PartyLobbyOpening(onBack: () -> Unit, errorMessage: String?, isWorking: Boolean) {
+    Column(
+        Modifier.fillMaxSize().widthIn(max = 640.dp)
+            .padding(start = 40.dp, end = 40.dp, top = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+    ) {
+        PartyLobbyHeader(onBack)
+        errorMessage?.let { PartyNotice(it, MaterialTheme.colorScheme.error) }
+        PartyPanel {
+            if (isWorking) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Text("Opening the session…")
+                }
+            } else {
+                Text("Unable to open this session.")
+            }
+        }
+    }
+}
+
+/**
+ * What the party is doing, and the code that gets people into it.
+ *
+ * [PartyHero] carried the poster and the title as well, because the lobby was one column and there
+ * was nowhere else for them; in the two-pane layout the title has its own rail, and what is left
+ * here is the party's own state.
+ */
+@Composable
+private fun PartyStatusBand(
+    party: WatchPartyState,
+    inviteCode: String?,
+    connection: PartyConnectionState,
+    sync: WatchPartySyncState,
+) {
+    PartyPanel {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    party.stageHeadline(),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                PartySyncLine(connection, sync, party.members.size)
+            }
+            if (inviteCode != null) PartyInviteCode(inviteCode)
+        }
+    }
+}
+
+/**
+ * The title, as the details screen would put it, in the width of a rail.
+ *
+ * The party only carries a title, a poster and an episode number - enough to say what is being
+ * watched, not enough to make the case for it while people wait. This fetches the real metadata,
+ * and reads top to bottom in the same order as the desktop hero: art, meta, ratings, genres,
+ * synopsis. [MetaDetailsRepository.fetch] is deliberately the entry point rather than `load`: it
+ * caches and returns, without publishing into the details screen's own state.
+ */
+@Composable
+private fun PartyTitleRail(content: PartyContent, modifier: Modifier = Modifier) {
+    // The rail is a details screen in miniature, so it answers to the details screen's own
+    // spoiler setting rather than to a rule of its own. Blurring the still but leaving the
+    // synopsis underneath it would be no protection at all - the overview is the spoiler.
+    val metaScreenSettings by remember {
+        MetaScreenSettingsRepository.ensureLoaded()
+        MetaScreenSettingsRepository.uiState
+    }.collectAsStateWithLifecycle()
+    val watchedState by remember {
+        WatchedRepository.ensureLoaded()
+        WatchedRepository.uiState
+    }.collectAsStateWithLifecycle()
+    val watchProgressState by remember {
+        WatchProgressRepository.ensureLoaded()
+        WatchProgressRepository.uiState
+    }.collectAsStateWithLifecycle()
+    var meta by remember(content.contentType, content.contentId) { mutableStateOf<MetaDetails?>(null) }
+    LaunchedEffect(content.contentType, content.contentId) {
+        meta = MetaDetailsRepository.fetch(type = content.contentType, id = content.contentId)
+    }
+    val loaded = meta
+    val episode = remember(loaded, content.videoId, content.season, content.episode) {
+        val videos = loaded?.videos.orEmpty()
+        videos.firstOrNull { it.id == content.videoId }
+            ?: videos.firstOrNull { it.season == content.season && it.episode == content.episode }
+    }
+    // Exactly `EpisodeListCard`'s rule, through the same helper: explicitly marked watched, or
+    // playback past the completion threshold. An episode we cannot resolve counts as unwatched,
+    // which is the safe direction - it hides rather than reveals.
+    val blurEpisode = remember(
+        metaScreenSettings.blurUnwatchedEpisodes,
+        watchedState.watchedKeys,
+        watchProgressState.entries,
+        episode,
+        content.contentId,
+    ) {
+        metaScreenSettings.blurUnwatchedEpisodes && (
+            episode == null ||
+                !WatchingState.isEpisodeSeen(
+                    watchedKeys = watchedState.watchedKeys,
+                    progressByVideoId = watchProgressState.byVideoIdForContent(content.contentId),
+                    metaType = content.contentType,
+                    metaId = content.contentId,
+                    episode = episode,
+                )
+            )
+    }
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(NuvioTokens.Radius.card),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+    ) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+            PartyTitleRailArt(content = content, meta = loaded)
+            Column(
+                Modifier.padding(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (loaded == null) {
+                    // Only what the party knows for certain is on screen until the fetch lands -
+                    // the poster and the title - so nothing already shown changes underneath
+                    // somebody reading it. These bars just hold the shape it will take.
+                    PartyRailPlaceholder()
+                } else {
+                    PartyTitleMetaRow(loaded)
+                    if (loaded.externalRatings.isNotEmpty()) {
+                        DetailRatingsRow(ratings = loaded.externalRatings)
+                    }
+                    if (loaded.genres.isNotEmpty()) {
+                        Text(
+                            loaded.genres.take(4).joinToString(" • "),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    loaded.description?.takeIf { it.isNotBlank() }?.let { synopsis ->
+                        Text(
+                            synopsis,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 5,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                if (content.episode != null) {
+                    PartyTitleEpisode(content = content, video = episode, blurred = blurEpisode)
+                }
+                // The rail is as tall as the window and a synopsis does not fill it; the cast is
+                // what the details screen puts next, and it reads as a title's page rather than a
+                // panel that ran out of things to say.
+                loaded?.cast?.take(12)?.takeIf { it.isNotEmpty() }?.let { cast ->
+                    DetailCastSection(cast = cast)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PartyTitleRailArt(content: PartyContent, meta: MetaDetails?) {
+    val panel = MaterialTheme.colorScheme.surface
+    var logoFailed by remember(meta?.logo) { mutableStateOf(false) }
+    val image = meta?.background?.takeIf { it.isNotBlank() }
+        ?: meta?.poster?.takeIf { it.isNotBlank() }
+        ?: content.poster
+    val logo = meta?.logo?.takeIf { it.isNotBlank() && !logoFailed }
+    Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
+        if (!image.isNullOrBlank()) {
+            NuvioAsyncImage(
+                model = image,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+        }
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(
+                    0f to Color.Transparent,
+                    0.42f to panel.copy(alpha = 0.30f),
+                    0.78f to panel.copy(alpha = 0.80f),
+                    1f to panel.copy(alpha = 0.96f),
+                ),
+            ),
+        )
+        Box(Modifier.align(Alignment.BottomStart).padding(start = 18.dp, end = 18.dp, bottom = 14.dp)) {
+            if (logo != null) {
+                NuvioAsyncImage(
+                    model = logo,
+                    contentDescription = content.title,
+                    modifier = Modifier.widthIn(max = 220.dp).height(58.dp),
+                    alignment = Alignment.BottomStart,
+                    contentScale = ContentScale.Fit,
+                    onError = { logoFailed = true },
+                )
+            } else {
+                Text(
+                    meta?.name?.takeIf { it.isNotBlank() } ?: content.title,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PartyTitleMetaRow(meta: MetaDetails) {
+    val labels = buildList {
+        desktopYearLabel(meta)?.let(::add)
+        desktopSeasonCountLabel(meta)?.let(::add)
+        formatRuntimeForDisplay(meta.runtime)?.let(::add)
+    }
+    val ageRating = meta.ageRating?.takeIf { it.isNotBlank() }
+    if (labels.isEmpty() && ageRating == null) return
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        labels.forEach { label ->
+            Text(
+                label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+            )
+        }
+        ageRating?.let { rating ->
+            Box(
+                Modifier.border(
+                    NuvioTokens.Border.thin,
+                    MaterialTheme.colorScheme.onBackground.copy(alpha = 0.35f),
+                    RoundedCornerShape(NuvioTokens.Radius.sm),
+                ).padding(horizontal = 8.dp, vertical = 2.dp),
+            ) {
+                Text(
+                    rating,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The episode under the show, rather than beside the title as a single line.
+ *
+ * A party is on one episode, and "S2 E4" says nothing about it; the still and the synopsis are what
+ * somebody sitting in the lobby is actually waiting to see.
+ */
+@Composable
+private fun PartyTitleEpisode(content: PartyContent, video: MetaVideo?, blurred: Boolean) {
+    val episodeNumber = content.episode ?: return
+    val season = content.season ?: video?.season ?: 1
+    val title = video?.title?.takeIf { it.isNotBlank() }
+        ?: content.episodeTitle?.takeIf { it.isNotBlank() }
+    val still = video?.thumbnail?.takeIf { it.isNotBlank() }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Box(
+            Modifier.fillMaxWidth().height(1.dp)
+                .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+        )
+        Text(
+            "NOW WATCHING",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.4.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+            if (still != null) {
+                NuvioAsyncImage(
+                    model = still,
+                    contentDescription = null,
+                    modifier = Modifier.width(132.dp).aspectRatio(16f / 9f)
+                        .clip(RoundedCornerShape(NuvioTokens.Radius.lg))
+                        .then(if (blurred) Modifier.blur(EpisodeStillBlur) else Modifier),
+                    contentScale = ContentScale.Crop,
+                )
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    "S$season · E$episodeNumber",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                title?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+        // Dropped rather than blurred. Four lines of blurred `bodySmall` stays legible enough to
+        // spoil at this size and reads as a rendering fault; the still above already says the
+        // episode is being withheld, and the title and S/E line still name it.
+        if (!blurred) {
+            video?.overview?.takeIf { it.isNotBlank() }?.let { overview ->
+                Text(
+                    overview,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PartyRailPlaceholder() {
+    val color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.14f)
+    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        listOf(0.42f, 0.92f, 1f, 0.72f).forEach { fraction ->
+            Box(
+                Modifier.fillMaxWidth(fraction).height(11.dp)
+                    .clip(RoundedCornerShape(NuvioTokens.Radius.xs)).background(color),
+            )
         }
     }
 }
@@ -639,21 +1120,21 @@ private fun PartyParticipantTile(
     val tone = member.readyTone()
     val offline = tone == PartyReadyTone.Offline
     Surface(
-        modifier = Modifier.width(172.dp).alpha(if (offline) 0.55f else 1f),
+        modifier = Modifier.width(PartyTileWidth).alpha(if (offline) 0.55f else 1f),
         shape = RoundedCornerShape(NuvioTokens.Radius.xl),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
     ) {
         Column(
-            Modifier.fillMaxWidth().padding(vertical = 16.dp, horizontal = 12.dp),
+            Modifier.fillMaxWidth().padding(vertical = 14.dp, horizontal = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(9.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Box(contentAlignment = Alignment.Center) {
                 // The ring is the ambient signal: a tile still working turns and the finished ones
                 // sit still, so "who are we waiting for" is answerable without reading a word.
                 if (tone == PartyReadyTone.Working) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(62.dp),
+                        modifier = Modifier.size(56.dp),
                         color = PartyWorkingColor,
                         strokeWidth = 2.5.dp,
                         trackColor = Color.Transparent,
@@ -663,7 +1144,7 @@ private fun PartyParticipantTile(
                     name = member.displayName(viewerProfileId),
                     avatarUrl = member.profile?.avatarUrl,
                     colorHex = member.profile?.avatarColorHex,
-                    size = 52.dp,
+                    size = 46.dp,
                 )
                 if (isHost) {
                     Box(
@@ -716,18 +1197,18 @@ private fun PartyParticipantTile(
 @Composable
 private fun PartyInviteTile(expanded: Boolean, onClick: () -> Unit) {
     Surface(
-        modifier = Modifier.width(172.dp).clickable(onClick = onClick),
+        modifier = Modifier.width(PartyTileWidth).clickable(onClick = onClick),
         shape = RoundedCornerShape(NuvioTokens.Radius.xl),
         color = Color.Transparent,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.9f)),
     ) {
         Column(
-            Modifier.fillMaxWidth().padding(vertical = 16.dp, horizontal = 12.dp),
+            Modifier.fillMaxWidth().padding(vertical = 14.dp, horizontal = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(9.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Box(
-                Modifier.size(52.dp).clip(CircleShape)
+                Modifier.size(46.dp).clip(CircleShape)
                     .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center,
             ) {
@@ -826,8 +1307,15 @@ private fun PartyHostSettings(
     waitForEveryone: Boolean,
     onWaitForEveryone: (Boolean) -> Unit,
 ) {
+    // Two stacked rows for four controls cost the lobby a panel's worth of height it needs to fit
+    // one screen; the switch reads perfectly well beside the chips, with its one explaining line
+    // underneath them both.
     PartyPanel {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             FilterChip(
                 selected = controlMode == WatchPartyControlMode.host_only,
                 onClick = { onControlMode(WatchPartyControlMode.host_only) },
@@ -838,22 +1326,19 @@ private fun PartyHostSettings(
                 onClick = { onControlMode(WatchPartyControlMode.collaborative) },
                 label = { Text("Collaborative") },
             )
-        }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("Wait for everyone", fontWeight = FontWeight.SemiBold)
-                Text(
-                    if (waitForEveryone) {
-                        "Playback pauses for anyone whose stream stalls, and starts again together."
-                    } else {
-                        "Playback carries on when someone's stream stalls; they catch up on their own."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            Spacer(Modifier.weight(1f))
+            Text("Wait for everyone", fontWeight = FontWeight.SemiBold)
             Switch(checked = waitForEveryone, onCheckedChange = onWaitForEveryone)
         }
+        Text(
+            if (waitForEveryone) {
+                "Playback pauses for anyone whose stream stalls, and starts again together."
+            } else {
+                "Playback carries on when someone's stream stalls; they catch up on their own."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
