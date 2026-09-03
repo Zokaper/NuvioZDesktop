@@ -284,6 +284,7 @@ let state = {
   partyBannerText: "",
   partyPanelVisible: false,
   partyControlModeLabel: "",
+  partyReadySummary: "",
   partyTransportEnabled: true,
   partyMembers: [],
   skipPromptVisible: false,
@@ -1874,26 +1875,49 @@ const renderPartyBanner = suppress => {
   partyBanner.setAttribute("aria-hidden", show ? "false" : "true");
 };
 
+const PARTY_STATUS_TONES = ["ready", "working", "failed", "offline"];
+
 const renderPartyPanel = suppress => {
   const show = Boolean(!suppress && state.partyPanelVisible && Array.isArray(state.partyMembers));
   partyPanel.classList.toggle("visible", show);
   partyPanel.setAttribute("aria-hidden", show ? "false" : "true");
-  partyControlMode.textContent = state.partyControlModeLabel || "";
+  // The header used to carry only the control mode. Mid-film the number that matters is how many
+  // people actually have a stream open, so that leads and the mode follows it.
+  const summary = String(state.partyReadySummary || "").trim();
+  const mode = String(state.partyControlModeLabel || "").trim();
+  partyControlMode.textContent = summary && mode ? `${summary} · ${mode}` : (summary || mode);
   partyMemberList.replaceChildren();
   (state.partyMembers || []).forEach(member => {
     const row = document.createElement("div");
     row.className = `party-member${member.connected ? "" : " offline"}`;
     const avatar = document.createElement("span");
     avatar.className = "party-member-avatar";
-    avatar.textContent = String(member.name || "?").trim().slice(0, 1).toUpperCase();
+    const avatarUrl = String(member.avatarUrl || "").trim();
+    if (avatarUrl) {
+      // Sent across the bridge since the panel shipped and drawn by nothing, so every avatar here
+      // was a monogram even when the profile had a picture.
+      const img = document.createElement("img");
+      img.src = avatarUrl;
+      img.alt = "";
+      img.decoding = "async";
+      // A profile picture that 404s must not leave an empty circle where a letter would do.
+      img.addEventListener("error", () => {
+        img.remove();
+        avatar.textContent = String(member.name || "?").trim().slice(0, 1).toUpperCase();
+      }, { once: true });
+      avatar.append(img);
+    } else {
+      avatar.textContent = String(member.name || "?").trim().slice(0, 1).toUpperCase();
+    }
     const copy = document.createElement("span");
     copy.className = "party-member-copy";
     const name = document.createElement("div");
     name.className = "party-member-name";
     name.textContent = `${member.name || "Guest"}${member.role === "host" ? " · Host" : ""}`;
     const status = document.createElement("div");
-    status.className = "party-member-status";
-    status.textContent = member.connected ? (member.status || "Connected") : "Disconnected";
+    const tone = PARTY_STATUS_TONES.includes(member.statusTone) ? member.statusTone : "working";
+    status.className = `party-member-status ${member.connected ? tone : "offline"}`;
+    status.textContent = member.connected ? (member.status || "connected") : "disconnected";
     copy.append(name, status);
     row.append(avatar, copy);
     partyMemberList.append(row);

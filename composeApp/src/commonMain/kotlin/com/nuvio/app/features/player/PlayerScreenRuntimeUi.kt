@@ -22,6 +22,10 @@ import androidx.compose.ui.unit.dp
 import com.nuvio.app.features.watchparty.PartyContent
 import com.nuvio.app.features.watchparty.SourceFingerprint
 import com.nuvio.app.features.watchparty.WatchPartyControlMode
+import com.nuvio.app.features.watchparty.readyCount
+import com.nuvio.app.features.watchparty.readyLabel
+import com.nuvio.app.features.watchparty.readyTone
+import com.nuvio.app.features.watchparty.wireName
 import com.nuvio.app.features.watchparty.WatchPartyRepository
 import com.nuvio.app.features.watchparty.displayName
 import com.nuvio.app.features.watchparty.matchesPlayback
@@ -452,11 +456,18 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             null -> ""
         },
         partyTransportEnabled = partyMayControl,
+        partyReadySummary = activeParty?.let {
+            "${it.readyCount()} of ${it.members.count { member -> member.connected }} ready"
+        }.orEmpty(),
         partyMembers = activeParty?.members.orEmpty().map { member ->
             PlayerPartyMember(
                 name = member.displayName(watchPartyUiState.activeProfileId),
                 role = member.role,
-                status = member.readyState.name.replace('_', ' ').replaceFirstChar(Char::uppercase),
+                // Was `readyState.name` with the underscores swapped - the codebase's words rather
+                // than the viewer's, and disagreeing with the lobby that had just said the same
+                // thing differently. Both surfaces now read from WatchPartyPresentation.
+                status = member.readyLabel(),
+                statusTone = member.readyTone().wireName,
                 avatarUrl = member.profile?.avatarUrl,
                 connected = member.connected,
             )

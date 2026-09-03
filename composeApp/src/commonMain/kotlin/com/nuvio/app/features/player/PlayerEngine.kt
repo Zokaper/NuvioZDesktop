@@ -82,6 +82,14 @@ data class PlayerPartyMember(
     val name: String,
     val role: String,
     val status: String,
+    /**
+     * How [status] should read: `ready`, `working`, `failed` or `offline`.
+     *
+     * The controls layer used to get the label alone, so it could print a member's state but not
+     * colour it - and a list where "ready" and "no source found" look identical answers the only
+     * question anybody asks of it by making them read every row.
+     */
+    val statusTone: String = "working",
     val avatarUrl: String? = null,
     val connected: Boolean = true,
 )
@@ -211,6 +219,8 @@ data class PlayerControlsState(
     val partyBannerText: String = "",
     val partyPanelVisible: Boolean = false,
     val partyControlModeLabel: String = "",
+    /** "3 of 4 ready" - the one number a viewer wants from the panel mid-film. */
+    val partyReadySummary: String = "",
     val partyTransportEnabled: Boolean = true,
     val partyMembers: List<PlayerPartyMember> = emptyList(),
     val skipPromptVisible: Boolean = false,

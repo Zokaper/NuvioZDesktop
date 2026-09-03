@@ -1,41 +1,65 @@
 package com.nuvio.app.features.social
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Button
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,13 +69,21 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.material3.LocalContentColor
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nuvio.app.core.ui.NuvioAsyncImage
+import com.nuvio.app.core.ui.NuvioTokens
+import com.nuvio.app.features.profiles.parseHexColor
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
@@ -76,6 +108,14 @@ import nuvio.composeapp.generated.resources.social_title
 import nuvio.composeapp.generated.resources.social_watching_now
 import org.jetbrains.compose.resources.stringResource
 
+/** Live presence, which is the reason to open this tab; fixed rather than themed, as in the lobby. */
+private val SocialLiveColor = Color(0xFF6FD08C)
+
+/** How a one-line message under the search field should read. */
+private enum class SocialFeedbackTone { Neutral, Positive, Negative }
+
+private data class SocialFeedback(val message: String, val tone: SocialFeedbackTone)
+
 @Composable
 fun SocialScreen(
     modifier: Modifier = Modifier,
@@ -83,6 +123,7 @@ fun SocialScreen(
     onOpenContent: (contentType: String, contentId: String, title: String) -> Unit = { _, _, _ -> },
     onJoinParty: (inviteCode: String) -> Unit = {},
     onJoinInvitedParty: (partyId: String) -> Unit = {},
+    onStartParty: (WatchingNowItem) -> Unit = {},
 ) {
     val state by SocialRepository.uiState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
@@ -92,7 +133,9 @@ fun SocialScreen(
     var searchResults by remember { mutableStateOf<List<SocialProfileSummary>>(emptyList()) }
     // Search previously rendered every outcome identically - a failure, an empty result and a query
     // too short to run all left the screen unchanged, which is indistinguishable from a dead button.
-    var searchMessage by remember { mutableStateOf<String?>(null) }
+    // Since then it said all three in one undifferentiated grey line, so "request sent" and "search
+    // failed" still looked the same; the tone is what separates them.
+    var feedback by remember { mutableStateOf<SocialFeedback?>(null) }
     var isSearching by remember { mutableStateOf(false) }
     var handleMessage by remember { mutableStateOf<String?>(null) }
     var partyCode by rememberSaveable { mutableStateOf("") }
@@ -107,21 +150,44 @@ fun SocialScreen(
             val query = search.trim()
             if (query.length < 3) {
                 searchResults = emptyList()
-                searchMessage = "Type at least 3 characters to search"
+                feedback = SocialFeedback("Type at least 3 characters to search", SocialFeedbackTone.Neutral)
             } else {
                 isSearching = true
-                searchMessage = null
+                feedback = null
                 SocialRepository.searchProfiles(query)
                     .onSuccess { results ->
                         searchResults = results
-                        searchMessage = if (results.isEmpty()) "No one is using @$query" else null
+                        feedback = if (results.isEmpty()) {
+                            SocialFeedback("No one is using @$query", SocialFeedbackTone.Neutral)
+                        } else {
+                            null
+                        }
                     }
                     .onFailure { error ->
                         searchResults = emptyList()
-                        searchMessage = error.message ?: "Search failed"
+                        feedback = SocialFeedback(error.message ?: "Search failed", SocialFeedbackTone.Negative)
                     }
                 isSearching = false
             }
+        }
+    }
+
+    val sendFriendRequest: (SocialProfileSummary) -> Unit = { profile ->
+        scope.launch {
+            // The result was previously discarded, so a sent request and a refused one both looked
+            // like a button that did nothing. On success the row is dropped, because the request is
+            // now pending rather than sendable.
+            SocialRepository.sendFriendRequest(profile.profileId)
+                .onSuccess {
+                    searchResults = searchResults.filterNot { it.profileId == profile.profileId }
+                    feedback = SocialFeedback("Friend request sent to @${profile.handle}", SocialFeedbackTone.Positive)
+                }
+                .onFailure { error ->
+                    feedback = SocialFeedback(
+                        error.message ?: "Could not send that friend request",
+                        SocialFeedbackTone.Negative,
+                    )
+                }
         }
     }
 
@@ -139,319 +205,994 @@ fun SocialScreen(
     // from mobile did not, which left every bare Text and Icon black on the dark background: the
     // search button was invisible rather than broken. Providing it once covers the whole screen.
     CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
-    BoxWithConstraints(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-    val wideDashboard = maxWidth >= 1040.dp
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize().widthIn(max = 1280.dp),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 110.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(Res.string.social_title), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = { scope.launch { SocialRepository.refresh() } }) {
-                    Icon(Icons.Rounded.Refresh, contentDescription = null)
+        BoxWithConstraints(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+            // Below this the friends rail cannot hold a search field and a roster side by side with
+            // the feed, so it folds back into the feed as a final section - which is also the phone
+            // layout, since this screen is shared with mobile.
+            val wideDashboard = maxWidth >= 1040.dp
+
+            Column(Modifier.fillMaxSize().widthIn(max = 1440.dp)) {
+                SocialIdentityHeader(
+                    me = state.me,
+                    friendCount = state.friends.size,
+                    watchingCount = state.watchingNow.size,
+                    // This header does not scroll, so it has to fit the narrowest window the
+                    // screen runs in - and it is shared with mobile, where a 200dp field plus a
+                    // button beside an avatar and a name simply does not. Below the dashboard
+                    // breakpoint the invite code moves into the feed instead.
+                    showJoinField = wideDashboard &&
+                        state.capabilities.watchPartyEnabled &&
+                        !state.needsHandleSetup,
+                    partyCode = partyCode,
+                    onPartyCodeChange = { partyCode = it.trim().uppercase().take(32) },
+                    onJoinParty = { onJoinParty(partyCode) },
+                    isRefreshing = state.isLoading,
+                    onRefresh = { scope.launch { SocialRepository.refresh() } },
+                )
+
+                Row(Modifier.fillMaxSize()) {
+                    Box(Modifier.weight(1f).fillMaxHeight()) {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxHeight().widthIn(max = 600.dp),
+                        contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 110.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        when {
+                            !state.capabilities.socialEnabled -> item {
+                                SocialNotice(stringResource(Res.string.social_disabled))
+                            }
+
+                            state.needsHandleSetup -> {
+                                item {
+                                    SocialHandleSetup(
+                                        handle = handle,
+                                        onHandleChange = { handle = normalizeSocialHandle(it).take(24) },
+                                        message = handleMessage,
+                                        onSave = {
+                                            scope.launch {
+                                                // The result was discarded here, so a handle that
+                                                // never saved looked exactly like one that did -
+                                                // which is how an empty database went unnoticed
+                                                // while the screen appeared to work.
+                                                SocialRepository.setupHandle(handle)
+                                                    .onFailure { error ->
+                                                        handleMessage = error.message
+                                                            ?: "Could not save that handle"
+                                                    }
+                                                    .onSuccess { handleMessage = null }
+                                            }
+                                        },
+                                    )
+                                }
+                            }
+
+                            else -> {
+                                if (state.isOfflineCache) {
+                                    item { SocialNotice(stringResource(Res.string.social_offline_cache)) }
+                                }
+                                state.errorMessage?.let { error ->
+                                    item { SocialNotice(error, MaterialTheme.colorScheme.error) }
+                                }
+
+                                if (!wideDashboard && state.capabilities.watchPartyEnabled) {
+                                    // The counterpart to the header dropping the field when narrow.
+                                    item {
+                                        SocialPanel {
+                                            Text(
+                                                "Watch Together",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            ) {
+                                                OutlinedTextField(
+                                                    value = partyCode,
+                                                    onValueChange = {
+                                                        partyCode = it.trim().uppercase().take(32)
+                                                    },
+                                                    modifier = Modifier.weight(1f),
+                                                    singleLine = true,
+                                                    label = { Text("Invite code") },
+                                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                                                    keyboardActions = KeyboardActions(
+                                                        onGo = { if (partyCode.isNotBlank()) onJoinParty(partyCode) },
+                                                    ),
+                                                )
+                                                Button(
+                                                    onClick = { onJoinParty(partyCode) },
+                                                    enabled = partyCode.isNotBlank(),
+                                                ) { Text("Join") }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                socialInbox(
+                                    state = state,
+                                    onRespond = { id, accept ->
+                                        scope.launch { SocialRepository.respondFriendRequest(id, accept) }
+                                    },
+                                    onJoinInvitedParty = onJoinInvitedParty,
+                                )
+
+                                item {
+                                    SocialSectionHeader(
+                                        stringResource(Res.string.social_watching_now),
+                                        state.watchingNow.size.takeIf { it > 0 },
+                                        live = state.watchingNow.isNotEmpty(),
+                                    )
+                                }
+                                if (state.watchingNow.isEmpty()) {
+                                    item {
+                                        if (state.isLoading) {
+                                            SocialSkeletonCard()
+                                        } else {
+                                            SocialEmptyState(
+                                                "Nobody is watching right now",
+                                                "When a friend starts something, it shows up here — and you can start a party on it.",
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    items(
+                                        state.watchingNow,
+                                        key = { "watching:${it.profile.profileId}:${it.videoId}" },
+                                    ) { watching ->
+                                        SocialPresenceCard(
+                                            item = watching,
+                                            watchPartyEnabled = state.capabilities.watchPartyEnabled,
+                                            onOpen = {
+                                                onOpenContent(
+                                                    watching.contentType,
+                                                    watching.contentId,
+                                                    watching.title,
+                                                )
+                                            },
+                                            onStartParty = { onStartParty(watching) },
+                                        )
+                                    }
+                                }
+
+                                item { Spacer(Modifier.height(6.dp)) }
+                                item {
+                                    SocialSectionHeader(stringResource(Res.string.social_recently_watched))
+                                }
+                                if (state.activity.isEmpty()) {
+                                    item {
+                                        if (state.isLoading) {
+                                            SocialSkeletonCard()
+                                        } else {
+                                            SocialEmptyState(stringResource(Res.string.social_no_activity))
+                                        }
+                                    }
+                                } else {
+                                    items(state.activity, key = { "activity:${it.runId}" }) { run ->
+                                        SocialRecentRow(
+                                            run = run,
+                                            onOpen = { onOpenContent(run.contentType, run.contentId, run.title) },
+                                        )
+                                    }
+                                }
+                                if (state.nextCursor != null) {
+                                    item {
+                                        OutlinedButton(
+                                            onClick = { scope.launch { SocialRepository.refresh(append = true) } },
+                                            enabled = !state.isLoadingMore,
+                                        ) {
+                                            Text(if (state.isLoadingMore) "Loading…" else "Load more")
+                                        }
+                                    }
+                                }
+
+                                if (!wideDashboard) {
+                                    item { Spacer(Modifier.height(6.dp)) }
+                                    item {
+                                        SocialFriendsPanel(
+                                            state = state,
+                                            search = search,
+                                            onSearchChange = { search = normalizeSocialHandle(it).take(24) },
+                                            onRunSearch = runSearch,
+                                            isSearching = isSearching,
+                                            feedback = feedback,
+                                            searchResults = searchResults,
+                                            onSendRequest = sendFriendRequest,
+                                            onRemoveFriend = { id ->
+                                                scope.launch { SocialRepository.removeFriend(id) }
+                                            },
+                                            onSelectFriend = SocialRepository::selectFriend,
+                                            shareWatching = shareWatching,
+                                            shareRecent = shareRecent,
+                                            onShareWatching = {
+                                                shareWatching = it
+                                                scope.launch {
+                                                    SocialRepository.setPrivacy(shareWatching, shareRecent)
+                                                }
+                                            },
+                                            onShareRecent = {
+                                                shareRecent = it
+                                                scope.launch {
+                                                    SocialRepository.setPrivacy(shareWatching, shareRecent)
+                                                }
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    }
+
+                    if (wideDashboard && state.capabilities.socialEnabled && !state.needsHandleSetup) {
+                        // Its own scroll, so the feed stays lazy: folding the roster into the feed's
+                        // LazyColumn would have meant rendering every paged activity row eagerly to
+                        // get two columns.
+                        Column(
+                            Modifier.width(360.dp)
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(start = 4.dp, end = 24.dp, top = 4.dp, bottom = 110.dp),
+                        ) {
+                            SocialFriendsPanel(
+                                state = state,
+                                search = search,
+                                onSearchChange = { search = normalizeSocialHandle(it).take(24) },
+                                onRunSearch = runSearch,
+                                isSearching = isSearching,
+                                feedback = feedback,
+                                searchResults = searchResults,
+                                onSendRequest = sendFriendRequest,
+                                onRemoveFriend = { id -> scope.launch { SocialRepository.removeFriend(id) } },
+                                onSelectFriend = SocialRepository::selectFriend,
+                                shareWatching = shareWatching,
+                                shareRecent = shareRecent,
+                                onShareWatching = {
+                                    shareWatching = it
+                                    scope.launch { SocialRepository.setPrivacy(shareWatching, shareRecent) }
+                                },
+                                onShareRecent = {
+                                    shareRecent = it
+                                    scope.launch { SocialRepository.setPrivacy(shareWatching, shareRecent) }
+                                },
+                            )
+                        }
+                    }
                 }
             }
         }
+    }
+}
 
-        if (!state.capabilities.socialEnabled) {
-            item { SocialMessageCard(stringResource(Res.string.social_disabled)) }
-        } else if (state.needsHandleSetup) {
-            item {
-                SocialPanel {
-                    Text(stringResource(Res.string.social_handle), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                    Text(stringResource(Res.string.social_handle_help), style = MaterialTheme.typography.bodyMedium)
-                    OutlinedTextField(
-                        value = handle,
-                        onValueChange = { handle = normalizeSocialHandle(it).take(24) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        label = { Text(stringResource(Res.string.social_handle)) },
-                        isError = handle.isNotEmpty() && !isValidSocialHandle(handle),
+/**
+ * Who you are here, and the two things you do from anywhere on the tab.
+ *
+ * Both used to be cards in the scroll: identity as a grey panel, and joining by code as a whole
+ * second panel wrapped around a single text field, which is a lot of screen for one action.
+ */
+@Composable
+private fun SocialIdentityHeader(
+    me: SocialProfileSummary?,
+    friendCount: Int,
+    watchingCount: Int,
+    showJoinField: Boolean,
+    partyCode: String,
+    onPartyCodeChange: (String) -> Unit,
+    onJoinParty: () -> Unit,
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
+) {
+    // A horizontal gradient here left two hard edges - one mid-width where it reached transparent,
+    // one across the bottom where the Box ended - which read as a mis-drawn panel rather than as a
+    // header. Fading downward has no edge to see.
+    Box(
+        Modifier.fillMaxWidth().background(
+            Brush.verticalGradient(
+                0f to MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                1f to Color.Transparent,
+            ),
+        ),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            if (me != null) {
+                SocialAvatar(me.displayName, me.avatarUrl, me.avatarColorHex, 56.dp)
+                // Weighted rather than intrinsic: an unbounded name column pushed the join field
+                // and the refresh button off the right edge as soon as a display name got long.
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        me.displayName,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                    Button(
-                        onClick = {
-                            scope.launch {
-                                // The result was discarded here, so a handle that never saved looked
-                                // exactly like one that did - which is how an empty database went
-                                // unnoticed while the screen appeared to work.
-                                SocialRepository.setupHandle(handle)
-                                    .onFailure { error -> handleMessage = error.message ?: "Could not save that handle" }
-                                    .onSuccess { handleMessage = null }
-                            }
-                        },
-                        enabled = isValidSocialHandle(handle),
-                    ) { Text(stringResource(Res.string.social_save_handle)) }
-                }
-            }
-            handleMessage?.let { message ->
-                item { SocialMessageCard(message) }
-            }
-        } else {
-            state.me?.let { me ->
-                item {
-                    SocialPanel {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Surface(
-                                shape = androidx.compose.foundation.shape.CircleShape,
-                                color = MaterialTheme.colorScheme.primaryContainer,
-                            ) {
-                                androidx.compose.foundation.layout.Box(
-                                    modifier = Modifier.padding(16.dp),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Text(me.displayName.take(1).uppercase(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                            Column(Modifier.padding(start = 14.dp).weight(1f)) {
-                                Text(me.displayName, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                                Text("@${me.handle}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text(
-                                    "${state.friends.size} friends · ${state.watchingNow.size} watching now",
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-            if (state.isOfflineCache) item { SocialMessageCard(stringResource(Res.string.social_offline_cache)) }
-            state.errorMessage?.let { error -> item { SocialMessageCard(error) } }
-
-            if (state.capabilities.watchPartyEnabled) {
-                item {
-                    SocialPanel {
-                        Text("Watch Together", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            OutlinedTextField(
-                                value = partyCode,
-                                onValueChange = { partyCode = it.trim().uppercase().take(32) },
-                                modifier = Modifier.weight(1f),
-                                singleLine = true,
-                                label = { Text("Invite code") },
-                            )
-                            Button(onClick = { onJoinParty(partyCode) }, enabled = partyCode.isNotBlank()) { Text("Join") }
-                        }
-                    }
-                }
-            }
-
-            if (state.requests.isNotEmpty()) {
-                item { SocialSectionTitle(stringResource(Res.string.social_inbox), state.requests.size) }
-                items(state.requests, key = { "request:${it.id}" }) { request ->
-                    SocialPersonRow(request.sender, subtitle = "@${request.sender.handle}") {
-                        IconButton(onClick = { scope.launch { SocialRepository.respondFriendRequest(request.id, true) } }) {
-                            Icon(Icons.Rounded.Check, stringResource(Res.string.social_accept))
-                        }
-                        IconButton(onClick = { scope.launch { SocialRepository.respondFriendRequest(request.id, false) } }) {
-                            Icon(Icons.Rounded.Close, stringResource(Res.string.social_decline))
-                        }
-                    }
-                }
-            }
-            if (state.partyInvites.isNotEmpty()) {
-                item { SocialSectionTitle("Watch Together invites", state.partyInvites.size) }
-                items(state.partyInvites, key = { "party-invite:${it.id}" }) { invite ->
-                    SocialPersonRow(invite.sender, subtitle = invite.content.title) {
-                        Button(onClick = { onJoinInvitedParty(invite.partyId) }) { Text("Join") }
-                    }
-                }
-            }
-
-            if (wideDashboard) {
-                item {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        SocialActivityColumn(
-                            title = stringResource(Res.string.social_watching_now),
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            state.watchingNow.forEach { watching ->
-                                SocialActivityChip(
-                                    profile = watching.profile,
-                                    title = watching.title,
-                                    poster = watching.poster,
-                                    season = watching.season,
-                                    episode = watching.episode,
-                                    episodeTitle = watching.episodeTitle,
-                                    status = if (watching.state == SocialPlaybackState.playing) "Playing" else "Paused",
-                                    progress = watching.progressFraction,
-                                    trailing = "${watching.roundedProgressPercent}%",
-                                    onClick = { onOpenContent(watching.contentType, watching.contentId, watching.title) },
-                                )
-                            }
-                            if (state.watchingNow.isEmpty()) Text(stringResource(Res.string.social_no_activity))
-                        }
-                        SocialActivityColumn(
-                            title = stringResource(Res.string.social_recently_watched),
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            state.activity.forEach { run ->
-                                SocialActivityChip(
-                                    profile = run.profile,
-                                    title = run.title,
-                                    poster = run.poster,
-                                    season = run.season,
-                                    episode = run.episode,
-                                    episodeTitle = run.episodeTitle,
-                                    status = "Recently watched",
-                                    trailing = if (run.eventCount > 1) "${run.eventCount} episodes" else null,
-                                    onClick = { onOpenContent(run.contentType, run.contentId, run.title) },
-                                )
-                            }
-                            if (state.activity.isEmpty() && !state.isLoading) Text(stringResource(Res.string.social_no_activity))
-                        }
-                    }
+                    Text(
+                        "@${me.handle} · $friendCount ${if (friendCount == 1) "friend" else "friends"}" +
+                            if (watchingCount > 0) " · $watchingCount watching now" else "",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             } else {
-                if (state.watchingNow.isNotEmpty()) {
-                    item { SocialSectionTitle(stringResource(Res.string.social_watching_now)) }
-                    items(state.watchingNow, key = { "watching:${it.profile.profileId}:${it.videoId}" }) { watching ->
-                        SocialActivityChip(
-                            profile = watching.profile,
-                            title = watching.title,
-                            poster = watching.poster,
-                            season = watching.season,
-                            episode = watching.episode,
-                            episodeTitle = watching.episodeTitle,
-                            status = if (watching.state == SocialPlaybackState.playing) "Playing" else "Paused",
-                            progress = watching.progressFraction,
-                            trailing = "${watching.roundedProgressPercent}%",
-                            onClick = { onOpenContent(watching.contentType, watching.contentId, watching.title) },
-                        )
-                    }
-                }
-                item { SocialSectionTitle(stringResource(Res.string.social_recently_watched)) }
-                if (state.activity.isEmpty() && !state.isLoading) item { SocialMessageCard(stringResource(Res.string.social_no_activity)) }
-                items(state.activity, key = { "activity:${it.runId}" }) { run ->
-                    SocialActivityChip(
-                        profile = run.profile,
-                        title = run.title,
-                        poster = run.poster,
-                        season = run.season,
-                        episode = run.episode,
-                        episodeTitle = run.episodeTitle,
-                        status = "Recently watched",
-                        trailing = if (run.eventCount > 1) "${run.eventCount} episodes" else null,
-                        onClick = { onOpenContent(run.contentType, run.contentId, run.title) },
-                    )
-                }
-            }
-            if (state.nextCursor != null) item {
-                Button(onClick = { scope.launch { SocialRepository.refresh(append = true) } }, enabled = !state.isLoadingMore) {
-                    Text("Load more")
-                }
+                Text(
+                    stringResource(Res.string.social_title),
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                )
             }
 
-            item { SocialSectionTitle(stringResource(Res.string.social_friends)) }
-            item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = search,
-                        onValueChange = { search = normalizeSocialHandle(it).take(24) },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        label = { Text(stringResource(Res.string.social_search_handle)) },
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = { runSearch() }),
-                    )
-                    IconButton(onClick = runSearch, enabled = !isSearching) {
-                        Icon(Icons.Rounded.Search, "Search handles")
-                    }
-                }
+            if (showJoinField) {
+                OutlinedTextField(
+                    value = partyCode,
+                    onValueChange = onPartyCodeChange,
+                    modifier = Modifier.width(200.dp),
+                    singleLine = true,
+                    label = { Text("Invite code") },
+                    leadingIcon = { Icon(Icons.Rounded.Groups, null, Modifier.size(18.dp)) },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                    keyboardActions = KeyboardActions(onGo = { if (partyCode.isNotBlank()) onJoinParty() }),
+                )
+                Button(onClick = onJoinParty, enabled = partyCode.isNotBlank()) { Text("Join") }
             }
-            searchMessage?.let { message ->
-                item { Text(message, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 4.dp)) }
-            }
-            items(searchResults, key = { "search:${it.profileId}" }) { profile ->
-                SocialPersonRow(profile, subtitle = "@${profile.handle}") {
-                    IconButton(onClick = {
-                        scope.launch {
-                            // The result was previously discarded, so a sent request and a refused
-                            // one both looked like a button that did nothing. On success the row is
-                            // dropped, because the request is now pending rather than sendable.
-                            SocialRepository.sendFriendRequest(profile.profileId)
-                                .onSuccess {
-                                    searchResults = searchResults.filterNot { it.profileId == profile.profileId }
-                                    searchMessage = "Friend request sent to @${profile.handle}"
-                                }
-                                .onFailure { error ->
-                                    searchMessage = error.message ?: "Could not send that friend request"
-                                }
-                        }
-                    }) {
-                        Icon(Icons.Rounded.PersonAdd, stringResource(Res.string.social_add_friend))
-                    }
-                }
-            }
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = state.selectedFriendId == null, onClick = { SocialRepository.selectFriend(null) }, label = { Text("All") })
-                    state.friends.forEach { friend ->
-                        FilterChip(selected = state.selectedFriendId == friend.profileId, onClick = { SocialRepository.selectFriend(friend.profileId) }, label = { Text(friend.displayName) })
-                    }
-                }
-            }
-            items(state.friends, key = { "friend:${it.profileId}" }) { friend ->
-                SocialPersonRow(friend, subtitle = "@${friend.handle}") {
-                    IconButton(onClick = { scope.launch { SocialRepository.removeFriend(friend.profileId) } }) {
-                        Icon(Icons.Rounded.DeleteOutline, stringResource(Res.string.social_remove_friend))
-                    }
-                }
-            }
-            item {
-                SocialPanel {
-                    PrivacyToggle(stringResource(Res.string.social_share_watching), shareWatching) { shareWatching = it; scope.launch { SocialRepository.setPrivacy(shareWatching, shareRecent) } }
-                    PrivacyToggle(stringResource(Res.string.social_share_recent), shareRecent) { shareRecent = it; scope.launch { SocialRepository.setPrivacy(shareWatching, shareRecent) } }
+            IconButton(onClick = onRefresh, enabled = !isRefreshing) {
+                if (isRefreshing) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Rounded.Refresh, "Refresh")
                 }
             }
         }
-    }
-    }
-    }
-}
-
-@Composable private fun SocialSectionTitle(title: String, count: Int? = null) {
-    Text(if (count == null) title else "$title · $count", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-}
-
-@Composable private fun SocialPanel(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
-    Surface(modifier = modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, tonalElevation = 2.dp) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
     }
 }
 
 @Composable
-private fun SocialActivityColumn(
-    title: String,
-    modifier: Modifier = Modifier,
-    content: @Composable ColumnScope.() -> Unit,
+private fun SocialHandleSetup(
+    handle: String,
+    onHandleChange: (String) -> Unit,
+    message: String?,
+    onSave: () -> Unit,
 ) {
-    SocialPanel(modifier) {
-        SocialSectionTitle(title)
-        content()
+    SocialPanel {
+        Text(
+            stringResource(Res.string.social_handle),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            stringResource(Res.string.social_handle_help),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedTextField(
+            value = handle,
+            onValueChange = onHandleChange,
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text(stringResource(Res.string.social_handle)) },
+            prefix = { Text("@") },
+            isError = handle.isNotEmpty() && !isValidSocialHandle(handle),
+            supportingText = {
+                Text("3-24 characters: letters, numbers and underscores.", style = MaterialTheme.typography.labelSmall)
+            },
+        )
+        Button(onClick = onSave, enabled = isValidSocialHandle(handle)) {
+            Text(stringResource(Res.string.social_save_handle))
+        }
+        message?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
     }
 }
 
-@Composable private fun SocialMessageCard(message: String) = SocialPanel { Text(message) }
+/** Friend requests and party invites, together, because both are "somebody is waiting on you". */
+private fun LazyListScope.socialInbox(
+    state: SocialUiState,
+    onRespond: (String, Boolean) -> Unit,
+    onJoinInvitedParty: (String) -> Unit,
+) {
+    if (state.requests.isEmpty() && state.partyInvites.isEmpty()) return
+    item {
+        SocialSectionHeader(stringResource(Res.string.social_inbox), state.unreadCount)
+    }
+    items(state.requests, key = { "request:${it.id}" }) { request ->
+        SocialPanel(accent = true) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                SocialAvatar(
+                    request.sender.displayName,
+                    request.sender.avatarUrl,
+                    request.sender.avatarColorHex,
+                    40.dp,
+                )
+                Column(Modifier.weight(1f)) {
+                    Text(request.sender.displayName, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    Text(
+                        "wants to be friends · @${request.sender.handle}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                IconButton(onClick = { onRespond(request.id, true) }) {
+                    Icon(Icons.Rounded.Check, stringResource(Res.string.social_accept), tint = SocialLiveColor)
+                }
+                IconButton(onClick = { onRespond(request.id, false) }) {
+                    Icon(
+                        Icons.Rounded.Close,
+                        stringResource(Res.string.social_decline),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+    items(state.partyInvites, key = { "party-invite:${it.id}" }) { invite ->
+        SocialPanel(accent = true) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                SocialPoster(invite.content.poster, 40.dp)
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "${invite.sender.displayName} invited you to watch",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        invite.content.title,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Button(onClick = { onJoinInvitedParty(invite.partyId) }) { Text("Join") }
+            }
+        }
+    }
+}
 
-@Composable private fun SocialPersonRow(profile: SocialProfileSummary, subtitle: String, actions: @Composable () -> Unit) {
-    Surface(shape = MaterialTheme.shapes.large, tonalElevation = 1.dp) {
-        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+/**
+ * A friend, mid-episode.
+ *
+ * This is the tab's headline and it used to be the same 76x48 landscape chip as everything else -
+ * which also cropped a 2:3 poster into a letterbox and mangled the art on every card.
+ */
+@Composable
+private fun SocialPresenceCard(
+    item: WatchingNowItem,
+    watchPartyEnabled: Boolean,
+    onOpen: () -> Unit,
+    onStartParty: () -> Unit,
+) {
+    val playing = item.state == SocialPlaybackState.playing
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
+        shape = RoundedCornerShape(NuvioTokens.Radius.card),
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        Row(
+            Modifier.padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            SocialPoster(item.poster, 74.dp)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SocialAvatar(item.profile.displayName, item.profile.avatarUrl, item.profile.avatarColorHex, 22.dp)
+                    Text(
+                        item.profile.displayName,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    SocialLiveBadge(playing)
+                }
+                Text(
+                    item.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                item.episode?.let { episode ->
+                    Text(
+                        "S${item.season ?: 1} E$episode" +
+                            item.episodeTitle?.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.height(2.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LinearProgressIndicator(
+                        progress = { item.progressFraction },
+                        modifier = Modifier.weight(1f).height(4.dp).clip(CircleShape),
+                        color = if (playing) SocialLiveColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                        drawStopIndicator = {},
+                    )
+                    Text(
+                        "${item.roundedProgressPercent}%",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (watchPartyEnabled) {
+                    Spacer(Modifier.height(2.dp))
+                    // The one feature that makes this tab worth having was unreachable from the feed:
+                    // the only thing a presence card did was open the details page.
+                    TextButton(onClick = onStartParty, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) {
+                        Icon(Icons.Rounded.Groups, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Watch together")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SocialRecentRow(run: RecentActivityRun, onOpen: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
+        shape = RoundedCornerShape(NuvioTokens.Radius.compactCard),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
+    ) {
+        Row(
+            Modifier.padding(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SocialPoster(run.poster, 38.dp)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    run.title,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    SocialAvatar(run.profile.displayName, run.profile.avatarUrl, run.profile.avatarColorHex, 18.dp)
+                    Text(
+                        buildString {
+                            append(run.profile.displayName)
+                            run.episode?.let { append(" · S${run.season ?: 1} E$it") }
+                            if (run.eventCount > 1) append(" · ${run.eventCount} episodes")
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Search, roster and privacy in one place.
+ *
+ * These were four separate stretches of the scroll - a heading, a search field, an unscrollable
+ * `Row` of one FilterChip per friend that ran off the edge past about eight of them, the friend
+ * rows, and then the privacy panel - with the roster telling you nothing the feed above had not
+ * already said better.
+ */
+@Composable
+private fun SocialFriendsPanel(
+    state: SocialUiState,
+    search: String,
+    onSearchChange: (String) -> Unit,
+    onRunSearch: () -> Unit,
+    isSearching: Boolean,
+    feedback: SocialFeedback?,
+    searchResults: List<SocialProfileSummary>,
+    onSendRequest: (SocialProfileSummary) -> Unit,
+    onRemoveFriend: (String) -> Unit,
+    onSelectFriend: (String?) -> Unit,
+    shareWatching: Boolean,
+    shareRecent: Boolean,
+    onShareWatching: (Boolean) -> Unit,
+    onShareRecent: (Boolean) -> Unit,
+) {
+    // What each friend is watching, so the roster answers the same question the feed does rather
+    // than listing names next to nothing.
+    val watchingByProfile = remember(state.watchingNow) {
+        state.watchingNow.associateBy { it.profile.profileId }
+    }
+    val friends = remember(state.friends, watchingByProfile) {
+        state.friends.sortedWith(
+            compareByDescending<SocialProfileSummary> { watchingByProfile.containsKey(it.profileId) }
+                .thenBy { it.displayName.lowercase() },
+        )
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SocialSectionHeader(stringResource(Res.string.social_friends), state.friends.size.takeIf { it > 0 })
+
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedTextField(
+                value = search,
+                onValueChange = onSearchChange,
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                label = { Text(stringResource(Res.string.social_search_handle)) },
+                prefix = { Text("@") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { onRunSearch() }),
+            )
+            IconButton(onClick = onRunSearch, enabled = !isSearching) {
+                if (isSearching) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Rounded.Search, "Search handles")
+                }
+            }
+        }
+
+        feedback?.let { entry ->
+            Text(
+                entry.message,
+                style = MaterialTheme.typography.bodySmall,
+                color = when (entry.tone) {
+                    SocialFeedbackTone.Positive -> SocialLiveColor
+                    SocialFeedbackTone.Negative -> MaterialTheme.colorScheme.error
+                    SocialFeedbackTone.Neutral -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        }
+
+        searchResults.forEach { profile ->
+            SocialPersonRow(
+                profile = profile,
+                subtitle = "@${profile.handle}",
+                onClick = null,
+            ) {
+                IconButton(onClick = { onSendRequest(profile) }) {
+                    Icon(
+                        Icons.Rounded.PersonAdd,
+                        stringResource(Res.string.social_add_friend),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        }
+
+        if (state.friends.isEmpty()) {
+            SocialEmptyState("No friends yet", "Search a handle above to send the first request.")
+        } else {
+            if (state.selectedFriendId != null) {
+                // The filter is real - it goes to the server as p_filter_profile_id - but it used to
+                // be one chip in a row of every friend, with no way to tell the feed was filtered.
+                Surface(
+                    modifier = Modifier.fillMaxWidth().clickable { onSelectFriend(null) },
+                    shape = RoundedCornerShape(NuvioTokens.Radius.chip),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "Showing only " +
+                                (
+                                    state.friends
+                                        .firstOrNull { it.profileId == state.selectedFriendId }
+                                        ?.displayName ?: "one friend"
+                                    ),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Icon(
+                            Icons.Rounded.Close,
+                            "Show everyone",
+                            Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
+            friends.forEach { friend ->
+                val watching = watchingByProfile[friend.profileId]
+                SocialPersonRow(
+                    profile = friend,
+                    subtitle = watching?.title ?: "@${friend.handle}",
+                    live = watching != null,
+                    onClick = {
+                        onSelectFriend(friend.profileId.takeIf { it != state.selectedFriendId })
+                    },
+                ) {
+                    IconButton(onClick = { onRemoveFriend(friend.profileId) }) {
+                        Icon(
+                            Icons.Rounded.DeleteOutline,
+                            stringResource(Res.string.social_remove_friend),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(4.dp))
+        SocialPanel {
+            Text(
+                "Privacy",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            PrivacyToggle(stringResource(Res.string.social_share_watching), shareWatching, onShareWatching)
+            PrivacyToggle(stringResource(Res.string.social_share_recent), shareRecent, onShareRecent)
+        }
+    }
+}
+
+@Composable
+private fun SocialLiveBadge(playing: Boolean) {
+    val color = if (playing) SocialLiveColor else MaterialTheme.colorScheme.onSurfaceVariant
+    Surface(shape = RoundedCornerShape(NuvioTokens.Radius.chip), color = color.copy(alpha = 0.16f)) {
+        Row(
+            Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            if (playing) SocialPulsingDot(color) else Box(Modifier.size(6.dp).clip(CircleShape).background(color))
+            Text(
+                if (playing) "PLAYING" else "PAUSED",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.6.sp,
+                color = color,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SocialPulsingDot(color: Color) {
+    val transition = rememberInfiniteTransition(label = "social-live")
+    val pulse by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.3f,
+        animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Reverse),
+        label = "social-live-alpha",
+    )
+    Box(Modifier.size(6.dp).alpha(pulse).clip(CircleShape).background(color))
+}
+
+@Composable
+private fun SocialSectionHeader(title: String, count: Int? = null, live: Boolean = false) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        count?.let {
+            Surface(
+                shape = RoundedCornerShape(NuvioTokens.Radius.chip),
+                color = if (live) {
+                    SocialLiveColor.copy(alpha = 0.18f)
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
+            ) {
+                Text(
+                    it.toString(),
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (live) SocialLiveColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SocialPanel(
+    modifier: Modifier = Modifier,
+    accent: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(NuvioTokens.Radius.compactCard),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = if (accent) 0.9f else 0.6f),
+        border = if (accent) {
+            BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
+        } else {
+            null
+        },
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
+    }
+}
+
+@Composable
+private fun SocialNotice(message: String, accent: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(NuvioTokens.Radius.compactCard),
+        color = accent.copy(alpha = 0.12f),
+    ) {
+        Text(message, Modifier.padding(14.dp), style = MaterialTheme.typography.bodySmall, color = accent)
+    }
+}
+
+/** An empty section that says why it is empty and what fills it. */
+@Composable
+private fun SocialEmptyState(title: String, detail: String? = null) {
+    Surface(
+        // Left to fill the feed, this was a 1250px-wide box holding two short lines, which makes an
+        // empty tab look broken rather than empty.
+        modifier = Modifier.widthIn(max = 560.dp),
+        shape = RoundedCornerShape(NuvioTokens.Radius.compactCard),
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(title, fontWeight = FontWeight.SemiBold)
+            detail?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+/** A card-shaped placeholder for the first load, so the tab does not open as a blank column. */
+@Composable
+private fun SocialSkeletonCard() {
+    val transition = rememberInfiniteTransition(label = "social-skeleton")
+    val shimmer by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.75f,
+        animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Reverse),
+        label = "social-skeleton-alpha",
+    )
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(NuvioTokens.Radius.card),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
+    ) {
+        Row(Modifier.padding(14.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Box(
+                Modifier.width(74.dp).aspectRatio(2f / 3f)
+                    .clip(RoundedCornerShape(NuvioTokens.Radius.poster))
+                    .alpha(shimmer)
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+            )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                listOf(0.4f, 0.8f, 0.55f).forEach { fraction ->
+                    Box(
+                        Modifier.fillMaxWidth(fraction).height(12.dp)
+                            .clip(CircleShape)
+                            .alpha(shimmer)
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SocialPersonRow(
+    profile: SocialProfileSummary,
+    subtitle: String,
+    live: Boolean = false,
+    onClick: (() -> Unit)? = null,
+    actions: @Composable () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+        shape = RoundedCornerShape(NuvioTokens.Radius.compactCard),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box {
+                // Carried on the model since the feature shipped and drawn by nothing here, so the
+                // same person was an avatar in the feed and a bare name in the roster.
+                SocialAvatar(profile.displayName, profile.avatarUrl, profile.avatarColorHex, 34.dp)
+                if (live) {
+                    Box(
+                        Modifier.align(Alignment.BottomEnd)
+                            .size(11.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surface),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(Modifier.size(7.dp).clip(CircleShape).background(SocialLiveColor))
+                    }
+                }
+            }
             Column(Modifier.weight(1f)) {
-                Text(profile.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-                Text(subtitle, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    profile.displayName,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (live) SocialLiveColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
             actions()
         }
     }
 }
 
+@Composable
+internal fun SocialAvatar(name: String, avatarUrl: String?, colorHex: String?, size: Dp) {
+    val background = colorHex?.let(::parseHexColor) ?: MaterialTheme.colorScheme.primaryContainer
+    Box(
+        Modifier.size(size)
+            .clip(CircleShape)
+            .background(background)
+            .border(1.dp, MaterialTheme.colorScheme.onBackground.copy(alpha = 0.14f), CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (!avatarUrl.isNullOrBlank()) {
+            NuvioAsyncImage(
+                model = avatarUrl,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+        } else {
+            Text(
+                name.trim().take(1).uppercase(),
+                fontSize = (size.value * 0.42f).sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+            )
+        }
+    }
+}
+
+/** A poster at the 2:3 it actually is, given a width. */
+@Composable
+private fun SocialPoster(poster: String?, width: Dp) {
+    val modifier = Modifier.width(width).aspectRatio(2f / 3f)
+        .clip(RoundedCornerShape(NuvioTokens.Radius.compactCard))
+    if (poster.isNullOrBlank()) {
+        Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant))
+    } else {
+        NuvioAsyncImage(
+            model = poster,
+            contentDescription = null,
+            modifier = modifier,
+            contentScale = ContentScale.Crop,
+        )
+    }
+}
+
 @Composable private fun PrivacyToggle(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, modifier = Modifier.weight(1f))
+        Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
         Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }

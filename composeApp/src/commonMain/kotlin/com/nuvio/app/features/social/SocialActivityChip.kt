@@ -54,29 +54,22 @@ fun SocialActivityChip(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // `poster` is a 2:3 poster, and cropping it into a 76x48 letterbox mangled the art on
+            // every card on the home rows. Shown at the shape it actually is.
+            val artModifier = Modifier.width(42.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp))
             if (!poster.isNullOrBlank()) {
                 NuvioAsyncImage(
                     model = poster,
                     contentDescription = null,
-                    modifier = Modifier.size(width = 76.dp, height = 48.dp).clip(RoundedCornerShape(10.dp)),
+                    modifier = artModifier,
                     contentScale = ContentScale.Crop,
                 )
             } else {
-                Box(
-                    Modifier.size(width = 76.dp, height = 48.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                )
+                Box(artModifier.background(MaterialTheme.colorScheme.surfaceVariant))
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier.size(20.dp).clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primaryContainer),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(profile.displayName.take(1).uppercase(), style = MaterialTheme.typography.labelSmall)
-                    }
+                    SocialAvatar(profile.displayName, profile.avatarUrl, profile.avatarColorHex, 20.dp)
                     Text(
                         "  ${profile.displayName} · $status",
                         style = MaterialTheme.typography.labelMedium,

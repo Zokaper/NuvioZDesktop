@@ -203,6 +203,7 @@ import com.nuvio.app.features.library.LibraryRepository
 import com.nuvio.app.features.library.LibrarySection
 import com.nuvio.app.features.social.SocialRepository
 import com.nuvio.app.features.social.SocialScreen
+import com.nuvio.app.features.social.WatchingNowItem
 import com.nuvio.app.features.watchparty.WatchPartyRepository
 import com.nuvio.app.features.watchparty.WatchPartyLobbyScreen
 import com.nuvio.app.features.watchparty.SourceFingerprint
@@ -2419,6 +2420,24 @@ private fun MainAppContent(
                                         onLibrarySectionViewAllClick = onLibrarySectionViewAllClick,
                                         onJoinParty = { code -> navController.navigate(WatchPartyLobbyRoute(inviteCode = code)) },
                                         onJoinInvitedParty = { partyId -> navController.navigate(WatchPartyLobbyRoute(partyId = partyId)) },
+                                        // Seeing that a friend is mid-episode and being unable to
+                                        // act on it was the social tab's dead end: the feed could
+                                        // only open the details page, so the one feature it exists
+                                        // to advertise had to be started from somewhere else.
+                                        onStartPartyOnContent = { watching ->
+                                            navController.navigate(
+                                                WatchPartyLobbyRoute(
+                                                    contentId = watching.contentId,
+                                                    contentType = watching.contentType,
+                                                    videoId = watching.videoId,
+                                                    title = watching.title,
+                                                    poster = watching.poster,
+                                                    season = watching.season,
+                                                    episode = watching.episode,
+                                                    episodeTitle = watching.episodeTitle,
+                                                ),
+                                            )
+                                        },
                                         onCloudFilePlay = { item, file ->
                                             coroutineScope.launch {
                                                 val resumeItem = WatchProgressRepository
@@ -5789,6 +5808,7 @@ private fun AppTabHost(
     onLibrarySectionViewAllClick: ((LibrarySection, LibrarySortOption) -> Unit)? = null,
     onJoinParty: ((String) -> Unit)? = null,
     onJoinInvitedParty: ((String) -> Unit)? = null,
+    onStartPartyOnContent: ((WatchingNowItem) -> Unit)? = null,
     onCloudFilePlay: ((CloudLibraryItem, CloudLibraryFile) -> Unit)? = null,
     onConnectCloudClick: (() -> Unit)? = null,
     onContinueWatchingClick: ((ContinueWatchingItem) -> Unit)? = null,
@@ -5898,6 +5918,7 @@ private fun AppTabHost(
                                 },
                                 onJoinParty = onJoinParty ?: {},
                                 onJoinInvitedParty = onJoinInvitedParty ?: {},
+                                onStartParty = onStartPartyOnContent ?: {},
                             )
                         }
 

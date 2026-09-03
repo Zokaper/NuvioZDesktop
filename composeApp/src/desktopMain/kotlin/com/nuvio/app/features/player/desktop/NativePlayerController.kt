@@ -1002,6 +1002,8 @@ private fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
         append(',')
         appendJsonField("partyControlModeLabel", partyControlModeLabel)
         append(',')
+        appendJsonField("partyReadySummary", partyReadySummary)
+        append(',')
         appendJsonField("partyTransportEnabled", partyTransportEnabled)
         append(',')
         appendJsonArrayField("partyMembers", partyMembers) { appendPartyMemberJson(it) }
@@ -1207,6 +1209,8 @@ private fun StringBuilder.appendPartyMemberJson(item: PlayerPartyMember) {
     appendJsonField("role", item.role)
     append(',')
     appendJsonField("status", item.status)
+    append(',')
+    appendJsonField("statusTone", item.statusTone)
     append(',')
     appendJsonField("avatarUrl", item.avatarUrl.orEmpty())
     append(',')
