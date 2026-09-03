@@ -59,6 +59,19 @@ data class WatchPartyUiState(
      * for a party to persist it into yet.
      */
     val waitForEveryone: Boolean = true,
+    /**
+     * The source the host has chosen but has not started the party on yet.
+     *
+     * Choosing and starting are two separate decisions, and the host makes them on two separate
+     * screens: the source list, then back in the lobby with everyone in front of them. Publishing
+     * the pick straight from the list collapsed the two - `party_select_source` is what moves the
+     * party out of the lobby, so the host's choice threw everybody into the player before the host
+     * had so much as looked at who was in the room. Held here rather than in the lobby's own
+     * composition because the lobby leaves composition while the source list is on top of it.
+     */
+    val stagedHostSource: SourceFingerprint? = null,
+    /** How [stagedHostSource] reads in the lobby - the release the host picked, in their words. */
+    val stagedHostSourceLabel: String? = null,
     val isWorking: Boolean = false,
     val errorMessage: String? = null,
 )
@@ -126,7 +139,43 @@ object WatchPartyRepository {
         lastLoggedHeartbeatStatus = null
         lastLoggedPollFailure = null
         scope.launch { if (_uiState.value.party != null) leave() else stopChannel() }
+        launchedSourceGeneration = null
         _uiState.value = WatchPartyUiState(activeProfileId = profileId)
+    }
+
+    /**
+     * The source generation this client has already left the lobby for.
+     *
+     * Every member - the host included - is sent to the player by one effect in the lobby, keyed on
+     * the party leaving `waiting_for_host_source`. Without a latch that effect fires again the
+     * moment somebody backs out of the player into the lobby, which is a trap with no way out; with
+     * the latch stored in the lobby's composition it was lost on that same back navigation, which
+     * is the same trap. It lives here because it has to outlive both screens.
+     *
+     * Each start bumps `source_generation` (the host runs `party_begin_source_selection` before
+     * publishing), so re-starting the same source still counts as a new launch.
+     */
+    private var launchedSourceGeneration: Int? = null
+
+    /** True exactly once per source generation: the caller may hand off to the player. */
+    fun claimSourceLaunch(generation: Int): Boolean {
+        if (launchedSourceGeneration == generation) return false
+        launchedSourceGeneration = generation
+        return true
+    }
+
+    /**
+     * Records the host's pick without telling the party about it.
+     *
+     * Deliberately local: the party is only told when the host starts it, and until then the
+     * lobby is the one screen that knows a source exists.
+     */
+    fun stageHostSource(fingerprint: SourceFingerprint, label: String?) {
+        log.i { "staged host source party=${_uiState.value.party?.id.shortId()} label=$label" }
+        _uiState.value = _uiState.value.copy(
+            stagedHostSource = fingerprint,
+            stagedHostSourceLabel = label?.takeIf { it.isNotBlank() },
+        )
     }
 
     fun setWaitForEveryone(enabled: Boolean) {
@@ -372,6 +421,7 @@ object WatchPartyRepository {
         // Local teardown is unconditional. The caller still awaits the bounded RPC so normal
         // navigation and window shutdown give host transfer/end a chance to complete.
         stopPolling(); stopChannel(); clockOffsetPartyId = null
+        launchedSourceGeneration = null
         _uiState.value = WatchPartyUiState(activeProfileId = profile)
         try {
             withTimeout(WatchPartyChannelCloseTimeoutMs) {
@@ -406,7 +456,18 @@ object WatchPartyRepository {
             lastLoggedState = signature
             log.i { "state viewer=${_uiState.value.activeProfileId.shortId()} $signature" }
         }
-        _uiState.value = _uiState.value.copy(party = snapshot, isWorking = false, errorMessage = null)
+        // A different party is a different everything: neither the host's staged pick nor the launch
+        // latch means anything about this one. Cleared in the same update that installs the snapshot,
+        // so no frame is ever composed with one party's state and another's pick.
+        val carriesOver = _uiState.value.party?.id == snapshot.id
+        if (!carriesOver) launchedSourceGeneration = null
+        _uiState.value = _uiState.value.copy(
+            party = snapshot,
+            stagedHostSource = _uiState.value.stagedHostSource.takeIf { carriesOver },
+            stagedHostSourceLabel = _uiState.value.stagedHostSourceLabel.takeIf { carriesOver },
+            isWorking = false,
+            errorMessage = null,
+        )
         // The poll is the floor under this whole feature, so nothing may come before it. Opening the
         // channel used to, and `subscribe(blockUntilSubscribed = true)` never returns for a topic
         // the server refuses - so a channel that could not be authorized left this line unreached
@@ -709,7 +770,11 @@ private fun generateInviteCode(): String {
 internal fun String?.shortId(): String = this?.take(8) ?: "-"
 
 private fun WatchPartyState.logSignature(): String = buildString {
-    append("party=${id.shortId()} status=$status gen=$contentGeneration seq=$sequence ")
+    // `stage` and `sourceGeneration` are what the lobby decides on, and neither was here: a run
+    // where the host pressed Start twice was indistinguishable from one where the snapshot never
+    // moved, because the only generation logged was the content one.
+    append("party=${id.shortId()} status=$status stage=${effectiveStage()} gen=$contentGeneration ")
+    append("srcGen=$sourceGeneration src=${if (sourceFingerprint == null) "-" else "set"} seq=$sequence ")
     append("host=${hostProfileId.shortId()} positionMs=$positionMs durationMs=$durationMs ")
     append("speed=$playbackSpeed updatedAt=$stateUpdatedAt mode=$controlMode video=${content.videoId} ")
     append("members=[")

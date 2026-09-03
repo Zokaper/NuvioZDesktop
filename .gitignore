@@ -32,3 +32,6 @@ torbox-download-fixture.json
 
 # Local MPVKit iOS build environment (sparse APFS image, see MPVKit docs)
 .mpvkit-build.sparseimage
+
+# Local-only helpers and captures: two-instance launch scripts, window grabs, run logs.
+scratchpad/

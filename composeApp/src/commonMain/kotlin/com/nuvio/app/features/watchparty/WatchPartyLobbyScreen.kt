@@ -157,34 +157,38 @@ fun WatchPartyLobbyScreen(
     val scope = rememberCoroutineScope()
     var showDepartureDialog by remember { mutableStateOf(false) }
 
-    // Start submitted a play command and stopped there, so the party went to `playing` server-side
-    // while everyone sat in the lobby watching nothing happen.
-    //
-    // Playback cannot simply be launched from here: each participant resolves their own source, by
-    // design, so there is no shared stream to open. Leaving the lobby for the title is the honest
-    // transition - from there the usual player flow runs, and BindWatchPartyEffect takes over the
-    // synchronisation once playback starts.
     val addonSignature = remember(addonsState.addons) { watchPartyAddonSignature(addonsState.addons) }
-    var handedOffSourceGeneration by remember(route) { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(state.party?.id, addonSignature) {
         if (state.party != null) WatchPartyRepository.publishAddonSignature(addonSignature)
     }
 
+    /**
+     * The one way out of the lobby, and it is the same one for everybody.
+     *
+     * The host used to walk itself to the player from the button handler while guests were pushed
+     * here by the snapshot, so the two halves of "we all start together" were two different pieces
+     * of code that had to be kept saying the same thing - and they stopped. Publishing a source is
+     * now the *only* thing that starts a party, so this effect is the only thing that has to be
+     * right: the host publishes on Start, the snapshot reaches everyone, and everyone leaves for
+     * the player off the same signal.
+     *
+     * `claimSourceLaunch` is the latch, and it lives in the repository rather than here: this
+     * composition is destroyed when the player goes on top of it, so a latch held locally would be
+     * gone by the time somebody backed out - and this effect would throw them straight back in.
+     */
     LaunchedEffect(state.party?.sourceGeneration, state.party?.sourceFingerprint) {
         val party = state.party ?: return@LaunchedEffect
-        val isHost = party.hostProfileId == state.activeProfileId
+        if (party.sourceFingerprint == null) return@LaunchedEffect
         if (
-            isHost ||
-            party.sourceFingerprint == null ||
             party.effectiveStage() !in setOf(
                 WatchPartyStage.resolving_sources,
                 WatchPartyStage.ready_to_launch,
                 WatchPartyStage.playing,
             )
         ) return@LaunchedEffect
-        if (handedOffSourceGeneration == party.sourceGeneration) return@LaunchedEffect
-        handedOffSourceGeneration = party.sourceGeneration
+        if (!WatchPartyRepository.claimSourceLaunch(party.sourceGeneration)) return@LaunchedEffect
+        lobbyLog.i { "launching party=${party.id.shortId()} generation=${party.sourceGeneration}" }
         onChooseSource(party, PartyStreamLaunchPurpose.RESOLVE_PLAYBACK)
     }
 
@@ -282,24 +286,40 @@ fun WatchPartyLobbyScreen(
                 // where nobody has resolved anything yet - it reported a source that did not exist
                 // and was the one thing that could defeat the host's own readiness gate. Readiness
                 // is now reported by the player, once a stream is actually open.
-                val onPrimary: () -> Unit = {
+                //
+                // The host's half of the lobby is two buttons because it is two decisions. Picking
+                // a release and committing everyone to it in the same press is what made the source
+                // list a trapdoor: there was no moment between the two in which the host could look
+                // at who had actually turned up.
+                val chosenSource = state.stagedHostSource ?: party.sourceFingerprint
+                val onChoose: () -> Unit = {
                     scope.launch {
-                        val retainedFingerprint = party.sourceFingerprint
-                        if (retainedFingerprint == null) {
-                            onChooseSource(party, PartyStreamLaunchPurpose.SELECT_SOURCE)
-                            return@launch
-                        }
+                        // Announces "the host is picking" and bumps the generation, so a source
+                        // chosen now cannot be published against the previous round's number.
                         WatchPartyRepository.beginSourceSelection(addonSignature).onSuccess {
-                            val selectingParty = WatchPartyRepository.uiState.value.party
-                            if (selectingParty != null) {
+                            WatchPartyRepository.uiState.value.party?.let {
+                                onChooseSource(it, PartyStreamLaunchPurpose.SELECT_SOURCE)
+                            }
+                        }
+                    }
+                }
+                val onStart: () -> Unit = {
+                    val fingerprint = chosenSource
+                    if (fingerprint != null) {
+                        scope.launch {
+                            // Begin, then select: begin bumps the generation, so pressing Start on
+                            // the same source a second time - after everyone backed out to the
+                            // lobby - is still a new launch that the lobby's latch lets through.
+                            WatchPartyRepository.beginSourceSelection(addonSignature).onSuccess {
+                                val selecting = WatchPartyRepository.uiState.value.party
+                                    ?: return@onSuccess
+                                // Nobody navigates from here. Publishing the source is the signal,
+                                // and the lobby's launch effect acts on it for host and guests
+                                // alike - see its comment for why that is one path and not two.
                                 WatchPartyRepository.selectSource(
-                                    fingerprint = retainedFingerprint,
-                                    expectedSourceGeneration = selectingParty.sourceGeneration,
-                                ).onSuccess {
-                                    WatchPartyRepository.uiState.value.party?.let {
-                                        onChooseSource(it, PartyStreamLaunchPurpose.RESOLVE_PLAYBACK)
-                                    }
-                                }
+                                    fingerprint = fingerprint,
+                                    expectedSourceGeneration = selecting.sourceGeneration,
+                                )
                             }
                         }
                     }
@@ -339,6 +359,7 @@ fun WatchPartyLobbyScreen(
                                     inviteCode = state.inviteCode,
                                     connection = state.connection,
                                     sync = syncState,
+                                    hostSourceStaged = state.stagedHostSource != null,
                                 )
                                 PartyStageRail(party.effectiveStage())
                                 addonNotice?.let { PartyNotice(it, PartyWorkingColor) }
@@ -360,8 +381,10 @@ fun WatchPartyLobbyScreen(
                             Spacer(Modifier.height(16.dp))
                             PartyActionBar(
                                 isHost = isHost,
-                                hasSource = party.sourceFingerprint != null,
-                                onPrimary = onPrimary,
+                                hasSource = chosenSource != null,
+                                sourceLabel = state.stagedHostSourceLabel,
+                                onChoose = onChoose,
+                                onStart = onStart,
                                 onLeave = onLeave,
                             )
                         }
@@ -394,6 +417,7 @@ fun WatchPartyLobbyScreen(
                             connection = state.connection,
                             sync = syncState,
                             wide = wide,
+                            hostSourceStaged = state.stagedHostSource != null,
                         )
                     }
 
@@ -426,8 +450,10 @@ fun WatchPartyLobbyScreen(
                     item {
                         PartyActionBar(
                             isHost = isHost,
-                            hasSource = party.sourceFingerprint != null,
-                            onPrimary = onPrimary,
+                            hasSource = chosenSource != null,
+                            sourceLabel = state.stagedHostSourceLabel,
+                            onChoose = onChoose,
+                            onStart = onStart,
                             onLeave = onLeave,
                         )
                     }
@@ -519,6 +545,7 @@ private fun PartyLobbyOpening(onBack: () -> Unit, errorMessage: String?, isWorki
 @Composable
 private fun PartyStatusBand(
     party: WatchPartyState,
+    hostSourceStaged: Boolean,
     inviteCode: String?,
     connection: PartyConnectionState,
     sync: WatchPartySyncState,
@@ -530,7 +557,7 @@ private fun PartyStatusBand(
         ) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
-                    party.stageHeadline(),
+                    party.stageHeadline(hostSourceStaged),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
@@ -866,6 +893,7 @@ private fun PartyHero(
     connection: PartyConnectionState,
     sync: WatchPartySyncState,
     wide: Boolean,
+    hostSourceStaged: Boolean,
 ) {
     PartyPanel {
         Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.Top) {
@@ -896,7 +924,7 @@ private fun PartyHero(
                 }
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    party.stageHeadline(),
+                    party.stageHeadline(hostSourceStaged),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.primary,
@@ -1342,24 +1370,38 @@ private fun PartyHostSettings(
     }
 }
 
+/**
+ * The host's two decisions, in the order they are made.
+ *
+ * Before a source exists there is one button and it opens the list. Once one is chosen the emphasis
+ * moves to Start and picking again demotes itself to the outlined button beside it: the party is
+ * one press from beginning, and nothing else in the bar should compete with that.
+ */
 @Composable
 private fun PartyActionBar(
     isHost: Boolean,
     hasSource: Boolean,
-    onPrimary: () -> Unit,
+    sourceLabel: String?,
+    onChoose: () -> Unit,
+    onStart: () -> Unit,
     onLeave: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             if (isHost) {
-                Button(onClick = onPrimary) {
-                    Text(
-                        if (!hasSource) {
-                            stringResource(Res.string.watch_party_choose_source)
-                        } else {
-                            stringResource(Res.string.watch_party_resolve_source)
-                        },
-                    )
+                if (hasSource) {
+                    Button(onClick = onStart) { Text("Start watching") }
+                    OutlinedButton(onClick = onChoose) {
+                        Text(stringResource(Res.string.watch_party_resolve_source))
+                    }
+                } else {
+                    Button(onClick = onChoose) {
+                        Text(stringResource(Res.string.watch_party_choose_source))
+                    }
                 }
             }
             Spacer(Modifier.weight(1f))
@@ -1367,9 +1409,15 @@ private fun PartyActionBar(
         }
         if (isHost) {
             Text(
-                stringResource(Res.string.watch_party_source_explanation),
+                when {
+                    !hasSource -> stringResource(Res.string.watch_party_source_explanation)
+                    sourceLabel != null -> "$sourceLabel - nobody leaves the lobby until you press Start."
+                    else -> "Source ready - nobody leaves the lobby until you press Start."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }

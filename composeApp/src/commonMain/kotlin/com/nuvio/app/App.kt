@@ -2826,6 +2826,22 @@ private fun MainAppContent(
                     var partySelectionCommitted by rememberSaveable(route.launchId) { mutableStateOf(false) }
                     var partyExactMatchHandled by rememberSaveable(route.launchId) { mutableStateOf(false) }
 
+                    /**
+                     * This route is a member resolving the host's source, not anyone choosing one.
+                     *
+                     * Such a launch decides [PlaybackRouteDecision.AutoPick] - see
+                     * `PlaybackRouteInputs.isPartyResolvePlayback` - but it borrows only that
+                     * branch's *surface*, the silent progress overlay, because a member has no
+                     * question to answer. Everything else keyed on `AutoPick` means "Instant is
+                     * measuring the connection to choose a source", and none of it is true here:
+                     * the source is already chosen. Each of those mechanisms is told so through
+                     * this flag, and the one that mattered was the stall backstop, which stands
+                     * down for an unsettled probe - a probe this route never runs. That is how a
+                     * member whose stream could not be opened sat on the overlay for good.
+                     */
+                    val isPartyResolveRoute =
+                        launch.partyContext?.purpose == PartyStreamLaunchPurpose.RESOLVE_PLAYBACK
+
                     fun StreamItem.partyFingerprint(): SourceFingerprint = SourceFingerprint(
                         addonId = addonId,
                         infoHash = p2pInfoHash,
@@ -2838,22 +2854,34 @@ private fun MainAppContent(
 
                     fun commitPartySelection(stream: StreamItem): Boolean {
                         val context = launch.partyContext ?: return false
-                        if (partySelectionCommitted) return context.purpose == PartyStreamLaunchPurpose.SELECT_SOURCE
+                        // Purpose only decides what the *first* call does. A second, racing call -
+                        // the generic auto-play chain unblocks the moment the exact-match effect
+                        // finishes and can fire again with its own auto-picked candidate - must
+                        // always be turned away once a selection is already committed, or a guest
+                        // gets navigated to the player twice with two different streams.
+                        if (partySelectionCommitted) return true
                         partySelectionCommitted = true
-                        val fingerprint = stream.partyFingerprint()
+                        if (context.purpose == PartyStreamLaunchPurpose.SELECT_SOURCE) {
+                            // Chosen, **not published**. `party_select_source` is the one thing
+                            // that starts a party, so publishing from here made the host's tap on
+                            // a release throw everybody into the player in the same instant. The
+                            // pick is held for the lobby, where the host presses Start with the
+                            // room in front of them. Held in the repository because this route is
+                            // about to leave the back stack and take its state with it.
+                            WatchPartyRepository.stageHostSource(
+                                fingerprint = stream.partyFingerprint(),
+                                label = stream.streamLabel,
+                            )
+                            onBack()
+                            return true
+                        }
                         streamRouteScope.launch {
-                            if (context.purpose == PartyStreamLaunchPurpose.SELECT_SOURCE) {
-                                WatchPartyRepository.selectSource(fingerprint, context.sourceGeneration)
-                                    .onSuccess { onBack() }
-                                    .onFailure { partySelectionCommitted = false }
-                                return@launch
-                            }
                             WatchPartyRepository.updateReady(
                                 state = SourceResolutionState.resolving,
                                 sourceGeneration = WatchPartyRepository.uiState.value.party?.sourceGeneration,
                             )
                         }
-                        return context.purpose == PartyStreamLaunchPurpose.SELECT_SOURCE
+                        return false
                     }
 
                     LaunchedEffect(launch.partyContext) {
@@ -2903,6 +2931,17 @@ private fun MainAppContent(
                     fun giveUpToSourceList(reason: String? = null) {
                         qualitySheetDismissed = true
                         manualSourceListRequested = true
+                        if (isPartyResolveRoute) {
+                            // The overlay is coming down and the list is going up, so whatever this
+                            // member last reported about resolving the host's source has stopped
+                            // being true. Saying so is what stops a host gated on readiness waiting
+                            // on somebody who is now reading a list of alternates. Cleared too, so
+                            // the manual pick that follows is allowed to commit.
+                            partySelectionCommitted = false
+                            WatchPartyRepository.updateReadyDetached(
+                                SourceResolutionState.choosing_fallback,
+                            )
+                        }
                         // Arriving here means the app could not choose, so the user is about to
                         // do it by hand - and `StreamsScreen` auto-filters to whichever addon
                         // last served this show. That filter is a convenience when the list is
@@ -3255,6 +3294,10 @@ private fun MainAppContent(
                                 manualSelection = launch.manualSelection,
                                 // Completed downloads are consumed before StreamRoute is created.
                                 hasCompletedLocalDownload = false,
+                                isPartyResolvePlayback = launch.partyContext?.let {
+                                    it.purpose == PartyStreamLaunchPurpose.RESOLVE_PLAYBACK &&
+                                        it.targetFingerprint != null
+                                } ?: false,
                             ),
                         )
                     }
@@ -3707,9 +3750,7 @@ private fun MainAppContent(
                                 error = "The host source is unavailable; choose an alternate",
                                 sourceGeneration = context.sourceGeneration,
                             )
-                            if (playerSettings.playbackMode == PlaybackMode.CLASSIC) {
-                                giveUpToSourceList(reason = "The host source is unavailable. Choose an alternate source.")
-                            }
+                            giveUpToSourceList(reason = "The host source is unavailable. Choose an alternate source.")
                         }
                     }
 
@@ -3861,6 +3902,7 @@ private fun MainAppContent(
                      */
                     val awaitingMeteredAnswer =
                         playbackRouteDecision is PlaybackRouteDecision.AutoPick &&
+                            !isPartyResolveRoute &&
                             sheetNetworkQuality.isMetered &&
                             meteredChoice == null
                     LaunchedEffect(
@@ -3879,6 +3921,11 @@ private fun MainAppContent(
                             playbackRouteDecision is PlaybackRouteDecision.ShowQualitySheet ||
                                 playbackRouteDecision is PlaybackRouteDecision.AutoPick
                         if (!needsConnectionFigure) return@LaunchedEffect
+                        // A party member's source was decided by the host. Measuring the line to
+                        // choose between candidates that are not being chosen between spends the
+                        // user's data on nothing, and on a metered connection it raises a dialog
+                        // asking permission to do it.
+                        if (isPartyResolveRoute) return@LaunchedEffect
                         if (qualitySheetDismissed) return@LaunchedEffect
                         // This effect re-runs often - `qualityProbeTarget` is rebuilt every
                         // time an addon answers - and once this sheet has committed to a figure
@@ -4063,6 +4110,16 @@ private fun MainAppContent(
                         streamsUiState.emptyStateReason,
                     ) {
                         if (playbackRouteDecision !is PlaybackRouteDecision.AutoPick) return@LaunchedEffect
+                        // `isPartyResolvePlayback` also decides to `AutoPick`, purely to borrow
+                        // its silent progress-overlay surface - a party guest has nothing to
+                        // answer, so Streamlined's sheet has no question to put in front of them.
+                        // It must not borrow Instant's *selection*: the exact-match effect further
+                        // down is the only thing allowed to choose a stream for a party launch,
+                        // and letting this one seed its own connection-based pick raced it, with
+                        // no guarantee the two agreed on a source.
+                        if (launch.partyContext?.purpose == PartyStreamLaunchPurpose.RESOLVE_PLAYBACK) {
+                            return@LaunchedEffect
+                        }
                         if (instantSelectionHandled) return@LaunchedEffect
                         if (qualitySheetDismissed || manualSourceListRequested) return@LaunchedEffect
                         if (
@@ -4192,7 +4249,14 @@ private fun MainAppContent(
                         // outcome the mode is for avoiding.
                         if (
                             playbackRouteDecision is PlaybackRouteDecision.AutoPick &&
-                            !connectionSettled
+                            !connectionSettled &&
+                            // ...but a party member never starts that probe, so its "not settled
+                            // yet" is permanent and this exemption would be permanent with it.
+                            // This is the route the backstop exists for: `openSelectedStream` has
+                            // several silent returns - no playable URL, an external handler that
+                            // refused, a debrid resolve that failed - and the exact-match effect
+                            // that called it has already latched, so nothing else will try again.
+                            !isPartyResolveRoute
                         ) return@LaunchedEffect
                         if (
                             streamsUiState.requestToken != expectedStreamsRequestToken ||
@@ -4436,6 +4500,7 @@ private fun MainAppContent(
                                         // band is exact - so it must not claim to be waiting for
                                         // one.
                                         isMeasuringConnection = !connectionSettled &&
+                                            !isPartyResolveRoute &&
                                             playbackRouteDecision is PlaybackRouteDecision.AutoPick,
                                     ),
                                 ),
@@ -4803,6 +4868,13 @@ private fun MainAppContent(
                                     episodeNumber = content.episode,
                                     episodeTitle = content.episodeTitle,
                                     resumePositionMs = party.positionMs.takeIf { it > 0L },
+                                    // The host is here to *choose*, so the list is the screen -
+                                    // whatever their playback mode would otherwise have done with
+                                    // it. Instant picked a release for them and published it before
+                                    // they saw one, which is not a host choosing a source for six
+                                    // people; Streamlined asked them a question about their own
+                                    // connection instead of showing them the releases.
+                                    manualSelection = purpose == PartyStreamLaunchPurpose.SELECT_SOURCE,
                                     partyContext = PartyStreamLaunchContext(
                                         partyId = party.id,
                                         isHost = party.hostProfileId == WatchPartyRepository.uiState.value.activeProfileId,

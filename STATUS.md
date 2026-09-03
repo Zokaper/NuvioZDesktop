@@ -1,6 +1,91 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-02
+Last updated: 2026-09-03
+
+## Watch Together: the host picks, then the host starts (2026-09-03)
+
+Publishing the source and starting the party were the same act, and a guest was thrown at the
+player the instant the host tapped a release. That is where the limbo came from, and it is also not
+the flow anyone wanted: the host had no moment between choosing a release and committing five
+people to it. The two are now two presses, and everybody leaves the lobby off one signal.
+
+### The flow
+
+1. **Choose source** (host) — `party_begin_source_selection` bumps the generation and says "the host
+   is picking", then the source list opens. It opens as a *manual* launch (`manualSelection = true`
+   on the `StreamLaunch`) whatever the host's playback mode is: Instant used to pick a release for
+   them and publish it before they had seen one, and Streamlined asked them about their own
+   connection instead of showing them the releases.
+2. **The pick is staged, not published.** `commitPartySelection` writes it to
+   `WatchPartyUiState.stagedHostSource` and pops back to the lobby. Nothing reaches the party, so
+   nobody moves. The lobby then reads "Source picked — start when everyone is here" with
+   **Start watching** / **Change source**.
+3. **Start watching** — begin (bumps the generation again, so re-starting the same source is still a
+   new launch) then `party_select_source`. That is the *only* thing that starts a party.
+4. One `LaunchedEffect` in the lobby sees `stage == resolving_sources` with a fingerprint and sends
+   **everyone, host included**, to `StreamRoute` with `RESOLVE_PLAYBACK`. It used to be two paths -
+   the host walked itself there from the button handler while guests were pushed by the snapshot -
+   and they drifted apart. The launch latch lives in `WatchPartyRepository.claimSourceLaunch`, not
+   in the lobby's composition, which is destroyed when the player goes on top of it: a latch held
+   locally was gone by the time somebody backed out, and the effect threw them straight back in.
+
+No server change. The staged pick is deliberately local to the host until Start.
+
+### Why the guest sat on a blank overlay
+
+`isPartyResolvePlayback` decides `AutoPick` to borrow that branch's silent progress overlay, because
+a member resolving the host's fingerprint has no question to answer. Everything *else* keyed on
+`AutoPick` means "Instant is measuring the connection to choose a source", and none of it is true
+here. The one that mattered is the stall backstop, which stands down for an unsettled connection
+probe - a probe this route never runs, so its "not settled" was permanent. Every silent return in
+`openSelectedStream` (no playable URL, an external handler that refused, a debrid resolve that
+failed) therefore rested on the overlay for good, with the exact-match effect already latched.
+
+`isPartyResolveRoute` in `entry<StreamRoute>` now tells the backstop, the connection probe, Instant's
+metered dialog and the overlay's "measuring your connection" line that this is not that route.
+`giveUpToSourceList` also reports `choosing_fallback`, so a host gated on readiness stops waiting on
+somebody who is now reading a list of alternates.
+
+### Verified
+
+Two instances, two profiles (`big z` host, `debug` guest), against production
+`pzbpghmmordvzcfbayoh`. Host created the party, guest joined by code, host chose a 2160p BDRemux and
+came **back to the lobby**, guest stayed in the lobby reading "waiting for the host to pick a
+source". Start put both in the player on the same file; both reported `ready`, `status=playing`,
+`durationMs=6519808`.
+
+`:composeApp:desktopTest` passes.
+
+### Local runs: two things this machine cannot build
+
+Neither is caused by the change above; both bite any local run.
+
+- **`WebView2Loader.dll` is missing**, so `player_bridge.dll` will not load at all and every play
+  fails with `NoClassDefFoundError: NativePlayerBridge`. `prepareWindowsPlayerRuntime` copies the
+  loader only `if (windowsWebView2LoaderDll.exists())`, i.e. only with the WebView2 NuGet package
+  installed (`-Pnuvio.webview2.dir`). Any Evergreen copy on the machine works - it is a stable-ABI
+  redistributable - dropped into `composeApp/build/native/windows` and
+  `composeApp/build/generated/desktop-app-resources/windows/native/windows`.
+- **The bridge itself is stale** (no MSVC here), so it has no `seekToExact` entry point and the JNI
+  lookup threw `UnsatisfiedLinkError` out of a party barrier - a modal error dialog over a film that
+  was otherwise playing perfectly in sync, once per correction.
+  `NativePlayerController.seekToExact` now falls back to the keyframe seek and logs once.
+
+### Running two instances
+
+`scratchpad/run-instance.ps1 -AppData <dir> -Tag <name>`. `createDistributable` needs jpackage, which
+the Android Studio JBR has none of, and `:composeApp:run` holds the Gradle project lock for the life
+of the app, so a second instance started that way waits forever on the first. The script runs `java`
+against a dumped runtime classpath (`scratchpad/dump-cp.gradle.kts`, task
+`:composeApp:dumpDesktopRuntimeClasspath`) and gives each instance its own `%APPDATA%` -
+`DesktopStorage.resolveAppDataDir()` reads it, and two instances sharing one store race on the same
+`nuvio_*.properties`. Seed the second from the first so it starts signed in, then switch it to the
+other profile in-app.
+
+`scratchpad/grab-window.ps1` screenshots a window without foregrounding it, `click.ps1` clicks into
+one, `tile-windows.ps1` puts them side by side. All three call `SetProcessDPIAware` first: this
+display scales, and without it the shell is virtualised, so every rectangle is short by the scale
+factor and every click lands up and to the left of its target.
 
 ## Watch Together and Social desktop UX overhaul (2026-09-02)
 

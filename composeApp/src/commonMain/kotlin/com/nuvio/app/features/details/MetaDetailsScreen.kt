@@ -1340,6 +1340,9 @@ fun MetaDetailsScreen(
                                     onSaveClick = toggleSaved,
                                     onSaveLongClick = openLibraryListPicker,
                                     onWatchedClick = toggleWatched,
+                                    onWatchTogetherClick = onWatchTogether?.let { callback ->
+                                        { callback(watchPartyContent) }
+                                    },
                                     onDownloadClick = {
                                         presetDownloadScope = if (meta.type.lowercase() in setOf("series", "show", "tv", "tvshow") || hasEpisodes) {
                                             DownloadScope.SelectedSeasons(emptySet())
@@ -2152,6 +2155,7 @@ private fun LazyListScope.configuredMetaSectionItems(
     onSaveClick: () -> Unit,
     onSaveLongClick: (() -> Unit)?,
     onWatchedClick: () -> Unit,
+    onWatchTogetherClick: (() -> Unit)? = null,
     onDownloadClick: () -> Unit,
     showManualPlayOption: Boolean,
     preferredEpisodeSeasonNumber: Int?,
@@ -2239,6 +2243,7 @@ private fun LazyListScope.configuredMetaSectionItems(
                     onSaveClick = onSaveClick,
                     onSaveLongClick = onSaveLongClick,
                     onWatchedClick = onWatchedClick,
+                    onWatchTogetherClick = onWatchTogetherClick,
                     onDownloadClick = onDownloadClick,
                     showManualPlayOption = showManualPlayOption,
                     preferredEpisodeSeasonNumber = preferredEpisodeSeasonNumber,
@@ -2400,6 +2405,7 @@ private fun ConfiguredMetaSections(
     onSaveClick: () -> Unit,
     onSaveLongClick: (() -> Unit)?,
     onWatchedClick: () -> Unit,
+    onWatchTogetherClick: (() -> Unit)? = null,
     onDownloadClick: () -> Unit,
     showManualPlayOption: Boolean,
     preferredEpisodeSeasonNumber: Int?,
@@ -2531,6 +2537,13 @@ private fun ConfiguredMetaSections(
                             onClick = onSaveClick,
                             onLongClick = onSaveLongClick,
                         ))
+                        onWatchTogetherClick?.let { action ->
+                            add(DetailSecondaryAction(
+                                label = stringResource(Res.string.watch_party_title),
+                                icon = Icons.Rounded.People,
+                                onClick = action,
+                            ))
+                        }
                     },
                     isTablet = isTablet,
                     onPlayClick = onPrimaryPlayClick,

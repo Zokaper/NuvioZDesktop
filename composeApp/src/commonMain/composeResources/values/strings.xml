@@ -2596,8 +2596,8 @@
     <!-- Nuvio Z Watch Together desktop UX. -->
     <string name="watch_party_title">Watch Together</string>
     <string name="watch_party_choose_source">Choose source</string>
-    <string name="watch_party_resolve_source">Resolve source</string>
-    <string name="watch_party_source_explanation">You choose the preferred source. Everyone resolves it locally before playback starts.</string>
+    <string name="watch_party_resolve_source">Change source</string>
+    <string name="watch_party_source_explanation">You pick one source for the party. Everyone resolves it on their own addons when you start.</string>
     <string name="watch_party_addon_differences">Addon differences</string>
     <string name="watch_party_host_controls">Host controls</string>
     <string name="watch_party_collaborative">Collaborative</string>

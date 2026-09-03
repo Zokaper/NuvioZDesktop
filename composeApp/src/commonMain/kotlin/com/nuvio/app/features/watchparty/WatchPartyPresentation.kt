@@ -94,10 +94,20 @@ fun WatchPartyStage.railLabel(): String = when (this) {
 fun WatchPartyStage.railIndex(): Int =
     if (this == WatchPartyStage.playing) WatchPartyStageRail.lastIndex else WatchPartyStageRail.indexOf(this)
 
-/** The one line under the title that says what the party as a whole is doing. */
-fun WatchPartyState.stageHeadline(): String = when (effectiveStage()) {
-    WatchPartyStage.lobby -> "Waiting in the lobby"
-    WatchPartyStage.waiting_for_host_source -> "Waiting for the host to pick a source"
+/**
+ * The one line under the title that says what the party as a whole is doing.
+ *
+ * [hostSourceStaged] is the host's own view and nobody else's: the pick is held on their machine
+ * until they press Start, so the party genuinely has no source yet and every other member is
+ * correctly told the host is still choosing. Without it the host read "waiting for the host to pick
+ * a source" while their own button said Start watching.
+ */
+fun WatchPartyState.stageHeadline(hostSourceStaged: Boolean = false): String = when (effectiveStage()) {
+    WatchPartyStage.lobby ->
+        if (hostSourceStaged) "Source picked - start when everyone is here" else "Waiting in the lobby"
+    WatchPartyStage.waiting_for_host_source ->
+        if (hostSourceStaged) "Source picked - start when everyone is here"
+        else "Waiting for the host to pick a source"
     WatchPartyStage.resolving_sources -> {
         val waiting = members.count { it.connected && it.readyState.tone(true) == PartyReadyTone.Working }
         if (waiting > 0) "Everyone is finding their source · $waiting to go" else "Everyone is finding their source"
