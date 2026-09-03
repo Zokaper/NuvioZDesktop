@@ -1198,7 +1198,7 @@
     <string name="playback_mode_classic_download">One episode or movie opens the source list; a whole season uses your preset</string>
     <string name="playback_mode_streamlined_tagline">Quality without the wall of releases</string>
     <string name="playback_mode_streamlined_stream_1">Pick a quality, Nuvio picks the release</string>
-    <string name="playback_mode_streamlined_stream_2">Remembers the quality you picked for the rest of the show</string>
+    <string name="playback_mode_streamlined_stream_2">Asks for the quality on every episode</string>
     <string name="playback_mode_streamlined_download">Always asks which preset to use</string>
     <string name="playback_mode_instant_tagline">Press play, it plays</string>
     <string name="playback_mode_instant_stream_1">Quality and source chosen from your connection</string>
