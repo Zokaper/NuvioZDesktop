@@ -928,7 +928,11 @@ private fun EpisodeHorizontalCard(
                 overflow = TextOverflow.Ellipsis,
             )
 
-            if (!video.overview.isNullOrBlank()) {
+            // Blurring the still and then printing the synopsis across it protected nothing -
+            // the overview is the spoiler, and it was the readable half. Dropped rather than
+            // blurred: blurred body text at this size stays legible enough to spoil and reads as
+            // a rendering fault, while the badge and title still say which episode this is.
+            if (!shouldBlurArtwork && !video.overview.isNullOrBlank()) {
                 Text(
                     text = video.overview,
                     style = MaterialTheme.typography.bodySmall.copy(
@@ -1214,6 +1218,8 @@ private fun EpisodeListCard(
     val cardShape = RoundedCornerShape(sizing.cardRadius)
     val ratingLabel = remember(imdbRating) { imdbRating?.takeIf { it > 0.0 }?.let(::formatEpisodeRating) }
     val formattedDate = remember(video.released) { video.released?.let { formatReleaseDateForDisplay(it) } }
+    // Hoisted out of the image box: the overview beside it is withheld on the same condition.
+    val shouldBlurArtwork = blurUnwatchedEpisodes && !isWatched
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -1243,7 +1249,6 @@ private fun EpisodeListCard(
                     .clip(RoundedCornerShape(topStart = sizing.cardRadius, bottomStart = sizing.cardRadius)),
             ) {
                 val imageUrl = video.thumbnail ?: fallbackImage
-                val shouldBlurArtwork = blurUnwatchedEpisodes && !isWatched
                 if (imageUrl != null) {
                     AsyncImage(
                         model = imageUrl,
@@ -1334,7 +1339,8 @@ private fun EpisodeListCard(
                     }
                 }
 
-                if (!video.overview.isNullOrBlank()) {
+                // Withheld with the still, for the same reason - see EpisodeHorizontalCard.
+                if (!shouldBlurArtwork && !video.overview.isNullOrBlank()) {
                     Text(
                         text = video.overview,
                         style = MaterialTheme.typography.bodyMedium.copy(
