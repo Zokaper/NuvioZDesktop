@@ -91,6 +91,43 @@ The project-level `.mcp.json` configures Claude Code to start the Compose Hot Re
 Trust the project, start the app with `.\scripts\dev-desktop.ps1 hot`, then start/restart Claude
 Code from this repository so it loads the server.
 
+**Start the app before the agent connects.** The MCP server attaches to an app that is *already
+running* - it watches for `composeApp/build/run/desktopMain/desktopMain.pid`. Launched with no app
+up it exits immediately, and the client reports only `CONNECTION_CLOSED`, which reads like a missing
+capability rather than an ordering problem. Wait for `> Task :composeApp:hotRunDesktop` in the
+launcher output, confirm the PID file exists, then connect - `/mcp reconnect` re-spawns the server,
+so a full restart of the agent is not needed.
+
+**`--auto` does not rebuild on save here.** After editing, run `.\gradlew.bat reload` as a second
+Gradle invocation; it coexists with the running `hotRunDesktop`, applies the change, and is where
+Kotlin compile errors surface. Budget roughly three minutes.
+
+#### Starting the agent from the parent folder
+
+MCP servers are read from the *session's* working directory, so a session opened at the folder that
+contains both repositories never sees this repository's `.mcp.json`. Create one beside the repos, at
+the parent folder root, with the script path relative to it:
+
+```json
+{
+  "mcpServers": {
+    "compose-hot-reload": {
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", "nuviozdesktop/scripts/dev-desktop.ps1", "mcp"
+      ]
+    }
+  }
+}
+```
+
+That parent folder is not a git repository, so this file is version-controlled nowhere and has to be
+recreated by hand if it goes missing. It works because `dev-desktop.ps1` sets its own working
+directory first: Gradle takes its project directory from the working directory rather than from the
+path of the wrapper it was invoked through, so pointing at `gradlew.bat` from elsewhere is not
+enough on its own.
+
 The currently installed Codex CLI stores MCP registrations in the user configuration. Register this
 repository's server once from the repository root, then restart the Codex task/app:
 
@@ -107,6 +144,18 @@ A typical UI loop is: start the Hot Reload app, let the agent connect to the Com
 edit Compose code, await/trigger reload, inspect the screenshot and semantic tree, check logs or UI
 errors, and repeat. The MCP server also exposes supported click, typing, scrolling, window resize,
 restart, and UI-reset operations.
+
+**A local run is a release-channel build, so it does not share the debug build's stored state.**
+`DesktopStorage.resolveAppDataDir()` picks its directory from
+`AppVersionConfig.DESKTOP_DEBUG_CHANNEL`, and that flag is off for every local invocation by design,
+so `dev-desktop.ps1` reads `%APPDATA%\Nuvio Z` while an installed debug MSI reads
+`%APPDATA%\Nuvio Z Debug`. Different profiles, addons, settings, and a separate
+`setup_wizard_completed_revision` - which is why the setup wizard can appear on a local run for an
+account that completed it long ago. To share the debug build's state instead, ask for the channel:
+
+```powershell
+.\gradlew.bat -Pnuvio.desktop.debugChannel=true :composeApp:hotRunDesktop --auto
+```
 
 This local workflow does not package or install an MSI/DMG. Release packaging remains in the
 existing GitHub Actions desktop release workflows and is unchanged.

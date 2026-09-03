@@ -78,6 +78,13 @@ we edit, not the files we ignore.
   `scripts/dev-desktop.ps1 hot`, then use the Compose Hot Reload MCP tools to inspect screenshots,
   semantics, logs/errors, reload state, and supported UI interactions. Revert any temporary visual
   verification change before finishing.
+- Three things about that workflow are worth reading in `README.md` before concluding it is broken:
+  the MCP server attaches to an **already running** app and reports only `CONNECTION_CLOSED`
+  otherwise; `--auto` does not rebuild on save, so `./gradlew.bat reload` is what applies an edit
+  and surfaces Kotlin errors; and a session started from the **parent folder** that holds both
+  repositories needs its own `.mcp.json` there, since MCP configuration is read from the session's
+  working directory. That parent folder is not a git repository, so `README.md` carries the file to
+  recreate.
 - For mechanical or non-UI changes, use Hot Reload when the change is compatible. Structural or
   startup changes may require a normal app restart; always run the relevant local compile/test and,
   when useful, launch the desktop app locally before considering the work complete.
