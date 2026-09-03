@@ -72,6 +72,20 @@ on web and to the (stale, unused) `iosApp/Configuration/Version.xcconfig` on des
 sync, re-check the version files by eye before cutting a release; the attribute protects the files
 we edit, not the files we ignore.
 
+### Local desktop development and delivery
+
+- For Compose UI changes, use the local Hot Reload workflow documented in `README.md`: start
+  `scripts/dev-desktop.ps1 hot`, then use the Compose Hot Reload MCP tools to inspect screenshots,
+  semantics, logs/errors, reload state, and supported UI interactions. Revert any temporary visual
+  verification change before finishing.
+- For mechanical or non-UI changes, use Hot Reload when the change is compatible. Structural or
+  startup changes may require a normal app restart; always run the relevant local compile/test and,
+  when useful, launch the desktop app locally before considering the work complete.
+- Once a change is complete, or when it needs multi-device/cross-platform validation, push through
+  the existing debug workflow by default. Do not cut, tag, promote, or trigger an actual release
+  unless the user explicitly requests a release. Do not replace or bypass the existing MSI/DMG
+  GitHub Actions release workflow.
+
 Active feature plan, also canonical in `nuvio-z` and covering both repositories:
 
 - `PLAYBACK_MODES_PLAN.md`: https://github.com/Zokaper/nuvio-z/blob/main/PLAYBACK_MODES_PLAN.md

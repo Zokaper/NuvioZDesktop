@@ -71,6 +71,46 @@ On Windows PowerShell:
 .\gradlew.bat :composeApp:run
 ```
 
+On Windows, the helper below finds the JetBrains Runtime bundled with Android Studio or IntelliJ,
+so `JAVA_HOME` does not have to be configured globally:
+
+```powershell
+# Normal local desktop run
+.\scripts\dev-desktop.ps1 normal
+
+# Compose Hot Reload with automatic reloads on saved source changes
+.\scripts\dev-desktop.ps1 hot
+```
+
+The underlying Gradle tasks are `:composeApp:run` and `:composeApp:hotRunDesktop --auto`. The
+desktop JVM target is named `desktop`; do not substitute a guessed `hotRunJvm` task.
+
+### Compose Hot Reload MCP
+
+The project-level `.mcp.json` configures Claude Code to start the Compose Hot Reload MCP server.
+Trust the project, start the app with `.\scripts\dev-desktop.ps1 hot`, then start/restart Claude
+Code from this repository so it loads the server.
+
+The currently installed Codex CLI stores MCP registrations in the user configuration. Register this
+repository's server once from the repository root, then restart the Codex task/app:
+
+```powershell
+$script = (Resolve-Path -LiteralPath "scripts\dev-desktop.ps1").Path
+codex mcp add compose-hot-reload -- powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script mcp
+```
+
+Verify it with `codex mcp get compose-hot-reload`. Claude Code and Codex launch the same underlying
+Gradle task, `:composeApp:hotMcpServerDesktop`; each agent starts it on demand rather than relying on
+a permanent background server.
+
+A typical UI loop is: start the Hot Reload app, let the agent connect to the Compose MCP server,
+edit Compose code, await/trigger reload, inspect the screenshot and semantic tree, check logs or UI
+errors, and repeat. The MCP server also exposes supported click, typing, scrolling, window resize,
+restart, and UI-reset operations.
+
+This local workflow does not package or install an MSI/DMG. Release packaging remains in the
+existing GitHub Actions desktop release workflows and is unchanged.
+
 Build a release package for the current host:
 
 ```bash

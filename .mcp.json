@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "compose-hot-reload": {
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/dev-desktop.ps1",
+        "mcp"
+      ]
+    }
+  }
+}
