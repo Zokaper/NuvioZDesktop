@@ -71,6 +71,8 @@ import kotlin.math.roundToInt
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
 import com.nuvio.app.features.playback.SwapDiagnosticsLog
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import com.nuvio.app.features.playback.PlaybackLoadingState
 import com.nuvio.app.features.playback.PlaybackProgressStep
 import com.nuvio.app.features.updater.formatFileSize
@@ -1772,6 +1774,7 @@ private fun BoxScope.RenderPlaybackOverlays(
             .takeIf { it.phase == PlayerNextEpisodePhase.STARTING }
             ?.targetVideoId
             ?.let { targetId -> playerMetaVideos.firstOrNull { it.id == targetId } }
+        val playerClipboardManager = LocalClipboardManager.current
         PlayerPlaybackOverlays(
             playerControlsLocked = playerControlsLocked,
             lockedOverlayVisible = lockedOverlayVisible,
@@ -1842,6 +1845,18 @@ private fun BoxScope.RenderPlaybackOverlays(
                 facts = args.sourceFacts,
             ),
             formatSize = ::formatFileSize,
+            onCopyErrorDetails = errorMessage?.let { message ->
+                {
+                    val label = PlaybackSourceSelector.describe(args.sourceFacts)
+                    playerClipboardManager.setText(
+                        AnnotatedString(
+                            listOf(label, args.streamTitle, message)
+                                .filter { it.isNotBlank() }
+                                .joinToString(" - "),
+                        ),
+                    )
+                }
+            },
         )
     }
 }

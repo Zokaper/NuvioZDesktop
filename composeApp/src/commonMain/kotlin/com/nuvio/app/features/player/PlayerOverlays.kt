@@ -71,6 +71,7 @@ import com.nuvio.app.features.playback.PlaybackLoadingScreen
 import com.nuvio.app.features.playback.PlaybackLoadingState
 import com.nuvio.app.features.playback.PlaybackProgressStep
 import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.playback_error_copy_details
 import nuvio.composeapp.generated.resources.compose_player_close
 import nuvio.composeapp.generated.resources.compose_player_episode_code_full
 import nuvio.composeapp.generated.resources.compose_player_go_back
@@ -352,6 +353,17 @@ internal fun PauseMetadataOverlay(
 internal fun ErrorModal(
     message: String,
     onDismiss: () -> Unit,
+    /**
+     * Which source produced this, as `PlaybackSourceSelector.describe` renders it elsewhere.
+     *
+     * This modal is the terminal surface of every failure the playback work touches, and it
+     * used to show the engine's raw message and one "Go back" - so a user who watched three
+     * sources get tried could not say which one had just died, and neither could anyone reading
+     * a screenshot of it. Null for the paths that genuinely have no source to name.
+     */
+    sourceLabel: String? = null,
+    /** Copies label and message together. A raw engine string is not something to transcribe. */
+    onCopyDetails: (() -> Unit)? = null,
 ) {
     Box(
         modifier = Modifier
@@ -380,6 +392,27 @@ internal fun ErrorModal(
                 maxLines = 4,
                 overflow = TextOverflow.Ellipsis,
             )
+            sourceLabel?.takeIf { it.isNotBlank() }?.let { label ->
+                Text(
+                    text = label,
+                    style = MaterialTheme.nuvioTypeScale.bodyLg.copy(lineHeight = 24.sp),
+                    color = Color.White.copy(alpha = 0.55f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (onCopyDetails != null) {
+                Text(
+                    text = stringResource(Res.string.playback_error_copy_details),
+                    modifier = Modifier
+                        .clickable(onClick = onCopyDetails)
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    style = MaterialTheme.nuvioTypeScale.bodyLg,
+                    color = MaterialTheme.colorScheme.primary,
+                    textAlign = TextAlign.Center,
+                )
+            }
             Surface(
                 modifier = Modifier
                     .padding(top = 4.dp)

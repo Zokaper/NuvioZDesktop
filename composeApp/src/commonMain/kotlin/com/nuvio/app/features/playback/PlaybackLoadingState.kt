@@ -2,6 +2,126 @@ package com.nuvio.app.features.playback
 
 import com.nuvio.app.features.downloads.SourceFacts
 
+// The pre-player loading surface's whole vocabulary, with no Compose in it.
+//
+// [PlaybackProgressStep], [PlaybackProgressInputs], [PlaybackProgress] and
+// [PlaybackProgressFailure] used to live in `PlaybackProgressOverlay.kt` beside the composable
+// that drew them. That put a derived, wholly testable state machine inside a file the pure
+// suite cannot compile, so the rule these types exist to enforce - *derived, never faked* - was
+// the one rule nothing could execute. They moved here when the loading screen became shared,
+// which is the same reason: two call sites now build this state, and a vocabulary owned by one
+// of them is a vocabulary the other will fork.
+
+/**
+ * What the automatic playback path is doing, for the overlay Streamlined and Instant show
+ * instead of the source list.
+ *
+ * Every value maps to state that already exists in `entry<StreamRoute>` - see
+ * [PlaybackProgress.step]. Nothing here is a timed or faked sequence: a step that cannot be
+ * observed is a step that lies about what the app is waiting for.
+ */
+enum class PlaybackProgressStep {
+    /** Addons and plugins are still returning candidates. */
+    FindingSources,
+
+    /**
+     * Instant only: the candidates are in but the connection measurement has not settled.
+     *
+     * Instant picks a quality *from* that measurement, so choosing before it lands would be
+     * choosing from the unmeasured platform guess - the fault the mode was withdrawn for the
+     * first time. The wait is bounded by `NetworkStrengthProbe.PROBE_DEADLINE_MS` and is
+     * usually invisible, because the probe runs alongside the fetch and the fetch is slower.
+     * It gets its own step for the case where it is not, because "Choosing a source" while the
+     * app is measuring a line is the same small lie the connection gauge work spent three
+     * passes removing.
+     */
+    CheckingConnection,
+
+    /** Candidates are in; `PlaybackSourceSelector` is ranking them. */
+    ChoosingSource,
+
+    /** A debrid link is being minted for the chosen candidate. Usually the real wait. */
+    ResolvingLink,
+
+    /** Chosen and resolved; handing off to the player. */
+    StartingPlayback,
+}
+
+/**
+ * Everything the overlay's state depends on, gathered by the caller.
+ *
+ * Plain data on purpose - the route entry gathers, this decides, and a test can cover the
+ * whole table without a Compose runtime.
+ */
+data class PlaybackProgressInputs(
+    /** `streamsUiState.isAnyLoading`, or the request token not yet matching. */
+    val isLoadingSources: Boolean,
+    /** `instantSelectionHandled` for Instant, the tier pick for Streamlined. */
+    val hasChosenSource: Boolean,
+    /** The existing `resolvingDebridStream` flag. */
+    val isResolvingLink: Boolean,
+    /** 1-based. Above 1 means the failure chain has moved on from a dead candidate. */
+    val attempt: Int = 1,
+    /**
+     * Instant only: `!connectionSettled`, the same signal the quality sheet withholds its
+     * figure on.
+     *
+     * Deliberately not passed by the remembered-band path, which does not need an estimate -
+     * its band is exact - and must not claim to be waiting for one.
+     */
+    val isMeasuringConnection: Boolean = false,
+)
+
+object PlaybackProgress {
+
+    /**
+     * The retry budget the failure chain runs to, so the overlay and the chain cannot disagree
+     * about how many tries the user is being told about.
+     *
+     * Defined in `StreamRouteSurface.kt` and aliased here. That file has no imports and is the
+     * one thing `scripts/run-pure-suites.sh` can actually execute, so the budget and the
+     * function that spends it ([playbackChain]) are covered by a test that runs without Gradle -
+     * which is how the drift this fixes would have been caught.
+     */
+    const val MAX_ATTEMPTS: Int = PLAYBACK_MAX_ATTEMPTS
+
+    /**
+     * Resolving is checked first because it is the only step with a real, observable wait: a
+     * debrid mint can take seconds while `isLoadingSources` is still true for a slow addon
+     * that nothing is waiting on any more.
+     */
+    fun step(inputs: PlaybackProgressInputs): PlaybackProgressStep = when {
+        inputs.isResolvingLink -> PlaybackProgressStep.ResolvingLink
+        inputs.isLoadingSources -> PlaybackProgressStep.FindingSources
+        // Below the fetch, because the two run concurrently and the fetch is nearly always the
+        // longer of the two; above the choice, because Instant genuinely cannot choose yet.
+        inputs.isMeasuringConnection && !inputs.hasChosenSource ->
+            PlaybackProgressStep.CheckingConnection
+        !inputs.hasChosenSource -> PlaybackProgressStep.ChoosingSource
+        else -> PlaybackProgressStep.StartingPlayback
+    }
+
+    // `isVisible` used to live here and answered only "does the overlay cover the list?".
+    // That was half the question: the route also paints an opaque hand-off surface under the
+    // overlay, and hiding the overlay while that surface stayed up traded a blank screen for
+    // a blank screen one layer down - which is what backing out of the player actually did.
+    // The whole stack is decided by `streamRouteSurface` in StreamRouteSurface.kt, so the two
+    // cannot disagree - and that file has no imports, so unlike this one it actually runs.
+}
+
+/**
+ * The source an automatic path has just given up on, for the overlay to name.
+ *
+ * [label] comes from `PlaybackSourceSelector.describe` - `1080p · WEB-DL · TorBox` - falling
+ * back to the stream's own label when nothing is known about it. [reason] is the provider's
+ * words when it gave any, and null when it simply failed.
+ */
+data class PlaybackProgressFailure(
+    val label: String,
+    val reason: String? = null,
+)
+
+
 /**
  * Everything the one loading surface shows, gathered by whichever side owns the moment.
  *

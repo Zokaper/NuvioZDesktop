@@ -557,8 +557,24 @@ internal fun StreamDestination(
         autoPickFailure = PlaybackProgressFailure(label = label, reason = reason)
     }
 
+    /**
+     * Names a dead candidate, falling back to **the addon's own words** when the caller has none.
+     *
+     * `AddonStreamGroup.error` has always held what the provider actually said and every reader
+     * reduced it to a boolean, so an addon answering "stream not found" and an addon answering
+     * nothing produced the same silent step to the next candidate. That is bug 3's whole
+     * symptom, and the evidence for it was already in memory.
+     *
+     * The caller's reason still wins where there is one - a resolve failure knows more than the
+     * group does. This only fills the gap that used to be filled with nothing.
+     */
     fun noteSourceFailure(stream: StreamItem, reason: String?) {
-        noteSourceFailureByLabel(sourceFailureLabel(stream), reason)
+        val addonMessage = reason?.takeIf { it.isNotBlank() }
+            ?: streamsUiState.groups
+                .firstOrNull { group -> group.addonId == stream.addonId }
+                ?.error
+                ?.takeIf { it.isNotBlank() }
+        noteSourceFailureByLabel(sourceFailureLabel(stream), addonMessage)
     }
 
     // Coming back from the player with a candidate still armed. Two very

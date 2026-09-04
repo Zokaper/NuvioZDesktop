@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import com.nuvio.app.features.p2p.P2pLoadingStatus
 import com.nuvio.app.features.playback.PlaybackLoadingState
 import com.nuvio.app.features.playback.PlaybackProgressStep
+import com.nuvio.app.features.playback.PlaybackSourceSelector
 import com.nuvio.app.features.player.skip.NextEpisodeCard
 import com.nuvio.app.features.player.skip.NextEpisodeInfo
 import com.nuvio.app.features.player.skip.SkipIntroButton
@@ -81,6 +82,8 @@ internal fun BoxScope.PlayerPlaybackOverlays(
         step = PlaybackProgressStep.StartingPlayback,
     ),
     formatSize: (Long) -> String = { it.toString() },
+    /** Puts the source label and the engine's message on the clipboard together. */
+    onCopyErrorDetails: (() -> Unit)? = null,
 ) {
     AnimatedVisibility(
         visible = playerControlsLocked && lockedOverlayVisible,
@@ -210,6 +213,11 @@ internal fun BoxScope.PlayerPlaybackOverlays(
         ErrorModal(
             message = errorMessage,
             onDismiss = onDismissError,
+            // The same words the loading screen and the failure chain use, from the same
+            // `SourceFacts`, so the three surfaces cannot disagree about what just died.
+            sourceLabel = PlaybackSourceSelector.describe(loadingState.facts)
+                .takeIf { it.isNotBlank() },
+            onCopyDetails = onCopyErrorDetails,
         )
     }
 }
