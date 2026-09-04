@@ -54,6 +54,8 @@ import com.nuvio.app.features.playback.PlaybackQualityOptions
 import com.nuvio.app.features.playback.PlaybackQualitySheet
 import com.nuvio.app.features.playback.PlaybackRouteDecision
 import com.nuvio.app.features.playback.PlaybackRouteInputs
+import com.nuvio.app.features.playback.ContentIdentityGuard
+import com.nuvio.app.features.playback.RequestedContent
 import com.nuvio.app.features.playback.PlaybackSelectionContext
 import com.nuvio.app.features.playback.PlaybackSelectionResult
 import com.nuvio.app.features.playback.PlaybackSourceCandidate
@@ -241,6 +243,8 @@ internal fun StreamDestination(
     // chain survives, so without this, backing out of the player lands on an
     // opaque overlay with nothing to interact with.
     var playbackHandedOff by rememberSaveable(route.launchId) { mutableStateOf(false) }
+    /** The requested title's year, once the meta answers. Null until then, and often for good. */
+    var requestedYear by remember(route.launchId) { mutableStateOf<Int?>(null) }
     val shouldResolveEpisodeVideoId =
         launch.parentMetaId != null &&
             launch.seasonNumber != null &&
@@ -287,9 +291,14 @@ internal fun StreamDestination(
         hasResolvedVideoId = false
         val metaType = launch.parentMetaType ?: launch.type
         val metaId = launch.parentMetaId ?: return@LaunchedEffect
-        val resolvedVideoId = runCatching {
+        val meta = runCatching {
             MetaDetailsRepository.fetch(metaType, metaId)
         }.getOrNull()
+        // The title's own year, for the content-identity guard. Best-effort and often absent -
+        // the guard treats a null as "not known", which always passes, so an addon that reports
+        // no release info simply gets no year check rather than a wrong one.
+        requestedYear = meta?.releaseInfo?.let(ContentIdentityGuard::parseYear)
+        val resolvedVideoId = meta
         ?.videos
         ?.firstOrNull { video ->
             video.season == launch.seasonNumber &&
@@ -455,6 +464,7 @@ internal fun StreamDestination(
         }
     }
     val playbackSelectionContext = remember(
+        requestedYear,
         launch.runtimeMinutes,
         launch.seasonNumber,
         launch.episodeNumber,
@@ -478,6 +488,22 @@ internal fun StreamDestination(
             languageStrictness = playerSettings.playbackLanguageStrictness,
             qualityCeilingMbps = playerSettings.playbackQualityCeilingMbps
                 .takeIf { it > 0 }?.toDouble(),
+            // ⚠ **Automatic modes only.** Classic and every manual path leave this null, so the
+            // guard is inert for them: a manual pick is the user reading the release name and
+            // choosing anyway, and overriding that would be a refusal wearing a helper's name.
+            identity = if (
+                playerSettings.playbackMode != PlaybackMode.CLASSIC &&
+                !launch.manualSelection &&
+                !launch.downloadIntent
+            ) {
+                RequestedContent(
+                    season = launch.seasonNumber,
+                    episode = launch.episodeNumber,
+                    year = requestedYear,
+                )
+            } else {
+                null
+            },
             codecPreference = playerSettings.playbackCodecPreference,
             dynamicRangePolicy = playerSettings.playbackDynamicRangePolicy,
             audioPreference = playerSettings.playbackAudioPreference,
