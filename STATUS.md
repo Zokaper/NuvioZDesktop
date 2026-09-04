@@ -39,6 +39,10 @@ merge-never-rebase doctrine.
 - Pure suites: **336 tests OK** across all 6 groups (126 + 64 + 49 + 17 + 29 + 51).
 - Desktop test suite: `:composeApp:desktopTest` **passed** (`BUILD SUCCESSFUL in 14m 39s`).
 - Upstream drift: 0 behind tag `0.1.22-alpha`, conflict surface reduced from 65 to 0.
+- Desktop debug build: **published & verified** via GitHub Actions [Run 33873568488](https://github.com/Zokaper/NuvioZDesktop/actions/runs/33873568488).
+  Release tag [`debug-v0.1.22-alpha-z1.40`](https://github.com/Zokaper/NuvioZDesktop/releases/tag/debug-v0.1.22-alpha-z1.40)
+  carries verified packages for Windows x64 (`Nuvio-Z-Debug-Windows-x64-0.1.22-alpha-z1.40.msi`) and Apple Silicon macOS
+  (`Nuvio-Z-Debug-macOS-arm64-0.1.22-alpha-z1.40.dmg`).
 
 ## Watch Together: the host picks, then the host starts (2026-09-03)
 
