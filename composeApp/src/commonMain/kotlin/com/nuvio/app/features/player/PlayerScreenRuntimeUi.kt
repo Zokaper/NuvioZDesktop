@@ -73,6 +73,7 @@ import org.jetbrains.compose.resources.stringResource
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import com.nuvio.app.features.playback.PlaybackLoadingState
+import com.nuvio.app.features.playback.PlaybackLoadingFacts
 import com.nuvio.app.features.playback.PlaybackProgressStep
 import com.nuvio.app.features.updater.formatFileSize
 
@@ -223,6 +224,11 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     val openingOverlayWanted = playerSettingsUiState.showLoadingOverlay &&
         !initialLoadCompleted &&
         errorMessage == null
+    val openingLoadingState = PlaybackLoadingState(
+        step = PlaybackProgressStep.StartingPlayback,
+        attempt = args.playbackAttempt,
+        facts = args.sourceFacts,
+    )
     val episodeText = if (seasonNumber != null && episodeNumber != null && !episodeTitle.isNullOrBlank()) {
         stringResource(
             Res.string.compose_player_episode_title_format,
@@ -482,6 +488,24 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             p2pInitialLoadingMessage
         },
         openingProgress = p2pInitialLoadingProgress,
+        openingStageLabel = p2pInitialLoadingMessage
+            ?: stringResource(Res.string.playback_progress_starting),
+        openingAttemptLabel = if (openingLoadingState.showsAttempt) {
+            stringResource(
+                Res.string.playback_progress_attempt,
+                openingLoadingState.displayAttempt,
+                openingLoadingState.maxAttempts,
+            )
+        } else {
+            ""
+        },
+        openingFactLabels = PlaybackLoadingFacts
+            .chips(openingLoadingState.facts, ::formatFileSize)
+            .map { it.label },
+        openingProviderLine = PlaybackLoadingFacts
+            .providerLine(openingLoadingState.facts)
+            .orEmpty(),
+        openingReleaseName = openingLoadingState.releaseName.orEmpty(),
         partyBannerVisible = watchPartyBanner != null && !playerControlsLocked,
         partyBannerText = watchPartyBanner.orEmpty(),
         partyPanelVisible = activeParty != null && controlsVisible && !playerControlsLocked,
@@ -667,7 +691,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             showP2pRebufferStats = showP2pRebufferStats,
             p2pRebufferMessage = p2pRebufferMessage,
             p2pRebufferProgress = p2pRebufferProgress,
-            suppressOpeningOverlay = isDesktop && playerSurfaceSourceUrl != null,
+            suppressOpeningOverlay = false,
             // Desktop draws its chrome in the native controls layer above the video surface, where
             // a Compose overlay would be invisible; there the banner is carried by
             // PlayerControlsState instead.

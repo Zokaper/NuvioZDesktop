@@ -231,6 +231,12 @@ data class PlayerControlsState(
     val openingTitle: String = "",
     val openingMessage: String? = null,
     val openingProgress: Float? = null,
+    /** Desktop-native rendering of Phase 2's shared loading band. */
+    val openingStageLabel: String = "",
+    val openingAttemptLabel: String = "",
+    val openingFactLabels: List<String> = emptyList(),
+    val openingProviderLine: String = "",
+    val openingReleaseName: String = "",
     /**
      * The Watch Together status line, shown whenever the party is holding playback back or has lost
      * sync. It is deliberately independent of [controlsVisible]: a player that is paused because it

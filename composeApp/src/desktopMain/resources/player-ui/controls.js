@@ -23,7 +23,7 @@ const pauseDescription = document.getElementById("pauseDescription");
 const toggle = document.getElementById("toggle");
 const toggleIcon = document.getElementById("toggleIcon");
 const toggleLabel = document.getElementById("toggleLabel");
-const nextEpisodeButton = document.getElementById("nextEpisodeButton");
+const playNextEpisodeButton = document.getElementById("playNextEpisodeButton");
 const nextEpisodeButtonLabel = document.getElementById("nextEpisodeButtonLabel");
 const fullscreenButton = document.getElementById("fullscreenButton");
 const fullscreenIcon = document.getElementById("fullscreenIcon");
@@ -53,9 +53,11 @@ const openingLogoBase = document.getElementById("openingLogoBase");
 const openingLogoFillClip = document.getElementById("openingLogoFillClip");
 const openingLogoFill = document.getElementById("openingLogoFill");
 const openingTitle = document.getElementById("openingTitle");
-const openingSpinner = document.getElementById("openingSpinner");
 const openingStatus = document.getElementById("openingStatus");
 const openingMessage = document.getElementById("openingMessage");
+const openingFacts = document.getElementById("openingFacts");
+const openingProvider = document.getElementById("openingProvider");
+const openingRelease = document.getElementById("openingRelease");
 const partyBanner = document.getElementById("partyBanner");
 const partyBannerText = document.getElementById("partyBannerText");
 const partyPanel = document.getElementById("partyPanel");
@@ -288,6 +290,11 @@ let state = {
   openingTitle: "",
   openingMessage: "",
   openingProgress: null,
+  openingStageLabel: "Starting playback",
+  openingAttemptLabel: "",
+  openingFactLabels: [],
+  openingProviderLine: "",
+  openingReleaseName: "",
   partyBannerVisible: false,
   partyBannerText: "",
   partyPanelVisible: false,
@@ -1917,8 +1924,14 @@ const renderOpeningOverlay = suppress => {
   const wantsOpening = Boolean(openingBootstrap || state.showOpeningOverlay);
   const showOpening = Boolean(!suppress && wantsOpening && state.isLoading);
   const titleText = String(state.openingTitle || state.title || "").trim();
-  const messageText = String(state.openingMessage || "").trim();
-  const showHorizontalProgress = hasProgress && !logoUrl;
+  const messageText = String(state.openingMessage || state.openingStageLabel || "").trim();
+  const attemptText = String(state.openingAttemptLabel || "").trim();
+  const statusText = [messageText, attemptText].filter(Boolean).join(" · ");
+  const factLabels = Array.isArray(state.openingFactLabels)
+    ? state.openingFactLabels.map(value => String(value || "").trim()).filter(Boolean)
+    : [];
+  const providerText = String(state.openingProviderLine || "").trim();
+  const releaseText = String(state.openingReleaseName || "").trim();
 
   root.classList.toggle("opening-active", showOpening);
   openingOverlay.classList.toggle("visible", showOpening);
@@ -1933,11 +1946,17 @@ const renderOpeningOverlay = suppress => {
 
   openingTitle.textContent = titleText;
   openingTitle.hidden = Boolean(logoUrl || !titleText);
-  openingSpinner.hidden = Boolean(logoUrl || titleText);
-
-  openingMessage.textContent = messageText;
-  openingStatus.hidden = !(messageText || showHorizontalProgress);
-  openingProgressTrack.hidden = !showHorizontalProgress;
+  openingMessage.textContent = statusText;
+  openingFacts.replaceChildren(...factLabels.map(label => {
+    const chip = document.createElement("span");
+    chip.textContent = label;
+    return chip;
+  }));
+  openingProvider.textContent = providerText;
+  openingProvider.hidden = !providerText;
+  openingRelease.textContent = releaseText;
+  openingRelease.hidden = !releaseText;
+  openingProgressTrack.classList.toggle("indeterminate", !hasProgress);
   openingProgressBar.style.width = `${(progress || 0) * 100}%`;
 
   return showOpening;
@@ -2313,11 +2332,11 @@ const renderChrome = () => {
   if (toggleLabel) {
     toggleLabel.textContent = playPauseLabel || (isPlaying ? "Pause" : "Play");
   }
-  if (nextEpisodeButton) {
-    nextEpisodeButton.hidden = !state.nextEpisodePlayable;
+  if (playNextEpisodeButton) {
+    playNextEpisodeButton.hidden = !state.nextEpisodePlayable;
     const nextLabel = state.nextEpisodeHeaderLabel || "Next episode";
-    nextEpisodeButton.setAttribute("aria-label", nextLabel);
-    nextEpisodeButton.setAttribute("title", nextLabel);
+    playNextEpisodeButton.setAttribute("aria-label", nextLabel);
+    playNextEpisodeButton.setAttribute("title", nextLabel);
     if (nextEpisodeButtonLabel) nextEpisodeButtonLabel.textContent = nextLabel;
   }
   syncFullscreenButtons();
