@@ -70,6 +70,11 @@ is a second, separate reason for the debug-MSI rule already recorded below. The 
 still the exit gate: Classic manual selection, Streamlined selection, Instant failover, P2P
 consent/decline, external-player reject, debrid resolution, next episode, and back navigation.
 
+Desktop debug build: **published & packaged** via GitHub Actions [Run 33905579208](https://github.com/Zokaper/NuvioZDesktop/actions/runs/33905579208).
+Release tag [`debug-v0.1.22-alpha-z1.41`](https://github.com/Zokaper/NuvioZDesktop/releases/tag/debug-v0.1.22-alpha-z1.41)
+carries verified packages for Windows x64 (`Nuvio-Z-Debug-Windows-x64-0.1.22-alpha-z1.41.msi`) and Apple Silicon macOS
+(`Nuvio-Z-Debug-macOS-arm64-0.1.22-alpha-z1.41.dmg`). Installed locally for watched testing.
+
 ## Phase 1 Upstream Sync: 0.1.22-alpha-z1 (2026-09-04)
 
 Completed Phase 1 upstream sync from `0.1.20-alpha` (`b32dd57b`) to upstream tag
