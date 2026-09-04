@@ -79,6 +79,7 @@ import com.nuvio.app.features.player.sanitizePlaybackResponseHeaders
 import com.nuvio.app.features.streams.StreamBehaviorHints
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamLaunchStore
+import com.nuvio.app.features.streams.PartyStreamLaunchPurpose
 import com.nuvio.app.features.streams.StreamsRepository
 import com.nuvio.app.features.streams.StreamsScreen
 import com.nuvio.app.features.updater.formatFileSize
@@ -127,7 +128,9 @@ internal fun StreamDestination(
     }
     val pauseDescription = launch.pauseDescription
     val streamRouteScope = rememberCoroutineScope()
-    var resolvingDebridStream by rememberSaveable(route.launchId) { mutableStateOf(false) }
+    // In-flight coroutine state cannot survive process restoration. Restoring `true` would leave
+    // the route permanently refusing every future resolve after Android killed it mid-request.
+    var resolvingDebridStream by remember(route.launchId) { mutableStateOf(false) }
     var pendingP2pStreamOpen by remember { mutableStateOf<PendingP2pStreamOpen?>(null) }
     var pendingUncachedStream by remember { mutableStateOf<StreamItem?>(null) }
     var qualitySheetDismissed by rememberSaveable(route.launchId) { mutableStateOf(false) }
@@ -402,6 +405,7 @@ internal fun StreamDestination(
                 popUpTo<StreamRoute> { inclusive = true }
             }
         }
+        if (replaceStreamRoute) StreamsRepository.consumeAutoPlay()
     }
 
     fun requestOrOpenP2pStream(
@@ -571,11 +575,6 @@ internal fun StreamDestination(
     // that announces a skipped sheet is not composable. Built from the same
     // function the sheet's own rows use, so the toast quotes the user's words
     // for the row they picked rather than a second description of it.
-    val playbackQualityOptionLabels: Map<String, String> = buildMap {
-        playbackQualityOptions.forEach { option ->
-            put(option.id, playbackQualityOptionLabel(option))
-        }
-    }
     // Keep the route decision across player hand-off and retry.
     var playbackRouteDecision by rememberSaveable(
         route.launchId,
@@ -590,6 +589,8 @@ internal fun StreamDestination(
         hasResolvedVideoId,
         playerSettings.playbackMode,
         launch.manualSelection,
+        launch.downloadIntent,
+        launch.partyContext,
     ) {
         if (!hasResolvedVideoId) return@LaunchedEffect
         if (routeDecisionHandled) return@LaunchedEffect
@@ -597,9 +598,12 @@ internal fun StreamDestination(
         playbackRouteDecision = PlaybackModeRouter.decide(
             PlaybackRouteInputs(
                 mode = playerSettings.playbackMode,
-                manualSelection = launch.manualSelection,
+                manualSelection = launch.manualSelection || launch.downloadIntent,
                 // Completed downloads are consumed before StreamRoute is created.
                 hasCompletedLocalDownload = false,
+                isPartyResolvePlayback = launch.partyContext?.purpose ==
+                    PartyStreamLaunchPurpose.RESOLVE_PLAYBACK &&
+                    launch.partyContext.targetFingerprint != null,
             ),
         )
     }
@@ -805,7 +809,6 @@ internal fun StreamDestination(
                 forceInternal = true,
                 isAutoPlay = true,
             )
-            StreamsRepository.consumeAutoPlay()
             return@LaunchedEffect
         }
         if (sourceUrl == null) {
@@ -886,7 +889,23 @@ internal fun StreamDestination(
         autoPickFailure = null
         if (playerSettings.externalPlayerEnabled) {
             playbackHandedOff = true
-            openExternalPlayback(playerLaunch)
+            val opened = openExternalPlayback(playerLaunch)
+            if (!opened) {
+                playbackHandedOff = false
+                if (hasFailureChain && StreamsRepository.skipAutoPlayStream(stream)) {
+                    autoPickAttempt += 1
+                    noteSourceFailure(stream, "External player did not accept the source")
+                } else if (hasFailureChain) {
+                    giveUpToSourceList(
+                        reason = "External player did not accept the source",
+                        path = "external_player_chain_spent",
+                    )
+                } else {
+                    StreamsRepository.consumeAutoPlay()
+                }
+                StreamsRepository.cancelLoading()
+                return@LaunchedEffect
+            }
             if (!hasFailureChain) StreamsRepository.consumeAutoPlay()
             StreamsRepository.cancelLoading()
             return@LaunchedEffect
@@ -1009,7 +1028,9 @@ internal fun StreamDestination(
         if (!forceInternal && (forceExternal || playerSettings.externalPlayerEnabled)) {
             streamRouteScope.launch {
                 playbackHandedOff = true
-                openExternalPlayback(playerLaunch)
+                if (!openExternalPlayback(playerLaunch)) {
+                    playbackHandedOff = false
+                }
                 StreamsRepository.cancelLoading()
             }
             return

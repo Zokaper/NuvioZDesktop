@@ -6,12 +6,14 @@ Last updated: 2026-09-04
 > 34 sections, kept whole and in order. This file is the live handoff only: the
 > state table above, the work since the last release, and what is still open below.
 
-## Phase 2 Playback: in progress (2026-09-04)
+## Phase 2 Playback: implementation complete, watched exit gate open (2026-09-04)
 
 Branch `claude/phase-2-playback`, cut from the Phase 1 sync branch - **not** from trunk, which is
 362 commits behind. Full handoff: `../HANDOFF-phase-2-playback.md`.
 
-**Stages 0-3 done, both repos. Stage 4 (P7), 5 (review + watched run) and 6 (docs) open.**
+**Stages 0-4 and 6 are complete in both repos.** The code review and automated verification pass
+are complete. Stage 5's installed playback matrix remains the release exit gate; Compose Hot
+Reload cannot exercise the native player bridge on this machine.
 
 ### The finding that matters most
 
@@ -44,17 +46,29 @@ conflict list and the deletion sweep.** Grep the callers of anything the dissolu
 - **Content-identity gate**, auto modes only, a partition rather than a filter.
 - **All 13 ways into the source list named and logged**, with `hasSilentUncover` making a
   reasonless uncover a failing test.
+- **The route audit is closed**: download launches cannot enter auto playback, P2P consent no
+  longer destroys an untried failure chain, rejected external-player launches advance or uncover
+  honestly, and process restoration cannot preserve a phantom in-flight debrid resolve.
+- **Desktop party resolution now outranks local downloads**, so joining a host session resolves
+  the host fingerprint rather than silently playing a different on-device file.
+- **P7 automatic source-swap was deleted**, including its setting/storage/sync key, detector,
+  candidates, forced-swap HUD controls and swap log. It had been held since `0.4.9`, had never run
+  on a device, and Phase 2 confirmed that null direct URLs discarded every unresolved alternative.
+  Passive network measurement and manual in-player source switching remain.
 
 ### Verified, and not
 
-Suites green: pure 388 desktop / 337 mobile, Android host 1,339, zero failures.
-`:composeApp:desktopTest` **not yet run this phase**.
+Suites green: pure 389 desktop / 337 mobile; Android host 1,312; desktop 1,518. All runs have zero
+failures, errors or skips. Desktop compiled the native bridge and real desktop source set; its one
+reported configuration-cache problem is the existing non-serializable bridge `Exec` task, and
+Gradle discarded that cache entry after the successful run.
 
 ⚠ **Nothing here has been exercised against real playback.** Hot reload cannot reach a first
 frame on this machine - the native bridge fails to attach (`java.desktop does not "opens
 java.awt"`), so the player route opens to an empty surface that looks exactly like a hang. That
-is a second, separate reason for the debug-MSI rule already recorded below. The watched run is
-the exit gate and it has not happened.
+is a second, separate reason for the debug-MSI rule already recorded below. The watched matrix is
+still the exit gate: Classic manual selection, Streamlined selection, Instant failover, P2P
+consent/decline, external-player reject, debrid resolution, next episode, and back navigation.
 
 ## Phase 1 Upstream Sync: 0.1.22-alpha-z1 (2026-09-04)
 

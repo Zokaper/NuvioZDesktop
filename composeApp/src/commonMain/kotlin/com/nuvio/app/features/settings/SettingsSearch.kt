@@ -669,14 +669,6 @@ internal fun settingsSearchEntries(
             )
             add(
                 PlaybackSearchRow(
-                    "playback-auto-downshift",
-                    stringResource(Res.string.settings_playback_auto_downshift),
-                    stringResource(Res.string.settings_playback_auto_downshift_description),
-                    sectionOverride = playbackSourcePreferences,
-                ),
-            )
-            add(
-                PlaybackSearchRow(
                     "audio-preference",
                     stringResource(Res.string.settings_playback_audio_preference),
                     stringResource(Res.string.settings_playback_audio_preference_description),

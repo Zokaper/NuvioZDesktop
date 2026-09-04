@@ -17,7 +17,6 @@ import com.nuvio.app.features.p2p.P2pStreamRequest
 import com.nuvio.app.features.p2p.P2pStreamingEngine
 import com.nuvio.app.features.p2p.P2pStreamingState
 import com.nuvio.app.core.network.NetworkThroughputMeter
-import com.nuvio.app.features.playback.AutoDownshiftDetector
 import com.nuvio.app.features.playback.PlaybackAttemptLog
 import com.nuvio.app.features.playback.PlaybackPosition
 import com.nuvio.app.features.playback.PlaybackStartupWatchdog
@@ -324,14 +323,9 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         }
     }
 
-    // A new source - whether the user picked it or a downshift did - starts its own settle
-    // window. Without this, a position-preserving switch inherits the previous source's
-    // "already settled" state and its perfectly normal startup buffering reads as
-    // starvation. The swap budget deliberately does *not* reset here.
+    // A different file starts fresh passive network measurements.
     LaunchedEffect(activeSourceUrl) {
-        autoDownshiftState = AutoDownshiftDetector.initial(autoDownshiftState.swapsUsed)
-        autoDownshiftClock = TimeSource.Monotonic.markNow()
-        autoDownshiftSourcesRequested = false
+        playbackObservationClock = TimeSource.Monotonic.markNow()
         // A different file is a different bitrate, so the measurement starts over.
         networkEstimateStartPositionMs = null
         networkEstimateStalled = false
@@ -344,7 +338,6 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
     // on the source URL, because re-minting changes the URL and would otherwise refund the
     // budget it just spent.
     LaunchedEffect(activeVideoId) {
-        autoDownshiftState = AutoDownshiftDetector.initial()
         credentialRefreshesUsed = 0
         credentialRefreshAttemptedSourceUrl = null
     }
@@ -695,15 +688,17 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
                     malId = lookup.malId,
                     episode = lookup.episode,
                     imdbId = imdbFromContent,
-                    imdbSeason = activeSeasonNumber,
-                    imdbEpisode = activeEpisodeNumber ?: lookup.episode,
+                    // MAL/Kitsu episodes are absolute. Let the repository map them through TVDB
+                    // before querying IMDb rather than short-circuiting with display S/E values.
+                    imdbSeason = null,
+                    imdbEpisode = null,
                 )
                 is SkipIntervalLookup.Kitsu -> SkipIntroRepository.getSkipIntervalsForKitsu(
                     kitsuId = lookup.kitsuId,
                     episode = lookup.episode,
                     imdbId = imdbFromContent,
-                    imdbSeason = activeSeasonNumber,
-                    imdbEpisode = activeEpisodeNumber ?: lookup.episode,
+                    imdbSeason = null,
+                    imdbEpisode = null,
                 )
             }
             skipIntervals = intervals
@@ -754,11 +749,9 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
                 intervalKey !in autoSkippedIntervalKeys
             ) {
                 val seekPositionMs = (current.endTime * 1000).toLong()
-                if (!controller.trySeekTo(seekPositionMs)) return@LaunchedEffect
-                autoSkippedIntervalKeys.add(intervalKey)
-                scheduleProgressSyncAfterSeek()
-                skipIntervalDismissed = true
-                playerNotificationMessage = getString(
+                // Resource lookup can suspend. Resolve it before seeking, because the seek changes
+                // positionMs and cancels this keyed effect before post-seek work can run.
+                val notification = getString(
                     when (segmentType) {
                         AutoSkipSegmentType.INTRO -> Res.string.player_auto_skip_intro_notification
                         AutoSkipSegmentType.RECAP -> Res.string.player_auto_skip_recap_notification
@@ -766,6 +759,11 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
                     },
                     formatPlaybackTime(seekPositionMs),
                 )
+                if (!controller.trySeekTo(seekPositionMs)) return@LaunchedEffect
+                autoSkippedIntervalKeys.add(intervalKey)
+                scheduleProgressSyncAfterSeek()
+                skipIntervalDismissed = true
+                playerNotificationMessage = notification
                 playerNotificationToken += 1L
             }
         }

@@ -70,7 +70,6 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
-import com.nuvio.app.features.playback.SwapDiagnosticsLog
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import com.nuvio.app.features.playback.PlaybackLoadingState
@@ -615,19 +614,6 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                         if (snapshot.isPlaying) {
                             completeNextEpisodeTransitionIfStarted()
                         }
-                        // A swap is only over when the replacement actually renders. This is
-                        // the measurement that decides whether automatic quality switching is
-                        // worth its interruption; nothing else in the app times it.
-                        swapStartedAt?.takeIf {
-                            snapshot.isPlaying && playerSurfaceSourceUrl ==
-                                (if (activeTorrentInfoHash != null) p2pResolvedSourceUrl else activeSourceUrl)
-                        }?.let { startedAt ->
-                            SwapDiagnosticsLog.completePending(
-                                startedAt.elapsedNow().inWholeMilliseconds,
-                                positionMsAfter = snapshot.positionMs,
-                            )
-                            swapStartedAt = null
-                        }
                     }
                     if (snapshot.isEnded) {
                         shouldPlay = false
@@ -635,7 +621,6 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                     }
                     observePlaybackForNetworkEstimate()
                     observePlaybackForThroughput()
-                    observePlaybackForAutoDownshift()
                 },
                 onError = { message ->
                     if (message != null && tryRefreshCredentialedSourceAfterError(message)) {
