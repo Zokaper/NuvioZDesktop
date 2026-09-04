@@ -71,6 +71,9 @@ import kotlin.math.roundToInt
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
 import com.nuvio.app.features.playback.SwapDiagnosticsLog
+import com.nuvio.app.features.playback.PlaybackLoadingState
+import com.nuvio.app.features.playback.PlaybackProgressStep
+import com.nuvio.app.features.updater.formatFileSize
 
 private val playerControlsLog = Logger.withTag("PlayerControls")
 
@@ -1830,6 +1833,15 @@ private fun BoxScope.RenderPlaybackOverlays(
             },
             errorMessage = errorMessage,
             onDismissError = { requestBack() },
+            // The route's own state, carried through `PlayerScreenArgs` rather than rebuilt:
+            // the band must say the same thing on both sides of the hand-off, and a second
+            // derivation here is a second thing to drift.
+            loadingState = PlaybackLoadingState(
+                step = PlaybackProgressStep.StartingPlayback,
+                attempt = args.playbackAttempt,
+                facts = args.sourceFacts,
+            ),
+            formatSize = ::formatFileSize,
         )
     }
 }
