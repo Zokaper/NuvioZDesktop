@@ -1,10 +1,44 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-03
+Last updated: 2026-09-04
 
 > **The history moved.** Everything before 2026-08-24 is in [`STATUS-ARCHIVE.md`](STATUS-ARCHIVE.md) -
 > 34 sections, kept whole and in order. This file is the live handoff only: the
 > state table above, the work since the last release, and what is still open below.
+
+## Phase 1 Upstream Sync: 0.1.22-alpha-z1 (2026-09-04)
+
+Completed Phase 1 upstream sync from `0.1.20-alpha` (`b32dd57b`) to upstream tag
+`refs/tags/upstream/0.1.22-alpha` (`5aca4f3f829a7a9ee259ce4c97631c9ff0b18a1c`), following the
+merge-never-rebase doctrine.
+
+### The merge and conflict resolutions
+
+- **Conflict volume**: 357 commits behind upstream, 65-file conflict surface, 39 files in conflict.
+  All 39 conflicts resolved and recorded in `rerere`.
+- **App.kt dissolution**: Upstream dissolved `App.kt` from 4,533 lines to 108 lines. Ported Z logic
+  into upstream's modular architecture:
+  - `MainAppContent.kt`: Navigation shell, root tab switching, stream launcher with download preferences
+    and `runtimeMinutes`, `onWhatsNewClick`, `onRunSetupAgainClick`, and 7-tab title dispatch.
+  - `StreamDestination.kt`: Playback resolution pipeline, fallback routing, Watch Together lobby and
+    session transitions.
+  - `AppGate.kt`, `AppShellComponents.kt`, `MainTabsDestination.kt`: Root tabs, Social and Downloads
+    navigation, and profile switcher hooks.
+- **Native player & HTML controls**: Preserved Z modifications in `player_bridge.mm`, `player_bridge.cpp`,
+  `NativePlayerBridge.kt`, `NativePlayerController.kt`, and the HTML controls card (`controls.html`,
+  `controls.js`, `controls.css`).
+- **Silent deletions restored**: Restored `AddonSubtitleStartupPolicy.kt`, its unit test,
+  `AddonSubtitleStartupMode` enum, storage keys, and `PlayerScreenRuntimeEffects.kt` hook.
+- **Toolchain**: Updated `scripts/run-pure-suites.sh` to Kotlin 2.4.10, dynamic serialization-plugin
+  versioning, and Git Bash/JBR path normalization.
+- **Version adoption**: Adopted `0.1.22-alpha-z1` with `RELEASE_SERIAL=127` in
+  `composeApp/Configuration/DesktopReleaseSerial.properties` and `DesktopVersion.properties`.
+
+### Verified
+
+- Pure suites: **336 tests OK** across all 6 groups (126 + 64 + 49 + 17 + 29 + 51).
+- Desktop test suite: `:composeApp:desktopTest` **passed** (`BUILD SUCCESSFUL in 14m 39s`).
+- Upstream drift: 0 behind tag `0.1.22-alpha`, conflict surface reduced from 65 to 0.
 
 ## Watch Together: the host picks, then the host starts (2026-09-03)
 
