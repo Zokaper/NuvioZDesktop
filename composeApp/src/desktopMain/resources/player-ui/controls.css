@@ -244,6 +244,7 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   opacity: 0;
   transform: translate3d(-50%, -12px, 0) scale(.98);
   pointer-events: none;
@@ -253,6 +254,17 @@ button:disabled {
     opacity 260ms var(--ease-out),
     transform 280ms var(--ease-out);
   will-change: opacity, transform;
+}
+
+.player-toast-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  fill: currentColor;
+}
+
+.player-toast-icon[hidden] {
+  display: none !important;
 }
 
 .player-toast-text {
@@ -933,6 +945,51 @@ button:disabled {
   color: var(--theme-control-foreground);
 }
 
+@media (min-width: 768px) {
+  .next-episode-card {
+    width: min(clamp(380px, 30vw, 460px), calc(100vw - (var(--hp) * 2)));
+    padding: clamp(11px, .8vw, 14px);
+    border-radius: 18px;
+  }
+
+  .next-episode-thumb {
+    width: clamp(108px, 8vw, 132px);
+    height: auto;
+    aspect-ratio: 16 / 9;
+    border-radius: 11px;
+  }
+
+  .next-episode-copy {
+    padding-left: clamp(11px, .8vw, 14px);
+  }
+
+  .next-episode-header {
+    font-size: clamp(12px, .85vw, 14px);
+  }
+
+  .next-episode-title {
+    margin-top: 3px;
+    font-size: clamp(15px, 1vw, 17px);
+  }
+
+  .next-episode-status {
+    margin-top: 3px;
+    font-size: clamp(12px, .85vw, 14px);
+  }
+
+  .next-episode-action {
+    gap: 4px;
+    margin-left: 8px;
+    padding: 7px 11px;
+    font-size: clamp(13px, .9vw, 15px);
+  }
+
+  .next-episode-action svg {
+    width: 17px;
+    height: 17px;
+  }
+}
+
 .header-actions {
   display: flex;
   gap: 10px;
@@ -1588,7 +1645,7 @@ button:disabled {
 }
 
 .volume-control {
-  --volume: 100%;
+  --volume-position: 50%;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1600,6 +1657,37 @@ button:disabled {
   height: 30px;
   flex: 0 0 auto;
   filter: drop-shadow(0 2px 10px rgba(0, 0, 0, .65));
+}
+
+.volume-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  padding-right: 2px;
+  border: none;
+  background: transparent;
+  width: 42px;
+  height: 42px;
+  margin: -6px;
+  border-radius: 999px;
+  color: var(--theme-control-foreground);
+  transform-origin: center;
+  transform: translateZ(0);
+  transition:
+    transform var(--motion-fast) var(--ease-out),
+    background-color var(--motion-standard) ease;
+  will-change: transform;
+}
+
+.volume-button:hover {
+  background: var(--theme-selected-surface-hover);
+  transform: translateZ(0) scale(1.04);
+}
+
+.volume-button:active,
+.volume-button.is-pressed {
+  transform: scale(.94);
 }
 
 .volume-slider {
@@ -1618,8 +1706,17 @@ button:disabled {
   background:
     linear-gradient(
       to right,
-      var(--theme-accent) 0 var(--volume),
-      rgba(255, 255, 255, .26) var(--volume) 100%
+      transparent 0 50%,
+      rgba(224, 189, 85, 0) 50%,
+      rgba(224, 189, 85, .18) 60%,
+      rgba(224, 189, 85, .46) 70%,
+      rgba(255, 173, 50, .78) 84%,
+      #ff4d4d 100%
+    ),
+    linear-gradient(
+      to right,
+      var(--theme-accent) 0 var(--volume-position),
+      rgba(255, 255, 255, .26) var(--volume-position) 100%
     );
 }
 
@@ -1630,7 +1727,7 @@ button:disabled {
   margin-top: -8px;
   border: 0;
   border-radius: 999px;
-  background: var(--theme-accent);
+  background: #fff;
   box-shadow: none;
 }
 
@@ -1714,6 +1811,12 @@ button:disabled {
   .volume-control svg {
     width: 34px;
     height: 34px;
+  }
+
+  .volume-button {
+    width: 48px;
+    height: 48px;
+    margin: -7px;
   }
 
   .volume-slider {
@@ -3349,4 +3452,5 @@ svg {
   display: block;
   fill: currentColor;
   stroke: none;
+  pointer-events: none;
 }

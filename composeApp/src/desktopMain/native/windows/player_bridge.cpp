@@ -66,6 +66,7 @@ constexpr UINT_PTR NUVIO_TIMER_ID = 0x4E50;
 // thread is wedged; shutdown gives up rather than blocking the caller forever.
 constexpr UINT kUiTaskTimeoutMs = 2000;
 constexpr UINT kShutdownJoinTimeoutMs = 3000;
+constexpr double kMaxVolumePercent = 200.0;
 
 const wchar_t *kMessageWindowClass = L"NuvioPlayerBridgeMessageWindow";
 const wchar_t *kContainerWindowClass = L"NuvioPlayerBridgeContainerWindow";
@@ -1051,19 +1052,19 @@ public:
         if (!mpv) return;
         double current = 100.0;
         mpvApi().getProperty(mpv, "volume", MPV_FORMAT_DOUBLE, &current);
-        double next = std::max(0.0, std::min(100.0, current + delta));
+        double next = std::max(0.0, std::min(kMaxVolumePercent, current + delta));
         mpvApi().setProperty(mpv, "volume", MPV_FORMAT_DOUBLE, &next);
     }
 
     void setVolume(double level) {
         std::lock_guard<std::mutex> lock(mpvMutex);
         if (!mpv) return;
-        double next = std::max(0.0, std::min(100.0, level * 100.0));
+        double next = std::max(0.0, std::min(kMaxVolumePercent, level * 100.0));
         mpvApi().setProperty(mpv, "volume", MPV_FORMAT_DOUBLE, &next);
     }
 
     double volume() {
-        return std::max(0.0, std::min(100.0, doubleProperty("volume", 100.0))) / 100.0;
+        return std::max(0.0, std::min(kMaxVolumePercent, doubleProperty("volume", 100.0))) / 100.0;
     }
 
     void setResizeMode(int mode) {
@@ -1252,7 +1253,8 @@ public:
         bool bold,
         double fontSize,
         int subPos,
-        bool useLibass
+        bool useLibass,
+        bool stripSdh
     ) {
         double size = std::max(18.0, std::min(96.0, fontSize));
         int64_t position = std::max(0, std::min(150, subPos));
@@ -1272,6 +1274,7 @@ public:
         bool outlineColorChanged =
             !hasAppliedSubtitleStyle || appliedSubtitleOutlineColor != resolvedOutlineColor;
         bool outlineSizeChanged = !hasAppliedSubtitleStyle || appliedSubtitleOutlineSize != outline;
+        bool stripSdhChanged = !hasAppliedSubtitleStyle || appliedSubtitleStripSdh != stripSdh;
 
         if (modeChanged) {
             setStringProperty("sub-ass-override", useLibass ? "scale" : "force");
@@ -1323,6 +1326,10 @@ public:
                 mpvApi().setProperty(mpv, "sub-outline-size", MPV_FORMAT_DOUBLE, &outline);
             }
         }
+        if (stripSdhChanged) {
+            setStringProperty("sub-filter-sdh", stripSdh ? "yes" : "no");
+            setStringProperty("sub-filter-sdh-harder", stripSdh ? "yes" : "no");
+        }
 
         hasAppliedSubtitleStyle = true;
         appliedSubtitleUseLibass = useLibass;
@@ -1333,6 +1340,7 @@ public:
         appliedSubtitleBold = bold;
         appliedSubtitleFontSize = size;
         appliedSubtitlePosition = position;
+        appliedSubtitleStripSdh = stripSdh;
     }
 
 private:
@@ -1368,6 +1376,7 @@ private:
     bool appliedSubtitleBold = false;
     double appliedSubtitleFontSize = 0.0;
     int64_t appliedSubtitlePosition = 0;
+    bool appliedSubtitleStripSdh = false;
 
     JavaVM *javaVm = nullptr;
     jobject eventSink = nullptr;
@@ -1687,6 +1696,7 @@ private:
             setMpvOptionStringLocked("input-default-bindings", "yes");
             setMpvOptionStringLocked("input-vo-keyboard", "no");
             setMpvOptionStringLocked("keep-open", "yes");
+            setMpvOptionStringLocked("volume-max", "200");
             setMpvOptionStringLocked("vo", "gpu-next");
             if (nvidiaRtxSuperResolutionEnabled) {
                 setMpvOptionStringLocked("gpu-api", "d3d11");
@@ -1825,6 +1835,7 @@ private:
         if (!webView) return;
         double duration = doubleProperty("duration", 0.0);
         double position = doubleProperty("time-pos", 0.0);
+        double volumeLevel = volume();
         bool paused = isPaused();
         bool loading = isLoading();
         std::string audioTracks = audioTracksJson();
@@ -1833,6 +1844,7 @@ private:
         std::ostringstream script;
         script << "window.playerUpdate({duration:" << duration
                << ",position:" << position
+               << ",volumeLevel:" << volumeLevel
                << ",paused:" << (paused ? "true" : "false")
                << ",loading:" << (loading ? "true" : "false")
                << ",audioTracks:" << audioTracks
@@ -2623,7 +2635,8 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_applySubtitleStyle
     jboolean bold,
     jfloat fontSize,
     jint subPos,
-    jboolean useLibass
+    jboolean useLibass,
+    jboolean stripSdh
 ) {
     auto player = playerFromHandle(handle);
     if (!player) return;
@@ -2635,6 +2648,7 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_applySubtitleStyle
         bold == JNI_TRUE,
         fontSize,
         subPos,
-        useLibass == JNI_TRUE
+        useLibass == JNI_TRUE,
+        stripSdh == JNI_TRUE
     );
 }

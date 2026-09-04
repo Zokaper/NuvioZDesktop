@@ -2128,25 +2128,22 @@ internal fun AddonSubtitleStartupModeDialog(
                     color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.SemiBold,
                 )
-
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     options.forEach { (mode, titleRes, descriptionRes) ->
                         val isSelected = mode == selectedMode
-                        val containerColor = if (isSelected) {
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-                        } else {
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-                        }
-
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { onModeSelected(mode) },
                             shape = RoundedCornerShape(12.dp),
-                            color = containerColor,
+                            color = if (isSelected) {
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                            },
                         ) {
                             Row(
                                 modifier = Modifier
@@ -2187,6 +2184,7 @@ internal fun AddonSubtitleStartupModeDialog(
         }
     }
 }
+
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)

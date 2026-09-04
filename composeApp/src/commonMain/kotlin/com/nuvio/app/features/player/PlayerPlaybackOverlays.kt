@@ -68,6 +68,7 @@ internal fun BoxScope.PlayerPlaybackOverlays(
     nextEpisodeStarting: Boolean,
     nextEpisodeActionEnabled: Boolean,
     nextEpisodeShowDismiss: Boolean,
+    blurUnwatchedEpisodes: Boolean,
     onPlayNextEpisode: () -> Unit,
     onDismissNextEpisode: () -> Unit,
     errorMessage: String?,
@@ -181,6 +182,7 @@ internal fun BoxScope.PlayerPlaybackOverlays(
             isStarting = nextEpisodeStarting,
             actionEnabled = nextEpisodeActionEnabled,
             showDismiss = nextEpisodeShowDismiss,
+            blurred = blurUnwatchedEpisodes && nextEpisodeInfo?.isWatched == false,
             onPlayNext = onPlayNextEpisode,
             onDismiss = onDismissNextEpisode,
             modifier = Modifier

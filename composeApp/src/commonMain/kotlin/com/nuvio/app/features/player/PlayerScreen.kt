@@ -6,7 +6,7 @@ import com.nuvio.app.features.watchparty.PartyContent
 import com.nuvio.app.features.watchparty.SourceFingerprint
 
 @Composable
-fun PlayerScreen(
+internal fun PlayerScreen(
     profileId: Int,
     title: String,
     sourceUrl: String,
@@ -20,7 +20,8 @@ fun PlayerScreen(
     streamSubtitle: String?,
     initialBingeGroup: String? = null,
     pauseDescription: String? = null,
-    onBack: () -> Unit,
+    onBack: PlayerBackRequest,
+    onSystemBackHandlerChanged: (handler: (() -> Unit)?) -> Unit = {},
     onOpenInExternalPlayer: ((ExternalPlayerPlaybackRequest) -> Unit)? = null,
     onOpenExternalUrl: ((String) -> Unit)? = null,
     onFatalPlaybackError: (() -> Unit)? = null,
@@ -63,6 +64,7 @@ fun PlayerScreen(
             initialBingeGroup = initialBingeGroup,
             pauseDescription = pauseDescription,
             onBack = onBack,
+            onSystemBackHandlerChanged = onSystemBackHandlerChanged,
             onOpenInExternalPlayer = onOpenInExternalPlayer,
             onOpenExternalUrl = onOpenExternalUrl,
             onFatalPlaybackError = onFatalPlaybackError,

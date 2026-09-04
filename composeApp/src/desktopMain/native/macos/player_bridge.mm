@@ -42,6 +42,8 @@
 #define NX_KEYTYPE_REWIND 20
 #endif
 
+static constexpr double kMaxVolumePercent = 200.0;
+
 @class PlayerMetalView;
 @class MpvWebPlayer;
 @class NuvioPlayerOpenGLLayer;
@@ -126,7 +128,8 @@
                                     bold:(BOOL)bold
                                 fontSize:(double)fontSize
                                   subPos:(int)subPos
-                               useLibass:(BOOL)useLibass;
+                               useLibass:(BOOL)useLibass
+                                stripSdh:(BOOL)stripSdh;
 - (void)handleScriptMessage:(NSDictionary *)message;
 - (void)focusControlsWebViewIfNeeded;
 - (void)layoutNativeSubviews;
@@ -1065,6 +1068,7 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     BOOL _appliedSubtitleBold;
     double _appliedSubtitleFontSize;
     int64_t _appliedSubtitlePosition;
+    BOOL _appliedSubtitleStripSdh;
 }
 
 - (instancetype)initWithHostView:(NSView *)hostView
@@ -1428,6 +1432,7 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     setMpvOptionString(_mpv, "input-default-bindings", "yes");
     setMpvOptionString(_mpv, "input-vo-keyboard", "no");
     setMpvOptionString(_mpv, "keep-open", "yes");
+    setMpvOptionString(_mpv, "volume-max", "200");
     setMpvOptionString(_mpv, "vo", "libmpv");
     setMpvOptionString(_mpv, "ao", "avfoundation,coreaudio,");
     setMpvOptionString(_mpv, "audio-channels", "auto");
@@ -1518,6 +1523,7 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
 
             double duration = [self doubleProperty:"duration" fallback:0.0];
             double position = [self doubleProperty:"time-pos" fallback:0.0];
+            double volumeLevel = [self volume];
             double cacheAhead = [self cacheAheadSecondsForPosition:position];
             BOOL paused = [self rawIsPaused];
             BOOL ended = [self rawIsEnded];
@@ -1542,9 +1548,10 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
                 }
                 [self applyHdrForPolledGamma:gamma primaries:primaries reason:@"sync" force:NO];
                 NSString *script = [NSString stringWithFormat:
-                    @"window.playerUpdate({duration:%0.3f,position:%0.3f,paused:%@,loading:%@,audioTracks:%@,subtitleTracks:%@})",
+                    @"window.playerUpdate({duration:%0.3f,position:%0.3f,volumeLevel:%0.3f,paused:%@,loading:%@,audioTracks:%@,subtitleTracks:%@})",
                     duration,
                     position,
+                    volumeLevel,
                     paused ? @"true" : @"false",
                     loading ? @"true" : @"false",
                     audioTracks,
@@ -1855,18 +1862,19 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
 - (void)adjustVolume:(double)delta {
     if (!_mpv) return;
     double current = [self doubleProperty:"volume" fallback:100.0];
-    double next = fmax(0.0, fmin(100.0, current + delta));
+    double next = fmax(0.0, fmin(kMaxVolumePercent, current + delta));
     mpv_set_property(_mpv, "volume", MPV_FORMAT_DOUBLE, &next);
 }
 
 - (void)setVolume:(double)level {
     if (!_mpv) return;
-    double next = fmax(0.0, fmin(100.0, level * 100.0));
+    double next = fmax(0.0, fmin(kMaxVolumePercent, level * 100.0));
     mpv_set_property(_mpv, "volume", MPV_FORMAT_DOUBLE, &next);
 }
 
 - (double)volume {
-    return [self doubleProperty:"volume" fallback:100.0] / 100.0;
+    double level = [self doubleProperty:"volume" fallback:100.0];
+    return fmax(0.0, fmin(kMaxVolumePercent, level)) / 100.0;
 }
 
 - (void)setResizeMode:(int)mode {
@@ -2090,7 +2098,8 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
                                     bold:(BOOL)bold
                                 fontSize:(double)fontSize
                                   subPos:(int)subPos
-                               useLibass:(BOOL)useLibass {
+                               useLibass:(BOOL)useLibass
+                                stripSdh:(BOOL)stripSdh {
     if (!_mpv) return;
     double size = MAX(18.0, MIN(96.0, fontSize));
     double scale = useLibass ? size / 54.0 : 1.0;
@@ -2110,6 +2119,7 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     BOOL outlineColorChanged =
         !_hasAppliedSubtitleStyle || ![_appliedSubtitleOutlineColor isEqualToString:resolvedOutlineColor];
     BOOL outlineSizeChanged = !_hasAppliedSubtitleStyle || _appliedSubtitleOutlineSize != outline;
+    BOOL stripSdhChanged = !_hasAppliedSubtitleStyle || _appliedSubtitleStripSdh != stripSdh;
 
     if (modeChanged) {
         [self setStringProperty:"sub-ass-override" value:useLibass ? @"scale" : @"force"];
@@ -2151,6 +2161,10 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
             mpv_set_property(_mpv, "sub-outline-size", MPV_FORMAT_DOUBLE, &outline);
         }
     }
+    if (stripSdhChanged) {
+        [self setStringProperty:"sub-filter-sdh" value:stripSdh ? @"yes" : @"no"];
+        [self setStringProperty:"sub-filter-sdh-harder" value:stripSdh ? @"yes" : @"no"];
+    }
 
     _hasAppliedSubtitleStyle = YES;
     _appliedSubtitleUseLibass = useLibass;
@@ -2161,6 +2175,7 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     _appliedSubtitleBold = bold;
     _appliedSubtitleFontSize = size;
     _appliedSubtitlePosition = position;
+    _appliedSubtitleStripSdh = stripSdh;
 }
 
 - (double)doubleProperty:(const char *)name fallback:(double)fallback {
@@ -3040,7 +3055,8 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_applySubtitleStyle
     jboolean bold,
     jfloat fontSize,
     jint subPos,
-    jboolean useLibass
+    jboolean useLibass,
+    jboolean stripSdh
 ) {
     if (handle == 0) return;
     std::string text = jstringToString(env, textColor);
@@ -3055,6 +3071,7 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_applySubtitleStyle
                                             bold:bold == JNI_TRUE
                                         fontSize:(double)fontSize
                                           subPos:(int)subPos
-                                       useLibass:useLibass == JNI_TRUE];
+                                       useLibass:useLibass == JNI_TRUE
+                                        stripSdh:stripSdh == JNI_TRUE];
     });
 }
