@@ -24,14 +24,38 @@ internal class NativePlayerHost : Canvas() {
     private var cursorVisible = true
 
     private companion object {
+        /** `NuvioColors.background`, `Color(0xFF0D0D0D)`. Kept in sync by hand; there is no
+         *  Compose on this side of the boundary to read the token from. */
+        val DEFAULT_SURFACE_BACKGROUND: Color = Color(0x0D, 0x0D, 0x0D)
+
         val hiddenCursor: Cursor by lazy {
             val image = BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB)
             Toolkit.getDefaultToolkit().createCustomCursor(image, Point(0, 0), "nuvio-hidden-cursor")
         }
     }
 
+    /**
+     * What this canvas fills with before the native player has a frame.
+     *
+     * ⚠ **Not black, and that is the point.** A heavyweight `Canvas` paints over all Compose
+     * content regardless of z-order, so the instant the `SwingPanel` is promoted to full size this
+     * fill *replaces* the loading screen the app was drawing - and while it was `Color.BLACK` that
+     * replacement was the black flash reported between choosing a source and the loading screen
+     * reappearing. Filled with the app's own background instead, the takeover is the same colour
+     * the screen it replaces is painted on, so there is nothing to see.
+     *
+     * Set from Compose so the AMOLED theme, whose background really is black, still matches.
+     */
+    @Volatile
+    var surfaceBackground: Color = DEFAULT_SURFACE_BACKGROUND
+        set(value) {
+            field = value
+            background = value
+            repaint()
+        }
+
     init {
-        background = Color.BLACK
+        background = surfaceBackground
         ignoreRepaint = false
         addMouseMotionListener(object : MouseMotionAdapter() {
             override fun mouseMoved(event: MouseEvent) {
@@ -98,7 +122,7 @@ internal class NativePlayerHost : Canvas() {
     }
 
     override fun paint(graphics: Graphics) {
-        graphics.color = Color.BLACK
+        graphics.color = surfaceBackground
         graphics.fillRect(0, 0, width, height)
         notifyFirstPaints()
     }

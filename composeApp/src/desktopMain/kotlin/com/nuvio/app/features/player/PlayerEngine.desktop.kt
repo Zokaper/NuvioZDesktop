@@ -20,8 +20,10 @@ import androidx.compose.ui.awt.SwingPanel
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.ui.LocalNuvioPlatformDensity
 import com.nuvio.app.features.player.desktop.DesktopHostOs
 import com.nuvio.app.features.player.desktop.NativePlayerController
@@ -237,10 +239,23 @@ private fun NativePlayerSurface(
         }
     }
 
+    // ⚠ **The player's ground is the app's background, not black.**
+    //
+    // The loading surface `PlaybackLoadingHost` draws is painted on `nuvio.colors.background`, and
+    // this root used to be `Color.Black` - so pushing `PlayerRoute` faded a *black* screen in
+    // under a screen that was `#0D0D0D`, and the dip between them is the black frame reported
+    // between choosing a source and the loading screen appearing. The `SwingPanel` and the AWT
+    // canvas behind it are given the same colour for the same reason: a heavyweight component
+    // paints over all Compose content the instant it is promoted to full size, so whatever it
+    // fills with *is* the hand-over.
+    val surfaceGround = MaterialTheme.nuvio.colors.background
+    LaunchedEffect(host, surfaceGround) {
+        host.surfaceBackground = java.awt.Color(surfaceGround.toArgb(), true)
+    }
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(surfaceGround),
     ) {
         CompositionLocalProvider(LocalDensity provides platformDensity) {
             SwingPanel(
@@ -254,7 +269,7 @@ private fun NativePlayerSurface(
                         .align(Alignment.BottomEnd)
                         .requiredSize(1.dp)
                 },
-                background = Color.Black,
+                background = surfaceGround,
             )
         }
     }

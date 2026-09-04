@@ -1913,6 +1913,8 @@ const trackListSignature = tracks =>
     ].join(":"))
     .join("|");
 
+let openingPaintReported = false;
+
 const renderOpeningOverlay = suppress => {
   const progress = normalizedOpeningProgress();
   const artworkUrl = setImageSource(openingArtwork, state.openingArtwork);
@@ -1958,6 +1960,18 @@ const renderOpeningOverlay = suppress => {
   openingRelease.hidden = !releaseText;
   openingProgressTrack.classList.toggle("indeterminate", !hasProgress);
   openingProgressBar.style.width = `${(progress || 0) * 100}%`;
+
+  // ⚠ **The only measurement of the desktop hand-over gap.** Between the SwingPanel being
+  // promoted to full size and this page painting, the native canvas covers every Compose layer,
+  // so the loading surface the app draws is gone and this one has not arrived. Nothing logged
+  // that window, which is why "there is a black screen for a moment" could only ever be reported
+  // rather than diagnosed. Fires once per page load, after the browser has actually presented a
+  // frame - a `requestAnimationFrame` inside a `requestAnimationFrame` is the cheapest honest
+  // "painted", since the first callback still runs before the compositor has committed.
+  if (showOpening && !openingPaintReported) {
+    openingPaintReported = true;
+    requestAnimationFrame(() => requestAnimationFrame(() => send("didPaintOpening")));
+  }
 
   return showOpening;
 };

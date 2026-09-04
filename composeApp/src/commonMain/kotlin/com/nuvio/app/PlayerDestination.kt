@@ -99,6 +99,7 @@ internal fun PlayerDestination(
         contentLanguage = launch.contentLanguage,
         sourceFacts = launch.sourceFacts,
         playbackAttempt = launch.playbackAttempt,
+        expectedRuntimeMinutes = launch.expectedRuntimeMinutes,
         onBack = onBack,
         onSystemBackHandlerChanged = registerSystemBack,
         onOpenInExternalPlayer = if (com.nuvio.app.core.build.AppFeaturePolicy.externalPlayerSupported) { { request ->

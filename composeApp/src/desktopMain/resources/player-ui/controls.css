@@ -328,9 +328,7 @@ button:disabled {
 }
 
 .next-episode-thumb img,
-.episode-thumb img,
-.opening-artwork,
-.opening-logo {
+.episode-thumb img {
   opacity: 0;
   filter: blur(14px) saturate(.92);
   transform: scale(1.035);
@@ -343,12 +341,32 @@ button:disabled {
 }
 
 .next-episode-thumb img.image-loaded,
-.episode-thumb img.image-loaded,
-.opening-artwork.image-loaded,
-.opening-logo.image-loaded {
+.episode-thumb img.image-loaded {
   opacity: 1;
   filter: blur(0) saturate(1);
   transform: scale(1);
+}
+
+/*
+ * ⚠ **The opening overlay's artwork and logo deliberately have no intro.**
+ *
+ * They used to share the blur/scale/fade above, so the same poster the Compose loading screen was
+ * already showing at rest re-appeared here mid-blur - a 620ms animation played at exactly the
+ * moment the two renderers swap, which reads as the screen reloading itself. `PlaybackLoadingScreen`
+ * has no such transition and cannot be given one (see its "no crossfade on the shared layers"
+ * rule), so matching it means having none here either.
+ *
+ * Everything else on this page keeps the intro; it is only wrong where two renderers must agree.
+ */
+.opening-artwork,
+.opening-logo {
+  opacity: 0;
+  transform-origin: center;
+}
+
+.opening-artwork.image-loaded,
+.opening-logo.image-loaded {
+  opacity: 1;
 }
 
 .image-error::before {
@@ -1342,7 +1360,7 @@ button:disabled {
   display: grid;
   place-items: center;
   overflow: hidden;
-  background: #0e0f12;
+  background: #0d0d0d;
   opacity: 1;
   pointer-events: auto;
   transition: opacity 180ms ease;

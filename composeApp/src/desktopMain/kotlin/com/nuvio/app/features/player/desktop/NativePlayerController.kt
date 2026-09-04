@@ -83,6 +83,13 @@ internal class NativePlayerController(
     @Volatile
     private var handle: Long = 0L
 
+    /**
+     * When the native window for the current source was created, for the `didPaintOpening`
+     * measurement below. Zero until the first attach of this controller.
+     */
+    @Volatile
+    private var openingAttachedAtMs: Long = 0L
+
     /** Native teardown of the previous player, if one is still running. */
     @Volatile
     private var disposeInFlight: Thread? = null
@@ -337,6 +344,7 @@ internal class NativePlayerController(
                         // After the handle is accepted, so the harness never sees a published
                         // controller with a dead handle. No-op outside a debug build.
                         NativePlayerDiagnosticsRegistry.publish(this@NativePlayerController)
+                        openingAttachedAtMs = System.currentTimeMillis()
                         log.d {
                             "attach created handle=$created source=${resolvedSource.toPlaybackLogKey()} " +
                                 "initialPositionMs=${pending.initialPositionMs}"
@@ -483,6 +491,20 @@ internal class NativePlayerController(
         }
         when (type) {
             "cursorActivity" -> host.noteCursorActivity()
+            // The controls page has presented its first frame of the opening overlay. Until it
+            // does, the promoted native canvas is covering the Compose loading surface with a
+            // flat fill, so this figure *is* the length of the desktop hand-over gap - the only
+            // part of the "choose a source, then a black screen" report that no log could
+            // previously account for.
+            "didPaintOpening" -> {
+                val attachedAt = openingAttachedAtMs
+                val elapsed = if (attachedAt > 0L) {
+                    System.currentTimeMillis() - attachedAt
+                } else {
+                    -1L
+                }
+                log.i { "opening overlay painted handle=$handle afterAttachMs=$elapsed" }
+            }
             "scrubChange" -> {
                 val handled = onScrubChange(value.toLong())
                 log.d { "scrubChange positionMs=${value.toLong()} handled=$handled handle=$handle" }

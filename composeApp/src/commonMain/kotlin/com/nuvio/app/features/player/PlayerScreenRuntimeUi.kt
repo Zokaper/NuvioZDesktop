@@ -72,6 +72,9 @@ import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
+import com.nuvio.app.features.playback.PlaybackHandover
+import com.nuvio.app.features.playback.PlaybackLoadingActions
+import com.nuvio.app.features.playback.PlaybackLoadingController
 import com.nuvio.app.features.playback.PlaybackLoadingState
 import com.nuvio.app.features.playback.PlaybackLoadingFacts
 import com.nuvio.app.features.playback.PlaybackProgressStep
@@ -221,14 +224,20 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         releaseInFlight = playerReleaseSurfaceRetention.inFlight,
         desktop = isDesktop,
     )
+    // ⚠ **`initialLoadCompleted` is not a first frame.** The engine drops `isLoading` once it has
+    // opened the media, which is before it has decoded anything, so an overlay that left on this
+    // signal alone dissolved onto a black video plane. `firstFrameReached` is the stronger one -
+    // see `PlaybackHandover.hasFirstFrame`. `initialLoadCompleted` is left exactly as it was
+    // because the seek, subtitle and watchdog paths all read it and mean the weaker thing.
     val openingOverlayWanted = playerSettingsUiState.showLoadingOverlay &&
-        !initialLoadCompleted &&
+        !firstFrameReached &&
         errorMessage == null
     val openingLoadingState = PlaybackLoadingState(
         step = PlaybackProgressStep.StartingPlayback,
         attempt = args.playbackAttempt,
         facts = args.sourceFacts,
     )
+
     val episodeText = if (seasonNumber != null && episodeNumber != null && !episodeTitle.isNullOrBlank()) {
         stringResource(
             Res.string.compose_player_episode_title_format,
@@ -292,6 +301,33 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         .takeIf { it.phase == PlayerNextEpisodePhase.STARTING }
         ?.targetVideoId
         ?.let { targetId -> playerMetaVideos.firstOrNull { it.id == targetId } }
+    // The loading surface is drawn by `PlaybackLoadingHost`, above `NavDisplay`. In the automatic
+    // modes the stream route already opened the session and handed it over, and this must not
+    // disturb it - re-opening would restart the entrance and the escape clock at exactly the
+    // route change the whole design exists to make invisible. Opening here covers the paths that
+    // reach the player with no stream route behind them at all: Continue Watching, the next
+    // episode, and a resumed download.
+    LaunchedEffect(openingOverlayWanted, args.sourceUrl) {
+        if (openingOverlayWanted) {
+            if (PlaybackLoadingController.activeToken == null) {
+                val token = PlaybackLoadingController.open(
+                    step = PlaybackProgressStep.StartingPlayback,
+                    artwork = startingEpisode?.thumbnail ?: background ?: poster,
+                    logo = if (startingEpisode != null) null else logo,
+                    title = startingEpisode?.title ?: title,
+                    attempt = args.playbackAttempt,
+                    facts = args.sourceFacts,
+                )
+                PlaybackLoadingController.handOff(token)
+                PlaybackLoadingController.registerActions(
+                    token = token,
+                    actions = PlaybackLoadingActions(onBack = { requestBack() }),
+                )
+            }
+        } else {
+            PlaybackLoadingController.closeAfterHandOff()
+        }
+    }
     val nextEpisodeStatus = when {
         nextEpisodeForControls == null -> ""
         !nextEpisodeForControls.hasAired && !nextEpisodeForControls.unairedMessage.isNullOrBlank() ->
@@ -638,6 +674,17 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                         if (snapshot.isPlaying) {
                             completeNextEpisodeTransitionIfStarted()
                         }
+                    }
+                    if (
+                        PlaybackHandover.hasFirstFrame(
+                            isLoading = snapshot.isLoading,
+                            isPlaying = snapshot.isPlaying,
+                            positionMs = snapshot.positionMs,
+                            videoWidth = snapshot.videoWidth,
+                            videoHeight = snapshot.videoHeight,
+                        )
+                    ) {
+                        firstFrameReached = true
                     }
                     if (snapshot.isEnded) {
                         shouldPlay = false
@@ -1792,10 +1839,15 @@ private fun BoxScope.RenderPlaybackOverlays(
             metrics = metrics,
             horizontalSafePadding = horizontalSafePadding,
             onUnlock = { unlockPlayerControls() },
-            showOpeningOverlay = playerSettingsUiState.showLoadingOverlay &&
-                !initialLoadCompleted &&
-                errorMessage == null &&
-                !suppressOpeningOverlay,
+            // ⚠ **Always false: `PlaybackLoadingHost` draws this now**, above `NavDisplay`, so
+            // that the same screen spans the route change and every failover. Rendering it here
+            // as well would put a second, shorter-lived copy directly over the first.
+            //
+            // The desktop *native* overlay is unaffected and still needed - a `SwingPanel` paints
+            // over all Compose content regardless of z-order, so once the video surface is
+            // promoted the host is invisible and JCEF's copy is the only one left. That one is
+            // fed by `PlayerControlsState.showOpeningOverlay`, not by this flag.
+            showOpeningOverlay = false,
             backdropArtwork = startingEpisode?.thumbnail ?: background ?: poster,
             logo = if (startingEpisode != null) null else logo,
             title = startingEpisode?.title ?: title,
