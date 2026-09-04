@@ -15,6 +15,14 @@ import com.nuvio.app.features.player.PlayerScreen
 import com.nuvio.app.features.watchprogress.ResumePromptRepository
 import com.nuvio.app.navigation.NuvioNavigator
 import com.nuvio.app.navigation.PlayerRoute
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import com.nuvio.app.features.streams.StreamsRepository
+import org.jetbrains.compose.resources.stringResource
+import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.playback_quality_no_match
 
 @Composable
 internal fun PlayerDestination(
@@ -49,6 +57,10 @@ internal fun PlayerDestination(
     val registerSystemBack = remember(route, onSystemBackHandlerChanged) {
         { handler: (() -> Unit)? -> onSystemBackHandlerChanged(route, handler) }
     }
+    val noAutomaticSourceText = stringResource(Res.string.playback_quality_no_match)
+    // Single-shot per launch. The engine can report a fatal error more than once on the way
+    // down, and a second pass would step the chain twice - burning a healthy candidate.
+    var instantFailureHandled by rememberSaveable(route.launchId) { mutableStateOf(false) }
     LaunchedEffect(launch.videoId) {
         launch.videoId?.let { ResumePromptRepository.markPlayerEntered(it) }
     }
@@ -137,6 +149,60 @@ internal fun PlayerDestination(
         onOpenExternalUrl = { url ->
             openExternalStreamUrl(url)
         },
+        /**
+         * ⚠ **Restored.** This handler existed in `App.kt`'s `MainAppContent` and did not
+         * survive the `0.1.22-alpha` sync, which split that file from ~4,400 lines to 112.
+         * Nothing deleted a file and everything still compiled, so the sync brief's deletion
+         * check could not see it - a lambda simply stopped being passed.
+         *
+         * Three things were dead in production because of it, and they are three of the bugs
+         * this phase was opened for:
+         *
+         *  - `PlaybackStartupWatchdog` arms only when `onFatalPlaybackError != null`
+         *    (`PlayerScreenRuntimeEffects.kt`), so **the watchdog never ran** - a source that
+         *    played no frame was never abandoned;
+         *  - the post-playback-started failover chain never advanced, so a source that opened
+         *    and died was the end of the road;
+         *  - `consumeFailoverRetry()` always answered false, so the stream route read every
+         *    return from the player as a back press.
+         *
+         * `nuvio-z` kept its copy, which is exactly why the loading loop was reported on
+         * desktop only.
+         */
+        onFatalPlaybackError = if (launch.autoPickedWithFailureChain) {
+            {
+                if (!instantFailureHandled) {
+                    instantFailureHandled = true
+                    val failed = StreamsRepository.uiState.value.autoPlayStream
+                    // A null `autoPlayStream` here does not mean the chain is spent - it means
+                    // playback started and `onPlaybackStarted` consumed it. That is the common
+                    // failure: a source that opens, plays a second, and dies.
+                    val hasNext = if (failed != null) {
+                        StreamsRepository.skipAutoPlayStream(failed)
+                    } else {
+                        StreamsRepository.failOverAfterPlaybackStarted()
+                    }
+                    // Say so, rather than leaving the stream route to guess from state a back
+                    // press produces just as well.
+                    if (hasNext) StreamsRepository.signalFailoverRetry()
+                    if (!hasNext) {
+                        StreamsRepository.consumeAutoPlay()
+                        NuvioToastController.show(noAutomaticSourceText)
+                    }
+                    // Back to `StreamRoute`, which the automatic modes deliberately leave on
+                    // the back stack because it hosts the chain, the retry counter and the
+                    // loading screen. `popBack` is a no-op unless the player is genuinely on
+                    // top, so a race cannot strand the user on a dead player with
+                    // `instantFailureHandled` already spent.
+                    popBack()
+                }
+            }
+        } else null,
+        // Retires the chain the moment a frame actually plays, so a later failure falls to
+        // `failOverAfterPlaybackStarted` rather than re-running the source that just worked.
+        onPlaybackStarted = if (launch.autoPickedWithFailureChain) {
+            { StreamsRepository.consumeAutoPlay() }
+        } else null,
         modifier = Modifier.fillMaxSize(),
     )
 }

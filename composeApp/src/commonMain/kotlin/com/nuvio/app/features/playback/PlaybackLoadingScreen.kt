@@ -41,7 +41,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.nuvio.app.core.ui.NuvioAsyncImage
+// The one line that differs between nuvio-z and nuviozdesktop.
+//
+// Desktop wraps coil3 in an expect/actual doing Skia-side downsampling; mobile calls coil3
+// directly. The signatures agree, so this alias keeps the rest of the file byte-identical
+// across the two repos - the same trick `PlayerOverlays.kt` already uses, for the same reason.
+// Matching each repo's own convention is also what keeps the hand-off invisible: this screen
+// must decode the backdrop exactly the way its local player does.
+import com.nuvio.app.core.ui.NuvioAsyncImage as AppAsyncImage
 import com.nuvio.app.core.ui.NuvioBackButton
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.downloads.SourceFacts
@@ -155,7 +162,7 @@ fun PlaybackLoadingScreen(
 @Composable
 private fun PlaybackLoadingBackdrop(artwork: String?) {
     if (artwork.isNullOrBlank()) return
-    NuvioAsyncImage(
+    AppAsyncImage(
         model = artwork,
         contentDescription = null,
         modifier = Modifier.fillMaxSize(),
@@ -195,7 +202,7 @@ private fun PlaybackLoadingTitle(
 
     Box(modifier = modifier.padding(horizontal = 24.dp), contentAlignment = Alignment.Center) {
         when {
-            logoUrl != null && !logoLoadError -> NuvioAsyncImage(
+            logoUrl != null && !logoLoadError -> AppAsyncImage(
                 model = logoUrl,
                 contentDescription = null,
                 modifier = Modifier.width(300.dp).height(180.dp),
