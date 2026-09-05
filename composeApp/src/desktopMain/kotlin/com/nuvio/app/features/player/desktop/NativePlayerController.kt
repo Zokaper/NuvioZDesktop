@@ -18,6 +18,7 @@ import com.nuvio.app.features.player.PlayerControlsState
 import com.nuvio.app.features.player.PlayerEngineController
 import com.nuvio.app.features.player.PlayerPlaybackSnapshot
 import com.nuvio.app.features.player.PlayerPartyMember
+import com.nuvio.app.features.player.PlayerOpeningFact
 import com.nuvio.app.features.player.PlayerResizeMode
 import com.nuvio.app.features.player.SUBTITLE_DELAY_MAX_MS
 import com.nuvio.app.features.player.SUBTITLE_DELAY_MIN_MS
@@ -1322,6 +1323,7 @@ private fun String.toPlayerControlsAction(): PlayerControlsAction? =
     when (this) {
         "toggleChrome" -> PlayerControlsAction.ToggleChrome
         "back" -> PlayerControlsAction.Back
+        "chooseManually" -> PlayerControlsAction.ChooseManually
         "toggle" -> PlayerControlsAction.TogglePlayback
         "keyboardToggle" -> PlayerControlsAction.KeyboardTogglePlayback
         "seekBack" -> PlayerControlsAction.SeekBack
@@ -1583,7 +1585,11 @@ internal fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
         append(',')
         appendJsonField("openingAttemptLabel", openingAttemptLabel)
         append(',')
-        appendJsonArrayField("openingFactLabels", openingFactLabels) { append(it.toJsonString()) }
+        appendJsonArrayField("openingFacts", openingFacts) { appendOpeningFactJson(it) }
+        append(',')
+        appendJsonField("openingOffersManualEscape", openingOffersManualEscape)
+        append(',')
+        appendJsonField("openingManualEscapeLabel", openingManualEscapeLabel)
         append(',')
         appendJsonField("openingProviderLine", openingProviderLine)
         append(',')
@@ -1802,6 +1808,14 @@ private fun StringBuilder.appendSeasonItemJson(item: PlayerControlSeasonItem) {
     appendJsonField("label", item.label)
     append(',')
     appendJsonField("isSelected", item.isSelected)
+    append('}')
+}
+
+private fun StringBuilder.appendOpeningFactJson(item: PlayerOpeningFact) {
+    append('{')
+    appendJsonField("label", item.label)
+    append(',')
+    appendJsonField("value", item.value)
     append('}')
 }
 

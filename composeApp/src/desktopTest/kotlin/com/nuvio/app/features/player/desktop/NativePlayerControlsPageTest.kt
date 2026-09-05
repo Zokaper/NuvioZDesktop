@@ -49,12 +49,13 @@ class NativePlayerControlsPageTest {
         val script = resourceText("/player-ui/controls.js")
         val css = resourceText("/player-ui/controls.css")
 
-        listOf("openingFacts", "openingProvider", "openingRelease").forEach { id ->
+        listOf("openingFacts", "openingProvider", "openingRelease", "openingManualButton").forEach { id ->
             assertTrue(html.contains("id=\"$id\""), "missing native loading-band element $id")
             assertTrue(script.contains("getElementById(\"$id\")"), "loading-band element $id is not wired")
         }
         assertTrue(script.contains("openingStageLabel"))
-        assertTrue(script.contains("openingFactLabels"))
+        assertTrue(script.contains("openingFacts"))
+        assertTrue(script.contains("openingOffersManualEscape"))
         assertTrue(css.contains("opening-progress-sweep"))
         assertFalse(css.contains("animation: opening-logo-pulse"))
         assertFalse(css.contains("animation: opening-artwork-drift"))

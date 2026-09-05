@@ -58,6 +58,7 @@ const openingMessage = document.getElementById("openingMessage");
 const openingFacts = document.getElementById("openingFacts");
 const openingProvider = document.getElementById("openingProvider");
 const openingRelease = document.getElementById("openingRelease");
+const openingManualButton = document.getElementById("openingManualButton");
 const partyBanner = document.getElementById("partyBanner");
 const partyBannerText = document.getElementById("partyBannerText");
 const partyPanel = document.getElementById("partyPanel");
@@ -293,7 +294,9 @@ let state = {
   openingScale: 1,
   openingStageLabel: "Starting playback",
   openingAttemptLabel: "",
-  openingFactLabels: [],
+  openingFacts: [],
+  openingOffersManualEscape: false,
+  openingManualEscapeLabel: "",
   openingProviderLine: "",
   openingReleaseName: "",
   partyBannerVisible: false,
@@ -1941,9 +1944,7 @@ const renderOpeningOverlay = suppress => {
   const messageText = String(state.openingMessage || state.openingStageLabel || "").trim();
   const attemptText = String(state.openingAttemptLabel || "").trim();
   const statusText = [messageText, attemptText].filter(Boolean).join(" · ");
-  const factLabels = Array.isArray(state.openingFactLabels)
-    ? state.openingFactLabels.map(value => String(value || "").trim()).filter(Boolean)
-    : [];
+  const openingFactItems = Array.isArray(state.openingFacts) ? state.openingFacts : [];
   const providerText = String(state.openingProviderLine || "").trim();
   const releaseText = String(state.openingReleaseName || "").trim();
 
@@ -1961,15 +1962,30 @@ const renderOpeningOverlay = suppress => {
   openingTitle.textContent = titleText;
   openingTitle.hidden = Boolean(logoUrl || !titleText);
   openingMessage.textContent = statusText;
-  openingFacts.replaceChildren(...factLabels.map(label => {
-    const chip = document.createElement("span");
-    chip.textContent = label;
-    return chip;
+  openingFacts.replaceChildren(...openingFactItems.map(fact => {
+    const item = document.createElement("div");
+    item.className = "opening-fact";
+    const label = document.createElement("span");
+    label.className = "opening-fact-label";
+    label.textContent = String(fact?.label || "");
+    const value = document.createElement("span");
+    value.className = "opening-fact-value";
+    const valText = String(fact?.value || "");
+    value.textContent = valText;
+    if (valText === "\u2014") {
+      value.classList.add("is-unknown");
+    }
+    item.appendChild(label);
+    item.appendChild(value);
+    return item;
   }));
   openingProvider.textContent = providerText;
   openingProvider.hidden = !providerText;
   openingRelease.textContent = releaseText;
-  openingRelease.hidden = !releaseText;
+  if (openingManualButton) {
+    openingManualButton.hidden = !state.openingOffersManualEscape;
+    openingManualButton.textContent = state.openingManualEscapeLabel || "";
+  }
   // Match the Compose loading screen's size before anything else is measured - see the
   // `.opening-overlay` rule. A missing or nonsensical value must leave the page exactly as it was.
   const openingScale = Number(state.openingScale);

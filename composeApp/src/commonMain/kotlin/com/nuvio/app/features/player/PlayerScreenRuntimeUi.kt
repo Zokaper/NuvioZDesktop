@@ -50,12 +50,18 @@ import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.P2pStreamingState
 import com.nuvio.app.features.p2p.formatP2pMegabytes
 import com.nuvio.app.features.p2p.formatP2pSpeed
+import com.nuvio.app.features.playback.PlaybackLoadingController
+import com.nuvio.app.features.playback.PlaybackLoadingFacts
+import com.nuvio.app.features.playback.PlaybackLoadingState
+import com.nuvio.app.features.playback.PlaybackProgressStep
 import com.nuvio.app.features.playback.PlaybackQualityOptions
 import com.nuvio.app.features.playback.PlaybackQualitySheet
 import com.nuvio.app.features.playback.PlaybackSelectionContext
 import com.nuvio.app.features.playback.PlaybackSelectionResult
 import com.nuvio.app.features.playback.PlaybackSourceCandidate
 import com.nuvio.app.features.playback.PlaybackSourceSelector
+import com.nuvio.app.features.playback.playbackFactSlotLabelRes
+import com.nuvio.app.features.playback.rememberLanguageNamer
 import com.nuvio.app.features.player.skip.SkipIntroRepository
 import com.nuvio.app.features.streams.AddonStreamGroup
 import com.nuvio.app.features.streams.StreamBadgeSettingsRepository
@@ -76,10 +82,6 @@ import androidx.compose.ui.platform.LocalDensity
 import com.nuvio.app.core.ui.LocalNuvioPlatformDensity
 import com.nuvio.app.features.playback.PlaybackHandover
 import com.nuvio.app.features.playback.PlaybackLoadingActions
-import com.nuvio.app.features.playback.PlaybackLoadingController
-import com.nuvio.app.features.playback.PlaybackLoadingState
-import com.nuvio.app.features.playback.PlaybackLoadingFacts
-import com.nuvio.app.features.playback.PlaybackProgressStep
 import com.nuvio.app.features.updater.formatFileSize
 
 private val playerControlsLog = Logger.withTag("PlayerControls")
@@ -351,6 +353,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             )
         else -> ""
     }
+    val openingNamer = rememberLanguageNamer(openingLoadingState.facts)
     val playerControlsState = PlayerControlsState(
         title = title,
         episodeText = episodeText,
@@ -540,9 +543,17 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         } else {
             ""
         },
-        openingFactLabels = PlaybackLoadingFacts
-            .chips(openingLoadingState.facts, ::formatFileSize)
-            .map { it.label },
+        openingFacts = PlaybackLoadingFacts
+            .facts(openingLoadingState.facts, ::formatFileSize, openingNamer)
+            .map { fact ->
+                PlayerOpeningFact(
+                    label = stringResource(playbackFactSlotLabelRes(fact.slot)).uppercase(),
+                    value = fact.value ?: PlaybackLoadingFacts.UNKNOWN,
+                )
+            },
+        openingOffersManualEscape = PlaybackLoadingController.session?.offersManualEscape == true &&
+            PlaybackLoadingController.actions?.onChooseManually != null,
+        openingManualEscapeLabel = stringResource(Res.string.playback_quality_manual),
         openingProviderLine = PlaybackLoadingFacts
             .providerLine(openingLoadingState.facts)
             .orEmpty(),
@@ -965,6 +976,9 @@ private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControl
         }
         PlayerControlsAction.RevealLockedOverlay -> revealLockedOverlay()
         PlayerControlsAction.Back -> requestBack()
+        PlayerControlsAction.ChooseManually -> {
+            PlaybackLoadingController.actions?.onChooseManually?.invoke()
+        }
         // Returning true is what stops the native controls layer performing the transport itself
         // (`NativePlayerController.handleFallbackAction`). While a party owns this playback it has
         // to: a host must not start before the instant it just scheduled for everybody else, and a

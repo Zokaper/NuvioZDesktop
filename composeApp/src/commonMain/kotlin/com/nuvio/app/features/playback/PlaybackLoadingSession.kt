@@ -139,8 +139,11 @@ object PlaybackLoadingSessions {
  */
 object PlaybackLoadingMotion {
 
-    /** Long enough to read as deliberate, short enough not to delay a fast start. */
-    const val ENTRY_DURATION_MS: Int = 220
+    /** Was 220. Long enough that the scrim and the band read as arriving rather than cutting. */
+    const val ENTRY_DURATION_MS: Int = 260
+
+    /** The logo leads the band, so the two do not land together and read as one hard swap. */
+    const val TITLE_STAGGER_MS: Int = 40
 
     /**
      * The band waits this long behind the backdrop.
@@ -163,12 +166,16 @@ object PlaybackLoadingMotion {
     /** See [surfaceAlpha]. The surface never scales. */
     fun surfaceScale(entryProgress: Float): Float = 1f
 
-    /**
-     * The entrance, and now the only thing that moves: the band settling onto a backdrop that is
-     * already there. Small enough that its layer costs nothing to composite.
-     */
-    fun bandAlpha(entryProgress: Float): Float {
-        val start = BAND_STAGGER_MS.toFloat() / ENTRY_DURATION_MS.toFloat()
+    /** The scrim, delegated so the sheet and this screen ramp on one curve. */
+    fun scrimAlpha(entryProgress: Float): Float =
+        PlaybackEntranceMotion.scrimAlpha(entryProgress)
+
+    fun titleAlpha(entryProgress: Float): Float = staggered(entryProgress, TITLE_STAGGER_MS)
+
+    fun bandAlpha(entryProgress: Float): Float = staggered(entryProgress, BAND_STAGGER_MS)
+
+    private fun staggered(entryProgress: Float, staggerMs: Int): Float {
+        val start = staggerMs.toFloat() / ENTRY_DURATION_MS.toFloat()
         return ((entryProgress.coerceIn(0f, 1f) - start) / (1f - start)).coerceIn(0f, 1f)
     }
 }

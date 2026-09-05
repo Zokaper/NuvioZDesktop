@@ -58,6 +58,7 @@ import com.nuvio.app.core.format.formatReleaseDateForDisplay
 import com.nuvio.app.core.network.NetworkCondition
 import com.nuvio.app.core.network.NetworkStatusRepository
 import com.nuvio.app.core.sync.AppForegroundMonitor
+import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.sync.AppVisibility
 import com.nuvio.app.core.sync.ProfileSettingsSync
 import com.nuvio.app.core.sync.SyncManager
@@ -1581,11 +1582,11 @@ internal fun MainAppContent(
                 entry<StreamRoute>(
                     metadata = if (isDesktop) {
                         NavDisplay.transitionSpec {
-                            fadeIn(animationSpec = tween(160)) togetherWith
-                                fadeOut(animationSpec = tween(160))
+                            fadeIn(tween(220, delayMillis = 90, easing = NuvioTokens.Motion.decelerate)) togetherWith
+                                fadeOut(tween(90, easing = NuvioTokens.Motion.accelerate))
                         } + NavDisplay.popTransitionSpec {
-                            fadeIn(animationSpec = tween(160)) togetherWith
-                                fadeOut(animationSpec = tween(160))
+                            fadeIn(tween(220, delayMillis = 90, easing = NuvioTokens.Motion.decelerate)) togetherWith
+                                fadeOut(tween(90, easing = NuvioTokens.Motion.accelerate))
                         }
                     } else {
                         emptyMap()

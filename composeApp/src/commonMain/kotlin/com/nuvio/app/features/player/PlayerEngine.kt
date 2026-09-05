@@ -74,6 +74,7 @@ enum class PlayerControlsAction {
     ToggleChrome,
     RevealLockedOverlay,
     Back,
+    ChooseManually,
     TogglePlayback,
     KeyboardTogglePlayback,
     SeekBack,
@@ -113,6 +114,8 @@ data class PlayerPartyMember(
     val avatarUrl: String? = null,
     val connected: Boolean = true,
 )
+
+data class PlayerOpeningFact(val label: String, val value: String)
 
 data class PlayerControlsState(
     val title: String = "",
@@ -249,7 +252,9 @@ data class PlayerControlsState(
     /** Desktop-native rendering of Phase 2's shared loading band. */
     val openingStageLabel: String = "",
     val openingAttemptLabel: String = "",
-    val openingFactLabels: List<String> = emptyList(),
+    val openingFacts: List<PlayerOpeningFact> = emptyList(),
+    val openingOffersManualEscape: Boolean = false,
+    val openingManualEscapeLabel: String = "",
     val openingProviderLine: String = "",
     val openingReleaseName: String = "",
     /**
