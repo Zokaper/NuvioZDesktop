@@ -339,9 +339,12 @@ actual object P2pStreamingEngine {
 
     private class TorrServerBinary {
         private val log = Logger.withTag("TorrServerBinary")
-        private val healthClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(2))
-            .build()
+        /** Lazy for the same reason as `TorrServerApi.client`; see the note there. */
+        private val healthClient by lazy {
+            HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(2))
+                .build()
+        }
         private var process: Process? = null
 
         val baseUrl: String get() = "http://127.0.0.1:$PORT"
@@ -591,9 +594,23 @@ actual object P2pStreamingEngine {
     ) {
         private val log = Logger.withTag("TorrServerApi")
         private val json = Json { ignoreUnknownKeys = true }
-        private val client = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
-            .build()
+        /**
+         * ⚠ **Lazy because this used to run inside `P2pStreamingEngine`'s class initializer.**
+         *
+         * Building a `java.net.http.HttpClient` opens an NIO selector, which on Windows binds a
+         * Unix-domain socket pair - measured at **311 ms**, and it ran on the AWT event thread the
+         * first time anything touched this object during composition. That was one of the stalls
+         * in the "black, grey, black, grey" report between choosing a source and the loading
+         * screen: `<clinit>` is triggered by whoever gets there first, and on that path it was the
+         * UI thread. Every real use is already inside `withContext(Dispatchers.IO)`, so deferring
+         * construction to first use moves the cost off the event thread rather than merely
+         * postponing it.
+         */
+        private val client by lazy {
+            HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .build()
+        }
 
         private val baseUrl: String get() = binary.baseUrl
 
@@ -706,3 +723,28 @@ private fun JsonObject.longOrDefault(key: String, default: Long): Long =
 
 private fun JsonObject.arrayOrEmpty(key: String): JsonArray =
     this[key]?.jsonArray ?: JsonArray(emptyList())
+
+/**
+ * Loads [P2pStreamingEngine] and its dependencies on a background thread at startup.
+ *
+ * ⚠ **Because the first thing to touch this object pays for its class initialization, and on the
+ * playback path that was the UI thread.** `PlayerScreenContent` references the engine while it
+ * composes, so choosing a source ran `<clinit>` - `ClassLoader.defineClass1` down through
+ * `TorrServerBinary`, plus an `HttpClient` that opens an NIO selector - inside the composition
+ * that was supposed to be putting the loading screen up. Measured on the desktop debug build at
+ * **311-339 ms**, and it is one of the frame gaps in the "flashing between the source and the
+ * player" report.
+ *
+ * Nothing is started here and no process is spawned: the constructors resolve paths and the HTTP
+ * clients are lazy. This only moves the class loading to a thread nobody is watching, exactly as
+ * [preloadNativePlayerBridgeAsync] does for the native player.
+ */
+internal fun preloadP2pStreamingEngineAsync() {
+    Thread {
+        runCatching { P2pStreamingEngine.toString() }
+    }.apply {
+        name = "nuvio-p2p-bootstrap"
+        isDaemon = true
+        start()
+    }
+}
