@@ -6,9 +6,60 @@ Last updated: 2026-09-05
 
 Branch `claude/phase-2-playback`. Three closing polish designs address presentation feedback on the surfaces built in Phase 2, preparing the branch for Ultra 1 review:
 
-1. **Desktop Streamlined Quality Table:** The wide-window branch of `PlaybackQualitySheet` (`isWide`, ≥768 dp) replaces the scaled-up phone card grid with a compact, structured quality table. Each candidate option is rendered as a clean row grouped by resolution, aligning `Needs`, `Size`, and connection fit across columns sharing a consistent baseline. A matching skeleton shimmer renders before figures settle.
+1. **Desktop Streamlined Quality Columns:** The wide-window branch of `PlaybackQualitySheet` (`isWide`, ≥768 dp) leads with Best available as a full-width strip — release, `Size`, `Needs` and the connection meter — and lays the alternatives out as **one column per resolution**, each column stacking only the bands that title actually has. ⚠ **Nothing scrolls, and that is the design.** `VideoResolution` has six members and `optionsForBucket` emits at most four bands each, so the offer is bounded and fits a desktop window once it is spent across the width. Panel max width went 920 → 1200 dp (`wideDialogMaxWidth`). A matching skeleton renders on the same footprint before the figures settle.
+
+   This replaced a quality *table* taken on the same day, which the maintainer reported as "literally just a list". Watched on a debug hot run it was: a 480 dp cap that sliced its last row mid-glyph with no scrollbar; a `RELEASE` column carrying `REMUX · DV` identically for 4K Max and 4K High with ~270 dp of dead air beside it; a `FIT` column that drew five visually identical meters on a 755 Mb/s line; a `1440p` row under a `1440p` header; and `Best available` printing `—` for a size the row beneath it printed as 72 GB.
+
+   ⚠ **A collapsed bucket gets the class it would have been.** `Variant.SINGLE` carries no band
+   - banding needs two sized sources to compare - and the row used to read "Only option", which
+   told the reader nothing about what they would get. `PlaybackQualityOptions.bandFor` derives
+   the class from the row's own bitrate against the same absolute boundaries, so a lone 8K
+   release at 41 Mb/s reads `Mid (Max)`: a Mid-class file, and the best 8K this title has. The
+   one row that keeps a fallback label is a release nobody reported a size for - there is no
+   bitrate to band by, and handing an unmeasurable file a class is exactly what banding on sized
+   sources alone exists to prevent.
+
+   **What a cell says, and in what order.** Band name, then dynamic range and audio as outlined
+   marks, then size and needs, then rip type and host on the last line in muted small caps. That
+   order is the fix for "there isn't much differentiating between the cells": down a column
+   `BLURAY` repeats four times and `DV / Atmos 7.1` does not, so the old order led with the
+   repeating part. `describeProvenance` splits the rip type and host back out of
+   `describeRelease`, which had folded the dynamic range into a sentence, so nothing is printed
+   twice. `SDR` is drawn (via `PlaybackLoadingFacts.dynamicRangeSlot`, the same earned default
+   the loading band uses) but **muted**, never accented - an empty mark row reads as a fact that
+   failed to load, and an accented `SDR` spends the panel's one emphasis on the ordinary case.
+   Cells sit on `surfaceCard`: `surface`, `surfaceElevated` and `surfaceDialog` are the same
+   colour in this theme, so the first attempt tinted the panel over itself and drew nothing.
+   The cell Best available resolves to is outlined rather than restated
+   (`PlaybackQualityOptions.sourceKey`) - it is routinely the very row beneath the hero, and two
+   identical offers side by side read as two files.
+
+   **`High (Max)`.** A resolution whose releases all fall under its Max boundary offers no Max row, so its top row reads "High" — and a lone "High" reads as a middling pick rather than as this title's ceiling at that resolution. `PlaybackQualityOptions.isTopBandBelowMax` marks it and the cell appends the Max word. ⚠ The band word itself is **never** rewritten: the bands are absolute, and relabelling one would be exactly the catalogue-relative naming `Variant` exists to end. `Variant.SINGLE` is excluded — a collapsed bucket has no bands to top — and reads "Only option" instead.
 2. **Fixed 5-Slot Loading Metadata Rail:** The loading band across Compose (`PlaybackLoadingScreen`) and desktop JCEF/HTML (`controls.html`, `controls.css`, `controls.js`) now renders a fixed five-slot spec strip: Resolution, Audio/Subs, Range, Audio, and Size. Absent metadata displays an honest em-dash (`—`) rather than phantom guesses; dynamic range safely falls back to `SDR`; the "Choose source manually" escape hatch resides in a reserved 36 dp row above the progress line so its appearance at 5 seconds never shifts the layout under the reader.
 3. **Seamless Entrance Motion:** Pop and dip artifacts entering playback are resolved via `PlaybackEntranceMotion` (260 ms coordinated curve: color-alpha scrim, logo, and band arrival) and a desktop navigator fade-through on `entry<StreamRoute>` (220 ms in with 90 ms delay + 90 ms out).
+
+**Verified:** `scripts/run-pure-suites.sh` passes, including the new `PlaybackQualityOptionsTest`
+coverage for `bandFor`, `isTopBandBelowMax` and `sourceKey`. `:composeApp:desktopTest` passes for
+`PlaybackSourceSelectorTest` (which the pure runner leaves to CI), `PlaybackEntranceMotionTest`
+and `PlaybackLoadingStateTest`.
+
+**Not** verified: ⚠ **the columns panel has never been watched against real playback**, and the
+one attempt to watch it produced a false alarm worth recording here so the next session does not
+chase it twice. It was run under `scripts/dev-desktop.ps1` (default `-Mode hot`), and a hot run
+cannot reach a first frame: `hotRunDesktop` does not inherit the
+`--add-opens=java.desktop/java.awt=ALL-UNNAMED` that `build.gradle.kts` gives `:composeApp:run`
+and the packaged app, so the native view never attaches. What that looks like from the sheet is
+indistinguishable from a regression in this work - pick a quality, `PlaybackStartupWatchdog`
+abandons each candidate without a frame, the overlay flickers through attempts 1-3, the chain
+spends, and `PlayerDestination`'s `onFatalPlaybackError` toasts "No safe automatic source matched"
+and pops to the details screen. Nothing on the selection path changed here: the cells hand
+`onOptionSelected` the same `PlaybackQualityOption` instances the table did. This needs a debug
+MSI, which is the hot-run rule already recorded for the bridge below.
+
+⚠ **A hot run also writes no debug log**, so there is nothing on disk to read afterwards.
+`isDebugBuild` on desktop is `System.getProperty("nuvio.debugTools")`, set only by
+`-Pnuvio.desktop.debugTools=true` or the debug channel - neither of which `dev-desktop.ps1`
+passes.
 
 **Deliberately NOT changed:**
 - **Phone Card Grid:** The narrow branch of `PlaybackQualitySheet` (<768 dp) retains its proven touch-card layout and bottom sheet mechanics for phones and small tablets.

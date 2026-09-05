@@ -58,7 +58,6 @@ import com.nuvio.app.core.format.formatReleaseDateForDisplay
 import com.nuvio.app.core.network.NetworkCondition
 import com.nuvio.app.core.network.NetworkStatusRepository
 import com.nuvio.app.core.sync.AppForegroundMonitor
-import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.sync.AppVisibility
 import com.nuvio.app.core.sync.ProfileSettingsSync
 import com.nuvio.app.core.sync.SyncManager
@@ -71,6 +70,7 @@ import com.nuvio.app.core.ui.NuvioPosterZoomActionOverlay
 import com.nuvio.app.core.ui.NuvioStatusModal
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.core.ui.NuvioToastHost
+import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.PosterZoomAnchor
 import com.nuvio.app.core.ui.PosterZoomAnchorHolder
 import com.nuvio.app.core.ui.PosterZoomOverlayAction
