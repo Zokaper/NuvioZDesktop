@@ -2,6 +2,119 @@
 
 Last updated: 2026-09-05
 
+## Source-to-player jank: the hand-over made continuous (2026-09-05)
+
+Branch `claude/phase-2-playback`. The report was "a stutter, then a grey screen, then the loading
+screen" between choosing a source and the player. It was **six** separate faults stacked on one
+path, each hiding the next, which is why three earlier rounds of plausible-looking fixes changed
+nothing the maintainer could see.
+
+**Nothing here was found by reading the code.** Two probes were added first and everything below
+was measured; the numbers come from the debug log in `%APPDATA%/Nuvio Z/logs/` and from screen
+captures aligned against it by wall clock.
+
+- `EdtStallWatchdog` (`core/debug/EdtStallWatchdog.kt`) - heartbeats the AWT event queue and, when
+  a beat waits >34 ms, samples the event thread's stack **while it is still blocked**. Compose
+  Desktop composes, lays out and draws on that thread, so this names whatever is holding it.
+- A frame-gap probe in `PlaybackLoadingHost` - logs every presented frame gap >34 ms for 2.5 s
+  from the tap, each with its offset. Debug builds only.
+
+### What was actually wrong
+
+| # | Fault | Cost | Where |
+| --- | --- | --- | --- |
+| 1 | The backdrop was scaled **in software, at full source resolution, on the event thread, on every paint** | **2,523 ms** frozen UI | `NativePlayerHost.paintBackdrop` |
+| 2 | Eight `Regex` literals compiled *per stream*, from composition, for the whole list | 265 ms | `SourceFacts.kt` |
+| 3 | `normalizeLanguageCode` compiled a regex and sorted a 100-entry map per call; `languageLabelResForCode` then normalized all 79 language codes per lookup | 35-131 ms, repeatedly | `LanguageCodes.kt`, `PlayerLanguagePreferences.kt` |
+| 4 | `P2pStreamingEngine` class-loading (and an eager `HttpClient`) ran on the UI thread, triggered by `PlayerScreenContent` composing | 311-339 ms | `P2pStreamingEngine.desktop.kt` |
+| 5 | The mpv container window class erased with `BLACK_BRUSH`, and a child HWND covers every Compose layer regardless of z-order | the **black** flash | `native/windows/player_bridge.cpp` |
+| 6 | The loading screen was the only surface on the path with **no `?: poster` fallback**, so a title with no `background` gave it nothing to draw | **1,560 ms** of flat #0D0D0D | `StreamDestination.kt` |
+
+Fault 6 is the one the whole session circled. Every other surface falls back to the poster
+(`StreamsTabletLayout`, and the player overlay's `startingEpisode?.thumbnail ?: background ?:
+poster`); the loading session alone passed `launch.background` and fell through to
+`nuvio.colors.background`. Captured on screen at 1,560 ms, ending exactly as the JCEF overlay
+painted - which is why it read as "grey, *then* the loading screen", and why fixing the canvas and
+the native container never touched it. The comment above that argument already claimed it was
+identical to what the player is handed.
+
+### The surfaces, and the rule they now all obey
+
+Five things can cover this path: the route's hand-off box, the Compose loading surface, the AWT
+canvas, the native container, and the WebView2 controls page. **Every one of them now draws the
+same artwork, and none of them appears before it can.**
+
+- The hand-off box paints the backdrop, and is opaque only when there is no artwork at all - so the
+  one frame before `AsyncImage` resolves shows the list underneath rather than a grey fill.
+- `NativePlayerHost` prepares a cropped, scaled, scrimmed backdrop **once per size on a worker
+  thread** (`paint` does no image maths at all), cached across players, and promotion waits for it.
+- The container is created parked below the client area and promoted only on `didPaintOpening`,
+  which now fires when the page's artwork has *loaded*, not merely when a frame was presented.
+- The attach waits for a genuinely full-size canvas: `notifyFirstPaints` used to unlock it at
+  `width > 1`, which the 1 dp parked panel satisfied, so the whole native player was built at 2 px
+  and then resized - and resizing a live WebView2/mpv container erases it.
+
+### Measured, start of session to end
+
+| | before | after |
+| --- | --- | --- |
+| UI thread freeze | 2,523 ms | gone |
+| `attach requested -> created` | 2,552 ms | ~40 ms |
+| Blocking work in the transition | ~900 ms | gone |
+| Black flash | present | gone |
+| Grey flash | 1,560 ms | ~2 frames |
+| Frames presented in 3 s | 5 | 250+ |
+
+### Also fixed here
+
+- **`openingScale` never reached the controls page.** It was written through the nullable-float
+  writer, which clamps to 0..1, so the opening overlay always rendered at scale 1 and the logo
+  visibly shrank at the takeover. Covered by `NativePlayerControlsJsonTest`.
+- **The loading session leaked on every teardown.** Both owners closed it from the `else` branch of
+  a `LaunchedEffect`, and an effect is *cancelled* on disposal and never runs its `else`. So the
+  surface survived exactly the case its own contract says ends it ("...or when the user leaves"),
+  leaving a loading screen over the app that nothing alive could close. Closed now from
+  `requestBack()` - the one unambiguous user-leave - and from a `DisposableEffect` on the stream
+  route, both exempting a handed-off session so a failover is untouched.
+- **The escape hatch toasted a false failure.** `autoPlayStream == null` guarded the whole
+  back-press effect rather than just the retry branch, so a back press with no armed stream set
+  nothing - including `userAbandonedPlayback`, the one flag that suppresses the dead-end backstop.
+  1.5 s later that backstop uncovered the source list with "No safe sources found". Seen in the log
+  as `outcome=gave_up uncover=dead_end_backstop` with `attempt=1/3`, i.e. no failover at all.
+
+### Tried and rejected - do not repeat
+
+**Parking the player panel by offset instead of size.** Windows erases a heavyweight component with
+its background brush on resize, before Java's `paint()` runs, and that is the last ~2 frames of
+grey. Keeping the panel full-size and translating it off screen removes that erase entirely and
+**breaks playback**: every attempt fails through to "attempt 3 of 3" and drops the user on the
+source list. A native player whose host canvas is outside the window does not start. The two frames
+are the price of a player that works; the warning is at the call site in `PlayerEngine.desktop.kt`.
+
+### Still open
+
+1. **~2 frames of grey at the promotion.** The AWT erase above. Would need the native erase
+   intercepted (`ignoreRepaint`, or taking over painting) - the same paint path that produces the
+   signals unlocking the attach, so getting it wrong stops playback rather than causing a flash.
+2. **Escape from the *loading* screen still needs two presses.** From the player it is now one
+   press, to details, with no false toast. The first press pops the player; the loading surface is
+   one screen across two routes and should exit in one gesture.
+3. **A grey moment while the player tears down** on the way back to details.
+4. **The 500 ms snapshot poll blocks the UI thread 40-120 ms throughout playback**, once measured at
+   1,218 ms: `NativePlayerBridge.isLoading` (a native call) from `PlayerEngine.desktop.kt`'s poll
+   loop. Moving it to a worker needs native handle-lifetime protection first - it is not the
+   one-liner an earlier handoff suggested.
+
+### Toolchain
+
+This machine can now build the native bridge: **MSVC C++ Build Tools** and the **WebView2 SDK**
+(`1.0.4191.47`, in `~/.nuget/packages`) were installed today, and the bridge builds with the full
+JBR **SDK** 25 from `~/.gradle/jdks` - Android Studio's JBR has no JNI headers, which is why this
+was blocked before. Until today `composeApp/build/native/windows/player_bridge.dll` was dated
+**Aug 8** against a Sep 4 source: every local run for a month had been executing a stale bridge,
+and the build printed a warning saying so on every build. Delete the DLL to force a rebuild; the
+old one is kept beside it as `player_bridge.20260808-backup.dll`.
+
 > **The history moved.** Everything before 2026-08-24 is in [`STATUS-ARCHIVE.md`](STATUS-ARCHIVE.md) -
 > 34 sections, kept whole and in order. This file is the live handoff only: the
 > state table above, the work since the last release, and what is still open below.
