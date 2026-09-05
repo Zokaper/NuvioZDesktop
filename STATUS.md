@@ -2,6 +2,66 @@
 
 Last updated: 2026-09-05
 
+## Ultra 1 is staged, not yet run (2026-09-05)
+
+Branch `claude/phase-2-playback`. Three PRs exist and only one of them is for merging; the
+distinction matters enough to write down.
+
+| PR | What it is | Scope |
+| --- | --- | --- |
+| [#2](https://github.com/Zokaper/NuvioZDesktop/pull/2) | **The real PR.** Base `codex/upstream-sync-0.1.22-alpha` | 24 commits, 86 files, +7,749/−1,907 |
+| [#3](https://github.com/Zokaper/NuvioZDesktop/pull/3) | **Review scaffolding.** `ultra1-audit` over `ultra1-audit-base` | 38 files, +13,009/−0 |
+| [nuvio-z#1](https://github.com/Zokaper/nuvio-z/pull/1) | Mobile's `/code-review high` companion | 73 files, +6,110/−1,790 |
+
+⚠ **Run `/code-review ultra 3`, not `ultra 2`, and never the no-argument form.** `Dev` does not
+carry the upstream sync - `git merge-base --is-ancestor f0107940 origin/Dev` answers no - so the
+no-argument form bundles **383 commits, 518 files, +41,951/−11,390**, most of it vanilla upstream.
+
+### Why the scaffolding exists
+
+`ultra` reads a diff. Against #2 it would have read **23 of the 56** files in the playback
+surface, and `PlaybackModeRouter`/`PlaybackModeModels` at their edges rather than whole - which
+`ROADMAP.md` predicted in the paragraph under the Ultra 1 line. The 33 it would not have seen
+include `StreamAutoPlaySelector` (239 lines), **Classic's picker**, reached from
+`StreamsRepository.load` whenever `manualSelection` is false. One of the three modes would have
+selected its source through code the review could not read.
+
+#3's diff is therefore the whole playback-mode system. Built as two commits off the phase branch:
+`ultra1-audit-base` deletes the 38 files, `ultra1-audit` restores them byte-identically.
+`git diff b50c44cd..ultra1-audit` is empty - verified at construction against the phase HEAD of
+the moment - so the reviewed tree *is* that branch and only the history differs. ⚠ **Commits made
+to `claude/phase-2-playback` afterwards do not reach #3.** Docs commits are harmless, since no
+`.md` is among the 38 files; a code change is not. If the branch moves before the run, rebuild the
+pair.
+
+⚠ **Head descends from base deliberately.** The obvious construction - deleting the files in a
+base cut from the sync branch - produces modify/delete conflicts on the 23 files Phase 2 changed.
+An unmergeable PR is not something to find out about with a non-renewable run.
+
+⚠ **This replaces the run on #2 rather than supplementing it.** The cost, taken knowingly: the
+agents audit the final code and never see what Phase 2 changed, so the new work is not marked.
+
+Excluded from #3: `StreamCard`, `StreamsTabletLayout`, the `StreamBadge` family, `EpochMs`, the
+per-platform storage actuals - 18 files, 2,064 lines that cannot decide which source plays. The
+quality sheet, loading screen and `StreamsScreen` are in: they carry selection logic, not just
+presentation.
+
+### Cleanup, owed
+
+⚠ **`ultra1-audit-base` and `ultra1-audit` are scaffolding. Delete both branches and close #3
+once the run has been made.** Neither is ever merged. #2 is the branch that lands.
+
+### What the reviewers are reading cold
+
+Two changes from 2026-09-05 have unit coverage and no run on a packaged build:
+
+- `0da891c0` - back was being answered with another play. Two effects in `StreamDestination` wake
+  on the same `autoPlayStream`; the abandon and the failover still share that state.
+- `b50c44cd` - `ChooseManually` now signals through the repository and pops, because the route it
+  must reach has stopped composing while the player is on top. Also logs a throwing
+  `NativePlayerController.snapshot()`, which until now was indistinguishable from a source that
+  never starts.
+
 ## Back was taken, then answered with another play (2026-09-05)
 
 Branch `claude/phase-2-playback`. Reported as "pressing Escape mid-loading or mid-player is
