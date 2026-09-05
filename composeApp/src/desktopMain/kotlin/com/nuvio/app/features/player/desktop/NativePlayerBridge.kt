@@ -49,6 +49,15 @@ internal object NativePlayerBridge {
     external fun dispose(handle: Long)
     external fun updateControls(handle: Long, controlsJson: String)
     external fun requestFocus(handle: Long)
+
+    /**
+     * Brings the native container into view once the controls page has painted its opening overlay.
+     *
+     * Windows-only: the container is created parked below the client area there so an *empty* one
+     * cannot cover the loading screen while WebView2 starts. The other bridges do not define this
+     * export, so the call site is guarded by host OS.
+     */
+    external fun promoteOpeningContainer(handle: Long)
     external fun setPaused(handle: Long, paused: Boolean)
     external fun seekTo(handle: Long, positionMs: Long)
     external fun seekToExact(handle: Long, positionMs: Long)

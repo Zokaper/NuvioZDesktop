@@ -23,7 +23,7 @@ const pauseDescription = document.getElementById("pauseDescription");
 const toggle = document.getElementById("toggle");
 const toggleIcon = document.getElementById("toggleIcon");
 const toggleLabel = document.getElementById("toggleLabel");
-const nextEpisodeButton = document.getElementById("nextEpisodeButton");
+const playNextEpisodeButton = document.getElementById("playNextEpisodeButton");
 const nextEpisodeButtonLabel = document.getElementById("nextEpisodeButtonLabel");
 const fullscreenButton = document.getElementById("fullscreenButton");
 const fullscreenIcon = document.getElementById("fullscreenIcon");
@@ -53,9 +53,12 @@ const openingLogoBase = document.getElementById("openingLogoBase");
 const openingLogoFillClip = document.getElementById("openingLogoFillClip");
 const openingLogoFill = document.getElementById("openingLogoFill");
 const openingTitle = document.getElementById("openingTitle");
-const openingSpinner = document.getElementById("openingSpinner");
 const openingStatus = document.getElementById("openingStatus");
 const openingMessage = document.getElementById("openingMessage");
+const openingFacts = document.getElementById("openingFacts");
+const openingProvider = document.getElementById("openingProvider");
+const openingRelease = document.getElementById("openingRelease");
+const openingManualButton = document.getElementById("openingManualButton");
 const partyBanner = document.getElementById("partyBanner");
 const partyBannerText = document.getElementById("partyBannerText");
 const partyPanel = document.getElementById("partyPanel");
@@ -288,6 +291,14 @@ let state = {
   openingTitle: "",
   openingMessage: "",
   openingProgress: null,
+  openingScale: 1,
+  openingStageLabel: "Starting playback",
+  openingAttemptLabel: "",
+  openingFacts: [],
+  openingOffersManualEscape: false,
+  openingManualEscapeLabel: "",
+  openingProviderLine: "",
+  openingReleaseName: "",
   partyBannerVisible: false,
   partyBannerText: "",
   partyPanelVisible: false,
@@ -1906,6 +1917,19 @@ const trackListSignature = tracks =>
     ].join(":"))
     .join("|");
 
+let openingPaintReported = false;
+let openingPaintPending = false;
+
+// How long the promote waits for the opening artwork before reporting anyway. A broken or slow
+// image must delay the hand-over, never withhold it - the native side has its own fallback too.
+const OPENING_ARTWORK_DEADLINE_MS = 800;
+
+const reportOpeningPainted = () => {
+  if (openingPaintReported) return;
+  openingPaintReported = true;
+  requestAnimationFrame(() => requestAnimationFrame(() => send("didPaintOpening")));
+};
+
 const renderOpeningOverlay = suppress => {
   const progress = normalizedOpeningProgress();
   const artworkUrl = setImageSource(openingArtwork, state.openingArtwork);
@@ -1917,8 +1941,12 @@ const renderOpeningOverlay = suppress => {
   const wantsOpening = Boolean(openingBootstrap || state.showOpeningOverlay);
   const showOpening = Boolean(!suppress && wantsOpening && state.isLoading);
   const titleText = String(state.openingTitle || state.title || "").trim();
-  const messageText = String(state.openingMessage || "").trim();
-  const showHorizontalProgress = hasProgress && !logoUrl;
+  const messageText = String(state.openingMessage || state.openingStageLabel || "").trim();
+  const attemptText = String(state.openingAttemptLabel || "").trim();
+  const statusText = [messageText, attemptText].filter(Boolean).join(" · ");
+  const openingFactItems = Array.isArray(state.openingFacts) ? state.openingFacts : [];
+  const providerText = String(state.openingProviderLine || "").trim();
+  const releaseText = String(state.openingReleaseName || "").trim();
 
   root.classList.toggle("opening-active", showOpening);
   openingOverlay.classList.toggle("visible", showOpening);
@@ -1933,12 +1961,73 @@ const renderOpeningOverlay = suppress => {
 
   openingTitle.textContent = titleText;
   openingTitle.hidden = Boolean(logoUrl || !titleText);
-  openingSpinner.hidden = Boolean(logoUrl || titleText);
-
-  openingMessage.textContent = messageText;
-  openingStatus.hidden = !(messageText || showHorizontalProgress);
-  openingProgressTrack.hidden = !showHorizontalProgress;
+  openingMessage.textContent = statusText;
+  openingFacts.replaceChildren(...openingFactItems.map(fact => {
+    const item = document.createElement("div");
+    item.className = "opening-fact";
+    const label = document.createElement("span");
+    label.className = "opening-fact-label";
+    label.textContent = String(fact?.label || "");
+    const value = document.createElement("span");
+    value.className = "opening-fact-value";
+    const valText = String(fact?.value || "");
+    value.textContent = valText;
+    if (valText === "\u2014") {
+      value.classList.add("is-unknown");
+    }
+    item.appendChild(label);
+    item.appendChild(value);
+    return item;
+  }));
+  openingProvider.textContent = providerText;
+  openingProvider.hidden = !providerText;
+  openingRelease.textContent = releaseText;
+  if (openingManualButton) {
+    openingManualButton.hidden = !state.openingOffersManualEscape;
+    openingManualButton.textContent = state.openingManualEscapeLabel || "";
+  }
+  // Match the Compose loading screen's size before anything else is measured - see the
+  // `.opening-overlay` rule. A missing or nonsensical value must leave the page exactly as it was.
+  const openingScale = Number(state.openingScale);
+  if (Number.isFinite(openingScale) && openingScale > 0) {
+    openingOverlay.style.setProperty("--opening-scale", String(openingScale));
+  }
+  openingProgressTrack.classList.toggle("indeterminate", !hasProgress);
   openingProgressBar.style.width = `${(progress || 0) * 100}%`;
+
+  // ⚠ **The only measurement of the desktop hand-over gap.** Between the SwingPanel being
+  // promoted to full size and this page painting, the native canvas covers every Compose layer,
+  // so the loading surface the app draws is gone and this one has not arrived. Nothing logged
+  // that window, which is why "there is a black screen for a moment" could only ever be reported
+  // rather than diagnosed. Fires once per page load, after the browser has actually presented a
+  // frame - a `requestAnimationFrame` inside a `requestAnimationFrame` is the cheapest honest
+  // "painted", since the first callback still runs before the compositor has committed.
+  // ⚠ **"Painted" has to mean the artwork is on screen, not merely that a frame was
+  // presented.** This signal is what promotes the native container over the app's own loading
+  // screen, so reporting it while `openingArtwork` was still fetching handed the screen to a page
+  // showing its background colour and no picture - the last of the grey flashes between the
+  // loading screen and the player, and the one the maintainer spotted as "the second loading
+  // screen loading its metadata". The image is `decoding="async"`, so a rendered frame says
+  // nothing about it; `data-loaded-src` is set by its own `onload` and is the real answer.
+  if (showOpening && !openingPaintReported && !openingPaintPending) {
+    openingPaintPending = true;
+    const artworkLoaded = () =>
+      !artworkUrl || openingArtwork.getAttribute("data-loaded-src") === artworkUrl;
+    if (artworkLoaded()) {
+      reportOpeningPainted();
+    } else {
+      let deadline = 0;
+      const settle = () => {
+        openingArtwork.removeEventListener("load", settle);
+        openingArtwork.removeEventListener("error", settle);
+        if (deadline) clearTimeout(deadline);
+        reportOpeningPainted();
+      };
+      openingArtwork.addEventListener("load", settle);
+      openingArtwork.addEventListener("error", settle);
+      deadline = setTimeout(settle, OPENING_ARTWORK_DEADLINE_MS);
+    }
+  }
 
   return showOpening;
 };
@@ -2313,11 +2402,11 @@ const renderChrome = () => {
   if (toggleLabel) {
     toggleLabel.textContent = playPauseLabel || (isPlaying ? "Pause" : "Play");
   }
-  if (nextEpisodeButton) {
-    nextEpisodeButton.hidden = !state.nextEpisodePlayable;
+  if (playNextEpisodeButton) {
+    playNextEpisodeButton.hidden = !state.nextEpisodePlayable;
     const nextLabel = state.nextEpisodeHeaderLabel || "Next episode";
-    nextEpisodeButton.setAttribute("aria-label", nextLabel);
-    nextEpisodeButton.setAttribute("title", nextLabel);
+    playNextEpisodeButton.setAttribute("aria-label", nextLabel);
+    playNextEpisodeButton.setAttribute("title", nextLabel);
     if (nextEpisodeButtonLabel) nextEpisodeButtonLabel.textContent = nextLabel;
   }
   syncFullscreenButtons();

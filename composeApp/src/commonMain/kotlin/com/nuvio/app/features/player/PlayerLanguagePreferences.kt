@@ -204,11 +204,30 @@ fun normalizeLanguageCode(language: String?): String? =
 fun languageMatchesPreference(trackLanguage: String?, targetLanguage: String): Boolean =
     com.nuvio.app.core.language.languageMatchesPreference(trackLanguage, targetLanguage)
 
+/**
+ * ⚠ **Built once, because the lookup below is called from composition.**
+ *
+ * `languageLabelResForCode` used to scan [AvailableLanguageOptions] and normalize *each* of its 79
+ * codes on every call, and the player's subtitle menu calls it once per track per language every
+ * time `RenderPlayerRuntimeUi` recomposes. That is 79 normalizations per label, and it was still
+ * costing 67 ms of UI thread at the moment a source is chosen after
+ * `com.nuvio.app.core.language.normalizeLanguageCode` itself had been made allocation-free.
+ *
+ * First entry wins, exactly as the `firstOrNull` it replaces did - hence the explicit
+ * put-if-absent rather than `associate`, which would keep the last.
+ */
+private val LanguageLabelResByNormalizedCode: Map<String, StringResource> by lazy {
+    buildMap {
+        AvailableLanguageOptions.forEach { option ->
+            val normalized = normalizeLanguageCode(option.code) ?: return@forEach
+            if (normalized !in this) put(normalized, option.labelRes)
+        }
+    }
+}
+
 private fun languageLabelResForCode(code: String?): StringResource? {
     val normalized = normalizeLanguageCode(code) ?: return null
-    return AvailableLanguageOptions.firstOrNull {
-        normalizeLanguageCode(it.code) == normalized
-    }?.labelRes
+    return LanguageLabelResByNormalizedCode[normalized]
 }
 
 @Composable

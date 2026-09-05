@@ -213,6 +213,65 @@ internal val LanguageNameAliases = mapOf(
     "brazilian" to "pt-BR",
 )
 
+/**
+ * ⚠ **Both of these are hoisted because this function is called from composition.**
+ *
+ * `normalizeLanguageCode` compiled a fresh `Regex` and sorted the whole of [LanguageNameAliases]
+ * *per call*, and the player's subtitle menu calls it once per track per language every time
+ * `RenderPlayerRuntimeUi` recomposes. Measured on the desktop debug build, that was 35-77 ms of UI
+ * thread per recomposition at exactly the moment a source is chosen - three of the stalls in the
+ * "stutter between the source and the loading screen" report, in
+ * `buildPlayerControlSubtitleSelection` and `buildSubtitleSelectionOptions`.
+ *
+ * Neither changes behaviour: the regex is the same pattern and the list is the same order the
+ * `sortedByDescending` produced, computed once. If this file gains a mutable alias map, these have
+ * to be rebuilt with it.
+ */
+private val WhitespaceRun = Regex("\\s+")
+
+/**
+ * One alias, with the three padded forms the word-boundary test needs already built.
+ *
+ * Building `"$name "`, `" $name"` and `" $name "` inside the scan meant three string allocations
+ * per alias per call, and the scan runs over every alias for any value the two maps above do not
+ * answer directly - roughly three hundred allocations per call, on the UI thread. Same comparisons,
+ * same order, no allocation.
+ */
+private class LanguageNameMatcher(
+    val name: String,
+    val prefix: String,
+    val suffix: String,
+    val infix: String,
+    val code: String,
+)
+
+/** Longest name first, so "latin american" is matched before "latin". See [WhitespaceRun]. */
+private val LanguageNameMatchers: List<LanguageNameMatcher> by lazy {
+    LanguageNameAliases.entries
+        .sortedByDescending { it.key.length }
+        .map { (name, code) ->
+            LanguageNameMatcher(
+                name = name,
+                prefix = "$name ",
+                suffix = " $name",
+                infix = " $name ",
+                code = code,
+            )
+        }
+}
+
+/** The marker sets, hoisted for the same reason: a `vararg` call allocates an array per call. */
+private val PortugueseMarkers = listOf("portuguese", "portugues")
+private val BrazilianMarkers =
+    listOf("brazil", "brasil", "brazilian", "brasileiro", "pt br", "ptbr", "pob", "(br)")
+private val EuropeanPortugueseMarkers =
+    listOf("portugal", "european", "europeu", "iberian", "pt pt", "ptpt")
+private val SpanishMarkers = listOf("spanish", "espanol", "castellano")
+private val LatinSpanishMarkers = listOf(
+    "latin", "latino", "latinoamerica", "latinoamericano", "lat am", "latam",
+    "es 419", "es419", "(419)",
+)
+
 fun normalizeLanguageCode(language: String?): String? {
     val raw = language
         ?.trim()
@@ -225,24 +284,24 @@ fun normalizeLanguageCode(language: String?): String? {
         .replace('-', ' ')
         .replace('.', ' ')
         .replace('/', ' ')
-        .replace(Regex("\\s+"), " ")
+        .replace(WhitespaceRun, " ")
         .trim()
 
-    fun containsAny(vararg values: String): Boolean =
+    fun containsAny(values: List<String>): Boolean =
         values.any { value -> tokenized.contains(value) }
 
-    if (containsAny("portuguese", "portugues")) {
+    if (containsAny(PortugueseMarkers)) {
         return when {
-            containsAny("brazil", "brasil", "brazilian", "brasileiro", "pt br", "ptbr", "pob", "(br)") ->
+            containsAny(BrazilianMarkers) ->
                 "pt-br"
-            containsAny("portugal", "european", "europeu", "iberian", "pt pt", "ptpt") ->
+            containsAny(EuropeanPortugueseMarkers) ->
                 "pt"
             else -> "pt"
         }
     }
 
-    if (containsAny("spanish", "espanol", "castellano")) {
-        return if (containsAny("latin", "latino", "latinoamerica", "latinoamericano", "lat am", "latam", "es 419", "es419", "(419)")) {
+    if (containsAny(SpanishMarkers)) {
+        return if (containsAny(LatinSpanishMarkers)) {
             "es-419"
         } else {
             "es"
@@ -251,15 +310,14 @@ fun normalizeLanguageCode(language: String?): String? {
 
     LanguageCodeAliases[raw]?.let { return it.replace('_', '-').lowercase() }
     LanguageNameAliases[tokenized]?.let { return it }
-    LanguageNameAliases.entries
-        .sortedByDescending { it.key.length }
-        .firstOrNull { (name, _) ->
-            tokenized == name ||
-                tokenized.startsWith("$name ") ||
-                tokenized.endsWith(" $name") ||
-                tokenized.contains(" $name ")
+    LanguageNameMatchers
+        .firstOrNull { matcher ->
+            tokenized == matcher.name ||
+                tokenized.startsWith(matcher.prefix) ||
+                tokenized.endsWith(matcher.suffix) ||
+                tokenized.contains(matcher.infix)
         }
-        ?.let { return it.value }
+        ?.let { return it.code }
 
     val primary = raw.substringBefore('-')
     val primaryAlias = LanguageCodeAliases[primary]?.replace('_', '-')?.lowercase()

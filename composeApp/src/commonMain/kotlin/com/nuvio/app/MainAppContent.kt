@@ -1,5 +1,7 @@
 package com.nuvio.app
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.MutableTransitionState
@@ -56,6 +58,7 @@ import com.nuvio.app.core.format.formatReleaseDateForDisplay
 import com.nuvio.app.core.network.NetworkCondition
 import com.nuvio.app.core.network.NetworkStatusRepository
 import com.nuvio.app.core.sync.AppForegroundMonitor
+import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.sync.AppVisibility
 import com.nuvio.app.core.sync.ProfileSettingsSync
 import com.nuvio.app.core.sync.SyncManager
@@ -118,6 +121,8 @@ import com.nuvio.app.features.library.toMetaPreview
 import com.nuvio.app.features.membership.MemberAccessRepository
 import com.nuvio.app.features.notifications.EpisodeReleaseNotificationsRepository
 import com.nuvio.app.features.p2p.P2pSettingsRepository
+import com.nuvio.app.features.playback.PlaybackLoadingHost
+import com.nuvio.app.features.player.ExternalPlaybackOutcome
 import com.nuvio.app.features.player.ExternalPlayerIntentResult
 import com.nuvio.app.features.player.ExternalPlayerPlatform
 import com.nuvio.app.features.player.PlayerLaunch
@@ -816,8 +821,8 @@ internal fun MainAppContent(
             }
         }
 
-        suspend fun openExternalPlayback(launch: PlayerLaunch): Boolean {
-            if (!AppFeaturePolicy.externalPlayerSupported) return false
+        suspend fun openExternalPlayback(launch: PlayerLaunch): ExternalPlaybackOutcome {
+            if (!AppFeaturePolicy.externalPlayerSupported) return ExternalPlaybackOutcome.PlayerUnavailable
 
             lastExternalPlayerLaunch = launch
 
@@ -858,15 +863,19 @@ internal fun MainAppContent(
                     if (!launched) {
                         NuvioToastController.show(externalPlayerFailedText)
                     }
-                    launched
+                    if (launched) {
+                        ExternalPlaybackOutcome.Opened
+                    } else {
+                        ExternalPlaybackOutcome.SourceRejected
+                    }
                 }
                 ExternalPlayerIntentResult.NotConfigured -> {
                     NuvioToastController.show(externalPlayerNotConfiguredText)
-                    false
+                    ExternalPlaybackOutcome.PlayerUnavailable
                 }
                 ExternalPlayerIntentResult.Failed -> {
                     NuvioToastController.show(externalPlayerFailedText)
-                    false
+                    ExternalPlaybackOutcome.PlayerUnavailable
                 }
             }
         }
@@ -1573,11 +1582,11 @@ internal fun MainAppContent(
                 entry<StreamRoute>(
                     metadata = if (isDesktop) {
                         NavDisplay.transitionSpec {
-                            fadeIn(animationSpec = tween(160)) togetherWith
-                                fadeOut(animationSpec = tween(160))
+                            fadeIn(tween(220, delayMillis = 90, easing = NuvioTokens.Motion.decelerate)) togetherWith
+                                fadeOut(tween(90, easing = NuvioTokens.Motion.accelerate))
                         } + NavDisplay.popTransitionSpec {
-                            fadeIn(animationSpec = tween(160)) togetherWith
-                                fadeOut(animationSpec = tween(160))
+                            fadeIn(tween(220, delayMillis = 90, easing = NuvioTokens.Motion.decelerate)) togetherWith
+                                fadeOut(tween(90, easing = NuvioTokens.Motion.accelerate))
                         }
                     } else {
                         emptyMap()
@@ -1592,16 +1601,31 @@ internal fun MainAppContent(
                     )
                 }
                 entry<PlayerRoute>(
-                    metadata = if (isIos) {
-                        NavDisplay.transitionSpec {
+                    metadata = when {
+                        isIos -> NavDisplay.transitionSpec {
                             fadeIn(animationSpec = tween(220)) togetherWith
                                 fadeOut(animationSpec = tween(220))
                         } + NavDisplay.popTransitionSpec {
                             fadeIn(animationSpec = tween(220)) togetherWith
                                 fadeOut(animationSpec = tween(220))
                         }
-                    } else {
-                        emptyMap()
+                        // ⚠ **Explicitly no transition, and not merely `emptyMap()`.** An empty
+                        // map is not "no animation": it falls through to `NavDisplay`'s own
+                        // default fade, which is several times longer than the 160 ms
+                        // `entry<StreamRoute>` uses to leave. The two ran against each other over
+                        // a black player root, and that asymmetry is the black frame the
+                        // maintainer reported between choosing a source and the loading screen.
+                        //
+                        // Nothing may fade here at all, because `PlaybackLoadingHost` is drawing
+                        // the identical screen above both entries for the whole crossing: a
+                        // transition would be a crossfade between two frames that are already the
+                        // same, visible only as a dip in brightness.
+                        isDesktop -> NavDisplay.transitionSpec {
+                            EnterTransition.None togetherWith ExitTransition.None
+                        } + NavDisplay.popTransitionSpec {
+                            EnterTransition.None togetherWith ExitTransition.None
+                        }
+                        else -> emptyMap()
                     },
                 ) { route ->
                     PlayerDestination(
@@ -2122,6 +2146,16 @@ internal fun MainAppContent(
                     .align(Alignment.BottomCenter)
                     .zIndex(15f),
             )
+
+            // ⚠ **Above `NavDisplay`, and that placement is the whole point.** The loading
+            // surface has to outlive `entry<StreamRoute>`, `entry<PlayerRoute>` and the pop
+            // between them; owned by either route it was destroyed and re-created at every
+            // hand-off and every failover, which is what produced the stutter, the black frame
+            // and the loading screen visibly reloading itself to say "Attempt 2".
+            //
+            // Below the toast host on purpose: a toast over this surface is legitimate and is
+            // sometimes the only thing that can report a background failure.
+            PlaybackLoadingHost(modifier = Modifier.zIndex(18f))
 
             NuvioToastHost(
                 modifier = Modifier

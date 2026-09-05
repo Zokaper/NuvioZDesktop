@@ -17,6 +17,7 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.debug.DesktopDebugLog
+import com.nuvio.app.core.debug.EdtStallWatchdog
 import com.nuvio.app.core.debug.SelfTestHooks
 import com.nuvio.app.core.debug.selftest.DesktopSelfTest
 import com.nuvio.app.core.debug.selftest.SelfTestOverlay
@@ -25,6 +26,7 @@ import com.nuvio.app.core.diagnostics.SentryInitializer
 import com.nuvio.app.core.ui.NuvioTheme
 import com.nuvio.app.features.discordrpc.DiscordPresenceManager
 import com.nuvio.app.features.p2p.P2pStreamingEngine
+import com.nuvio.app.features.p2p.preloadP2pStreamingEngineAsync
 import com.nuvio.app.features.plugins.configureDesktopQuickJsLibrary
 import com.nuvio.app.features.player.PlatformPlayerSurface
 import com.nuvio.app.features.player.desktop.DesktopAppFullscreenController
@@ -57,6 +59,9 @@ private const val MacosDarkAquaAppearance = "NSAppearanceNameDarkAqua"
 fun main(args: Array<String>) {
     // First, so the rest of startup is inside the capture. No-op unless -Dnuvio.debugTools=true.
     DesktopDebugLog.install()?.let { logFile -> println("Nuvio debug log: $logFile") }
+    // Second, so a stall in the rest of startup is attributed rather than guessed at. Also a no-op
+    // outside a debug build.
+    EdtStallWatchdog.install()
     // On Linux, initialize GTK BEFORE AWT/Compose/Skia to prevent GdkDisplayManager
     // type registration conflict (Skiko partially loads GDK without full GTK init).
     if (System.getProperty("os.name", "").lowercase().contains("linux")) {
@@ -69,6 +74,10 @@ fun main(args: Array<String>) {
     installDesktopOpenUriHandler()
     handleDesktopLaunchArgs(args)
     preloadNativePlayerBridgeAsync()
+    // Same reason, one subsystem over: the player screen touches `P2pStreamingEngine` while it
+    // composes, so without this its class loading lands on the UI thread at the exact moment a
+    // source is chosen. See the note on the function.
+    preloadP2pStreamingEngineAsync()
     // Load cached profile data synchronously so the profile color is available
     // on the very first Compose frame (matching Android's SharedPreferences behavior).
     ProfileRepository.loadCachedProfiles()
