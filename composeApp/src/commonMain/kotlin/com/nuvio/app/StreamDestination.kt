@@ -220,6 +220,17 @@ internal fun StreamDestination(
      * grew their own copy; this is the one copy.
      */
     fun leaveToDetails() {
+        // ⚠ **The automatic play ends here, not at the pop.** "Escape takes you back and stops
+        // whatever is running" is one action, and splitting it left the stopping half unwritten:
+        // the pop tore this route down while the chain stayed armed in the repository, so the
+        // auto-play effect relaunched the source on the way out, and the next visit to the same
+        // title was handed the same chain again by `carriedAutoPlayChain`.
+        //
+        // The fetch goes with it. A user who has left is not waiting on a source list, and an
+        // addon still answering into a route nobody is looking at is the "finding" half of what
+        // Escape is supposed to terminate.
+        StreamsRepository.abandonAutoPlay()
+        StreamsRepository.cancelLoading()
         exitRequested = true
         onBack()
     }
@@ -288,8 +299,9 @@ internal fun StreamDestination(
     /**
      * The user backed out of the player themselves, rather than a source failing.
      *
-     * Read only by the stall backstop, to keep it from reporting a deliberate exit as a dead end.
-     * Saveable because the exit happens on the far side of a route change.
+     * Read by the stall backstop, to keep it from reporting a deliberate exit as a dead end, and
+     * by the auto-play effect, which must not answer a back press with another play. Saveable
+     * because the exit happens on the far side of a route change.
      */
     var userAbandonedPlayback by rememberSaveable(route.launchId) { mutableStateOf(false) }
     // Set at *every* exit to playback, not just the reuse-last-link one.
@@ -793,6 +805,15 @@ internal fun StreamDestination(
     ) {
         if (!routeDecisionHandled) return@LaunchedEffect
         if (launch.manualSelection) return@LaunchedEffect
+        // ⚠ **The user leaving outranks an armed chain, and this line is the whole of "Escape
+        // means stop".** On the pop back from the player this effect and the retry effect above
+        // both wake on the same `autoPlayStream`, and whichever ran first decided what happened.
+        // When this one won it relaunched the source the user had just escaped: measured at
+        // 2.4 s after the back press, re-attaching at the position they left it
+        // (`initialPositionMs=361499` against a `pos=360902` exit), which is why Escape had to
+        // be out-pressed rather than pressed. Ordering the two effects is not a fix - the
+        // abandon is a fact, and a fact outranks a race.
+        if (userAbandonedPlayback) return@LaunchedEffect
         val isClassicAutoPlay = playerSettings.playbackMode == PlaybackMode.CLASSIC &&
             playbackRouteDecision is PlaybackRouteDecision.ShowSourceList
         // Streamlined runs the chain from the moment a tier is chosen, Instant
@@ -1963,10 +1984,16 @@ internal fun StreamDestination(
         // `closeAfterHandOff` ends it, which is the entire reason the surface outlives this route.
         DisposableEffect(Unit) {
             onDispose {
-                val token = loadingToken ?: return@onDispose
-                if (PlaybackLoadingController.session?.handedOff != true) {
-                    PlaybackLoadingController.close(token)
-                }
+                // ⚠ **A hand-off is the one exit that leaves the chain alone.** Every other way
+                // this route can vanish - Escape, the back button, the window closing, a deep
+                // link landing elsewhere - is the user leaving, and an automatic play that
+                // outlives them is a play nobody asked for. `leaveToDetails` covers the exits
+                // this route owns; this covers the ones it does not, which is why the abandon
+                // is here as well as there rather than only at the call sites.
+                if (PlaybackLoadingController.session?.handedOff == true) return@onDispose
+                loadingToken?.let { token -> PlaybackLoadingController.close(token) }
+                StreamsRepository.abandonAutoPlay()
+                StreamsRepository.cancelLoading()
             }
         }
 
