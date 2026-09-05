@@ -66,6 +66,7 @@ import com.nuvio.app.features.player.skip.SkipIntroRepository
 import com.nuvio.app.features.streams.AddonStreamGroup
 import com.nuvio.app.features.streams.StreamBadgeSettingsRepository
 import com.nuvio.app.features.streams.StreamItem
+import com.nuvio.app.features.streams.StreamsRepository
 import com.nuvio.app.features.streams.isSelectableForPlayback
 import com.nuvio.app.features.watchprogress.buildPlaybackVideoId
 import com.nuvio.app.features.watching.application.WatchingState
@@ -976,8 +977,16 @@ private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControl
         }
         PlayerControlsAction.RevealLockedOverlay -> revealLockedOverlay()
         PlayerControlsAction.Back -> requestBack()
+        // ⚠ **Signalled and popped, never invoked in place.** Calling the route's
+        // `onChooseManually` from here did nothing the user could see: in the automatic modes
+        // `StreamRoute` has stopped composing while this player is on top, so the flags that
+        // callback sets are written into state that has already been saved and are dropped when
+        // the route is restored - and nothing left the player either, so the screen did not
+        // change. Reported as "the select source manually button doesn't work", and it could not
+        // have worked. The route consumes the request when the pop brings it back.
         PlayerControlsAction.ChooseManually -> {
-            PlaybackLoadingController.actions?.onChooseManually?.invoke()
+            StreamsRepository.signalManualSourceRequest()
+            requestBack()
         }
         // Returning true is what stops the native controls layer performing the transport itself
         // (`NativePlayerController.handleFallbackAction`). While a party owns this playback it has

@@ -98,6 +98,16 @@ internal class NativePlayerController(
     private var handle: Long = 0L
 
     /**
+     * The handle [snapshot] has already reported a bridge failure for, so it reports each once.
+     *
+     * ⚠ **The watchdog polls [snapshot] once a second, so an unguarded log would be sixty lines
+     * a minute of the same failure** - and the one line that matters is the first, because it
+     * carries the throwable from before the state went bad.
+     */
+    @Volatile
+    private var snapshotFailureReportedFor: Long = 0L
+
+    /**
      * When the native window for the current source was created, for the `didPaintOpening`
      * measurement below. Zero until the first attach of this controller.
      */
@@ -741,7 +751,22 @@ internal class NativePlayerController(
                 bufferedPositionMs = NativePlayerBridge.bufferedPositionMs(current),
                 playbackSpeed = NativePlayerBridge.speed(current),
             )
-        }.getOrDefault(PlayerPlaybackSnapshot(isLoading = true))
+        }.getOrElse { error ->
+            // ⚠ **A throwing bridge used to be indistinguishable from a source that never
+            // starts.** The default below is an all-zeros snapshot, so `PlaybackStartupWatchdog`
+            // sees position 0, buffer 0 and duration 0 either way and abandons at
+            // `NO_PROGRESS_DEADLINE_MS` with `NeverStarted` - the same verdict a genuinely dead
+            // source earns. A 2026-09-05 report of three healthy 4K sources abandoned in a row,
+            // fixed by restarting the app, could not be told apart from three slow ones for
+            // exactly this reason: the duration went from real on the first attempt to zero on
+            // the next two, which is what a failing bridge call looks like from out here and
+            // what a cold CDN looks like too. Saying so costs one line and settles it.
+            if (snapshotFailureReportedFor != current) {
+                snapshotFailureReportedFor = current
+                log.w(error) { "snapshot failed handle=$current; reporting an empty loading snapshot" }
+            }
+            PlayerPlaybackSnapshot(isLoading = true)
+        }
     }
 
     /**

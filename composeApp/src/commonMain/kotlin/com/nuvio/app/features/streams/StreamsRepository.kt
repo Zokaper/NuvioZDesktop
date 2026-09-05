@@ -664,6 +664,32 @@ object StreamsRepository {
     }
 
     /**
+     * "Choose source manually", pressed from inside the player.
+     *
+     * ⚠ **It has to be said here rather than done there, for the same reason a retry does.**
+     * The button reaches `StreamDestination.giveUpToSourceList` through
+     * `PlaybackLoadingController.actions`, and in the automatic modes that route has *stopped
+     * composing* while the player is on top - it stays on the back stack, but its
+     * `rememberSaveable` state has already been saved. Flags written into it from the player are
+     * dropped when the route is restored, so the button flipped state nobody would read and left
+     * the user in the player: it did nothing at all, which is exactly how it was reported.
+     *
+     * The player signals and pops; the route consumes on its way back and uncovers the list.
+     */
+    private var manualSourceRequestPending = false
+
+    fun signalManualSourceRequest() {
+        manualSourceRequestPending = true
+    }
+
+    /** True once, for the request that was signalled. */
+    fun consumeManualSourceRequest(): Boolean {
+        val pending = manualSourceRequestPending
+        manualSourceRequestPending = false
+        return pending
+    }
+
+    /**
      * Why the player gave up on the source it was handed, in the user's language.
      *
      * Written by the player runtime immediately before it invokes `onFatalPlaybackError`, and
@@ -738,6 +764,7 @@ object StreamsRepository {
     fun abandonAutoPlay() {
         activeRequestKey = null
         failoverRetryPending = false
+        manualSourceRequestPending = false
         retiredAutoPlayStream = null
         retiredAutoPlayCandidates = emptyList()
         pendingFailureReason = null

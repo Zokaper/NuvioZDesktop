@@ -708,6 +708,26 @@ internal fun StreamDestination(
         noteSourceFailureByLabel(sourceFailureLabel(stream), reason?.takeIf { it.isNotBlank() })
     }
 
+    // "Choose source manually", pressed inside the player and answered here.
+    //
+    // ⚠ **Ordered before the retry effect below on purpose.** Both wake on the return from the
+    // player, and this one is the more specific answer: the user did not just leave, they asked
+    // for the list. Letting the retry effect see it first would carry the gesture through
+    // `leaveToDetails` to the details screen - which is right for a plain Back and wrong for a
+    // button whose whole text is where it wants to go.
+    //
+    // The chain goes with it. A list the user is reading must not have a candidate starting
+    // underneath it, which is the same rule `abandonAutoPlay` exists for.
+    LaunchedEffect(navController.currentRoute) {
+        if (navController.currentRoute != route) return@LaunchedEffect
+        if (!StreamsRepository.consumeManualSourceRequest()) return@LaunchedEffect
+        playbackHandedOff = false
+        lastHandedOffFacts = null
+        StreamsRepository.abandonAutoPlay()
+        // Blank, because the user pressed the button: they already know why they are here.
+        giveUpToSourceList(reason = "", path = "manual_escape_from_player")
+    }
+
     // Coming back from the player with a candidate still armed. Two very
     // different things look identical here, and telling them apart is the whole
     // point of this effect.
