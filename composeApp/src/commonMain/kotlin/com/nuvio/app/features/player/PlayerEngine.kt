@@ -231,6 +231,21 @@ data class PlayerControlsState(
     val openingTitle: String = "",
     val openingMessage: String? = null,
     val openingProgress: Float? = null,
+    /**
+     * The app's desktop UI scale, so the native opening overlay is the **same size** as the
+     * Compose loading screen it takes over from.
+     *
+     * ⚠ **This is the bug that made the hand-over obvious.** `NuvioTheme` multiplies `LocalDensity`
+     * by `effectiveDesktopUiScale`, so every Compose dp on desktop is already scaled - but the
+     * controls page is a browser and sizes everything in raw CSS px, which knows nothing about it.
+     * The two loading screens were therefore never the same size, and the moment both became
+     * visible in sequence the takeover read as the screen reloading at a different zoom. Matching
+     * the colour was not enough; they have to match the *scale*.
+     *
+     * Applied to the opening overlay only. The rest of the player chrome never coexists with a
+     * Compose screen, so it has nothing to match and is deliberately left alone.
+     */
+    val openingScale: Float = 1f,
     /** Desktop-native rendering of Phase 2's shared loading band. */
     val openingStageLabel: String = "",
     val openingAttemptLabel: String = "",

@@ -1353,6 +1353,22 @@ button:disabled {
   }
 }
 
+/*
+ * ⚠ **The overlay itself stays full-bleed; only its *contents* scale.**
+ *
+ * `NuvioTheme` multiplies every desktop dp by `desktopUiScaleForWindow` - measured at 1.4365853 on
+ * the maintainer's window - while this page renders raw CSS px. The two loading screens were
+ * therefore never the same size, and the hand-over read as the screen reloading at a different
+ * zoom. The band's base values already match Compose's (16/12/14/12px, 48px up); only the
+ * multiplier was missing.
+ *
+ * An earlier attempt put `zoom: var(--opening-scale)` on this element with `width`/`height`
+ * dividing it back out. It did not take, and `zoom`'s interaction with a percentage-sized absolute
+ * box is subtle enough that it is not worth a second guess: `transform` on the three content
+ * groups is explicit about what moves and what does not. The backdrop and scrim must **not** scale
+ * - they are full-bleed on both sides of the hand-over and scaling them would crop differently
+ * from the Compose backdrop and from `NativePlayerHost`'s.
+ */
 .opening-overlay {
   position: absolute;
   inset: 0;
@@ -1378,9 +1394,9 @@ button:disabled {
 
 .opening-actions {
   position: absolute;
-  top: calc(var(--slider-bottom) + env(safe-area-inset-top));
-  left: var(--hp);
-  right: var(--hp);
+  top: calc(20px * var(--opening-scale, 1) + env(safe-area-inset-top));
+  left: calc(32px * var(--opening-scale, 1));
+  right: calc(32px * var(--opening-scale, 1));
   z-index: 3;
   display: flex;
   align-items: center;
@@ -1389,8 +1405,8 @@ button:disabled {
 }
 
 .opening-button {
-  width: var(--header-button);
-  height: var(--header-button);
+  width: calc(44px * var(--opening-scale, 1));
+  height: calc(44px * var(--opening-scale, 1));
   display: grid;
   place-items: center;
   border-radius: 999px;
@@ -1407,8 +1423,8 @@ button:disabled {
 }
 
 .opening-button svg {
-  width: var(--header-icon);
-  height: var(--header-icon);
+  width: calc(24px * var(--opening-scale, 1));
+  height: calc(24px * var(--opening-scale, 1));
 }
 
 .opening-artwork {
@@ -1447,6 +1463,9 @@ button:disabled {
 .opening-content {
   position: relative;
   z-index: 2;
+  /* Optically centred like the Compose logo/title block, so it scales about its own centre. */
+  transform: scale(var(--opening-scale, 1));
+  transform-origin: center;
   width: min(100%, 720px);
   min-height: 260px;
   display: flex;
@@ -1513,9 +1532,13 @@ button:disabled {
 .opening-band {
   position: absolute;
   z-index: 2;
-  left: var(--hp);
-  right: var(--hp);
-  bottom: 48px;
+  left: calc(32px * var(--opening-scale, 1));
+  bottom: calc(48px * var(--opening-scale, 1));
+  /* Transform also scales the width. Compensate before scaling so the right edge stays
+     inside the viewport, with the same 32dp/48dp insets as PlaybackLoadingScreen. */
+  width: calc(100% / var(--opening-scale, 1) - 64px);
+  transform: scale(var(--opening-scale, 1));
+  transform-origin: bottom left;
   display: flex;
   flex-direction: column;
   align-items: flex-start;

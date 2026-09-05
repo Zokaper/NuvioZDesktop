@@ -11,6 +11,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,6 +45,7 @@ import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.playback.ConnectionProbeSettlement
 import com.nuvio.app.features.playback.PLAYBACK_PROGRESS_STALL_GRACE_MS
 import com.nuvio.app.features.playback.PlaybackLoadingActions
+import com.nuvio.app.features.playback.PlaybackLoadingBackdrop
 import com.nuvio.app.features.playback.PlaybackLoadingController
 import com.nuvio.app.features.playback.PlaybackLoadingState
 import com.nuvio.app.features.playback.PlaybackMode
@@ -53,9 +55,6 @@ import com.nuvio.app.features.playback.PlaybackProgress
 import com.nuvio.app.features.playback.PlaybackProgressFailure
 import com.nuvio.app.features.playback.PlaybackProgressInputs
 import com.nuvio.app.features.playback.PlaybackProgressStep
-import com.nuvio.app.features.playback.PlaybackProbeVerdict
-import com.nuvio.app.features.playback.logKey
-import com.nuvio.app.features.playback.probePlaybackSource
 import com.nuvio.app.features.playback.PlaybackQualityOption
 import com.nuvio.app.features.playback.PlaybackQualityOptions
 import com.nuvio.app.features.playback.PlaybackQualitySheet
@@ -718,7 +717,19 @@ internal fun StreamDestination(
     LaunchedEffect(streamsUiState.autoPlayStream, navController.currentRoute) {
         if (navController.currentRoute != route) return@LaunchedEffect
         if (!playbackHandedOff) return@LaunchedEffect
-        if (streamsUiState.autoPlayStream == null) return@LaunchedEffect
+        // ⚠ **`autoPlayStream` gates the *retry*, never the *user leaving*, and conflating the two
+        // was the escape hatch's whole fault.**
+        //
+        // This guard used to sit above the branch, so a back press with no armed stream - a manual
+        // pick, or an automatic chain whose stream had already been consumed - returned here and
+        // set nothing. `userAbandonedPlayback` therefore stayed false, which is the one flag that
+        // suppresses the dead-end backstop, so 1.5 s later that backstop uncovered the source list
+        // and toasted "No safe sources found" at a user who had simply pressed Escape. Observed in
+        // the log as `outcome=gave_up uncover=dead_end_backstop` with `attempt=1/3` - no failover
+        // had happened at all - and it is also why Escape appeared to need two presses: the first
+        // popped the player and the route did nothing with it.
+        //
+        // A retry still requires a stream to relaunch, so the check moves into that branch alone.
         if (!StreamsRepository.consumeFailoverRetry()) {
             // The user came back on their own. Retire the chain first, so
             // nothing relaunches behind them.
@@ -747,6 +758,9 @@ internal fun StreamDestination(
             leaveToDetails()
             return@LaunchedEffect
         }
+        // A retry has nothing to relaunch without an armed stream. Only reachable when the player
+        // asked for one, so silence here is the failover arriving before the stream does.
+        if (streamsUiState.autoPlayStream == null) return@LaunchedEffect
         playbackHandedOff = false
         lastHandedOffFacts = null
         autoPickAttempt += 1
@@ -930,45 +944,6 @@ internal fun StreamDestination(
         // complaint about the previous candidate into the overlay of the one
         // that is now working.
         autoPickFailure = null
-
-        // ⚠ **One request, before a frame is ever attached.** See `PlaybackSourceProbe` for the
-        // session this came from: a source marked cached that produced nothing for twenty
-        // seconds, then a provider's two-minute "being prepared" slate that *played* and so was
-        // scored as a success. Both are visible in the response and neither was visible to the
-        // app. Running it here, under a loading screen that is already up and before the player
-        // route exists, means a rejected source never opens the player at all - so the chain
-        // steps with nothing on screen changing but the attempt number.
-        //
-        // A null result means the probe did not apply (a torrent, a local file); a failure or a
-        // timeout inside it answers `Pass`. Neither may block a play.
-        val probe = probePlaybackSource(
-            url = playerLaunch.sourceUrl,
-            headers = playerLaunch.sourceHeaders,
-            expectedBytes = playerLaunch.sourceFacts?.sizeBytes,
-        )
-        if (probe != null) {
-            streamLog.i { "probe ${probe.toLogFields()} verdict=${probe.verdict.logKey()}" }
-        }
-        val probeRejection = when (probe?.verdict) {
-            is PlaybackProbeVerdict.Dead -> getString(Res.string.playback_source_unreachable)
-            is PlaybackProbeVerdict.Placeholder -> getString(Res.string.playback_source_not_ready)
-            // `Pass`, and the two ways there is no verdict at all: a protocol the probe does not
-            // apply to, and a probe that failed or timed out. All three play the source.
-            else -> null
-        }
-        if (probeRejection != null) {
-            if (hasFailureChain && StreamsRepository.skipAutoPlayStream(stream)) {
-                autoPickAttempt += 1
-                noteSourceFailure(stream, probeRejection)
-            } else if (hasFailureChain) {
-                giveUpToSourceList(reason = probeRejection, path = "probe_chain_spent")
-            } else {
-                StreamsRepository.consumeAutoPlay()
-                giveUpToSourceList(reason = probeRejection, path = "probe_rejected")
-            }
-            StreamsRepository.cancelLoading()
-            return@LaunchedEffect
-        }
 
         if (playerSettings.externalPlayerEnabled) {
             lastHandedOffFacts = playerLaunch.sourceFacts
@@ -1699,12 +1674,36 @@ internal fun StreamDestination(
         // state where this surface should never be resting was also one where
         // an invisible row could be started by a stray tap.
         if (streamSurface != StreamRouteSurface.SourceList) {
+            val handOffArtwork = launch.background ?: launch.poster
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(MaterialTheme.nuvio.colors.background)
+                    // ⚠ **Opaque only when there is no artwork to cover with.** The backdrop below
+                    // is full-bleed and opaque once loaded, so it hides the list on its own - but
+                    // `AsyncImage` needs a frame to resolve even from the memory cache, and while
+                    // this Box painted its own flat fill underneath, that frame *was* a grey one.
+                    // Captured on screen at 14:21:55.136, one frame, immediately after a source was
+                    // chosen and before the loading session opened. Transparent, the same list the
+                    // user was already looking at stays visible for that frame instead, and the
+                    // backdrop covers it the moment it arrives - continuous either way.
+                    .then(
+                        if (handOffArtwork.isNullOrBlank()) {
+                            Modifier.background(MaterialTheme.nuvio.colors.background)
+                        } else {
+                            Modifier
+                        },
+                    )
                     .nuvioConsumePointerEvents(),
-            )
+            ) {
+                // ⚠ **The same picture as everything else on this path, and it must stay that
+                // way.** This surface goes up the instant a source is chosen and comes down when
+                // `PlaybackLoadingHost` opens its session - a gap of a frame or more. While it was
+                // a flat fill, that gap was a grey flash between a source list showing the artwork
+                // and a loading screen showing the artwork, measured on screen at the head of the
+                // hand-over. Same artwork, same crop, same scrim, so the loading screen arriving
+                // over it changes nothing visible. Same fallback as the session it precedes.
+                PlaybackLoadingBackdrop(artwork = handOffArtwork)
+            }
         }
         if (streamSurface == StreamRouteSurface.QualitySheet) {
             PlaybackQualitySheet(
@@ -1922,7 +1921,20 @@ internal fun StreamDestination(
                         // and the logo do not re-decode at the route change. Diverging these is
                         // the one way to make the hand-off visible again without changing
                         // anything else.
-                        artwork = launch.background,
+                        //
+                        // ⚠ **`?: poster` is load-bearing, and its absence was the grey flash.**
+                        // Every other surface on this path falls back to the poster when a title
+                        // has no backdrop - `StreamsTabletLayout` uses `background ?: poster`, and
+                        // the player's overlay uses `startingEpisode?.thumbnail ?: background ?:
+                        // poster`. This one did not, so on a title with no `background` the
+                        // loading screen alone had nothing to draw and fell through to
+                        // `nuvio.colors.background`: a flat #0D0D0D screen for its whole life,
+                        // between a source list showing the poster and a player overlay showing
+                        // the poster. Captured on screen at 1560 ms, ending exactly when the JCEF
+                        // overlay painted - which is why it read as "grey, then the loading
+                        // screen", and why chasing the canvas and the native container never
+                        // touched it. The comment above already claimed this matched the player.
+                        artwork = launch.background ?: launch.poster,
                         logo = launch.logo,
                         title = launch.title,
                         attempt = autoPickAttempt,
@@ -1932,6 +1944,29 @@ internal fun StreamDestination(
             } else {
                 loadingToken?.let(PlaybackLoadingController::close)
                 loadingToken = null
+            }
+        }
+
+        // ⚠ **The "or the user leaves" arm of the session's lifetime, which was never written.**
+        //
+        // `PlaybackLoadingController.close` is reachable from exactly one place - the `else` above -
+        // and an effect does not run its `else` when the composition is torn down. So popping this
+        // route (`leaveToDetails`, the back button, Escape) cancelled that effect and left the
+        // session **running**. `PlaybackLoadingHost` draws above `NavDisplay` and stops for nothing,
+        // so the abandoned surface kept painting over the details screen: the details screen
+        // appeared for one frame, the loading screen repainted over it, and there was no way out,
+        // because nothing left alive could ever close it. That is the "press Escape, see the other
+        // backdrop, then it flips back and you are stuck" report - and `PlaybackLoadingController`'s
+        // own contract already claimed this case was handled ("...or when the user leaves").
+        //
+        // A handed-off session is deliberately exempt: from that point the player owns it and
+        // `closeAfterHandOff` ends it, which is the entire reason the surface outlives this route.
+        DisposableEffect(Unit) {
+            onDispose {
+                val token = loadingToken ?: return@onDispose
+                if (PlaybackLoadingController.session?.handedOff != true) {
+                    PlaybackLoadingController.close(token)
+                }
             }
         }
 

@@ -290,6 +290,7 @@ let state = {
   openingTitle: "",
   openingMessage: "",
   openingProgress: null,
+  openingScale: 1,
   openingStageLabel: "Starting playback",
   openingAttemptLabel: "",
   openingFactLabels: [],
@@ -1914,6 +1915,17 @@ const trackListSignature = tracks =>
     .join("|");
 
 let openingPaintReported = false;
+let openingPaintPending = false;
+
+// How long the promote waits for the opening artwork before reporting anyway. A broken or slow
+// image must delay the hand-over, never withhold it - the native side has its own fallback too.
+const OPENING_ARTWORK_DEADLINE_MS = 800;
+
+const reportOpeningPainted = () => {
+  if (openingPaintReported) return;
+  openingPaintReported = true;
+  requestAnimationFrame(() => requestAnimationFrame(() => send("didPaintOpening")));
+};
 
 const renderOpeningOverlay = suppress => {
   const progress = normalizedOpeningProgress();
@@ -1958,6 +1970,12 @@ const renderOpeningOverlay = suppress => {
   openingProvider.hidden = !providerText;
   openingRelease.textContent = releaseText;
   openingRelease.hidden = !releaseText;
+  // Match the Compose loading screen's size before anything else is measured - see the
+  // `.opening-overlay` rule. A missing or nonsensical value must leave the page exactly as it was.
+  const openingScale = Number(state.openingScale);
+  if (Number.isFinite(openingScale) && openingScale > 0) {
+    openingOverlay.style.setProperty("--opening-scale", String(openingScale));
+  }
   openingProgressTrack.classList.toggle("indeterminate", !hasProgress);
   openingProgressBar.style.width = `${(progress || 0) * 100}%`;
 
@@ -1968,9 +1986,31 @@ const renderOpeningOverlay = suppress => {
   // rather than diagnosed. Fires once per page load, after the browser has actually presented a
   // frame - a `requestAnimationFrame` inside a `requestAnimationFrame` is the cheapest honest
   // "painted", since the first callback still runs before the compositor has committed.
-  if (showOpening && !openingPaintReported) {
-    openingPaintReported = true;
-    requestAnimationFrame(() => requestAnimationFrame(() => send("didPaintOpening")));
+  // ⚠ **"Painted" has to mean the artwork is on screen, not merely that a frame was
+  // presented.** This signal is what promotes the native container over the app's own loading
+  // screen, so reporting it while `openingArtwork` was still fetching handed the screen to a page
+  // showing its background colour and no picture - the last of the grey flashes between the
+  // loading screen and the player, and the one the maintainer spotted as "the second loading
+  // screen loading its metadata". The image is `decoding="async"`, so a rendered frame says
+  // nothing about it; `data-loaded-src` is set by its own `onload` and is the real answer.
+  if (showOpening && !openingPaintReported && !openingPaintPending) {
+    openingPaintPending = true;
+    const artworkLoaded = () =>
+      !artworkUrl || openingArtwork.getAttribute("data-loaded-src") === artworkUrl;
+    if (artworkLoaded()) {
+      reportOpeningPainted();
+    } else {
+      let deadline = 0;
+      const settle = () => {
+        openingArtwork.removeEventListener("load", settle);
+        openingArtwork.removeEventListener("error", settle);
+        if (deadline) clearTimeout(deadline);
+        reportOpeningPainted();
+      };
+      openingArtwork.addEventListener("load", settle);
+      openingArtwork.addEventListener("error", settle);
+      deadline = setTimeout(settle, OPENING_ARTWORK_DEADLINE_MS);
+    }
   }
 
   return showOpening;

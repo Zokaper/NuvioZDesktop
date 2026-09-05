@@ -117,6 +117,16 @@ private fun NativePlayerSurface(
     val host = remember { NativePlayerHost() }
     val controller = remember(host) { NativePlayerController(host) }
     val hostFirstPaintComplete = remember { mutableStateOf(false) }
+    /**
+     * Whether the canvas may cover the loading screen yet. See `NativePlayerHost.onBackdropReady`.
+     *
+     * ⚠ **Promotion is a hand-over, not a layout detail.** The instant this panel fills its parent,
+     * the heavyweight canvas behind it replaces every Compose layer on screen - including the
+     * loading screen the user is reading. Gating that on `onFirstPaint` alone promoted it while the
+     * canvas was still one pixel with nothing decoded, so the hand-over was to a flat fill: the
+     * grey flash between the loading screen and the player.
+     */
+    val hostBackdropReady = remember { mutableStateOf(false) }
     val hostFirstFullSizePaintComplete = remember { mutableStateOf(false) }
     val playbackHeaders = remember(sourceHeaders) { sanitizePlaybackHeaders(sourceHeaders) }
     val latestOnPlayerControlsAction = rememberUpdatedState(onPlayerControlsAction)
@@ -143,6 +153,9 @@ private fun NativePlayerSurface(
         host.onFirstPaint = {
             hostFirstPaintComplete.value = true
         }
+        host.onBackdropReady = {
+            hostBackdropReady.value = true
+        }
         host.onFirstFullSizePaint = {
             hostFirstFullSizePaintComplete.value = true
         }
@@ -150,7 +163,18 @@ private fun NativePlayerSurface(
             host.onDisplayableChanged = null
             host.onFirstPaint = null
             host.onFirstFullSizePaint = null
+            host.onBackdropReady = null
         }
+    }
+
+    // ⚠ **A backdrop that never decodes must delay the picture, never withhold it.** The gate above
+    // waits for artwork so the hand-over is invisible; this bounds that wait, so a dead image URL
+    // or an offline cache costs a moment of loading screen and nothing else. Every failure path in
+    // `prepareOpeningBackdrop` is silent by design, so there is no error to wait on - only a clock.
+    LaunchedEffect(host, hostFirstPaintComplete.value) {
+        if (!hostFirstPaintComplete.value || hostBackdropReady.value) return@LaunchedEffect
+        delay(BACKDROP_READY_DEADLINE_MS)
+        hostBackdropReady.value = true
     }
 
     LaunchedEffect(controller) {
@@ -262,7 +286,15 @@ private fun NativePlayerSurface(
                 factory = {
                     host
                 },
-                modifier = if (hostFirstPaintComplete.value) {
+                // ⚠ **Parked by size, and it must stay that way.**
+                //
+                // Parking by *offset* instead - full size, translated off screen - was tried to
+                // avoid the erase Windows performs when a heavyweight component is resized (two
+                // frames of grey at the promotion, measured). It removed the grey and **broke
+                // playback**: every attempt failed through to "attempt 3 of 3" and dropped the user
+                // on the source list. A native player whose host canvas is outside the window does
+                // not start. The two frames are the price of a player that works.
+                modifier = if (hostFirstPaintComplete.value && hostBackdropReady.value) {
                     Modifier.fillMaxSize()
                 } else {
                     Modifier
@@ -323,3 +355,12 @@ private class DesktopStubPlayerController : PlayerEngineController {
     override fun clearExternalSubtitle() = Unit
     override fun clearExternalSubtitleAndSelect(trackIndex: Int) = Unit
 }
+
+/**
+ * How long promotion waits for the opening backdrop before covering the loading screen anyway.
+ *
+ * Generous, because the cost of waiting is a loading screen the user is already reading, and the
+ * cost of not waiting is the grey flash this gate exists to remove. The decode is cached by URL in
+ * `NativePlayerController`, so only the first play of a title can approach this at all.
+ */
+private const val BACKDROP_READY_DEADLINE_MS: Long = 1_200L

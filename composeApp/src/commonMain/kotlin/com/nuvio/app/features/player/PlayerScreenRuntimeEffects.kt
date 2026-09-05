@@ -19,6 +19,10 @@ import com.nuvio.app.features.p2p.P2pStreamingState
 import com.nuvio.app.core.network.NetworkThroughputMeter
 import com.nuvio.app.features.playback.PlaybackAttemptLog
 import com.nuvio.app.features.playback.PlaybackDurationPlausibility
+import com.nuvio.app.features.playback.PlaybackProbeOutcome
+import com.nuvio.app.features.playback.PlaybackProbeVerdict
+import com.nuvio.app.features.playback.logKey
+import com.nuvio.app.features.playback.probePlaybackSource
 import com.nuvio.app.features.playback.PlaybackPosition
 import com.nuvio.app.features.playback.PlaybackStartupWatchdog
 import com.nuvio.app.features.player.skip.AutoSkipSegmentType
@@ -360,6 +364,45 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
     ) {
         val hasChain = args.onFatalPlaybackError != null || nextEpisodeFallbacks.isNotEmpty()
         if (!hasChain) return@LaunchedEffect
+
+        // ⚠ **Beside the attach, never before it.** `probePlaybackSource` is unbounded - see its
+        // KDoc for why a timeout cannot be enforced over a blocking OkHttp call - so awaiting it on
+        // the hand-off added eight seconds to every automatic play. Here it costs nothing: the
+        // loading surface covers the player until the first frame, so a source rejected while the
+        // probe is still running steps the chain with nothing on screen changing but the attempt
+        // number, and a verdict that arrives after the first frame is simply ignored below.
+        //
+        // Deliberately inside the watchdog's own effect: it is keyed on the same source, it is
+        // already gated on there being a chain to step, and the abandon machinery is right here
+        // rather than duplicated.
+        launch {
+            val outcome = probePlaybackSource(
+                url = activeSourceUrl,
+                headers = activeSourceHeaders,
+                expectedBytes = args.sourceFacts?.sizeBytes,
+            )
+            startupLog.i {
+                val detail = when (outcome) {
+                    is PlaybackProbeOutcome.NotApplicable -> "skipped=not_http"
+                    is PlaybackProbeOutcome.Failed -> "failed=${outcome.reason}"
+                    is PlaybackProbeOutcome.Completed ->
+                        "${outcome.result.toLogFields()} verdict=${outcome.result.verdict.logKey()}"
+                }
+                "probe $detail"
+            }
+            val verdict = (outcome as? PlaybackProbeOutcome.Completed)?.result?.verdict
+            val rejection = when (verdict) {
+                is PlaybackProbeVerdict.Dead -> Res.string.playback_source_unreachable
+                is PlaybackProbeVerdict.Placeholder -> Res.string.playback_source_not_ready
+                else -> null
+            } ?: return@launch
+            // A frame arrived while the probe was in flight. Whatever it thinks, the user is
+            // watching something - abandoning it now would be the probe overruling the evidence.
+            if (firstFrameReached) return@launch
+            StreamsRepository.noteAutoPickFailureReason(getString(rejection))
+            if (tryNextEpisodeFallback()) return@launch
+            args.onFatalPlaybackError?.invoke()
+        }
         // While diagnosing startup/buffering, abandoning the source hides the useful state, so
         // leave the player open for inspection.
         if (isDebugBuild && PlaybackDebugSettings.hudEnabled) return@LaunchedEffect

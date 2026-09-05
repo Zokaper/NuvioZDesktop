@@ -72,6 +72,8 @@ import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.LocalDensity
+import com.nuvio.app.core.ui.LocalNuvioPlatformDensity
 import com.nuvio.app.features.playback.PlaybackHandover
 import com.nuvio.app.features.playback.PlaybackLoadingActions
 import com.nuvio.app.features.playback.PlaybackLoadingController
@@ -524,6 +526,9 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             p2pInitialLoadingMessage
         },
         openingProgress = p2pInitialLoadingProgress,
+        // `LocalDensity` here is already `platformDensity x effectiveDesktopUiScale` - see
+        // `NuvioTheme` - so dividing the two recovers the scale the browser needs to match.
+        openingScale = LocalDensity.current.density / LocalNuvioPlatformDensity.current.density,
         openingStageLabel = p2pInitialLoadingMessage
             ?: stringResource(Res.string.playback_progress_starting),
         openingAttemptLabel = if (openingLoadingState.showsAttempt) {
@@ -900,6 +905,20 @@ internal fun releaseRetainedPlayerBeforeNavigation(
 }
 
 private fun PlayerScreenRuntime.requestBack() {
+    // ⚠ **The session ends here because the user said so, and nowhere else can say it.**
+    //
+    // Both owners close the session from the `else` branch of a `LaunchedEffect` - this file at
+    // `openingOverlayWanted`, `StreamDestination` at `showLoadingSurface`. An effect is *cancelled*
+    // on disposal and never runs its `else`, so tearing this screen down leaked the session every
+    // time: `PlaybackLoadingHost` draws above `NavDisplay` and stops for nothing, leaving a loading
+    // screen over the app that nothing alive could close. That is the "press Escape and you are
+    // trapped on a loading screen that never loads" report, and it is why the surface survived
+    // exactly the case its contract says ends it.
+    //
+    // Deliberately here rather than in an `onDispose`: this screen is also disposed by a *failover*,
+    // which pops the player and re-enters the stream route, and the surface must survive that
+    // untouched. An explicit back is the one teardown that is unambiguously the user leaving.
+    PlaybackLoadingController.closeAfterHandOff()
     flushWatchProgress()
     val exitingController = playerLifecycleController
     args.onBack { afterRelease, releaseFailed ->

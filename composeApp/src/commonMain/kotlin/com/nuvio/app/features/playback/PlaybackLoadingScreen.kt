@@ -123,15 +123,15 @@ fun PlaybackLoadingScreen(
      */
     entryProgress: Float = 1f,
 ) {
+    // ⚠ **No `graphicsLayer` on this Box, and it must not gain one.** It used to fade and scale
+    // the whole surface for the entrance, which meant Compose rendered a full-screen layer -
+    // backdrop included - to an offscreen buffer and composited it every frame. On a large window
+    // at a 1.4x UI scale that is a very large allocation per frame, and it is the stutter the
+    // maintainer reported immediately after choosing a source. The band below carries the
+    // entrance instead: it is small, so its layer is cheap.
     Box(
         modifier = modifier
             .fillMaxSize()
-            .graphicsLayer {
-                alpha = PlaybackLoadingMotion.surfaceAlpha(entryProgress)
-                val settle = PlaybackLoadingMotion.surfaceScale(entryProgress)
-                scaleX = settle
-                scaleY = settle
-            }
             .background(MaterialTheme.nuvio.colors.background)
             .nuvioConsumePointerEvents(),
     ) {
@@ -178,12 +178,18 @@ fun PlaybackLoadingScreen(
 /**
  * Backdrop and scrim.
  *
+ * ⚠ **Also drawn by `StreamDestination`'s opaque hand-off surface**, which is why this is
+ * `internal` rather than private. That surface covers the source list from the moment a source is
+ * chosen until this screen's session opens, and while it was a flat `nuvio.colors.background` fill
+ * it was a grey frame between a list showing the artwork and a loading screen showing the artwork.
+ * Every surface on this path has to draw the same picture; a flat one is a flash by definition.
+ *
  * Cropped, full-bleed and unanimated. The gradient is the player's, kept verbatim so the two
  * sides of the hand-off scrim the same artwork to the same values - a scrim that differs by
  * even one stop reads as a flash at the route change.
  */
 @Composable
-private fun PlaybackLoadingBackdrop(artwork: String?) {
+internal fun PlaybackLoadingBackdrop(artwork: String?) {
     if (artwork.isNullOrBlank()) return
     AppAsyncImage(
         model = artwork,
