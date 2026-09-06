@@ -343,10 +343,9 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         networkThroughputState = NetworkThroughputMeter.initial()
     }
 
-    // A session is one thing being watched. Moving to the next episode earns a fresh swap - and
-    // a fresh credential-refresh budget, for exactly the same reason. Keyed on the *video*, not
-    // on the source URL, because re-minting changes the URL and would otherwise refund the
-    // budget it just spent.
+    // A session is one thing being watched. Moving to the next episode earns a fresh candidate
+    // chain and a fresh credential-refresh budget. Keyed on the *video*, not on the source URL,
+    // because re-minting changes the URL and would otherwise refund the budget it just spent.
     LaunchedEffect(activeVideoId) {
         credentialRefreshesUsed = 0
         credentialRefreshAttemptedSourceUrl = null
