@@ -52,7 +52,11 @@ data class SourceFacts(
     // how a wrong-show pick becomes visible before it plays - so it is now load-bearing rather
     // than incidental, and the stub has to carry it.
     val filename: String? = null,
-)
+    val isAiUpscaled: Boolean = false,
+) {
+    val isTheatricalCapture: Boolean
+        get() = com.nuvio.app.core.media.ReleaseTags.isTheatricalCapture(releaseQuality)
+}
 
 object SourceFactsExtractor {
     fun extract(stream: com.nuvio.app.features.streams.StreamItem): SourceFacts = SourceFacts()

@@ -640,6 +640,7 @@ internal fun StreamDestination(
             codecPreference = playerSettings.playbackCodecPreference,
             dynamicRangePolicy = playerSettings.playbackDynamicRangePolicy,
             audioPreference = playerSettings.playbackAudioPreference,
+            displayMaxHeight = platformDisplayMaxHeight(),
         )
     }
     // The quality choices for *this* title, derived from what the addons actually
@@ -1582,6 +1583,7 @@ internal fun StreamDestination(
             pinnedHeight = null,
             estimatedMbps = sheetNetworkQuality.estimatedMbps,
             maxHeight = meteredCapHeight,
+            context = playbackSelectionContext,
         )
         if (option == null) {
             giveUpToSourceList(path = "instant_no_option")
