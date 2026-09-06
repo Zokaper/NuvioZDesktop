@@ -374,6 +374,7 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         // Deliberately inside the watchdog's own effect: it is keyed on the same source, it is
         // already gated on there being a chain to step, and the abandon machinery is right here
         // rather than duplicated.
+        var probePassed = false
         launch {
             val outcome = probePlaybackSource(
                 url = activeSourceUrl,
@@ -390,6 +391,9 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
                 "probe $detail"
             }
             val verdict = (outcome as? PlaybackProbeOutcome.Completed)?.result?.verdict
+            if (verdict is PlaybackProbeVerdict.Pass) {
+                probePassed = true
+            }
             val rejection = when (verdict) {
                 is PlaybackProbeVerdict.Dead -> Res.string.playback_source_unreachable
                 is PlaybackProbeVerdict.Placeholder -> Res.string.playback_source_not_ready
@@ -419,6 +423,7 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
                 "baselineMs=${args.initialPositionMs}ms"
         }
         var lastLoggedProgressMs = 0L
+        var wasEvidenceOfLifeLogged = false
         while (true) {
             delay(PlaybackStartupWatchdog.POLL_INTERVAL_MS)
             val snapshot = playbackSnapshot
@@ -444,6 +449,7 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
                     progressFraction = activeInitialProgressFraction,
                     durationMs = snapshot.durationMs,
                 ) ?: activeInitialPositionMs.coerceAtLeast(0L),
+                hasExternalEvidenceOfLife = probePassed,
             )
             // ⚠ **Checked before the watchdog's verdict, because the watchdog would say Started.**
             // A provider's "being prepared" slate plays perfectly: position advances, the buffer
@@ -472,6 +478,14 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
                 return@LaunchedEffect
             }
             watch = PlaybackStartupWatchdog.observe(watch, sample)
+            if (!wasEvidenceOfLifeLogged && watch.hasEvidenceOfLife) {
+                wasEvidenceOfLifeLogged = true
+                startupLog.i {
+                    "watchdog evidence of life: attempt=${args.playbackAttempt} candidate=$activeStreamTitle " +
+                        "elapsed=${sample.elapsedMs}ms duration=${sample.durationMs}ms " +
+                        "buffered=${sample.bufferedPositionMs}ms probePassed=$probePassed"
+                }
+            }
             if (watch.bestProgressMs > lastLoggedProgressMs && watch.bestProgressMs > 0L) {
                 lastLoggedProgressMs = watch.bestProgressMs
                 startupLog.d {
@@ -501,6 +515,7 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
                             "attempt=${args.playbackAttempt} " +
                             "elapsed=${sample.elapsedMs}ms progress=${watch.bestProgressMs}ms " +
                             "lastAdvance=${watch.lastAdvanceMs}ms duration=${sample.durationMs}ms " +
+                            "evidenceOfLife=${watch.hasEvidenceOfLife} " +
                             "engine=${snapshot.engineName}"
                     }
                     StreamsRepository.noteAutoPickFailureReason(
