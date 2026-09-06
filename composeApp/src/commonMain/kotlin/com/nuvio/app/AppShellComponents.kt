@@ -86,6 +86,7 @@ import com.nuvio.app.features.library.LibrarySection
 import com.nuvio.app.features.library.LibrarySortOption
 import com.nuvio.app.features.player.PlayerBackReleaseGuard
 import com.nuvio.app.features.player.PlayerBackRequest
+import com.nuvio.app.features.player.PlayerExitDiagnostics
 import com.nuvio.app.features.profiles.ActiveProfileMiniAvatar
 import com.nuvio.app.features.profiles.AvatarCatalogItem
 import com.nuvio.app.features.profiles.AvatarRepository
@@ -229,6 +230,7 @@ internal fun rememberGuardedPlayerPopBackStack(
                 releaseBeforeBack = releaseBeforeBack,
                 beforePop = beforePop,
                 pop = {
+                    PlayerExitDiagnostics.recordT1(route.toString())
                     navController.currentRoute == route &&
                         navController.popBackStack(expectedRoute = route)
                 },

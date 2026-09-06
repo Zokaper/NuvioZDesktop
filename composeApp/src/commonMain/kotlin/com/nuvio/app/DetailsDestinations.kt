@@ -7,7 +7,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import com.nuvio.app.features.details.MetaDetailsScreen
+import com.nuvio.app.features.player.PlayerExitDiagnostics
 import com.nuvio.app.features.details.PersonDetailScreen
 import com.nuvio.app.features.details.TmdbEntityBrowseScreen
 import com.nuvio.app.features.home.MetaPreview
@@ -91,6 +93,12 @@ internal fun DetailsDestination(
         onPlay = onPlay,
         onPlayManually = onPlayManually,
         onOpenMeta = onOpenMeta,
+        modifier = Modifier
+            .fillMaxSize()
+            .drawWithContent {
+                drawContent()
+                PlayerExitDiagnostics.recordT2("DetailsDestination")
+            },
         onCastClick = { person, avatarTransitionKey ->
             val tmdbId = person.tmdbId
             if (tmdbId != null && tmdbId > 0) {
@@ -127,7 +135,6 @@ internal fun DetailsDestination(
         },
         sharedTransitionScope = sharedTransitionScope,
         animatedVisibilityScope = animatedVisibilityScope,
-        modifier = Modifier.fillMaxSize(),
     )
 }
 

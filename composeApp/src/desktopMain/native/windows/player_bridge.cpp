@@ -1148,6 +1148,14 @@ public:
         return flagProperty("eof-reached", false);
     }
 
+    int videoWidth() {
+        return (int)int64Property("video-params/w", 0);
+    }
+
+    int videoHeight() {
+        return (int)int64Property("video-params/h", 0);
+    }
+
     /**
      * Everything the Kotlin side cannot otherwise see, in one call.
      *
@@ -2553,6 +2561,18 @@ extern "C" JNIEXPORT jfloat JNICALL
 Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_speed(JNIEnv *, jobject, jlong handle) {
     auto player = playerFromHandle(handle);
     return player ? (jfloat)player->speed() : 1.0f;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_videoWidth(JNIEnv *, jobject, jlong handle) {
+    auto player = playerFromHandle(handle);
+    return player ? (jint)player->videoWidth() : 0;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_videoHeight(JNIEnv *, jobject, jlong handle) {
+    auto player = playerFromHandle(handle);
+    return player ? (jint)player->videoHeight() : 0;
 }
 
 extern "C" JNIEXPORT jfloat JNICALL

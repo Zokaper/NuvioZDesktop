@@ -16,6 +16,7 @@ import com.nuvio.app.features.player.ParentalWarning
 import com.nuvio.app.features.player.PlayerControlsAction
 import com.nuvio.app.features.player.PlayerControlsState
 import com.nuvio.app.features.player.PlayerEngineController
+import com.nuvio.app.features.player.PlayerExitDiagnostics
 import com.nuvio.app.features.player.PlayerPlaybackSnapshot
 import com.nuvio.app.features.player.PlayerPartyMember
 import com.nuvio.app.features.player.PlayerOpeningFact
@@ -736,12 +737,21 @@ internal class NativePlayerController(
         NativePlayerBridge.setSpeed(current, next)
     }
 
+    private fun readVideoDimensions(current: Long): Pair<Int, Int> {
+        val width = runCatching { NativePlayerBridge.videoWidth(current) }.getOrDefault(0)
+        val height = runCatching { NativePlayerBridge.videoHeight(current) }.getOrDefault(0)
+        if (width > 0 && height > 0) return Pair(width, height)
+        val diag = runCatching { NativeMpvDiagnostics.parse(NativePlayerBridge.diagnosticsJson(current)) }.getOrNull()
+        return Pair(diag?.videoWidth ?: 0, diag?.videoHeight ?: 0)
+    }
+
     fun snapshot(): PlayerPlaybackSnapshot {
         val current = handle
-        if (current == 0L) return PlayerPlaybackSnapshot(isLoading = true)
+        if (current == 0L) return PlayerPlaybackSnapshot(isLoading = true, engineName = "Desktop-mpv")
         return runCatching {
             val isLoading = NativePlayerBridge.isLoading(current)
             val isEnded = NativePlayerBridge.isEnded(current)
+            val (width, height) = readVideoDimensions(current)
             PlayerPlaybackSnapshot(
                 isLoading = isLoading,
                 isPlaying = !NativePlayerBridge.isPaused(current) && !isLoading && !isEnded,
@@ -750,6 +760,9 @@ internal class NativePlayerController(
                 positionMs = NativePlayerBridge.positionMs(current),
                 bufferedPositionMs = NativePlayerBridge.bufferedPositionMs(current),
                 playbackSpeed = NativePlayerBridge.speed(current),
+                videoWidth = width,
+                videoHeight = height,
+                engineName = "Desktop-mpv",
             )
         }.getOrElse { error ->
             // ⚠ **A throwing bridge used to be indistinguishable from a source that never
@@ -765,7 +778,7 @@ internal class NativePlayerController(
                 snapshotFailureReportedFor = current
                 log.w(error) { "snapshot failed handle=$current; reporting an empty loading snapshot" }
             }
-            PlayerPlaybackSnapshot(isLoading = true)
+            PlayerPlaybackSnapshot(isLoading = true, engineName = "Desktop-mpv")
         }
     }
 
@@ -819,63 +832,60 @@ internal class NativePlayerController(
                     active
                 }
                 else -> {
-                    releaseCallbacks += callback
                     active ?: Thread({
-                    awaitThreadCompletion(disposeInFlight, "native teardown")
-                    awaitInFlightCreates()
-                    // A create worker publishes/configures its result on the EDT before leaving
-                    // createsInFlight. Release must drain those already-queued callbacks before
-                    // taking the final disposal snapshot: a stale publication can reject its
-                    // handle and start a tracked disposal after the create thread has exited.
-                    awaitSwingCallbacksQueuedByCreates()
-                    awaitThreadCompletion(disposeInFlight, "native teardown queued by create")
-                    var failureMessage = synchronized(lifecycleLock) { terminalReleaseFailure }
-                    val current = if (failureMessage == null) detachPlayerHandle() else 0L
-                    if (current != 0L) {
-                        log.d { "pre-navigation dispose started handle=$current" }
-                        runCatching { nativeDispose(current) }
-                            .onSuccess { log.d { "pre-navigation dispose completed handle=$current" } }
-                            .onFailure { error ->
-                                failureMessage = "Native player shutdown failed. Quit Nuvio before removing the player."
-                                log.w(error) { "pre-navigation dispose failed handle=$current" }
-                            }
-                    }
-                    val callbacks = synchronized(lifecycleLock) {
-                        releaseInFlight = null
-                        releaseTimedOut = false
-                        if (failureMessage != null) terminalReleaseFailure = failureMessage
-                        releaseCallbacks.toList().also { releaseCallbacks.clear() }
-                    }
-                    SwingUtilities.invokeLater {
-                        callbacks.forEach { pending ->
-                            val invoke = if (failureMessage == null) {
-                                { pending.onReleased() }
-                            } else {
-                                { pending.onFailed(failureMessage) }
-                            }
-                            runCatching(invoke)
-                                .onFailure { error -> log.w(error) { "release callback failed" } }
+                        awaitThreadCompletion(disposeInFlight, "native teardown")
+                        awaitInFlightCreates()
+                        // A create worker publishes/configures its result on the EDT before leaving
+                        // createsInFlight. Release must drain those already-queued callbacks before
+                        // taking the final disposal snapshot: a stale publication can reject its
+                        // handle and start a tracked disposal after the create thread has exited.
+                        awaitSwingCallbacksQueuedByCreates()
+                        awaitThreadCompletion(disposeInFlight, "native teardown queued by create")
+                        var failureMessage = synchronized(lifecycleLock) { terminalReleaseFailure }
+                        val current = if (failureMessage == null) detachPlayerHandle() else 0L
+                        if (current != 0L) {
+                            log.d { "pre-navigation dispose started handle=$current" }
+                            runCatching { nativeDispose(current) }
+                                .onSuccess { log.d { "pre-navigation dispose completed handle=$current" } }
+                                .onFailure { error ->
+                                    failureMessage = "Native player shutdown failed. Quit Nuvio before removing the player."
+                                    log.w(error) { "pre-navigation dispose failed handle=$current" }
+                                }
                         }
+                        PlayerExitDiagnostics.recordT4(current)
+                        synchronized(lifecycleLock) {
+                            releaseInFlight = null
+                            releaseTimedOut = false
+                            if (failureMessage != null) terminalReleaseFailure = failureMessage
+                        }
+                    }, "nuvio-player-release").apply {
+                        isDaemon = true
+                        releaseInFlight = this
+                        releaseTimedOut = false
+                        shouldStart = true
                     }
-                }, "nuvio-player-release").apply {
-                    isDaemon = true
-                    releaseInFlight = this
-                    releaseTimedOut = false
-                    shouldStart = true
                 }
             }
         }
-        }
         if (immediateFailure != null) {
-            SwingUtilities.invokeLater {
+            val invoke = Runnable {
                 runCatching { callback.onFailed(immediateFailure) }
                     .onFailure { error -> log.w(error) { "immediate release failure callback failed" } }
             }
+            if (SwingUtilities.isEventDispatchThread()) invoke.run() else SwingUtilities.invokeLater(invoke)
             return
         }
         if (shouldStart) {
             worker.start()
-            startReleaseWatchdog(worker)
+        }
+        val notifyReleased = Runnable {
+            runCatching(callback.onReleased)
+                .onFailure { error -> log.w(error) { "release callback failed" } }
+        }
+        if (SwingUtilities.isEventDispatchThread()) {
+            notifyReleased.run()
+        } else {
+            SwingUtilities.invokeLater(notifyReleased)
         }
     }
 

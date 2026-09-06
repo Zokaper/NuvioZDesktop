@@ -236,7 +236,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     // because the seek, subtitle and watchdog paths all read it and mean the weaker thing.
     val openingOverlayWanted = playerSettingsUiState.showLoadingOverlay &&
         !firstFrameReached &&
-        errorMessage == null
+        (errorMessage == null || args.onFatalPlaybackError != null)
     val openingLoadingState = PlaybackLoadingState(
         step = PlaybackProgressStep.StartingPlayback,
         attempt = args.playbackAttempt,
@@ -917,6 +917,7 @@ internal fun releaseRetainedPlayerBeforeNavigation(
 }
 
 private fun PlayerScreenRuntime.requestBack() {
+    PlayerExitDiagnostics.recordT0("requestBack")
     // ⚠ **The session ends here because the user said so, and nowhere else can say it.**
     //
     // Both owners close the session from the `else` branch of a `LaunchedEffect` - this file at

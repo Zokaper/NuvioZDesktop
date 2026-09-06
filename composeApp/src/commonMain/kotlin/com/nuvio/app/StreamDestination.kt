@@ -23,6 +23,8 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawWithContent
+import com.nuvio.app.features.player.PlayerExitDiagnostics
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.network.MeteredPlaybackChoice
 import com.nuvio.app.core.network.NetworkConnectionType
@@ -217,6 +219,9 @@ internal fun StreamDestination(
      * said why" a failing test rather than a thing users have to notice and report.
      */
     var uncoverPath by rememberSaveable(route.launchId) { mutableStateOf<String?>(null) }
+    var manualPlaybackStarting by rememberSaveable(route.launchId) { mutableStateOf(false) }
+    var manualCandidateFacts by remember(route.launchId) { mutableStateOf<SourceFacts?>(null) }
+    var loadingToken by rememberSaveable(route.launchId) { mutableStateOf<Long?>(null) }
 
     /**
      * Gives the screen back to the user, with a reason.
@@ -238,6 +243,10 @@ internal fun StreamDestination(
      * supposed to bite. A required parameter turns that into a compile error instead.
      */
     fun giveUpToSourceList(reason: String? = null, path: String) {
+        manualPlaybackStarting = false
+        manualCandidateFacts = null
+        loadingToken?.let(PlaybackLoadingController::close)
+        loadingToken = null
         qualitySheetDismissed = true
         manualSourceListRequested = true
         // ⚠ **Which of the eight ways in this was.** The maintainer could not name the
@@ -270,6 +279,10 @@ internal fun StreamDestination(
      * grew their own copy; this is the one copy.
      */
     fun leaveToDetails() {
+        manualPlaybackStarting = false
+        manualCandidateFacts = null
+        loadingToken?.let(PlaybackLoadingController::close)
+        loadingToken = null
         // ⚠ **The automatic play ends here, not at the pop.** "Escape takes you back and stops
         // whatever is running" is one action, and splitting it left the stopping half unwritten:
         // the pop tore this route down while the chain stayed armed in the repository, so the
@@ -1069,6 +1082,7 @@ internal fun StreamDestination(
         val launchId = PlayerLaunchStore.put(playerLaunch)
         lastHandedOffFacts = playerLaunch.sourceFacts
         playbackHandedOff = true
+        loadingToken?.let(PlaybackLoadingController::handOff)
         streamLog.i {
             "handoff: attempt=$autoPickAttempt candidate=${playerLaunch.streamTitle} " +
                 "urlType=${if (playerLaunch.torrentInfoHash != null) "p2p" else "http"} " +
@@ -1099,6 +1113,27 @@ internal fun StreamDestination(
         forceExternal: Boolean,
         forceInternal: Boolean,
     ) {
+        val willOpenInternally = forceInternal || (!forceExternal && !playerSettings.externalPlayerEnabled && !stream.shouldOpenExternally)
+        val streamFacts = playbackCandidates.firstOrNull { it.stream === stream }?.facts
+            ?: SourceFactsExtractor.extract(stream)
+        if (willOpenInternally) {
+            manualCandidateFacts = streamFacts
+            manualPlaybackStarting = true
+            if (loadingToken == null) {
+                loadingToken = PlaybackLoadingController.open(
+                    step = if (DirectDebridPlaybackResolver.shouldResolveToPlayableStream(stream)) {
+                        PlaybackProgressStep.ResolvingLink
+                    } else {
+                        PlaybackProgressStep.StartingPlayback
+                    },
+                    artwork = launch.background ?: launch.poster,
+                    logo = launch.logo,
+                    title = launch.title,
+                    attempt = autoPickAttempt,
+                    facts = streamFacts,
+                )
+            }
+        }
         if (DirectDebridPlaybackResolver.shouldResolveToPlayableStream(stream)) {
             if (resolvingDebridStream) return
             streamRouteScope.launch {
@@ -1118,6 +1153,10 @@ internal fun StreamDestination(
                         forceInternal = forceInternal,
                     )
                     else -> {
+                        manualPlaybackStarting = false
+                        manualCandidateFacts = null
+                        loadingToken?.let(PlaybackLoadingController::close)
+                        loadingToken = null
                         resolved.toastMessage()?.let { NuvioToastController.show(it) }
                         if (resolved == DirectDebridPlayableResult.Stale) {
                             StreamsRepository.reload(
@@ -1146,6 +1185,10 @@ internal fun StreamDestination(
             return
         }
         if (stream.shouldOpenExternally) {
+            manualPlaybackStarting = false
+            manualCandidateFacts = null
+            loadingToken?.let(PlaybackLoadingController::close)
+            loadingToken = null
             val opened = stream.externalOpenUrl?.let { url -> openExternalStreamUrl(url) } == true
             if (opened) {
                 StreamsRepository.cancelLoading()
@@ -1187,6 +1230,10 @@ internal fun StreamDestination(
         )
 
         if (!forceInternal && (forceExternal || playerSettings.externalPlayerEnabled)) {
+            manualPlaybackStarting = false
+            manualCandidateFacts = null
+            loadingToken?.let(PlaybackLoadingController::close)
+            loadingToken = null
             streamRouteScope.launch {
                 lastHandedOffFacts = playerLaunch.sourceFacts
                 playbackHandedOff = true
@@ -1208,6 +1255,7 @@ internal fun StreamDestination(
         // the opaque surface kept painting over a list nobody could see.
         lastHandedOffFacts = playerLaunch.sourceFacts
         playbackHandedOff = true
+        loadingToken?.let(PlaybackLoadingController::handOff)
         navController.navigate(
             PlayerRoute(launchId = launchId, title = playerLaunch.title)
         )
@@ -1713,7 +1761,14 @@ internal fun StreamDestination(
     }
 
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .drawWithContent {
+                drawContent()
+                PlayerExitDiagnostics.recordT2("StreamDestination")
+            },
+    ) {
         StreamsScreen(
             type = launch.type,
             videoId = effectiveVideoId,
@@ -1954,7 +2009,8 @@ internal fun StreamDestination(
                 },
             )
         }
-        val showLoadingSurface = streamSurface == StreamRouteSurface.ProgressOverlay ||
+        val showLoadingSurface = manualPlaybackStarting ||
+            streamSurface == StreamRouteSurface.ProgressOverlay ||
             (streamSurface == StreamRouteSurface.HandOff && playbackHandedOff)
         // ⚠ **This route no longer draws the loading screen; it publishes to it.**
         // `PlaybackLoadingHost` renders it above `NavDisplay` - see the block comment there for
@@ -1964,6 +2020,8 @@ internal fun StreamDestination(
         // destroyed and re-created in between.
         val loadingStep = if (playbackHandedOff) {
             PlaybackProgressStep.StartingPlayback
+        } else if (manualPlaybackStarting) {
+            if (resolvingDebridStream) PlaybackProgressStep.ResolvingLink else PlaybackProgressStep.StartingPlayback
         } else {
             PlaybackProgress.step(
                 PlaybackProgressInputs(
@@ -1981,6 +2039,7 @@ internal fun StreamDestination(
                 ),
             )
         }
+        val loadingFacts = if (manualPlaybackStarting) manualCandidateFacts ?: activeCandidateFacts else activeCandidateFacts
         val loadingState = PlaybackLoadingState(
             step = loadingStep,
             attempt = autoPickAttempt,
@@ -1988,17 +2047,9 @@ internal fun StreamDestination(
             // the user is about to receive - and so the same figures survive the hand-off into
             // the player, which renders them from the same `SourceFacts` rather than from its own
             // re-parse of the display title.
-            facts = activeCandidateFacts,
+            facts = loadingFacts,
             failure = autoPickFailure,
         )
-
-        // ⚠ **`rememberSaveable`, not `remember`.** In the automatic modes this entry stays on
-        // the back stack while the player is on top, stops composing, and is composed again by
-        // the failover's pop. A plain `remember` would lose the token there, the route would open
-        // a *second* session on top of its own, and the screen would re-enter - which is exactly
-        // the "Attempt 2 reloads the loading screen" fault. `autoPickAttempt` above is saveable
-        // for the same reason.
-        var loadingToken by rememberSaveable(route.launchId) { mutableStateOf<Long?>(null) }
 
         LaunchedEffect(showLoadingSurface) {
             if (showLoadingSurface) {
@@ -2026,12 +2077,14 @@ internal fun StreamDestination(
                         logo = launch.logo,
                         title = launch.title,
                         attempt = autoPickAttempt,
-                        facts = activeCandidateFacts,
+                        facts = loadingFacts,
                     )
                 }
             } else {
                 loadingToken?.let(PlaybackLoadingController::close)
                 loadingToken = null
+                manualPlaybackStarting = false
+                manualCandidateFacts = null
             }
         }
 
@@ -2086,7 +2139,13 @@ internal fun StreamDestination(
             PlaybackLoadingController.registerActions(
                 token = token,
                 actions = PlaybackLoadingActions(
-                    onBack = { leaveToDetails() },
+                    onBack = {
+                        if (manualPlaybackStarting) {
+                            giveUpToSourceList(reason = "", path = "manual_escape")
+                        } else {
+                            leaveToDetails()
+                        }
+                    },
                     // The blank reason is the point: `giveUpToSourceList` toasts whatever it is
                     // given, and the user who just pressed this button already knows why they
                     // are looking at the list.

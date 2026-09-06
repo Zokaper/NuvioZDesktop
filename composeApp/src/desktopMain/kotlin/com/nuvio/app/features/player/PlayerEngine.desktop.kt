@@ -29,8 +29,10 @@ import com.nuvio.app.features.player.desktop.DesktopHostOs
 import com.nuvio.app.features.player.desktop.NativePlayerController
 import com.nuvio.app.features.player.desktop.NativePlayerHost
 import com.nuvio.app.features.player.desktop.desktopFullscreenChanges
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.withContext
 
 @Composable
 actual fun PlatformPlayerSurface(
@@ -257,9 +259,17 @@ private fun NativePlayerSurface(
     }
 
     LaunchedEffect(controller) {
+        var hasFirstFrame = false
         while (true) {
-            onSnapshot(controller.snapshot())
-            delay(500L)
+            val snapshot = withContext(Dispatchers.IO) {
+                controller.snapshot()
+            }
+            onSnapshot(snapshot)
+            if (!hasFirstFrame && (snapshot.videoWidth > 0 && snapshot.videoHeight > 0 || (snapshot.isPlaying && snapshot.positionMs > 0L))) {
+                hasFirstFrame = true
+            }
+            val pollDelayMs = if (hasFirstFrame) 500L else 50L
+            delay(pollDelayMs)
         }
     }
 

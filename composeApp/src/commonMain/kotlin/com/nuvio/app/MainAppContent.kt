@@ -191,6 +191,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import com.nuvio.app.core.ui.AppPresenceState
 import com.nuvio.app.core.ui.PresenceSnapshot
 import androidx.compose.ui.ExperimentalComposeUiApi
+import com.nuvio.app.features.player.PlayerExitDiagnostics
 import com.nuvio.app.features.player.dispatchNavigationBack
 
 @OptIn(ExperimentalSharedTransitionApi::class, ExperimentalComposeUiApi::class)
@@ -1318,6 +1319,9 @@ internal fun MainAppContent(
                     modifier = Modifier.fillMaxSize(),
                     onBack = {
                         val routeAtRequest = navController.currentRoute
+                        if (routeAtRequest is PlayerRoute) {
+                            PlayerExitDiagnostics.recordT0("systemBack")
+                        }
                         dispatchNavigationBack(
                             isPlayerRoute = routeAtRequest is PlayerRoute,
                             playerBack = registeredPlayerSystemBack

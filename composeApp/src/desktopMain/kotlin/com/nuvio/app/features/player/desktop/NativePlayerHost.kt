@@ -1,6 +1,7 @@
 package com.nuvio.app.features.player.desktop
 
 import co.touchlab.kermit.Logger
+import com.nuvio.app.features.player.PlayerExitDiagnostics
 import java.awt.Canvas
 import java.awt.Color
 import java.awt.Cursor
@@ -460,6 +461,7 @@ internal class NativePlayerHost : Canvas() {
     }
 
     override fun removeNotify() {
+        PlayerExitDiagnostics.recordT3("NativePlayerHost.removeNotify")
         onDisplayableChanged?.invoke(false)
         firstPaintNotified = false
         firstFullSizePaintNotified = false

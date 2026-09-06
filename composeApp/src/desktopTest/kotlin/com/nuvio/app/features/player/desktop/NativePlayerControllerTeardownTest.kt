@@ -20,14 +20,18 @@ private val failNativeCreate: NativePlayerCreate = { _, _, _, _, _, _, _, _, _ -
 
 class NativePlayerControllerTeardownTest {
     @Test
-    fun completesNavigationOnlyAfterNativeHandleIsDisposed() {
+    fun completesNavigationImmediatelyWhileDisposingNativeHandleAsynchronously() {
         val events = Collections.synchronizedList(mutableListOf<String>())
         val released = CountDownLatch(1)
+        val disposed = CountDownLatch(1)
         val host = NativePlayerHost()
         val controller = NativePlayerController(
             host = host,
             nativeCreate = failNativeCreate,
-            nativeDispose = { handle -> events += "disposed-$handle" },
+            nativeDispose = { handle ->
+                events += "disposed-$handle"
+                disposed.countDown()
+            },
         )
         controller.setNativeHandleForTest(42L)
 
@@ -37,7 +41,9 @@ class NativePlayerControllerTeardownTest {
         }
 
         assertTrue(released.await(2, TimeUnit.SECONDS))
-        assertEquals(listOf("disposed-42", "released"), events.toList())
+        assertEquals(listOf("released"), events.toList())
+        assertTrue(disposed.await(2, TimeUnit.SECONDS))
+        assertEquals(listOf("released", "disposed-42"), events.toList())
     }
 
     @Test
@@ -381,7 +387,7 @@ class NativePlayerControllerTeardownTest {
     }
 
     @Test
-    fun releaseWaitsForTrackedRejectedHandleDisposal() {
+    fun releaseDoesNotBlockNavigationForTrackedRejectedHandleDisposal() {
         val disposeStarted = CountDownLatch(1)
         val allowDispose = CountDownLatch(1)
         val released = CountDownLatch(1)
@@ -398,9 +404,8 @@ class NativePlayerControllerTeardownTest {
         assertTrue(disposeStarted.await(2, TimeUnit.SECONDS))
         controller.releaseBeforeNavigation { released.countDown() }
 
-        assertFalse(released.await(100, TimeUnit.MILLISECONDS))
-        allowDispose.countDown()
         assertTrue(released.await(2, TimeUnit.SECONDS))
+        allowDispose.countDown()
     }
 
     @Test
@@ -509,22 +514,28 @@ class NativePlayerControllerTeardownTest {
     fun nativeDisposeFailureCannotBecomeSuccessfulOnRetry() {
         val failures = AtomicInteger()
         val completions = AtomicInteger()
-        val firstFailure = CountDownLatch(1)
         val retryFailure = CountDownLatch(1)
+        val disposeFinished = CountDownLatch(1)
         val controller = NativePlayerController(
             host = NativePlayerHost(),
             nativeCreate = failNativeCreate,
-            nativeDispose = { error("dispose failed") },
+            nativeDispose = {
+                try {
+                    error("dispose failed")
+                } finally {
+                    disposeFinished.countDown()
+                }
+            },
         )
         controller.setNativeHandleForTest(42L)
 
         controller.releaseBeforeNavigation(
             onReleased = { completions.incrementAndGet() },
-            onReleaseFailed = {
-                if (failures.incrementAndGet() == 1) firstFailure.countDown()
-            },
+            onReleaseFailed = { failures.incrementAndGet() },
         )
-        assertTrue(firstFailure.await(2, TimeUnit.SECONDS))
+        assertTrue(disposeFinished.await(2, TimeUnit.SECONDS))
+        Thread.sleep(50)
+
         controller.releaseBeforeNavigation(
             onReleased = { completions.incrementAndGet() },
             onReleaseFailed = {
@@ -534,12 +545,12 @@ class NativePlayerControllerTeardownTest {
         )
 
         assertTrue(retryFailure.await(2, TimeUnit.SECONDS))
-        assertEquals(0, completions.get())
-        assertEquals(2, failures.get())
+        assertEquals(1, completions.get())
+        assertEquals(1, failures.get())
     }
 
     @Test
-    fun desktopReleaseWaitsForNativeDispose() {
+    fun desktopReleaseDoesNotWaitForNativeDispose() {
         val disposeStarted = CountDownLatch(1)
         val allowDispose = CountDownLatch(1)
         val released = CountDownLatch(1)
@@ -555,59 +566,45 @@ class NativePlayerControllerTeardownTest {
 
         controller.releaseBeforeNavigation { released.countDown() }
 
-        assertTrue(disposeStarted.await(2, TimeUnit.SECONDS))
-        assertFalse(released.await(100, TimeUnit.MILLISECONDS))
-        allowDispose.countDown()
         assertTrue(released.await(2, TimeUnit.SECONDS))
+        assertTrue(disposeStarted.await(2, TimeUnit.SECONDS))
+        allowDispose.countDown()
     }
 
     @Test
-    fun blockedNativeDisposeReportsFailureWithoutCompletingNavigation() {
+    fun blockedNativeDisposeDoesNotBlockNavigation() {
         val disposeStarted = CountDownLatch(1)
         val allowDispose = CountDownLatch(1)
-        val failed = CountDownLatch(1)
-        val disposeFinished = CountDownLatch(1)
-        val completed = AtomicInteger()
+        val completed = CountDownLatch(1)
         val controller = NativePlayerController(
             host = NativePlayerHost(),
             nativeCreate = failNativeCreate,
             nativeDispose = {
                 disposeStarted.countDown()
                 allowDispose.await()
-                disposeFinished.countDown()
             },
-            releaseTimeoutMs = 50L,
         )
         controller.setNativeHandleForTest(42L)
 
         controller.releaseBeforeNavigation(
-            onReleased = { completed.incrementAndGet() },
-            onReleaseFailed = {
-                assertTrue(SwingUtilities.isEventDispatchThread())
-                failed.countDown()
-            },
+            onReleased = { completed.countDown() },
+            onReleaseFailed = {},
         )
 
+        assertTrue(completed.await(2, TimeUnit.SECONDS))
         assertTrue(disposeStarted.await(2, TimeUnit.SECONDS))
-        assertTrue(failed.await(2, TimeUnit.SECONDS))
-        assertEquals(0, completed.get())
         allowDispose.countDown()
-        assertTrue(disposeFinished.await(2, TimeUnit.SECONDS))
-        SwingUtilities.invokeAndWait {}
-        assertEquals(0, completed.get())
     }
 
     @Test
-    fun blockedNativeCreateReportsFailureWithoutCompletingNavigation() {
+    fun blockedNativeCreateDoesNotBlockNavigation() {
         val createStarted = CountDownLatch(1)
         val allowCreate = CountDownLatch(1)
-        val failed = CountDownLatch(1)
-        val completed = AtomicInteger()
+        val completed = CountDownLatch(1)
         val controller = NativePlayerController(
             host = NativePlayerHost(),
             nativeCreate = failNativeCreate,
             nativeDispose = {},
-            releaseTimeoutMs = 50L,
         )
         val create = Thread {
             createStarted.countDown()
@@ -617,24 +614,18 @@ class NativePlayerControllerTeardownTest {
         controller.addCreateInFlightForTest(create)
 
         controller.releaseBeforeNavigation(
-            onReleased = { completed.incrementAndGet() },
-            onReleaseFailed = {
-                assertTrue(SwingUtilities.isEventDispatchThread())
-                failed.countDown()
-            },
+            onReleased = { completed.countDown() },
+            onReleaseFailed = {},
         )
 
-        assertTrue(failed.await(2, TimeUnit.SECONDS))
-        assertEquals(0, completed.get())
+        assertTrue(completed.await(2, TimeUnit.SECONDS))
         allowCreate.countDown()
         create.join(2_000)
         assertFalse(create.isAlive)
-        SwingUtilities.invokeAndWait {}
-        assertEquals(0, completed.get())
     }
 
     @Test
-    fun repeatedReleaseCallbacksCompleteOnceOnSwingEdt() {
+    fun repeatedReleaseCallbacksCompleteImmediatelyOnSwingEdt() {
         val started = CountDownLatch(1)
         val unblock = CountDownLatch(1)
         val done = CountDownLatch(2)
@@ -655,15 +646,14 @@ class NativePlayerControllerTeardownTest {
                 done.countDown()
             }
         }
-        assertTrue(started.await(2, TimeUnit.SECONDS))
-        assertFalse(done.await(100, TimeUnit.MILLISECONDS))
-        unblock.countDown()
         assertTrue(done.await(2, TimeUnit.SECONDS))
         assertEquals(2, calls.get())
+        assertTrue(started.await(2, TimeUnit.SECONDS))
+        unblock.countDown()
     }
 
     @Test
-    fun releaseCompletionWaitsForEarlierNativeTeardown() {
+    fun releaseCompletesNavigationImmediatelyWhileEarlierNativeTeardownRuns() {
         val teardownStarted = CountDownLatch(1)
         val allowTeardown = CountDownLatch(1)
         val releaseCompleted = CountDownLatch(1)
@@ -675,13 +665,13 @@ class NativePlayerControllerTeardownTest {
         assertTrue(teardownStarted.await(2, TimeUnit.SECONDS))
         controller.setDisposeInFlightForTest(teardown)
         controller.releaseBeforeNavigation { releaseCompleted.countDown() }
-        assertFalse(releaseCompleted.await(100, TimeUnit.MILLISECONDS))
-        allowTeardown.countDown()
         assertTrue(releaseCompleted.await(2, TimeUnit.SECONDS))
+        allowTeardown.countDown()
+        teardown.join(2_000)
     }
 
     @Test
-    fun releaseCompletionWaitsForDisposeStartedWhileCreateIsFinishing() {
+    fun releaseCompletionDoesNotBlockForDisposeStartedWhileCreateIsFinishing() {
         val createStarted = CountDownLatch(1)
         val allowCreate = CountDownLatch(1)
         val disposeStarted = CountDownLatch(1)
@@ -704,17 +694,15 @@ class NativePlayerControllerTeardownTest {
         controller.addCreateInFlightForTest(create)
 
         controller.releaseBeforeNavigation { releaseCompleted.countDown() }
+        assertTrue(releaseCompleted.await(2, TimeUnit.SECONDS))
         controller.dispose()
         allowCreate.countDown()
         assertTrue(disposeStarted.await(2, TimeUnit.SECONDS))
-
-        assertFalse(releaseCompleted.await(100, TimeUnit.MILLISECONDS))
         allowDispose.countDown()
-        assertTrue(releaseCompleted.await(2, TimeUnit.SECONDS))
     }
 
     @Test
-    fun releaseCompletionWaitsForInFlightNativeCreate() {
+    fun releaseCompletionDoesNotBlockForInFlightNativeCreate() {
         val host = NativePlayerHost()
         val controller = NativePlayerController(host = host, nativeCreate = failNativeCreate, nativeDispose = {})
         val createStarted = CountDownLatch(1)
@@ -729,13 +717,13 @@ class NativePlayerControllerTeardownTest {
 
         controller.releaseBeforeNavigation { releaseCompleted.countDown() }
 
-        assertFalse(releaseCompleted.await(100, TimeUnit.MILLISECONDS))
-        allowCreate.countDown()
         assertTrue(releaseCompleted.await(2, TimeUnit.SECONDS))
+        allowCreate.countDown()
+        create.join(2_000)
     }
 
     @Test
-    fun releaseCompletionWaitsForDisposalQueuedByFinishingCreate() {
+    fun releaseCompletionDoesNotBlockForDisposalQueuedByFinishingCreate() {
         val edtBlocked = CountDownLatch(1)
         val allowEdt = CountDownLatch(1)
         val createStarted = CountDownLatch(1)
@@ -767,28 +755,25 @@ class NativePlayerControllerTeardownTest {
         controller.addCreateInFlightForTest(create)
 
         controller.releaseBeforeNavigation { releaseCompleted.countDown() }
+        allowEdt.countDown()
+        assertTrue(releaseCompleted.await(2, TimeUnit.SECONDS))
         allowCreate.countDown()
         create.join(2_000L)
         assertFalse(create.isAlive)
-        allowEdt.countDown()
         assertTrue(disposeStarted.await(2, TimeUnit.SECONDS))
-
-        assertFalse(releaseCompleted.await(100, TimeUnit.MILLISECONDS))
         allowDispose.countDown()
-        assertTrue(releaseCompleted.await(2, TimeUnit.SECONDS))
     }
 
     @Test
-    fun timedOutQueuedDisposalNeverCompletesNavigationLater() {
+    fun queuedDisposalDoesNotBlockOrTimeoutNavigation() {
         val edtBlocked = CountDownLatch(1)
         val allowEdt = CountDownLatch(1)
         val createStarted = CountDownLatch(1)
         val allowCreate = CountDownLatch(1)
         val disposeStarted = CountDownLatch(1)
         val allowDispose = CountDownLatch(1)
-        val failed = CountDownLatch(1)
-        val failures = AtomicInteger()
         val completions = AtomicInteger()
+        val completedLatch = CountDownLatch(1)
         val controller = NativePlayerController(
             host = NativePlayerHost(),
             nativeCreate = failNativeCreate,
@@ -814,27 +799,22 @@ class NativePlayerControllerTeardownTest {
         controller.addCreateInFlightForTest(create)
 
         controller.releaseBeforeNavigation(
-            onReleased = { completions.incrementAndGet() },
-            onReleaseFailed = {
-                assertTrue(SwingUtilities.isEventDispatchThread())
-                failures.incrementAndGet()
-                failed.countDown()
+            onReleased = {
+                completions.incrementAndGet()
+                completedLatch.countDown()
             },
+            onReleaseFailed = {},
         )
+        allowEdt.countDown()
+        assertTrue(completedLatch.await(2, TimeUnit.SECONDS))
+        assertEquals(1, completions.get())
+
         allowCreate.countDown()
         create.join(2_000L)
         assertFalse(create.isAlive)
-        allowEdt.countDown()
         assertTrue(disposeStarted.await(2, TimeUnit.SECONDS))
-        assertTrue(failed.await(2, TimeUnit.SECONDS))
-        assertEquals(1, failures.get())
-        assertEquals(0, completions.get())
-
         allowDispose.countDown()
         controller.disposeInFlightForTest()?.join(2_000L)
-        SwingUtilities.invokeAndWait {}
-        assertEquals(1, failures.get())
-        assertEquals(0, completions.get())
     }
 }
 

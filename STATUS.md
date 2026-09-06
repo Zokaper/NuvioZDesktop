@@ -2,6 +2,40 @@
 
 Last updated: 2026-09-06
 
+## Phase 2 follow-up: Seamless desktop player handoff (2026-09-06)
+
+Branch `claude/phase-2-desktop-handoff`.
+
+Implemented the Phase 2 follow-up for desktop-only seamless player startup and exit handoffs:
+
+1. **Part A: Source → Player Startup (`StreamDestination.kt`, `PlayerScreenRuntimeUi.kt`):**
+   - Elevated the existing Phase 2 loading surface (`PlaybackLoadingController` / `PlaybackLoadingHost`) across all 3 playback modes (Classic, Streamlined, Instant).
+   - In `StreamDestination.kt`, manual and streamlined candidate selection (`openSelectedStream`) opens the persistent loading session immediately upon user action, displaying candidate facts and artwork before route navigation or debrid link resolution begins.
+   - Handed off the active loading token into the player route via `loadingToken?.let(PlaybackLoadingController::handOff)`.
+   - Prevented failover attempt 2 reload stutter in `PlayerScreenRuntimeUi.kt`: kept `openingOverlayWanted = true` during fatal playback errors when failovers are active (`args.onFatalPlaybackError != null`), ensuring the loading screen persists seamlessly across automatic candidate failovers without snapping or recreating.
+   - Preserved canonical teardown: session properly closes on user escape/back (`giveUpToSourceList` or `leaveToDetails`) and candidate exhaustion.
+   - Gated loading overlay dismissal strictly on first rendered video frame (`PlaybackHandover.hasFirstFrame`).
+
+2. **Part B: Player → Previous Screen Exit (`PlayerExitDiagnostics.kt`, `NativePlayerController.kt`, `PlayerEngine.desktop.kt`, `NativePlayerBridge.kt`, `player_bridge.cpp`):**
+   - Instrumented timestamped diagnostics across the entire exit pipeline:
+     - `T0`: Escape/back action received (`requestBack` or `systemBack`).
+     - `T1`: Navigation pop requested (`rememberGuardedPlayerPopBackStack`).
+     - `T2`: Previous Compose destination drawn (`DetailsDestination` / `StreamDestination`).
+     - `T3`: Native player surface detached/hidden (`NativePlayerHost.removeNotify`).
+     - `T4`: Native player teardown completed in background thread.
+   - Decoupled navigation pop from native player teardown:
+     - In `NativePlayerController.releaseBeforeNavigation`, `onReleased` is invoked immediately on the EDT, allowing `PlayerRoute` to pop instantly (`T1`) and Compose to paint the previous destination (`T2`, ~16 ms).
+     - Native player disposal runs in the background thread `nuvio-player-release` (`T4`), completely eliminating the momentary `#0D0D0D` dark gray screen caused by premature window hiding while `PlayerRoute` remained mounted.
+   - Moved snapshot polling off the Swing EDT to `Dispatchers.IO` in `PlayerEngine.desktop.kt` with adaptive polling intervals (50 ms before first frame, 500 ms steady-state).
+   - Added native video dimensions querying via JNI (`NativePlayerBridge.videoWidth` and `videoHeight` reading mpv's `video-params/w` and `video-params/h`), populating `snapshot.videoWidth` and `videoHeight` for precise first-frame detection.
+   - Rebuilt MSVC Windows player bridge DLL (`composeApp/build/native/windows/player_bridge.dll`).
+
+3. **Verification:**
+   - Pure test suites outside Gradle: 459 tests passed clean across all 6 groups (`scripts/run-pure-suites.sh`).
+   - `NativePlayerControllerTeardownTest`: all 23 tests passed (`:composeApp:desktopTest`).
+   - `PlayerExitOrderingTest`: all 4 tests passed (`:composeApp:desktopTest`).
+   - Kotlin desktop compilation: clean without errors.
+
 ## Phase 2 manual-verification finding: Startup watchdog evidence-of-life deadline (2026-09-06)
 
 Branch `claude/phase-2-playback`.
