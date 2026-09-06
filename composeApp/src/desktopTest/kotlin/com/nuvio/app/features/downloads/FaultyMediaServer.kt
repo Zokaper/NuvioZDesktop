@@ -133,6 +133,7 @@ internal class FaultyMediaServer : AutoCloseable {
         client.tcpNoDelay = true
         val input = client.getInputStream().bufferedReader(Charsets.ISO_8859_1)
         val requestLine = input.readLine() ?: return
+        val method = requestLine.substringBefore(' ').uppercase()
         val path = requestLine.split(' ').getOrNull(1) ?: return
 
         var rangeStart = 0L
@@ -151,10 +152,6 @@ internal class FaultyMediaServer : AutoCloseable {
             }
         }
 
-        requestCounts.getOrPut(path) { AtomicInteger() }.incrementAndGet()
-        requestedRangeStarts.getOrPut(path) { mutableListOf() }.let { starts ->
-            synchronized(starts) { starts += rangeStart }
-        }
         val content = files[path]
         val output = client.getOutputStream()
         if (content == null) {
@@ -163,6 +160,24 @@ internal class FaultyMediaServer : AutoCloseable {
             return
         }
         val etag = etagFor(content)
+        // Lazy source resolution now verifies the authoritative size with HEAD
+        // immediately before each GET. A transfer fault belongs to the body request,
+        // so the probe must neither consume it nor inflate the transfer counters.
+        if (method == "HEAD") {
+            writeHeaders(
+                output = output,
+                status = 200,
+                bodyLength = content.size.toLong(),
+                rangeStart = null,
+                total = content.size.toLong(),
+                etag = etag,
+            )
+            return
+        }
+        requestCounts.getOrPut(path) { AtomicInteger() }.incrementAndGet()
+        requestedRangeStarts.getOrPut(path) { mutableListOf() }.let { starts ->
+            synchronized(starts) { starts += rangeStart }
+        }
         val effectiveRangeStart = if (rangeStart > 0L && ifRange != null && ifRange != etag) 0L else rangeStart
         servedRangeStarts.getOrPut(path) { mutableListOf() }.let { starts ->
             synchronized(starts) { starts += effectiveRangeStart }

@@ -1,10 +1,10 @@
 package com.nuvio.app.features.downloads
 
 import com.nuvio.app.core.storage.DesktopStorage
+import com.nuvio.app.core.network.NetworkCondition
+import com.nuvio.app.core.network.NetworkStatusUiState
 import com.nuvio.app.features.debrid.DebridProviders
 import com.nuvio.app.features.debrid.DebridSettingsRepository
-import com.nuvio.app.features.debrid.DirectDebridPlayableResult
-import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
 import com.nuvio.app.features.streams.StreamBehaviorHints
 import com.nuvio.app.features.streams.StreamClientResolve
 import com.nuvio.app.features.streams.StreamItem
@@ -14,6 +14,9 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -72,6 +75,7 @@ class DesktopDownloadQueueE2ETest {
         DownloadsTiming.stallTimeoutMs = STALL_TIMEOUT_MS
         DownloadsTiming.queueWatchdogTimeoutMs = QUEUE_WATCHDOG_MS
         DownloadsTiming.sourceResolveTimeoutMs = SOURCE_RESOLVE_TIMEOUT_MS
+        DownloadsTiming.connectivityRefreshIntervalMs = 100L
         defaultResolver = DownloadsRepository.resolvePlayableStream
         server = FaultyMediaServer()
     }
@@ -82,6 +86,156 @@ class DesktopDownloadQueueE2ETest {
         DownloadsRepository.deleteDownloadsForTitle(META_ID)
         DownloadsTiming.reset()
         DownloadsRepository.resolvePlayableStream = defaultResolver
+        DownloadsRepository.restoreConnectivityFeedAfterTests()
+    }
+
+    @Test
+    fun `unresolved sources wait for slots and never resolve while offline`() {
+        val episodes = (1..4).map { publishEpisode(it) }
+        val connectivity = FakeConnectivityFeed(NetworkCondition.NoInternet)
+        DownloadsRepository.installConnectivityFeedForTests(connectivity)
+        val entered = CountDownLatch(2)
+        val gates = episodes.associate { it.number to CompletableDeferred<Unit>() }
+        val calls = mutableListOf<Int>()
+        val active = AtomicInteger()
+        val peak = AtomicInteger()
+        DownloadsRepository.resolvePlayableStream = { stream, _, episode ->
+            val number = assertNotNull(episode)
+            synchronized(calls) { calls += number }
+            val nowActive = active.incrementAndGet()
+            peak.updateAndGet { maxOf(it, nowActive) }
+            entered.countDown()
+            try {
+                gates.getValue(number).await()
+                DownloadSourceResolution.Ready(stream.copy(url = server.urlFor(episodes[number - 1].path)))
+            } finally {
+                active.decrementAndGet()
+            }
+        }
+
+        episodes.forEach { enqueueUnresolved(it) }
+        Thread.sleep(350L)
+        assertTrue(synchronized(calls) { calls.isEmpty() }, "offline enqueue contacted the provider")
+        assertTrue(
+            DownloadsRepository.uiState.value.items.all {
+                it.activity == DownloadActivity.WAITING_FOR_CONNECTION
+            },
+        )
+        DownloadsRepository.clearLocalState()
+        DownloadsRepository.ensureLoaded()
+        assertEquals(4, DownloadsRepository.uiState.value.items.size)
+        assertTrue(DownloadsRepository.uiState.value.items.all { it.sourceUrl == null })
+        assertTrue(synchronized(calls) { calls.isEmpty() }, "reload resolved a source without a slot")
+
+        connectivity.moveTo(NetworkCondition.Online)
+        assertTrue(entered.await(5, TimeUnit.SECONDS), "two source resolutions did not acquire slots")
+        assertEquals(setOf(1, 2), synchronized(calls) { calls.toSet() })
+        assertEquals(2, peak.get())
+        try {
+            gates.getValue(1).complete(Unit)
+            awaitCondition(15_000L, "the first slot to pass to episode three") { items ->
+                synchronized(calls) { 3 in calls } &&
+                    items.any { it.episodeNumber == 1 && it.status == DownloadStatus.Completed }
+            }
+            assertTrue(synchronized(calls) { 4 !in calls }, "episode four resolved before a slot opened")
+        } finally {
+            gates.values.forEach { it.complete(Unit) }
+        }
+        awaitQueueDrained(timeoutMs = 30_000L)
+        assertTrue(peak.get() <= DownloadsRepository.MAX_CONCURRENT_TRANSFERS)
+        episodes.forEach { assertContentOnDisk(itemFor(it), it.content) }
+    }
+
+    @Test
+    fun `offline interruption preserves partial bytes and a user pause`() {
+        val connectivity = FakeConnectivityFeed(NetworkCondition.Online)
+        DownloadsRepository.installConnectivityFeedForTests(connectivity)
+        val activeEpisode = publishEpisode(1)
+        val pausedEpisode = publishEpisode(2)
+        server.failNextRequests(
+            activeEpisode.path,
+            FaultyMediaServer.Behavior.Throttle(delayPerChunkMs = 20L),
+        )
+        server.failNextRequests(
+            pausedEpisode.path,
+            FaultyMediaServer.Behavior.Throttle(delayPerChunkMs = 20L),
+        )
+        DownloadsRepository.resolvePlayableStream = { stream, _, episode ->
+            val selected = if (episode == 1) activeEpisode else pausedEpisode
+            DownloadSourceResolution.Ready(stream.copy(url = server.urlFor(selected.path)))
+        }
+
+        enqueueUnresolved(activeEpisode)
+        enqueueUnresolved(pausedEpisode)
+        awaitProgress(activeEpisode)
+        awaitProgress(pausedEpisode)
+        val pausedId = itemFor(pausedEpisode).id
+        DownloadsRepository.pauseDownload(pausedId)
+        awaitCondition(5_000L, "the second item to become user paused") {
+            itemFor(pausedEpisode).pauseReason == DownloadPauseReason.User
+        }
+        val partialBefore = DownloadsPlatformDownloader.partialFileBytes(itemFor(activeEpisode).fileName)
+        val attemptBefore = itemFor(activeEpisode).attemptCount
+        val pausedRequests = server.requestCount(pausedEpisode.path)
+
+        connectivity.moveTo(NetworkCondition.NoInternet)
+        awaitCondition(5_000L, "the active item to name its connection wait") {
+            itemFor(activeEpisode).activity == DownloadActivity.WAITING_FOR_CONNECTION
+        }
+        Thread.sleep(500L)
+        assertEquals(attemptBefore, itemFor(activeEpisode).attemptCount, "offline time spent a retry")
+        assertTrue(
+            DownloadsPlatformDownloader.partialFileBytes(itemFor(activeEpisode).fileName) >= partialBefore,
+            "connection loss discarded the partial file",
+        )
+        assertTrue(connectivity.refreshRequests.get() > 0, "offline queue did not request a network refresh")
+
+        connectivity.moveTo(NetworkCondition.Online)
+        awaitCondition(30_000L, "the interrupted transfer to resume") {
+            itemFor(activeEpisode).status == DownloadStatus.Completed
+        }
+        assertEquals(
+            DownloadPauseReason.User,
+            itemFor(pausedEpisode).pauseReason,
+            "connectivity recovery undid a user pause",
+        )
+        assertEquals(pausedRequests, server.requestCount(pausedEpisode.path))
+        assertContentOnDisk(itemFor(activeEpisode), activeEpisode.content)
+    }
+
+    @Test
+    fun `provider server outage state does not block a media transfer`() {
+        val connectivity = FakeConnectivityFeed(NetworkCondition.ServersUnreachable)
+        DownloadsRepository.installConnectivityFeedForTests(connectivity)
+        val episode = publishEpisode(1)
+        enqueue(episode)
+        awaitQueueDrained()
+        assertContentOnDisk(itemFor(episode), episode.content)
+    }
+
+    @Test
+    fun `authoritative size change asks once before bytes move`() {
+        val episode = publishEpisode(1)
+        DownloadsRepository.resolvePlayableStream = { stream, _, _ ->
+            DownloadSourceResolution.Ready(stream.copy(url = server.urlFor(episode.path)))
+        }
+        enqueueUnresolved(
+            episode = episode,
+            expectedSizeBytes = 512L * 1024L,
+            calculatedCapBytes = 1024L * 1024L,
+        )
+
+        awaitCondition(10_000L, "the authoritative size to request approval") {
+            itemFor(episode).pauseReason == DownloadPauseReason.SizeApproval
+        }
+        val waiting = itemFor(episode)
+        assertEquals(episode.content.size.toLong(), waiting.expectedSizeBytes)
+        assertEquals(0, server.requestCount(episode.path), "bytes moved before size approval")
+
+        DownloadsRepository.approveUnexpectedSize(waiting.id)
+        awaitQueueDrained()
+        assertTrue(itemFor(episode).sizeCapOverrideApproved)
+        assertContentOnDisk(itemFor(episode), episode.content)
     }
 
     @Test
@@ -897,10 +1051,9 @@ class DesktopDownloadQueueE2ETest {
      *
      * This is deliberately opt-in. [TORBOX_API_KEY_ENV] is read only into the
      * disposable desktop-test profile and is cleared in `finally`; [TORBOX_FIXTURE_ENV]
-     * names a local JSON file whose contents are never printed. Preparing every
-     * source before enqueueing reproduces a real automatic season batch. Setting
-     * `waitAfterPrepareSeconds` above TorBox's signed-link lifetime proves that each
-     * queued transfer re-checks the provider and obtains a usable whole-file link.
+     * names a local JSON file whose contents are never printed. The fixture queues
+     * only info-hash/file selections: no signed link exists until a transfer slot is
+     * available, at which point the repository performs the first provider call.
      */
     @Test
     fun `real TorBox season rechecks and remints every source`() {
@@ -936,29 +1089,17 @@ class DesktopDownloadQueueE2ETest {
                 defaultResolver(stream, season, episode)
             }
 
-            val prepared = fixture.sources.map { source ->
-                val origin = source.toOriginStream()
-                val resolved = runBlocking {
-                    DirectDebridPlaybackResolver.resolveToPlayableStream(
-                        stream = origin,
-                        season = source.season,
-                        episode = source.episode,
-                        forceRefresh = true,
-                    )
-                }
-                val playable = (resolved as? DirectDebridPlayableResult.Success)?.stream
-                    ?: fail("TorBox could not prepare fixture episode ${source.episode}: ${resolved::class.simpleName}")
-                assertNotNull(playable.playableDirectUrl, "TorBox returned no playable URL for episode ${source.episode}")
-                PreparedTorboxSource(source, origin, playable)
-            }
-            val preparedAt = DownloadsClock.nowEpochMs()
-
-            if (fixture.waitAfterPrepareSeconds > 0L) {
-                Thread.sleep(fixture.waitAfterPrepareSeconds * 1_000L)
-            }
+            val connectivity = FakeConnectivityFeed(NetworkCondition.NoInternet)
+            DownloadsRepository.installConnectivityFeedForTests(connectivity)
+            fixture.sources.forEach(::enqueueTorboxSource)
+            assertEquals(0, providerChecks.get(), "enqueue minted TorBox links before a slot opened")
+            assertTrue(
+                DownloadsRepository.uiState.value.items.all { it.sourceUrl == null },
+                "an unresolved TorBox selection unexpectedly persisted a signed URL",
+            )
 
             val watch = QueueWatch().start()
-            prepared.forEach { enqueueTorboxSource(it, preparedAt) }
+            connectivity.moveTo(NetworkCondition.Online)
             try {
                 awaitQueueDrained(timeoutMs = fixture.queueTimeoutMinutes * 60_000L)
             } finally {
@@ -1042,15 +1183,32 @@ class DesktopDownloadQueueE2ETest {
 
     private class Episode(val number: Int, val path: String, val content: ByteArray)
 
+    private class FakeConnectivityFeed(initial: NetworkCondition) : DownloadConnectivityFeed {
+        private val mutableStates = MutableStateFlow(NetworkStatusUiState(initial))
+        override val states: StateFlow<NetworkStatusUiState> = mutableStates.asStateFlow()
+        val refreshRequests = AtomicInteger()
+
+        override fun ensureStarted() = Unit
+
+        override fun requestRefresh() {
+            refreshRequests.incrementAndGet()
+        }
+
+        fun moveTo(condition: NetworkCondition) {
+            mutableStates.value = NetworkStatusUiState(condition)
+        }
+    }
+
     @Serializable
     private data class RealTorboxFixture(
+        // Retained only so existing private fixtures decode; lazy resolution makes
+        // the former signed-link expiry sleep unnecessary.
         val waitAfterPrepareSeconds: Long = 0L,
         val queueTimeoutMinutes: Long = 180L,
         val sources: List<RealTorboxSource>,
     ) {
         fun validate() {
             assertTrue(sources.isNotEmpty(), "the TorBox fixture must contain at least one source")
-            assertTrue(waitAfterPrepareSeconds in 0L..3_600L, "waitAfterPrepareSeconds must be between 0 and 3600")
             assertTrue(queueTimeoutMinutes in 1L..720L, "queueTimeoutMinutes must be between 1 and 720")
             assertEquals(sources.size, sources.map { it.episode }.distinct().size, "fixture episodes must be unique")
             sources.forEach { source ->
@@ -1099,12 +1257,6 @@ class DesktopDownloadQueueE2ETest {
         )
     }
 
-    private data class PreparedTorboxSource(
-        val fixture: RealTorboxSource,
-        val origin: StreamItem,
-        val resolved: StreamItem,
-    )
-
     private fun publishEpisode(number: Int): Episode {
         val path = "/media/s01e%02d.mp4".format(number)
         // Above the "no real episode is this small" floor the placeholder check uses,
@@ -1146,6 +1298,49 @@ class DesktopDownloadQueueE2ETest {
         assertEquals(DownloadEnqueueResult.Started, result, "${episode.path} was not accepted")
     }
 
+    private fun enqueueUnresolved(
+        episode: Episode,
+        expectedSizeBytes: Long = episode.content.size.toLong(),
+        calculatedCapBytes: Long? = null,
+    ) {
+        val origin = StreamItem(
+            name = "Unresolved source ${episode.number}",
+            addonName = "Harness",
+            addonId = "addon:harness",
+            behaviorHints = StreamBehaviorHints(
+                videoSize = expectedSizeBytes,
+                filename = "harness-s01e%02d.mp4".format(episode.number),
+            ),
+            clientResolve = StreamClientResolve(
+                type = "debrid",
+                infoHash = episode.number.toString(16).padStart(40, '0'),
+                fileIdx = 0,
+                season = 1,
+                episode = episode.number,
+                isCached = true,
+            ),
+        )
+        val result = DownloadsRepository.enqueueFromStream(
+            contentType = "series",
+            videoId = "$META_ID:1:${episode.number}",
+            parentMetaId = META_ID,
+            parentMetaType = "series",
+            title = "Harness",
+            logo = null,
+            poster = null,
+            background = null,
+            seasonNumber = 1,
+            episodeNumber = episode.number,
+            episodeTitle = "Episode ${episode.number}",
+            episodeThumbnail = null,
+            stream = origin,
+            expectedSizeBytes = expectedSizeBytes,
+            sourceOrigin = DownloadSourceOrigin(origin, season = 1, episode = episode.number),
+            calculatedCapBytes = calculatedCapBytes,
+        )
+        assertEquals(DownloadEnqueueResult.Started, result, "${episode.path} was not accepted")
+    }
+
     /** Enqueues a URL the harness did not publish, for the real-source run. */
     private fun enqueueUrl(url: String, episodeNumber: Int) {
         val stream = StreamItem(
@@ -1172,8 +1367,8 @@ class DesktopDownloadQueueE2ETest {
         assertEquals(DownloadEnqueueResult.Started, result, "$url was not accepted")
     }
 
-    private fun enqueueTorboxSource(source: PreparedTorboxSource, preparedAt: Long) {
-        val fixture = source.fixture
+    private fun enqueueTorboxSource(fixture: RealTorboxSource) {
+        val origin = fixture.toOriginStream()
         val result = DownloadsRepository.enqueueFromStream(
             contentType = "series",
             videoId = "$META_ID:${fixture.season}:${fixture.episode}",
@@ -1187,14 +1382,13 @@ class DesktopDownloadQueueE2ETest {
             episodeNumber = fixture.episode,
             episodeTitle = "Episode ${fixture.episode}",
             episodeThumbnail = null,
-            stream = source.resolved,
-            expectedSizeBytes = fixture.expectedSizeBytes ?: source.resolved.behaviorHints.videoSize,
+            stream = origin,
+            expectedSizeBytes = fixture.expectedSizeBytes,
             sourceOrigin = DownloadSourceOrigin(
-                stream = source.origin,
+                stream = origin,
                 season = fixture.season,
                 episode = fixture.episode,
             ),
-            sourceUrlResolvedAtEpochMs = preparedAt,
         )
         assertEquals(DownloadEnqueueResult.Started, result, "TorBox episode ${fixture.episode} was not accepted")
     }
