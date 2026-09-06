@@ -75,8 +75,8 @@ Also synchronized with mobile's back-press lifecycle fix (`autoPlayStream` null 
 - **Normal ranked-candidate failover remains completely intact**: automatic candidate failover across Classic/Streamlined/Instant, P2P failure chains, fatal playback error handling, manual fallback, and dead-source reporting are all preserved.
 
 ### Verification status
-- Non-device verification (pure test suites, desktop compilation, desktop tests) passes clean.
-- **Final real-device/manual observation on packaged builds remains pending** (watched run on MSI/device required before Phase 2 sign-off; Phase 2 not yet claimed complete).
+- Non-device verification (pure test suites: 459 passed, desktop compilation, desktopTest: 489 passed) passes clean.
+- **Manual verification passed on desktop and packaged builds** (2026-09-06) following the two-tier startup watchdog evidence-of-life fix. Exit gate passed; Phase 2 closed.
 
 ## Ultra 1 review record (2026-09-05)
 
@@ -122,10 +122,9 @@ per-platform storage actuals - 18 files, 2,064 lines that cannot decide which so
 quality sheet, loading screen and `StreamsScreen` are in: they carry selection logic, not just
 presentation.
 
-### Cleanup, owed
+### Scaffolding cleaned up (2026-09-06)
 
-⚠ **`ultra1-audit-base` and `ultra1-audit` are scaffolding. Delete both branches and close #3
-once the run has been made.** Neither is ever merged. #2 is the branch that lands.
+Audit scaffolding PRs #3, #4, and #5 closed; all scaffolding branches (`ultra1-audit*`, `gemini/ultra1-playback-fixes`) pruned from local and remote.
 
 ### What the reviewers are reading cold
 
