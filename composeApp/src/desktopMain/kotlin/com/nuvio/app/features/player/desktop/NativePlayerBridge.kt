@@ -26,6 +26,14 @@ internal object NativePlayerBridge {
         loadNativeLibrary()
     }
 
+    /**
+     * Linux only: initialize GTK before any AWT/Compose/Skia code runs, so GDK's
+     * types are registered once and canonically (prevents a GdkDisplayManager
+     * GType conflict with Skiko on some JDK builds). Must be the first thing
+     * main() calls. Approach from skoruppa's linux-webkitgtk branch.
+     */
+    external fun initGtkEarly(): Boolean
+
     external fun create(
         hostViewPtr: Long,
         sourceUrl: String,
@@ -41,6 +49,15 @@ internal object NativePlayerBridge {
     external fun dispose(handle: Long)
     external fun updateControls(handle: Long, controlsJson: String)
     external fun requestFocus(handle: Long)
+
+    /**
+     * Brings the native container into view once the controls page has painted its opening overlay.
+     *
+     * Windows-only: the container is created parked below the client area there so an *empty* one
+     * cannot cover the loading screen while WebView2 starts. The other bridges do not define this
+     * export, so the call site is guarded by host OS.
+     */
+    external fun promoteOpeningContainer(handle: Long)
     external fun setPaused(handle: Long, paused: Boolean)
     external fun seekTo(handle: Long, positionMs: Long)
     external fun seekToExact(handle: Long, positionMs: Long)
@@ -122,6 +139,7 @@ internal object NativePlayerBridge {
         fontSize: Float,
         subPos: Int,
         useLibass: Boolean,
+        stripSdh: Boolean,
     )
     external fun warmupWebView2(controlsPageUrl: String): Boolean
     external fun shutdownWebView2Warmup()
@@ -136,7 +154,11 @@ internal object NativePlayerBridge {
             val controlsPage = runCatching { controlsPageAssets }
                 .getOrNull()
                 ?: return@Thread
-            if (DesktopHostOs.current == DesktopHostOs.WINDOWS) {
+            // Linux warms the WebKitGTK engine through the same entry point
+            // (the bridge maps warmupWebView2 to a hidden WebKitGTK view).
+            if (DesktopHostOs.current == DesktopHostOs.WINDOWS ||
+                DesktopHostOs.current == DesktopHostOs.LINUX
+            ) {
                 runCatching { warmupWebView2(controlsPage.url) }
             }
         }.apply {
@@ -144,7 +166,9 @@ internal object NativePlayerBridge {
             isDaemon = true
             start()
         }
-        if (DesktopHostOs.current == DesktopHostOs.WINDOWS) {
+        if (DesktopHostOs.current == DesktopHostOs.WINDOWS ||
+            DesktopHostOs.current == DesktopHostOs.LINUX
+        ) {
             Runtime.getRuntime().addShutdownHook(
                 Thread {
                     runCatching { shutdownWebView2Warmup() }
@@ -157,7 +181,11 @@ internal object NativePlayerBridge {
 
     private fun loadNativeLibrary() {
         val platform = DesktopHostOs.current
-        require(platform == DesktopHostOs.MACOS || platform == DesktopHostOs.WINDOWS) {
+        require(
+            platform == DesktopHostOs.MACOS ||
+                platform == DesktopHostOs.WINDOWS ||
+                platform == DesktopHostOs.LINUX
+        ) {
             "Native desktop playback is not implemented for $platform yet."
         }
 
@@ -345,7 +373,7 @@ internal object NativePlayerBridge {
 private val nativePlayerBridgePreloadScheduled = AtomicBoolean(false)
 
 internal fun preloadNativePlayerBridgeAsync() {
-    if (DesktopHostOs.current != DesktopHostOs.MACOS && DesktopHostOs.current != DesktopHostOs.WINDOWS) return
+    if (DesktopHostOs.current !in setOf(DesktopHostOs.MACOS, DesktopHostOs.WINDOWS, DesktopHostOs.LINUX)) return
     if (!nativePlayerBridgePreloadScheduled.compareAndSet(false, true)) return
 
     // Referencing NativePlayerBridge initializes the object and loads its native

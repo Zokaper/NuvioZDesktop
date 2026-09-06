@@ -32,6 +32,10 @@ interface PlayerEngineController {
      * and the guest never converges. Engines whose ordinary seek is already exact inherit it here.
      */
     fun seekToExact(positionMs: Long) = seekTo(positionMs)
+    fun trySeekTo(positionMs: Long): Boolean {
+        seekTo(positionMs)
+        return true
+    }
     fun seekBy(offsetMs: Long)
     fun retry()
     fun setPlaybackSpeed(speed: Float)
@@ -44,16 +48,33 @@ interface PlayerEngineController {
     fun clearExternalSubtitle()
     fun clearExternalSubtitleAndSelect(trackIndex: Int)
     fun applySubtitleStyle(style: SubtitleStyleState, useLibass: Boolean = false) {}
+    fun applySubtitlePreferences(
+        preferredLanguage: String,
+        secondaryPreferredLanguage: String? = null,
+        useForcedSubtitles: Boolean,
+        autoSelectionApplied: Boolean,
+        hasActiveSubtitle: Boolean,
+        useCustomSubtitles: Boolean = false,
+    ) {}
     fun setSubtitleDelayMs(delayMs: Int) {}
     fun configureIosVideoOutput(settings: PlayerSettingsUiState) {}
     fun updateNowPlayingMetadata(info: PlayerNowPlayingInfo) {}
     fun clearNowPlayingInfo() {}
+
+    /** Optional barrier for platforms that must release native resources before their route is removed. */
+    fun releaseBeforeNavigation(
+        onReleased: () -> Unit,
+        onReleaseFailed: (String) -> Unit = {},
+    ) {
+        onReleased()
+    }
 }
 
 enum class PlayerControlsAction {
     ToggleChrome,
     RevealLockedOverlay,
     Back,
+    ChooseManually,
     TogglePlayback,
     KeyboardTogglePlayback,
     SeekBack,
@@ -93,6 +114,8 @@ data class PlayerPartyMember(
     val avatarUrl: String? = null,
     val connected: Boolean = true,
 )
+
+data class PlayerOpeningFact(val label: String, val value: String)
 
 data class PlayerControlsState(
     val title: String = "",
@@ -149,6 +172,7 @@ data class PlayerControlsState(
     val p2pConsentBody: String = "",
     val p2pConsentEnableLabel: String = "Enable P2P",
     val p2pConsentCancelLabel: String = "Cancel",
+    val speedPanelTitle: String = "Playback Speed",
     val audioTracksPanelTitle: String = "Audio Tracks",
     val noAudioTracksLabel: String = "No audio tracks available",
     val subtitlesPanelTitle: String = "Subtitles",
@@ -210,6 +234,29 @@ data class PlayerControlsState(
     val openingTitle: String = "",
     val openingMessage: String? = null,
     val openingProgress: Float? = null,
+    /**
+     * The app's desktop UI scale, so the native opening overlay is the **same size** as the
+     * Compose loading screen it takes over from.
+     *
+     * ⚠ **This is the bug that made the hand-over obvious.** `NuvioTheme` multiplies `LocalDensity`
+     * by `effectiveDesktopUiScale`, so every Compose dp on desktop is already scaled - but the
+     * controls page is a browser and sizes everything in raw CSS px, which knows nothing about it.
+     * The two loading screens were therefore never the same size, and the moment both became
+     * visible in sequence the takeover read as the screen reloading at a different zoom. Matching
+     * the colour was not enough; they have to match the *scale*.
+     *
+     * Applied to the opening overlay only. The rest of the player chrome never coexists with a
+     * Compose screen, so it has nothing to match and is deliberately left alone.
+     */
+    val openingScale: Float = 1f,
+    /** Desktop-native rendering of Phase 2's shared loading band. */
+    val openingStageLabel: String = "",
+    val openingAttemptLabel: String = "",
+    val openingFacts: List<PlayerOpeningFact> = emptyList(),
+    val openingOffersManualEscape: Boolean = false,
+    val openingManualEscapeLabel: String = "",
+    val openingProviderLine: String = "",
+    val openingReleaseName: String = "",
     /**
      * The Watch Together status line, shown whenever the party is holding playback back or has lost
      * sync. It is deliberately independent of [controlsVisible]: a player that is paused because it
@@ -279,6 +326,10 @@ data class PlayerControlsState(
     val subtitleAutoSyncIsLoading: Boolean = false,
     val subtitleAutoSyncErrorMessage: String = "",
     val closeModalsToken: Long = 0L,
+    val submitIntroContentKey: String = "",
+    val submitIntroSuccessToken: Long = 0L,
+    val notificationMessage: String = "",
+    val notificationToken: Long = 0L,
 )
 
 data class PlayerControlFilterItem(
@@ -420,4 +471,5 @@ expect fun PlatformPlayerSurface(
     onControllerReady: (PlayerEngineController) -> Unit,
     onSnapshot: (PlayerPlaybackSnapshot) -> Unit,
     onError: (String?) -> Unit,
+    sourceAvailable: Boolean = true,
 )

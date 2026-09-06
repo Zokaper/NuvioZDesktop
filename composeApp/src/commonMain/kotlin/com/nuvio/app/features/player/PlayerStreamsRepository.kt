@@ -5,7 +5,7 @@ import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.buildAddonResourceUrl
 import com.nuvio.app.features.addons.enabledAddons
-import com.nuvio.app.features.addons.httpGetText
+import com.nuvio.app.features.addons.fetchAddonResponseText
 import com.nuvio.app.features.addons.httpGetTextWithHeaders
 import com.nuvio.app.features.downloads.AddonSourceKey
 import com.nuvio.app.features.downloads.AioDetectionContext
@@ -375,9 +375,10 @@ object PlayerStreamsRepository {
                             manifestUrl = addon.manifest.transportUrl,
                             treatAsAioStreams = addonKey in DownloadsRepository.sourcePolicy.value.aioOverrides,
                         )
-                        val enhancedHeaders = AioStreamsSupport.requestHeaders(aioContext)
+                        val enhancedHeaders = AioStreamsSupport.requestHeaders(aioContext) +
+                            if (forceRefresh) mapOf("Cache-Control" to "no-cache") else emptyMap()
                         val payload = if (enhancedHeaders.isEmpty()) {
-                            httpGetText(url)
+                            fetchAddonResponseText(url)
                         } else {
                             httpGetTextWithHeaders(url, enhancedHeaders)
                         }
@@ -549,3 +550,7 @@ private fun StreamsUiState.streamDiagnostics(): String {
         "loadingGroups=$loadingCount errorGroups=$errorCount empty=${emptyStateReason ?: "none"} " +
         "sample=$sampleGroups$suffix"
 }
+
+private fun com.nuvio.app.features.addons.ManagedAddon.streamAddonInstanceId(manifestId: String): String =
+    "addon:$manifestId:$manifestUrl"
+

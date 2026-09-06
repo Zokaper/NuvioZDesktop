@@ -1,5 +1,6 @@
 package com.nuvio.app.features.settings
 
+import com.nuvio.app.AppScreenTab
 import com.nuvio.app.core.build.AppFeaturePolicy
 
 import androidx.compose.foundation.background
@@ -22,7 +23,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -37,7 +37,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -52,6 +54,7 @@ import androidx.compose.ui.unit.max
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.AppTheme
 import com.nuvio.app.core.ui.LocalNuvioBottomNavigationOverlayPadding
+import com.nuvio.app.core.ui.LocalNuvioNavBarScrollState
 import com.nuvio.app.core.ui.NuvioDesktopVerticalScrollbar
 import com.nuvio.app.core.ui.NuvioScreen
 import com.nuvio.app.core.ui.NuvioScreenHeader
@@ -64,10 +67,14 @@ import com.nuvio.app.core.ui.PosterCardStyleRepository
 import com.nuvio.app.core.ui.PosterCardStyleUiState
 import com.nuvio.app.features.collection.CollectionRepository
 import com.nuvio.app.features.addons.enabledAddons
+import com.nuvio.app.features.addons.firstEnabledManifestError
+import com.nuvio.app.features.addons.hasPendingEnabledManifests
+import com.nuvio.app.features.addons.isWaitingForFirstEnabledManifest
 import com.nuvio.app.features.debrid.DebridSettings
 import com.nuvio.app.features.debrid.DebridSettingsRepository
 import com.nuvio.app.features.home.HomeCatalogSettingsItem
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
+import com.nuvio.app.features.home.buildAddonCatalogRefreshSignature
 import com.nuvio.app.features.mdblist.MdbListSettings
 import com.nuvio.app.features.mdblist.MdbListSettingsRepository
 import com.nuvio.app.features.notifications.EpisodeReleaseNotificationsRepository
@@ -120,6 +127,7 @@ private fun SettingsPage.isEnabledByPolicy(): Boolean =
 @Composable
 fun SettingsScreen(
     modifier: Modifier = Modifier,
+    topChromePadding: Dp? = null,
     rootActionRequests: Flow<Unit> = emptyFlow(),
     requestedPageName: String? = null,
     onRequestedPageConsumed: () -> Unit = {},
@@ -201,21 +209,10 @@ fun SettingsScreen(
             AddonRepository.uiState
         }.collectAsStateWithLifecycle()
         val homescreenCatalogRefreshKey = remember(addonsUiState.addons) {
-            val enabledAddons = addonsUiState.addons.enabledAddons()
-            val allManifestsSettled = enabledAddons.isNotEmpty() &&
-                enabledAddons.none { it.isRefreshing }
-            if (!allManifestsSettled) return@remember emptyList<String>()
-            enabledAddons.mapNotNull { addon ->
-                val manifest = addon.manifest ?: return@mapNotNull null
-                buildString {
-                    append(manifest.transportUrl)
-                    append(':')
-                    append(manifest.catalogs.joinToString(separator = ",") { catalog ->
-                        "${catalog.type}:${catalog.id}:${catalog.extra.count { it.isRequired }}"
-                    })
-                }
-            }
+            buildAddonCatalogRefreshSignature(addonsUiState.addons)
         }
+        val addonManifestsLoading = addonsUiState.addons.hasPendingEnabledManifests()
+        val addonManifestErrorMessage = addonsUiState.addons.firstEnabledManifestError()
         val homescreenSettingsUiState by remember {
             HomeCatalogSettingsRepository.snapshot()
             HomeCatalogSettingsRepository.uiState
@@ -242,8 +239,10 @@ fun SettingsScreen(
         }.collectAsStateWithLifecycle()
 
         LaunchedEffect(homescreenCatalogRefreshKey) {
-            if (homescreenCatalogRefreshKey.isEmpty()) return@LaunchedEffect
-            HomeCatalogSettingsRepository.syncCatalogs(addonsUiState.addons.enabledAddons())
+            val enabledAddons = addonsUiState.addons.enabledAddons()
+            if (!enabledAddons.isWaitingForFirstEnabledManifest()) {
+                HomeCatalogSettingsRepository.syncCatalogs(enabledAddons)
+            }
         }
 
         LaunchedEffect(Unit) {
@@ -306,9 +305,10 @@ fun SettingsScreen(
         CompositionLocalProvider(
             LocalShowAdvancedSettings provides (playerSettingsUiState.showAdvancedSettings || revealAdvancedForSearch),
         ) {
-        if (maxWidth >= 768.dp) {
+        if (maxWidth >= 960.dp) {
             TabletSettingsScreen(
                 page = page,
+                topChromePadding = topChromePadding,
                 scrollToTopRequests = scrollToTopRequests,
                 onPageChange = {
                     if (it == SettingsPage.Root) revealAdvancedForSearch = false
@@ -343,7 +343,6 @@ fun SettingsScreen(
                 onLiquidGlassNativeTabBarToggle = ThemeSettingsRepository::setLiquidGlassNativeTabBar,
                 appIconState = appIconState,
                 onAppIconSelected = onAppIconSelected,
-                onAppIconBackgroundChanged = { enabled -> AppIconRepository.setBlackBackground(enabled) },
                 onAppIconFailureDismissed = AppIconRepository::clearFailure,
                 selectedAppLanguage = selectedAppLanguage,
                 onAppLanguageSelected = ThemeSettingsRepository::setAppLanguage,
@@ -361,6 +360,8 @@ fun SettingsScreen(
                 homescreenShowCatalogType = homescreenSettingsUiState.showCatalogType,
                 homescreenHideUnreleasedContent = homescreenSettingsUiState.hideUnreleasedContent,
                 homescreenItems = homescreenSettingsUiState.items,
+                homescreenCatalogLoading = addonManifestsLoading,
+                homescreenCatalogErrorMessage = addonManifestErrorMessage,
                 metaScreenSettingsUiState = metaScreenSettingsUiState,
                 continueWatchingPreferencesUiState = continueWatchingPreferencesUiState,
                 posterCardStyleUiState = posterCardStyleUiState,
@@ -377,6 +378,8 @@ fun SettingsScreen(
         } else {
             MobileSettingsScreen(
                 page = page,
+                isTabletLayout = maxWidth >= 768.dp,
+                topChromePadding = topChromePadding,
                 scrollToTopRequests = scrollToTopRequests,
                 onPageChange = {
                     if (it == SettingsPage.Root) revealAdvancedForSearch = false
@@ -411,7 +414,6 @@ fun SettingsScreen(
                 onLiquidGlassNativeTabBarToggle = ThemeSettingsRepository::setLiquidGlassNativeTabBar,
                 appIconState = appIconState,
                 onAppIconSelected = onAppIconSelected,
-                onAppIconBackgroundChanged = { enabled -> AppIconRepository.setBlackBackground(enabled) },
                 onAppIconFailureDismissed = AppIconRepository::clearFailure,
                 selectedAppLanguage = selectedAppLanguage,
                 onAppLanguageSelected = ThemeSettingsRepository::setAppLanguage,
@@ -429,6 +431,8 @@ fun SettingsScreen(
                 homescreenShowCatalogType = homescreenSettingsUiState.showCatalogType,
                 homescreenHideUnreleasedContent = homescreenSettingsUiState.hideUnreleasedContent,
                 homescreenItems = homescreenSettingsUiState.items,
+                homescreenCatalogLoading = addonManifestsLoading,
+                homescreenCatalogErrorMessage = addonManifestErrorMessage,
                 metaScreenSettingsUiState = metaScreenSettingsUiState,
                 continueWatchingPreferencesUiState = continueWatchingPreferencesUiState,
                 posterCardStyleUiState = posterCardStyleUiState,
@@ -467,6 +471,8 @@ fun SettingsScreen(
 @Composable
 private fun MobileSettingsScreen(
     page: SettingsPage,
+    isTabletLayout: Boolean = false,
+    topChromePadding: Dp? = null,
     scrollToTopRequests: Flow<Unit>,
     onPageChange: (SettingsPage) -> Unit,
     onSearchNavigation: () -> Unit,
@@ -498,7 +504,7 @@ private fun MobileSettingsScreen(
     onLiquidGlassNativeTabBarToggle: (Boolean) -> Unit,
     appIconState: AppIconSettingsState,
     onAppIconSelected: (AppIconOption) -> Unit,
-    onAppIconBackgroundChanged: (Boolean) -> Unit,    onAppIconFailureDismissed: () -> Unit,
+    onAppIconFailureDismissed: () -> Unit,
     selectedAppLanguage: AppLanguage,
     onAppLanguageSelected: (AppLanguage) -> Unit,
     navBarStyle: NavBarStyle,
@@ -515,6 +521,8 @@ private fun MobileSettingsScreen(
     homescreenShowCatalogType: Boolean,
     homescreenHideUnreleasedContent: Boolean,
     homescreenItems: List<HomeCatalogSettingsItem>,
+    homescreenCatalogLoading: Boolean,
+    homescreenCatalogErrorMessage: String?,
     metaScreenSettingsUiState: MetaScreenSettingsUiState,
     continueWatchingPreferencesUiState: ContinueWatchingPreferencesUiState,
     posterCardStyleUiState: PosterCardStyleUiState,
@@ -610,20 +618,28 @@ private fun MobileSettingsScreen(
             }
         }
 
+        val navBarScrollState = LocalNuvioNavBarScrollState.current
+        LaunchedEffect(Unit) {
+            navBarScrollState?.updateScrollOffset(AppScreenTab.Settings, 0f)
+        }
+
         LaunchedEffect(scrollToTopRequests) {
             scrollToTopRequests.collect {
                 listState.animateScrollToItem(0)
+                navBarScrollState?.expand()
             }
         }
 
         NuvioScreen(
             modifier = Modifier.nestedScroll(rootSearchRevealConnection),
+            topPadding = if (topChromePadding != null) 0.dp else null,
             listState = listState,
         ) {
             stickyHeader {
                 val previousPage = page.previousPage()
                 NuvioScreenHeader(
                     title = stringResource(page.titleRes),
+                    topPadding = topChromePadding,
                     onBack = previousPage?.let { { onPageChange(it) } },
                 )
             }
@@ -704,7 +720,7 @@ private fun MobileSettingsScreen(
                     isTablet = false,
                 )
                 SettingsPage.Appearance -> appearanceSettingsContent(
-                    isTablet = false,
+                    isTablet = isTabletLayout,
                     selectedTheme = selectedTheme,
                     onThemeSelected = onThemeSelected,
                     amoledEnabled = amoledEnabled,
@@ -714,7 +730,6 @@ private fun MobileSettingsScreen(
                     onLiquidGlassNativeTabBarToggle = onLiquidGlassNativeTabBarToggle,
                     appIconState = appIconState,
                     onAppIconSelected = onAppIconSelected,
-                onAppIconBackgroundChanged = { enabled -> AppIconRepository.setBlackBackground(enabled) },
                     onAppIconFailureDismissed = onAppIconFailureDismissed,
                     selectedAppLanguage = selectedAppLanguage,
                     onAppLanguageSelected = onAppLanguageSelected,
@@ -771,6 +786,8 @@ private fun MobileSettingsScreen(
                     showCatalogType = homescreenShowCatalogType,
                     hideUnreleasedContent = homescreenHideUnreleasedContent,
                     items = homescreenItems,
+                    isCatalogLoading = homescreenCatalogLoading,
+                    catalogErrorMessage = homescreenCatalogErrorMessage,
                 )
                 SettingsPage.MetaScreen -> metaScreenSettingsContent(
                     isTablet = false,
@@ -852,6 +869,7 @@ private fun rememberSettingsRootSearchRevealConnection(
 @Composable
 private fun TabletSettingsScreen(
     page: SettingsPage,
+    topChromePadding: Dp? = null,
     scrollToTopRequests: Flow<Unit>,
     onPageChange: (SettingsPage) -> Unit,
     onSearchNavigation: () -> Unit,
@@ -883,7 +901,7 @@ private fun TabletSettingsScreen(
     onLiquidGlassNativeTabBarToggle: (Boolean) -> Unit,
     appIconState: AppIconSettingsState,
     onAppIconSelected: (AppIconOption) -> Unit,
-    onAppIconBackgroundChanged: (Boolean) -> Unit,    onAppIconFailureDismissed: () -> Unit,
+    onAppIconFailureDismissed: () -> Unit,
     selectedAppLanguage: AppLanguage,
     onAppLanguageSelected: (AppLanguage) -> Unit,
     navBarStyle: NavBarStyle,
@@ -900,6 +918,8 @@ private fun TabletSettingsScreen(
     homescreenShowCatalogType: Boolean,
     homescreenHideUnreleasedContent: Boolean,
     homescreenItems: List<HomeCatalogSettingsItem>,
+    homescreenCatalogLoading: Boolean,
+    homescreenCatalogErrorMessage: String?,
     metaScreenSettingsUiState: MetaScreenSettingsUiState,
     continueWatchingPreferencesUiState: ContinueWatchingPreferencesUiState,
     posterCardStyleUiState: PosterCardStyleUiState,
@@ -916,7 +936,9 @@ private fun TabletSettingsScreen(
     var selectedCategory by rememberSaveable { mutableStateOf(SettingsCategory.General.name) }
     val activeCategory = SettingsCategory.valueOf(selectedCategory)
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val topOffset = max(statusBarPadding + 24.dp, 48.dp) + 64.dp
+    val effectiveTopOffset = topChromePadding ?: (statusBarPadding + 24.dp)
+
+    val navBarScrollState = LocalNuvioNavBarScrollState.current
 
     LaunchedEffect(page) {
         if (page.opensInlineOnTablet) {
@@ -926,6 +948,7 @@ private fun TabletSettingsScreen(
 
     fun openInlinePage(page: SettingsPage) {
         selectedCategory = page.category.name
+        navBarScrollState?.expand()
         onPageChange(page)
     }
 
@@ -934,37 +957,39 @@ private fun TabletSettingsScreen(
     Row(modifier = Modifier.fillMaxSize()) {
         Surface(
             modifier = Modifier
-                .width(280.dp)
+                .width(240.dp)
                 .fillMaxSize(),
             color = MaterialTheme.colorScheme.surface,
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = topOffset),
+                    .padding(top = effectiveTopOffset),
             ) {
                 Text(
                     text = stringResource(Res.string.compose_settings_page_root),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 24.dp)
-                        .padding(bottom = 20.dp),
+                        .padding(bottom = 16.dp),
                     style = MaterialTheme.typography.displayLarge,
                     color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    softWrap = false,
                 )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                Spacer(modifier = Modifier.height(10.dp))
                 SettingsCategory.entries.forEach { category ->
                     SettingsSidebarItem(
                         label = stringResource(category.labelRes),
                         icon = category.icon,
                         selected = category == activeCategory,
                         onClick = {
-                            selectedCategory = category.name
-                            if (page != SettingsPage.Root) {
-                                onPageChange(SettingsPage.Root)
+                            if (category != activeCategory || page != SettingsPage.Root) {
+                                selectedCategory = category.name
+                                navBarScrollState?.expand()
+                                if (page != SettingsPage.Root) {
+                                    onPageChange(SettingsPage.Root)
+                                }
                             }
                         },
                     )
@@ -1012,7 +1037,7 @@ private fun TabletSettingsScreen(
                 }
             }
 
-            val listState = rememberLazyListState()
+            val listState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
             val bottomOverlayPadding = LocalNuvioBottomNavigationOverlayPadding.current
             val rootSearchRevealConnection = rememberSettingsRootSearchRevealConnection(
                 page = page,
@@ -1036,6 +1061,16 @@ private fun TabletSettingsScreen(
             LaunchedEffect(scrollToTopRequests) {
                 scrollToTopRequests.collect {
                     listState.animateScrollToItem(0)
+                    navBarScrollState?.expand()
+                }
+            }
+            LaunchedEffect(listState, navBarScrollState) {
+                snapshotFlow {
+                    (listState.firstVisibleItemIndex * 80f) + listState.firstVisibleItemScrollOffset.toFloat()
+                }.collect { calculatedOffset ->
+                    if (calculatedOffset > 0f || listState.isScrollInProgress || listState.layoutInfo.totalItemsCount > 0) {
+                        navBarScrollState?.updateScrollOffset(AppScreenTab.Settings, calculatedOffset)
+                    }
                 }
             }
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -1050,7 +1085,7 @@ private fun TabletSettingsScreen(
                         .nestedScroll(rootSearchRevealConnection),
                     contentPadding = PaddingValues(
                         start = horizontalGutter,
-                        top = topOffset,
+                        top = effectiveTopOffset,
                         end = horizontalGutter,
                         bottom = 40.dp + bottomOverlayPadding,
                     ),
@@ -1162,7 +1197,6 @@ private fun TabletSettingsScreen(
                             onLiquidGlassNativeTabBarToggle = onLiquidGlassNativeTabBarToggle,
                             appIconState = appIconState,
                             onAppIconSelected = onAppIconSelected,
-                onAppIconBackgroundChanged = { enabled -> AppIconRepository.setBlackBackground(enabled) },
                             onAppIconFailureDismissed = onAppIconFailureDismissed,
                             selectedAppLanguage = selectedAppLanguage,
                             onAppLanguageSelected = onAppLanguageSelected,
@@ -1219,6 +1253,8 @@ private fun TabletSettingsScreen(
                             showCatalogType = homescreenShowCatalogType,
                             hideUnreleasedContent = homescreenHideUnreleasedContent,
                             items = homescreenItems,
+                            isCatalogLoading = homescreenCatalogLoading,
+                            catalogErrorMessage = homescreenCatalogErrorMessage,
                         )
                         SettingsPage.MetaScreen -> metaScreenSettingsContent(
                             isTablet = true,
@@ -1257,7 +1293,7 @@ private fun TabletSettingsScreen(
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
                         .fillMaxHeight()
-                        .padding(vertical = 8.dp, horizontal = 4.dp),
+                        .padding(top = effectiveTopOffset, bottom = 8.dp, end = 4.dp),
                 )
             }
         }

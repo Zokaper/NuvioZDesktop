@@ -9,17 +9,19 @@ import com.nuvio.app.core.i18n.localizedByteUnit
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.features.addons.httpRequestRaw
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
-import kotlinx.coroutines.runBlocking
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.getString
 
@@ -220,9 +222,10 @@ private object AppUpdaterRepository {
         return appUpdaterJson.decodeFromString<List<GitHubReleaseDto>>(response.body)
     }
 
-    suspend fun getLatestChannelUpdate(): Result<AppUpdate> = runCatching {
-        val source = AppUpdaterPlatform.releaseSource
-        val releases = fetchReleases()
+    suspend fun getLatestChannelUpdate(): Result<AppUpdate> = withContext(Dispatchers.Default) {
+        runCatching {
+            val source = AppUpdaterPlatform.releaseSource
+            val releases = fetchReleases()
         // The two channels cannot see each other, and each half of that matters. A debug build
         // takes only `debug-v*` prereleases, so it never installs the release app over itself.
         // A release build rejects them outright rather than relying on `includePrereleases`,
@@ -258,15 +261,16 @@ private object AppUpdaterRepository {
         )
             ?: error(getString(Res.string.updates_update_asset_missing))
 
-        AppUpdate(
-            tag = tag,
-            title = release.name?.takeIf { it.isNotBlank() } ?: tag,
-            notes = release.body.orEmpty(),
-            releaseUrl = release.htmlUrl,
-            assetName = asset.name,
-            assetUrl = asset.downloadUrl,
-            assetSizeBytes = asset.size,
-        )
+            AppUpdate(
+                tag = tag,
+                title = release.name?.takeIf { it.isNotBlank() } ?: tag,
+                notes = release.body.orEmpty(),
+                releaseUrl = release.htmlUrl,
+                assetName = asset.name,
+                assetUrl = asset.downloadUrl,
+                assetSizeBytes = asset.size,
+            )
+        }
     }
 
     private fun GitHubReleaseDto.isDebugChannelRelease(): Boolean =
@@ -355,7 +359,9 @@ class AppUpdaterController internal constructor(
                 )
             }
 
-            val ignoredTag = AppUpdaterPlatform.getIgnoredTag()
+            val ignoredTag = withContext(Dispatchers.Default) {
+                AppUpdaterPlatform.getIgnoredTag()
+            }
             val result = AppUpdaterRepository.getLatestChannelUpdate()
 
             result.onSuccess { update ->

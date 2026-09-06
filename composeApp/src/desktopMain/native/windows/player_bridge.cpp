@@ -61,11 +61,15 @@ namespace {
 HMODULE gModule = nullptr;
 constexpr UINT WM_NUVIO_TASK = WM_APP + 0x4E50;
 constexpr UINT_PTR NUVIO_TIMER_ID = 0x4E50;
+// How long the container may stay parked waiting for the controls page's first paint before it
+// is shown regardless. A page that errors must never be able to hide the video permanently.
+constexpr ULONGLONG NUVIO_CONTAINER_PROMOTE_FALLBACK_MS = 2000;
 
 // Caps on waiting for the player's own UI thread during teardown. Exceeding these means that
 // thread is wedged; shutdown gives up rather than blocking the caller forever.
 constexpr UINT kUiTaskTimeoutMs = 2000;
 constexpr UINT kShutdownJoinTimeoutMs = 3000;
+constexpr double kMaxVolumePercent = 200.0;
 
 const wchar_t *kMessageWindowClass = L"NuvioPlayerBridgeMessageWindow";
 const wchar_t *kContainerWindowClass = L"NuvioPlayerBridgeContainerWindow";
@@ -598,6 +602,23 @@ class WindowsMpvWebPlayer;
 LRESULT CALLBACK messageWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK containerWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 
+// The app's background, `NuvioColors.background` (0xFF0D0D0D). Kept in sync by hand, exactly as
+// `NativePlayerHost.DEFAULT_SURFACE_BACKGROUND` is, because there is no Compose on this side of
+// the boundary to read the token from.
+//
+// ⚠ **Every erase in this file uses this instead of BLACK_BRUSH, and new ones must too.** The
+// container is a child HWND, so it paints over every Compose layer regardless of z-order and
+// nothing the application draws can cover it. While it erased black it was a *black* rectangle
+// over a #0D0D0D loading screen for the whole window between the native attach and WebView2's
+// first paint - measured at 254-699 ms, once per attach, and a failover chain attaches three
+// times in one play. That is the "black, grey, black, grey" flashing reported between choosing a
+// source and the player: not a Compose transition at all, and not something a Compose overlay can
+// ever hide. Erasing with the app's own background makes the takeover invisible instead.
+static HBRUSH nuvioSurfaceBrush() {
+    static HBRUSH brush = CreateSolidBrush(RGB(0x0D, 0x0D, 0x0D));
+    return brush;
+}
+
 void registerWindowClasses() {
     static std::once_flag once;
     std::call_once(once, []() {
@@ -613,7 +634,7 @@ void registerWindowClasses() {
         containerClass.style = CS_DBLCLKS;
         containerClass.lpfnWndProc = containerWindowProc;
         containerClass.hInstance = gModule;
-        containerClass.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+        containerClass.hbrBackground = nuvioSurfaceBrush();
         containerClass.lpszClassName = kContainerWindowClass;
         RegisterClassExW(&containerClass);
     });
@@ -970,6 +991,11 @@ public:
 
     void onTimer() {
         if (shuttingDown.load()) return;
+        // The safety net for a controls page that never reports a first paint.
+        if (!containerPromoted && containerCreatedAtMs != 0 &&
+            GetTickCount64() - containerCreatedAtMs >= NUVIO_CONTAINER_PROMOTE_FALLBACK_MS) {
+            containerPromoted = true;
+        }
         layoutNativeSubviews();
         syncControls();
     }
@@ -988,6 +1014,15 @@ public:
     void requestFocus() {
         postUiTask([self = shared_from_this()]() {
             self->focusNativeControls();
+        });
+    }
+
+    /** Brings the parked container into view; see its creation. Idempotent. */
+    void promoteOpeningContainer() {
+        postUiTask([self = shared_from_this()]() {
+            if (self->containerPromoted) return;
+            self->containerPromoted = true;
+            self->layoutNativeSubviews();
         });
     }
 
@@ -1051,19 +1086,19 @@ public:
         if (!mpv) return;
         double current = 100.0;
         mpvApi().getProperty(mpv, "volume", MPV_FORMAT_DOUBLE, &current);
-        double next = std::max(0.0, std::min(100.0, current + delta));
+        double next = std::max(0.0, std::min(kMaxVolumePercent, current + delta));
         mpvApi().setProperty(mpv, "volume", MPV_FORMAT_DOUBLE, &next);
     }
 
     void setVolume(double level) {
         std::lock_guard<std::mutex> lock(mpvMutex);
         if (!mpv) return;
-        double next = std::max(0.0, std::min(100.0, level * 100.0));
+        double next = std::max(0.0, std::min(kMaxVolumePercent, level * 100.0));
         mpvApi().setProperty(mpv, "volume", MPV_FORMAT_DOUBLE, &next);
     }
 
     double volume() {
-        return std::max(0.0, std::min(100.0, doubleProperty("volume", 100.0))) / 100.0;
+        return std::max(0.0, std::min(kMaxVolumePercent, doubleProperty("volume", 100.0))) / 100.0;
     }
 
     void setResizeMode(int mode) {
@@ -1252,7 +1287,8 @@ public:
         bool bold,
         double fontSize,
         int subPos,
-        bool useLibass
+        bool useLibass,
+        bool stripSdh
     ) {
         double size = std::max(18.0, std::min(96.0, fontSize));
         int64_t position = std::max(0, std::min(150, subPos));
@@ -1272,6 +1308,7 @@ public:
         bool outlineColorChanged =
             !hasAppliedSubtitleStyle || appliedSubtitleOutlineColor != resolvedOutlineColor;
         bool outlineSizeChanged = !hasAppliedSubtitleStyle || appliedSubtitleOutlineSize != outline;
+        bool stripSdhChanged = !hasAppliedSubtitleStyle || appliedSubtitleStripSdh != stripSdh;
 
         if (modeChanged) {
             setStringProperty("sub-ass-override", useLibass ? "scale" : "force");
@@ -1323,6 +1360,10 @@ public:
                 mpvApi().setProperty(mpv, "sub-outline-size", MPV_FORMAT_DOUBLE, &outline);
             }
         }
+        if (stripSdhChanged) {
+            setStringProperty("sub-filter-sdh", stripSdh ? "yes" : "no");
+            setStringProperty("sub-filter-sdh-harder", stripSdh ? "yes" : "no");
+        }
 
         hasAppliedSubtitleStyle = true;
         appliedSubtitleUseLibass = useLibass;
@@ -1333,11 +1374,14 @@ public:
         appliedSubtitleBold = bold;
         appliedSubtitleFontSize = size;
         appliedSubtitlePosition = position;
+        appliedSubtitleStripSdh = stripSdh;
     }
 
 private:
     HWND hostHwnd = nullptr;
     HWND containerHwnd = nullptr;
+    bool containerPromoted = false;
+    ULONGLONG containerCreatedAtMs = 0;
     HWND messageHwnd = nullptr;
     DWORD uiThreadId = 0;
     bool didOleInitialize = false;
@@ -1368,6 +1412,7 @@ private:
     bool appliedSubtitleBold = false;
     double appliedSubtitleFontSize = 0.0;
     int64_t appliedSubtitlePosition = 0;
+    bool appliedSubtitleStripSdh = false;
 
     JavaVM *javaVm = nullptr;
     jobject eventSink = nullptr;
@@ -1457,13 +1502,27 @@ private:
         LONG width = std::max<LONG>(1, bounds.right - bounds.left);
         LONG height = std::max<LONG>(1, bounds.bottom - bounds.top);
 
+        // ⚠ **Created at `y = height`, i.e. parked just below the visible client area.**
+        //
+        // Measured: the container is created 880 ms before the controls page first paints, and
+        // until then it is an empty rectangle filled with the class brush. Being a child HWND it
+        // covers every Compose layer regardless of z-order, so that fill *replaced* a correct
+        // loading screen for the whole of `afterAttachMs` - the grey flash between the loading
+        // screen and the player, and the last one standing once the AWT canvas underneath was
+        // taught to paint the artwork.
+        //
+        // It stays WS_VISIBLE and full-size so WebView2 and mpv lay out and render normally: a
+        // hidden or 1x1 parent throttles requestAnimationFrame, and `didPaintOpening` - the signal
+        // that promotes it - is sent from exactly that. Parked, it is simply clipped by the parent,
+        // so the canvas underneath keeps showing the backdrop until the page has drawn the same
+        // picture. See promoteOpeningContainer().
         containerHwnd = CreateWindowExW(
             0,
             kContainerWindowClass,
             L"",
             WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
             0,
-            0,
+            height,
             width,
             height,
             hostHwnd,
@@ -1474,6 +1533,7 @@ private:
         if (!containerHwnd) {
             throw std::runtime_error("Unable to create native player container window.");
         }
+        containerCreatedAtMs = GetTickCount64();
 
         startWebView(controlsUrl);
         startMpv(sourceUrl, headerLines, playWhenReady, initialPositionMs, decoderPriority, nvidiaRtxSuperResolutionEnabled);
@@ -1687,6 +1747,7 @@ private:
             setMpvOptionStringLocked("input-default-bindings", "yes");
             setMpvOptionStringLocked("input-vo-keyboard", "no");
             setMpvOptionStringLocked("keep-open", "yes");
+            setMpvOptionStringLocked("volume-max", "200");
             setMpvOptionStringLocked("vo", "gpu-next");
             if (nvidiaRtxSuperResolutionEnabled) {
                 setMpvOptionStringLocked("gpu-api", "d3d11");
@@ -1778,7 +1839,11 @@ private:
         LONG width = std::max<LONG>(1, bounds.right - bounds.left);
         LONG height = std::max<LONG>(1, bounds.bottom - bounds.top);
         if (containerHwnd) {
-            SetWindowPos(containerHwnd, HWND_TOP, 0, 0, width, height, SWP_SHOWWINDOW | SWP_NOACTIVATE);
+            const LONG containerTop = containerPromoted ? 0 : height;
+            SetWindowPos(
+                containerHwnd, HWND_TOP, 0, containerTop, width, height,
+                SWP_SHOWWINDOW | SWP_NOACTIVATE
+            );
         }
         if (controller) {
             RECT webBounds = {0, 0, width, height};
@@ -1825,6 +1890,7 @@ private:
         if (!webView) return;
         double duration = doubleProperty("duration", 0.0);
         double position = doubleProperty("time-pos", 0.0);
+        double volumeLevel = volume();
         bool paused = isPaused();
         bool loading = isLoading();
         std::string audioTracks = audioTracksJson();
@@ -1833,6 +1899,7 @@ private:
         std::ostringstream script;
         script << "window.playerUpdate({duration:" << duration
                << ",position:" << position
+               << ",volumeLevel:" << volumeLevel
                << ",paused:" << (paused ? "true" : "false")
                << ",loading:" << (loading ? "true" : "false")
                << ",audioTracks:" << audioTracks
@@ -2272,7 +2339,7 @@ LRESULT CALLBACK containerWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         case WM_ERASEBKGND: {
             RECT rect = {};
             GetClientRect(hwnd, &rect);
-            FillRect((HDC)wParam, &rect, (HBRUSH)GetStockObject(BLACK_BRUSH));
+            FillRect((HDC)wParam, &rect, nuvioSurfaceBrush());
             return 1;
         }
         case WM_NCDESTROY:
@@ -2396,6 +2463,12 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_requestFocus(JNIEnv *, jobject, jlong handle) {
     auto player = playerFromHandle(handle);
     if (player) player->requestFocus();
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_promoteOpeningContainer(JNIEnv *, jobject, jlong handle) {
+    auto player = playerFromHandle(handle);
+    if (player) player->promoteOpeningContainer();
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -2577,10 +2650,11 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_applyWindowChrome(
     );
 
     // The window's default class brush is white, so any region Windows erases before Skia
-    // repaints it flashes white. Erase to black instead; against the near-black UI it is
-    // invisible even if a repaint lags.
+    // repaints it flashes white. Erase to the app's own background instead - see
+    // nuvioSurfaceBrush() - so a lagging repaint shows the colour the UI is painted on rather
+    // than a black rectangle.
     if (hwnd && IsWindow(hwnd)) {
-        SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)GetStockObject(BLACK_BRUSH));
+        SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)nuvioSurfaceBrush());
     }
 }
 
@@ -2623,7 +2697,8 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_applySubtitleStyle
     jboolean bold,
     jfloat fontSize,
     jint subPos,
-    jboolean useLibass
+    jboolean useLibass,
+    jboolean stripSdh
 ) {
     auto player = playerFromHandle(handle);
     if (!player) return;
@@ -2635,6 +2710,7 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_applySubtitleStyle
         bold == JNI_TRUE,
         fontSize,
         subPos,
-        useLibass == JNI_TRUE
+        useLibass == JNI_TRUE,
+        stripSdh == JNI_TRUE
     );
 }

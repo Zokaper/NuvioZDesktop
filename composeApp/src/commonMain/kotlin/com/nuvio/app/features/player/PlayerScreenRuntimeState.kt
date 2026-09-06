@@ -14,7 +14,6 @@ import com.nuvio.app.features.details.MetaScreenSettingsUiState
 import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.p2p.P2pSettingsUiState
 import com.nuvio.app.features.p2p.P2pStreamingState
-import com.nuvio.app.features.playback.AutoDownshiftDetector
 import com.nuvio.app.features.player.skip.NextEpisodeInfo
 import com.nuvio.app.features.player.skip.SkipInterval
 import com.nuvio.app.features.streams.StreamItem
@@ -28,6 +27,46 @@ import com.nuvio.app.features.watchprogress.WatchProgressUiState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlin.time.TimeSource
+
+internal data class PlayerSurfaceSource(
+    val sourceUrl: String,
+    val sourceAudioUrl: String?,
+    val sourceHeaders: Map<String, String>,
+    val sourceResponseHeaders: Map<String, String>,
+    val externalSubtitles: List<com.nuvio.app.features.streams.StreamSubtitle>,
+    val streamType: String?,
+    val initialPositionMs: Long?,
+    val initialPositionRequestKey: String?,
+)
+
+internal fun shouldRenderPlayerSurface(
+    hasCurrentSource: Boolean,
+    hasLifecycleController: Boolean,
+    releaseInFlight: Boolean,
+    desktop: Boolean,
+): Boolean = hasCurrentSource || (desktop && hasLifecycleController && releaseInFlight)
+
+internal class PlayerReleaseSurfaceRetention {
+    private var nextAttemptId = 0L
+    private var activeAttemptId: Long? = null
+
+    var inFlight by mutableStateOf(false)
+        private set
+
+    fun begin(): Long {
+        val attemptId = ++nextAttemptId
+        activeAttemptId = attemptId
+        inFlight = true
+        return attemptId
+    }
+
+    fun finish(attemptId: Long): Boolean {
+        if (activeAttemptId != attemptId) return false
+        activeAttemptId = null
+        inFlight = false
+        return true
+    }
+}
 
 internal class PlayerScreenRuntime(
     args: PlayerScreenArgs,
@@ -100,7 +139,7 @@ internal class PlayerScreenRuntime(
 
     var gestureController: PlayerGestureController? = null
 
-    var controlsVisible by mutableStateOf(true)
+    var controlsVisible by mutableStateOf(false)
     var controlsActivityTick by mutableStateOf(0)
     var playerControlsLocked by mutableStateOf(false)
     var activeSourceUrl by mutableStateOf(sourceUrl)
@@ -127,6 +166,7 @@ internal class PlayerScreenRuntime(
     var activeEpisodeNumber by mutableStateOf(episodeNumber)
     var activeEpisodeTitle by mutableStateOf(episodeTitle)
     var activeEpisodeThumbnail by mutableStateOf(episodeThumbnail)
+    var activePauseDescription by mutableStateOf(pauseDescription)
     var activeVideoId by mutableStateOf(videoId)
     var activeInitialPositionMs by mutableStateOf(initialPositionMs)
     var activeInitialProgressFraction by mutableStateOf(initialProgressFraction)
@@ -145,25 +185,8 @@ internal class PlayerScreenRuntime(
      */
     var playbackSnapshotAtMs by mutableStateOf(0L)
 
-    /**
-     * Instant's auto source-swap trigger state, carried across snapshots.
-     *
-     * The swap budget lives here rather than in the detector so it survives a source
-     * change: one swap per playback session, not one per source.
-     */
-    var autoDownshiftState by mutableStateOf(AutoDownshiftDetector.initial())
-    var autoDownshiftClock by mutableStateOf(TimeSource.Monotonic.markNow())
-    var autoDownshiftSourcesRequested by mutableStateOf(false)
-
-    /**
-     * When the in-flight source swap was requested, or null when none is.
-     *
-     * Set by `switchToSource` and cleared when the replacement produces its first frame, so
-     * the difference is the visible interruption a quality change actually costs. That number
-     * is the evidence for whether automatic downshift is worth turning on by default; it is
-     * null during normal startup because only a swap sets it.
-     */
-    var swapStartedAt by mutableStateOf<TimeSource.Monotonic.ValueTimeMark?>(null)
+    /** Monotonic clock shared by the passive playback network measurements. */
+    var playbackObservationClock by mutableStateOf(TimeSource.Monotonic.markNow())
     var debugStatusMessage by mutableStateOf<String?>(null)
 
     /** Per-source state for the passive network measurement; see `observePlaybackForNetworkEstimate`. */
@@ -174,6 +197,8 @@ internal class PlayerScreenRuntime(
     /** Per-source state for the buffer-fill throughput measurement; see [NetworkThroughputMeter]. */
     var networkThroughputState by mutableStateOf(NetworkThroughputMeter.initial())
     var playerController by mutableStateOf<PlayerEngineController?>(null)
+    var playerLifecycleController by mutableStateOf<PlayerEngineController?>(null)
+    val playerReleaseSurfaceRetention = PlayerReleaseSurfaceRetention()
     var playerControllerSourceUrl by mutableStateOf<String?>(null)
     var errorMessage by mutableStateOf<String?>(null)
     var isScrubbingTimeline by mutableStateOf(false)
@@ -188,6 +213,20 @@ internal class PlayerScreenRuntime(
     var seekProgressSyncJob by mutableStateOf<Job?>(null)
     var accumulatedSeekState by mutableStateOf<PlayerAccumulatedSeekState?>(null)
     var initialLoadCompleted by mutableStateOf(false)
+
+    /**
+     * A frame has actually been decoded - the stronger sibling of [initialLoadCompleted].
+     *
+     * ⚠ **Deliberately a second flag rather than a redefinition.** [initialLoadCompleted] means
+     * "the engine has opened the media" and the seek, subtitle and startup-watchdog paths all
+     * depend on that weaker meaning; tightening it in place would silently move all of them. Only
+     * the loading surface reads this one, because it is the only thing that must not give way
+     * until there is a picture behind it. See `PlaybackHandover.hasFirstFrame`.
+     *
+     * Cleared alongside [initialLoadCompleted] on every source change, so a failover puts the
+     * surface back up.
+     */
+    var firstFrameReached by mutableStateOf(false)
     var speedBoostRestoreSpeed by mutableStateOf<Float?>(null)
     var isHoldToSpeedGestureActive by mutableStateOf(false)
     var initialSeekApplied by mutableStateOf(
@@ -213,6 +252,9 @@ internal class PlayerScreenRuntime(
     var submitIntroStatusMessage by mutableStateOf<String?>(null)
     var playerControlsPendingP2pSwitch by mutableStateOf<PendingPlayerP2pSwitch?>(null)
     var playerControlsCloseModalsToken by mutableStateOf(0L)
+    var playerControlsSubmitIntroSuccessToken by mutableStateOf(0L)
+    var playerNotificationMessage by mutableStateOf("")
+    var playerNotificationToken by mutableStateOf(0L)
     var episodeStreamsPanelState by mutableStateOf(EpisodeStreamsPanelState())
     var episodeQualitySheetEpisode by mutableStateOf<MetaVideo?>(null)
     var playerMetaVideos by mutableStateOf<List<MetaVideo>>(emptyList())
@@ -287,6 +329,8 @@ internal class PlayerScreenRuntime(
     var preferredAudioSelectionApplied by mutableStateOf(false)
     var preferredSubtitleSelectionApplied by mutableStateOf(false)
     var activeSubtitleTab by mutableStateOf(SubtitleTab.BuiltIn)
+    var isUserExplicitSubtitleSelection by mutableStateOf(false)
+    var hasScannedTextTracksOnce by mutableStateOf(false)
     var autoFetchedAddonSubtitlesForKey by mutableStateOf<String?>(null)
     var trackPreferenceRestoreApplied by mutableStateOf(false)
     var subtitleDelayMs by mutableStateOf(0)

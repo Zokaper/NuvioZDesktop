@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -49,16 +50,23 @@ import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.P2pStreamingState
 import com.nuvio.app.features.p2p.formatP2pMegabytes
 import com.nuvio.app.features.p2p.formatP2pSpeed
+import com.nuvio.app.features.playback.PlaybackLoadingController
+import com.nuvio.app.features.playback.PlaybackLoadingFacts
+import com.nuvio.app.features.playback.PlaybackLoadingState
+import com.nuvio.app.features.playback.PlaybackProgressStep
 import com.nuvio.app.features.playback.PlaybackQualityOptions
 import com.nuvio.app.features.playback.PlaybackQualitySheet
 import com.nuvio.app.features.playback.PlaybackSelectionContext
 import com.nuvio.app.features.playback.PlaybackSelectionResult
 import com.nuvio.app.features.playback.PlaybackSourceCandidate
 import com.nuvio.app.features.playback.PlaybackSourceSelector
+import com.nuvio.app.features.playback.playbackFactSlotLabelRes
+import com.nuvio.app.features.playback.rememberLanguageNamer
 import com.nuvio.app.features.player.skip.SkipIntroRepository
 import com.nuvio.app.features.streams.AddonStreamGroup
 import com.nuvio.app.features.streams.StreamBadgeSettingsRepository
 import com.nuvio.app.features.streams.StreamItem
+import com.nuvio.app.features.streams.StreamsRepository
 import com.nuvio.app.features.streams.isSelectableForPlayback
 import com.nuvio.app.features.watchprogress.buildPlaybackVideoId
 import com.nuvio.app.features.watching.application.WatchingState
@@ -69,7 +77,13 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
-import com.nuvio.app.features.playback.SwapDiagnosticsLog
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.LocalDensity
+import com.nuvio.app.core.ui.LocalNuvioPlatformDensity
+import com.nuvio.app.features.playback.PlaybackHandover
+import com.nuvio.app.features.playback.PlaybackLoadingActions
+import com.nuvio.app.features.updater.formatFileSize
 
 private val playerControlsLog = Logger.withTag("PlayerControls")
 
@@ -77,6 +91,11 @@ private val playerControlsLog = Logger.withTag("PlayerControls")
 internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     val runtime = this
     val watchPartyUiState by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
+    val systemBackRegistration = args.onSystemBackHandlerChanged
+    DisposableEffect(runtime, systemBackRegistration) {
+        systemBackRegistration { runtime.requestBack() }
+        onDispose { systemBackRegistration(null) }
+    }
     val isInPip = rememberIsInPictureInPicture()
     val displayedPositionMs = scrubbingPositionMs ?: playbackSnapshot.positionMs
     val seasonNumber = activeSeasonNumber
@@ -192,9 +211,38 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     }
     val playerSurfaceSourceUrl = if (isP2pPlaybackActive) p2pResolvedSourceUrl else activeSourceUrl
     val initialPositionRequestKey = currentInitialPositionRequestKey()
+    val currentPlayerSurfaceSource = playerSurfaceSourceUrl?.let { sourceUrl ->
+        PlayerSurfaceSource(
+            sourceUrl = sourceUrl,
+            sourceAudioUrl = activeSourceAudioUrl,
+            sourceHeaders = activeSourceHeaders,
+            sourceResponseHeaders = activeSourceResponseHeaders,
+            externalSubtitles = externalSubtitles,
+            streamType = activeStreamType,
+            initialPositionMs = activeInitialPositionMs.takeIf { it > 0L },
+            initialPositionRequestKey = initialPositionRequestKey,
+        )
+    }
+    val renderPlayerSurface = shouldRenderPlayerSurface(
+        hasCurrentSource = currentPlayerSurfaceSource != null,
+        hasLifecycleController = playerLifecycleController != null,
+        releaseInFlight = playerReleaseSurfaceRetention.inFlight,
+        desktop = isDesktop,
+    )
+    // ⚠ **`initialLoadCompleted` is not a first frame.** The engine drops `isLoading` once it has
+    // opened the media, which is before it has decoded anything, so an overlay that left on this
+    // signal alone dissolved onto a black video plane. `firstFrameReached` is the stronger one -
+    // see `PlaybackHandover.hasFirstFrame`. `initialLoadCompleted` is left exactly as it was
+    // because the seek, subtitle and watchdog paths all read it and mean the weaker thing.
     val openingOverlayWanted = playerSettingsUiState.showLoadingOverlay &&
-        !initialLoadCompleted &&
+        !firstFrameReached &&
         errorMessage == null
+    val openingLoadingState = PlaybackLoadingState(
+        step = PlaybackProgressStep.StartingPlayback,
+        attempt = args.playbackAttempt,
+        facts = args.sourceFacts,
+    )
+
     val episodeText = if (seasonNumber != null && episodeNumber != null && !episodeTitle.isNullOrBlank()) {
         stringResource(
             Res.string.compose_player_episode_title_format,
@@ -250,12 +298,41 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     } else {
         selectedEpisodeCodeAndTitle
     }
-    val nativeSkipInterval = activeSkipInterval.takeIf { initialLoadCompleted && !pausedOverlayVisible }
+    val nativeSkipInterval = activeSkipInterval.takeIf {
+        initialLoadCompleted && !pausedOverlayVisible && !skipIntervalDismissed
+    }
     val nextEpisodeForControls = nextEpisodeInfo.takeIf { isSeries && showNextEpisodeCard }
     val startingEpisode = nextEpisodeTransition
         .takeIf { it.phase == PlayerNextEpisodePhase.STARTING }
         ?.targetVideoId
         ?.let { targetId -> playerMetaVideos.firstOrNull { it.id == targetId } }
+    // The loading surface is drawn by `PlaybackLoadingHost`, above `NavDisplay`. In the automatic
+    // modes the stream route already opened the session and handed it over, and this must not
+    // disturb it - re-opening would restart the entrance and the escape clock at exactly the
+    // route change the whole design exists to make invisible. Opening here covers the paths that
+    // reach the player with no stream route behind them at all: Continue Watching, the next
+    // episode, and a resumed download.
+    LaunchedEffect(openingOverlayWanted, args.sourceUrl) {
+        if (openingOverlayWanted) {
+            if (PlaybackLoadingController.activeToken == null) {
+                val token = PlaybackLoadingController.open(
+                    step = PlaybackProgressStep.StartingPlayback,
+                    artwork = startingEpisode?.thumbnail ?: background ?: poster,
+                    logo = if (startingEpisode != null) null else logo,
+                    title = startingEpisode?.title ?: title,
+                    attempt = args.playbackAttempt,
+                    facts = args.sourceFacts,
+                )
+                PlaybackLoadingController.handOff(token)
+                PlaybackLoadingController.registerActions(
+                    token = token,
+                    actions = PlaybackLoadingActions(onBack = { requestBack() }),
+                )
+            }
+        } else {
+            PlaybackLoadingController.closeAfterHandOff()
+        }
+    }
     val nextEpisodeStatus = when {
         nextEpisodeForControls == null -> ""
         !nextEpisodeForControls.hasAired && !nextEpisodeForControls.unairedMessage.isNullOrBlank() ->
@@ -277,6 +354,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             )
         else -> ""
     }
+    val openingNamer = rememberLanguageNamer(openingLoadingState.facts)
     val playerControlsState = PlayerControlsState(
         title = title,
         episodeText = episodeText,
@@ -290,7 +368,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             activeProviderName
         },
         pauseOverlayEpisodeTitle = activeEpisodeTitle.orEmpty(),
-        pauseOverlayDescription = (pauseDescription ?: activeStreamSubtitle).orEmpty(),
+        pauseOverlayDescription = (activePauseDescription ?: activeStreamSubtitle).orEmpty(),
         resizeModeLabel = stringResource(resizeMode.labelRes),
         playbackSpeedLabel = formatPlaybackSpeedLabel(playbackSnapshot.playbackSpeed),
         subtitlesLabel = stringResource(Res.string.compose_player_subs),
@@ -335,6 +413,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         p2pConsentBody = stringResource(Res.string.p2p_consent_body),
         p2pConsentEnableLabel = stringResource(Res.string.p2p_consent_enable),
         p2pConsentCancelLabel = stringResource(Res.string.p2p_consent_cancel),
+        speedPanelTitle = stringResource(Res.string.compose_player_playback_speed),
         audioTracksPanelTitle = stringResource(Res.string.compose_player_audio_tracks),
         noAudioTracksLabel = stringResource(Res.string.compose_player_no_audio_tracks_available),
         subtitlesPanelTitle = stringResource(Res.string.compose_player_subtitles),
@@ -414,6 +493,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         episodeStreamItems = episodeStreamItems,
         blurUnwatchedEpisodes = metaScreenSettingsUiState.blurUnwatchedEpisodes,
         submitIntroSegmentType = submitIntroSegmentType,
+        submitIntroContentKey = activeSubmitIntroContentKey(),
         submitIntroStartTime = submitIntroStartTimeStr,
         submitIntroEndTime = submitIntroEndTimeStr,
         isSubmitIntroSubmitting = isSubmitIntroSubmitting,
@@ -437,6 +517,9 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         subtitleAutoSyncIsLoading = subtitleAutoSyncState.isLoading,
         subtitleAutoSyncErrorMessage = subtitleAutoSyncState.errorMessage.orEmpty(),
         closeModalsToken = playerControlsCloseModalsToken,
+        submitIntroSuccessToken = playerControlsSubmitIntroSuccessToken,
+        notificationMessage = playerNotificationMessage,
+        notificationToken = playerNotificationToken,
         showOpeningOverlay = openingOverlayWanted,
         openingArtwork = startingEpisode?.thumbnail ?: background ?: poster,
         openingLogo = if (startingEpisode != null) null else logo,
@@ -447,6 +530,35 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             p2pInitialLoadingMessage
         },
         openingProgress = p2pInitialLoadingProgress,
+        // `LocalDensity` here is already `platformDensity x effectiveDesktopUiScale` - see
+        // `NuvioTheme` - so dividing the two recovers the scale the browser needs to match.
+        openingScale = LocalDensity.current.density / LocalNuvioPlatformDensity.current.density,
+        openingStageLabel = p2pInitialLoadingMessage
+            ?: stringResource(Res.string.playback_progress_starting),
+        openingAttemptLabel = if (openingLoadingState.showsAttempt) {
+            stringResource(
+                Res.string.playback_progress_attempt,
+                openingLoadingState.displayAttempt,
+                openingLoadingState.maxAttempts,
+            )
+        } else {
+            ""
+        },
+        openingFacts = PlaybackLoadingFacts
+            .facts(openingLoadingState.facts, ::formatFileSize, openingNamer)
+            .map { fact ->
+                PlayerOpeningFact(
+                    label = stringResource(playbackFactSlotLabelRes(fact.slot)).uppercase(),
+                    value = fact.value ?: PlaybackLoadingFacts.UNKNOWN,
+                )
+            },
+        openingOffersManualEscape = PlaybackLoadingController.session?.offersManualEscape == true &&
+            PlaybackLoadingController.actions?.onChooseManually != null,
+        openingManualEscapeLabel = stringResource(Res.string.playback_quality_manual),
+        openingProviderLine = PlaybackLoadingFacts
+            .providerLine(openingLoadingState.facts)
+            .orEmpty(),
+        openingReleaseName = openingLoadingState.releaseName.orEmpty(),
         partyBannerVisible = watchPartyBanner != null && !playerControlsLocked,
         partyBannerText = watchPartyBanner.orEmpty(),
         partyPanelVisible = activeParty != null && controlsVisible && !playerControlsLocked,
@@ -530,18 +642,21 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                 commitHorizontalSeekState = gestureCallbacks.commitHorizontalSeek,
             ),
     ) {
-        if (playerSurfaceSourceUrl != null) {
+        if (renderPlayerSurface) {
+            val surfaceSource = currentPlayerSurfaceSource
+            val sourceAvailable = surfaceSource != null
             PlatformPlayerSurface(
-                sourceUrl = playerSurfaceSourceUrl,
-                sourceAudioUrl = activeSourceAudioUrl,
-                sourceHeaders = activeSourceHeaders,
-                sourceResponseHeaders = activeSourceResponseHeaders,
-                externalSubtitles = externalSubtitles,
-                streamType = activeStreamType,
+                sourceUrl = surfaceSource?.sourceUrl.orEmpty(),
+                sourceAvailable = sourceAvailable,
+                sourceAudioUrl = surfaceSource?.sourceAudioUrl,
+                sourceHeaders = surfaceSource?.sourceHeaders.orEmpty(),
+                sourceResponseHeaders = surfaceSource?.sourceResponseHeaders.orEmpty(),
+                externalSubtitles = surfaceSource?.externalSubtitles.orEmpty(),
+                streamType = surfaceSource?.streamType,
                 modifier = Modifier.fillMaxSize(),
-                playWhenReady = shouldPlay,
-                initialPositionMs = activeInitialPositionMs.takeIf { it > 0L },
-                initialPositionRequestKey = initialPositionRequestKey,
+                playWhenReady = shouldPlay && sourceAvailable,
+                initialPositionMs = surfaceSource?.initialPositionMs,
+                initialPositionRequestKey = surfaceSource?.initialPositionRequestKey,
                 resizeMode = resizeMode,
                 playerControlsState = playerControlsState,
                 onPlayerControlsAction = { action -> handlePlayerControlsAction(action) },
@@ -560,8 +675,9 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                     }
                 },
                 onControllerReady = { controller ->
-                    playerController = controller
-                    playerControllerSourceUrl = activeSourceUrl
+                    playerController = controller.takeIf { sourceAvailable }
+                    playerLifecycleController = controller
+                    playerControllerSourceUrl = surfaceSource?.sourceUrl
                 },
                 onSnapshot = { snapshot ->
                     val wasPlaying = playbackSnapshot.isPlaying
@@ -575,19 +691,17 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                         if (snapshot.isPlaying) {
                             completeNextEpisodeTransitionIfStarted()
                         }
-                        // A swap is only over when the replacement actually renders. This is
-                        // the measurement that decides whether automatic quality switching is
-                        // worth its interruption; nothing else in the app times it.
-                        swapStartedAt?.takeIf {
-                            snapshot.isPlaying && playerSurfaceSourceUrl ==
-                                (if (activeTorrentInfoHash != null) p2pResolvedSourceUrl else activeSourceUrl)
-                        }?.let { startedAt ->
-                            SwapDiagnosticsLog.completePending(
-                                startedAt.elapsedNow().inWholeMilliseconds,
-                                positionMsAfter = snapshot.positionMs,
-                            )
-                            swapStartedAt = null
-                        }
+                    }
+                    if (
+                        PlaybackHandover.hasFirstFrame(
+                            isLoading = snapshot.isLoading,
+                            isPlaying = snapshot.isPlaying,
+                            positionMs = snapshot.positionMs,
+                            videoWidth = snapshot.videoWidth,
+                            videoHeight = snapshot.videoHeight,
+                        )
+                    ) {
+                        firstFrameReached = true
                     }
                     if (snapshot.isEnded) {
                         shouldPlay = false
@@ -595,7 +709,6 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                     }
                     observePlaybackForNetworkEstimate()
                     observePlaybackForThroughput()
-                    observePlaybackForAutoDownshift()
                 },
                 onError = { message ->
                     if (message != null && tryRefreshCredentialedSourceAfterError(message)) {
@@ -622,7 +735,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                 seasonNumber = activeSeasonNumber,
                 episodeNumber = activeEpisodeNumber,
                 episodeTitle = activeEpisodeTitle,
-                pauseDescription = pauseDescription ?: activeStreamSubtitle,
+                pauseDescription = activePauseDescription ?: activeStreamSubtitle,
                 providerName = activeProviderName,
                 metrics = metrics,
                 horizontalSafePadding = horizontalSafePadding,
@@ -642,7 +755,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             showP2pRebufferStats = showP2pRebufferStats,
             p2pRebufferMessage = p2pRebufferMessage,
             p2pRebufferProgress = p2pRebufferProgress,
-            suppressOpeningOverlay = isDesktop && playerSurfaceSourceUrl != null,
+            suppressOpeningOverlay = false,
             // Desktop draws its chrome in the native controls layer above the video surface, where
             // a Compose overlay would be invisible; there the banner is carried by
             // PlayerControlsState instead.
@@ -695,10 +808,7 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
             onLockToggle = {
                 if (playerControlsLocked) unlockPlayerControls() else lockPlayerControls()
             },
-            onBack = {
-                flushWatchProgress()
-                args.onBack()
-            },
+            onBack = { requestBack() },
             onTogglePlayback = { togglePlayback() },
             onSeekBack = { seekBy(-10_000L) },
             onSeekForward = { seekBy(10_000L) },
@@ -783,6 +893,78 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
     }
 }
 
+internal fun releasePlayerBeforeNavigation(
+    releasePlayer: (
+        onReleased: () -> Unit,
+        onReleaseFailed: (String) -> Unit,
+    ) -> Unit,
+    navigateBack: () -> Unit,
+    onReleaseFailed: (String) -> Unit = {},
+) {
+    releasePlayer(navigateBack, onReleaseFailed)
+}
+
+internal fun releaseRetainedPlayerBeforeNavigation(
+    controller: PlayerEngineController?,
+    navigateBack: () -> Unit,
+    onReleaseFailed: (String) -> Unit = {},
+) {
+    if (controller == null) {
+        navigateBack()
+    } else {
+        controller.releaseBeforeNavigation(navigateBack, onReleaseFailed)
+    }
+}
+
+private fun PlayerScreenRuntime.requestBack() {
+    // ⚠ **The session ends here because the user said so, and nowhere else can say it.**
+    //
+    // Both owners close the session from the `else` branch of a `LaunchedEffect` - this file at
+    // `openingOverlayWanted`, `StreamDestination` at `showLoadingSurface`. An effect is *cancelled*
+    // on disposal and never runs its `else`, so tearing this screen down leaked the session every
+    // time: `PlaybackLoadingHost` draws above `NavDisplay` and stops for nothing, leaving a loading
+    // screen over the app that nothing alive could close. That is the "press Escape and you are
+    // trapped on a loading screen that never loads" report, and it is why the surface survived
+    // exactly the case its contract says ends it.
+    //
+    // Deliberately here rather than in an `onDispose`: this screen is also disposed by a *failover*,
+    // which pops the player and re-enters the stream route, and the surface must survive that
+    // untouched. An explicit back is the one teardown that is unambiguously the user leaving.
+    PlaybackLoadingController.closeAfterHandOff()
+    flushWatchProgress()
+    val exitingController = playerLifecycleController
+    args.onBack { afterRelease, releaseFailed ->
+        val releaseAttemptId = playerReleaseSurfaceRetention.begin()
+        try {
+            releaseRetainedPlayerBeforeNavigation(
+                controller = exitingController,
+                navigateBack = {
+                    if (!playerReleaseSurfaceRetention.finish(releaseAttemptId)) {
+                        return@releaseRetainedPlayerBeforeNavigation
+                    }
+                    if (playerLifecycleController === exitingController) {
+                        playerLifecycleController = null
+                    }
+                    if (playerController === exitingController) {
+                        playerController = null
+                    }
+                    afterRelease()
+                },
+                onReleaseFailed = { message ->
+                    if (!playerReleaseSurfaceRetention.finish(releaseAttemptId)) {
+                        return@releaseRetainedPlayerBeforeNavigation
+                    }
+                    errorMessage = message
+                    releaseFailed(message)
+                },
+            )
+        } catch (failure: Throwable) {
+            playerReleaseSurfaceRetention.finish(releaseAttemptId)
+            throw failure
+        }
+    }
+}
+
 private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControlsAction): Boolean {
     playerControlsLog.d { "action=$action ${playerControlLogContext()}" }
     when (action) {
@@ -794,9 +976,17 @@ private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControl
             }
         }
         PlayerControlsAction.RevealLockedOverlay -> revealLockedOverlay()
-        PlayerControlsAction.Back -> {
-            flushWatchProgress()
-            args.onBack()
+        PlayerControlsAction.Back -> requestBack()
+        // ⚠ **Signalled and popped, never invoked in place.** Calling the route's
+        // `onChooseManually` from here did nothing the user could see: in the automatic modes
+        // `StreamRoute` has stopped composing while this player is on top, so the flags that
+        // callback sets are written into state that has already been saved and are dropped when
+        // the route is restored - and nothing left the player either, so the screen did not
+        // change. Reported as "the select source manually button doesn't work", and it could not
+        // have worked. The route consumes the request when the pop brings it back.
+        PlayerControlsAction.ChooseManually -> {
+            StreamsRepository.signalManualSourceRequest()
+            requestBack()
         }
         // Returning true is what stops the native controls layer performing the transport itself
         // (`NativePlayerController.handleFallbackAction`). While a party owns this playback it has
@@ -1031,6 +1221,21 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
                 playerController?.selectSubtitleTrack(index)
             }
         }
+        "selectAudioTrack" -> {
+            // The controls webview sends the track id (trackIdValue); map it back
+            // to the logical index that selectAudioTrack() expects (falling back to
+            // treating the value as an index if no id matches).
+            val requestedId = value.toInt()
+            val index = audioTracks.firstOrNull { it.id == requestedId.toString() }?.index
+                ?: audioTracks.firstOrNull { it.index == requestedId }?.index
+                ?: requestedId
+            playerControlsLog.d {
+                "selectAudioTrack id=$requestedId index=$index tracks=${audioTracks.size} ${playerControlLogContext()}"
+            }
+            selectedAudioIndex = index
+            persistAudioPreference(audioTracks.firstOrNull { it.index == index })
+            playerController?.selectAudioTrack(index)
+        }
         "fetchAddonSubtitles" -> fetchAddonSubtitlesForActiveItem()
         "selectAddonSubtitle" -> {
             val addon = visibleAddonSubtitles.getOrNull(value.toInt()) ?: return true
@@ -1220,10 +1425,16 @@ private fun PlayerScreenRuntime.submitIntroFromPlayerControls() {
             submitIntroSegmentType = "intro"
             submitIntroStatusMessage = null
             playerControlsCloseModalsToken += 1
+            playerControlsSubmitIntroSuccessToken += 1
         } else {
             submitIntroStatusMessage = "Unable to submit timestamps."
         }
     }
+}
+
+private fun PlayerScreenRuntime.activeSubmitIntroContentKey(): String {
+    val imdbId = activeSubmitIntroImdbId()?.takeIf { it.isNotBlank() } ?: return ""
+    return "$imdbId:$activeSeasonNumber:$activeEpisodeNumber"
 }
 
 private fun PlayerScreenRuntime.activeSubmitIntroImdbId(): String? =
@@ -1661,6 +1872,7 @@ private fun BoxScope.RenderPlaybackOverlays(
             .takeIf { it.phase == PlayerNextEpisodePhase.STARTING }
             ?.targetVideoId
             ?.let { targetId -> playerMetaVideos.firstOrNull { it.id == targetId } }
+        val playerClipboardManager = LocalClipboardManager.current
         PlayerPlaybackOverlays(
             playerControlsLocked = playerControlsLocked,
             lockedOverlayVisible = lockedOverlayVisible,
@@ -1669,17 +1881,19 @@ private fun BoxScope.RenderPlaybackOverlays(
             metrics = metrics,
             horizontalSafePadding = horizontalSafePadding,
             onUnlock = { unlockPlayerControls() },
-            showOpeningOverlay = playerSettingsUiState.showLoadingOverlay &&
-                !initialLoadCompleted &&
-                errorMessage == null &&
-                !suppressOpeningOverlay,
+            // ⚠ **Always false: `PlaybackLoadingHost` draws this now**, above `NavDisplay`, so
+            // that the same screen spans the route change and every failover. Rendering it here
+            // as well would put a second, shorter-lived copy directly over the first.
+            //
+            // The desktop *native* overlay is unaffected and still needed - a `SwingPanel` paints
+            // over all Compose content regardless of z-order, so once the video surface is
+            // promoted the host is invisible and JCEF's copy is the only one left. That one is
+            // fed by `PlayerControlsState.showOpeningOverlay`, not by this flag.
+            showOpeningOverlay = false,
             backdropArtwork = startingEpisode?.thumbnail ?: background ?: poster,
             logo = if (startingEpisode != null) null else logo,
             title = startingEpisode?.title ?: title,
-            onBackWithProgress = {
-                flushWatchProgress()
-                args.onBack()
-            },
+            onBackWithProgress = { requestBack() },
             p2pInitialLoadingMessage = if (startingEpisode != null) {
                 stringResource(Res.string.player_next_episode_starting)
             } else {
@@ -1718,14 +1932,33 @@ private fun BoxScope.RenderPlaybackOverlays(
             nextEpisodeStarting = nextEpisodeTransition.phase == PlayerNextEpisodePhase.STARTING,
             nextEpisodeActionEnabled = nextEpisodeTransition.canAcceptManualTap(),
             nextEpisodeShowDismiss = showNextEpisodeCard,
+            blurUnwatchedEpisodes = metaScreenSettingsUiState.blurUnwatchedEpisodes,
             onPlayNextEpisode = { playNextEpisodeFromControls() },
             onDismissNextEpisode = {
                 cancelNextEpisodeTransition(suppressForCurrentEpisode = true)
             },
             errorMessage = errorMessage,
-            onDismissError = {
-                flushWatchProgress()
-                args.onBack()
+            onDismissError = { requestBack() },
+            // The route's own state, carried through `PlayerScreenArgs` rather than rebuilt:
+            // the band must say the same thing on both sides of the hand-off, and a second
+            // derivation here is a second thing to drift.
+            loadingState = PlaybackLoadingState(
+                step = PlaybackProgressStep.StartingPlayback,
+                attempt = args.playbackAttempt,
+                facts = args.sourceFacts,
+            ),
+            formatSize = ::formatFileSize,
+            onCopyErrorDetails = errorMessage?.let { message ->
+                {
+                    val label = PlaybackSourceSelector.describe(args.sourceFacts)
+                    playerClipboardManager.setText(
+                        AnnotatedString(
+                            listOf(label, args.streamTitle, message)
+                                .filter { it.isNotBlank() }
+                                .joinToString(" - "),
+                        ),
+                    )
+                }
             },
         )
     }
@@ -1768,6 +2001,8 @@ private fun PlayerScreenRuntime.RenderPlayerModals(displayedPositionMs: Long) {
         subtitleAutoSyncState = subtitleAutoSyncState,
         onBuiltInSubtitleTrackSelected = { index ->
             val wasCustom = useCustomSubtitles
+            isUserExplicitSubtitleSelection = true
+            preferredSubtitleSelectionApplied = true
             selectedSubtitleIndex = index
             selectedAddonSubtitleId = null
             useCustomSubtitles = false
@@ -1779,9 +2014,11 @@ private fun PlayerScreenRuntime.RenderPlayerModals(displayedPositionMs: Long) {
             }
         },
         onAddonSubtitleSelected = { addon ->
+            isUserExplicitSubtitleSelection = true
             selectedAddonSubtitleId = addon.id
             selectedSubtitleIndex = -1
             useCustomSubtitles = true
+            preferredSubtitleSelectionApplied = true
             persistAddonSubtitlePreference(addon)
             playerController?.setSubtitleUri(addon.url)
         },
