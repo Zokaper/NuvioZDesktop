@@ -822,6 +822,10 @@ internal fun StreamDestination(
         if (streamsUiState.autoPlayStream == null) return@LaunchedEffect
         playbackHandedOff = false
         lastHandedOffFacts = null
+        streamLog.i {
+            "failover retrying from attempt $autoPickAttempt to ${autoPickAttempt + 1}: " +
+                "previousCandidate=$lastHandedOffLabel"
+        }
         autoPickAttempt += 1
         // The third failure route, and the only one that used to say nothing.
         // The source opened, played, and died - the most visible failure there
@@ -879,6 +883,9 @@ internal fun StreamDestination(
         if (streamsUiState.requestToken != expectedStreamsRequestToken) return@LaunchedEffect
         val selectedStream = streamsUiState.autoPlayStream ?: return@LaunchedEffect
         val stream = if (DirectDebridPlaybackResolver.shouldResolveToPlayableStream(selectedStream)) {
+            streamLog.i {
+                "debrid resolving: attempt=$autoPickAttempt candidate=${sourceFailureLabel(selectedStream)}"
+            }
             when (
                 val resolved = DirectDebridPlaybackResolver.resolveToPlayableStream(
                     stream = selectedStream,
@@ -886,8 +893,17 @@ internal fun StreamDestination(
                     episode = launch.episodeNumber,
                 )
             ) {
-                is DirectDebridPlayableResult.Success -> resolved.stream
+                is DirectDebridPlayableResult.Success -> {
+                    streamLog.i {
+                        "debrid resolve succeeded: attempt=$autoPickAttempt candidate=${sourceFailureLabel(selectedStream)}"
+                    }
+                    resolved.stream
+                }
                 else -> {
+                    streamLog.w {
+                        "debrid resolve failed: attempt=$autoPickAttempt candidate=${sourceFailureLabel(selectedStream)} " +
+                            "reason=${resolved.toastMessage()}"
+                    }
                     val hasNextCandidate = StreamsRepository.skipAutoPlayStream(selectedStream)
                     if (hasNextCandidate && hasFailureChain) {
                         autoPickAttempt += 1
@@ -1053,6 +1069,11 @@ internal fun StreamDestination(
         val launchId = PlayerLaunchStore.put(playerLaunch)
         lastHandedOffFacts = playerLaunch.sourceFacts
         playbackHandedOff = true
+        streamLog.i {
+            "handoff: attempt=$autoPickAttempt candidate=${playerLaunch.streamTitle} " +
+                "urlType=${if (playerLaunch.torrentInfoHash != null) "p2p" else "http"} " +
+                "facts=${playerLaunch.sourceFacts?.let { "${it.resolution.qualityLabel} ${it.releaseQuality.orEmpty()} ${it.debridService.orEmpty()}".trim() } ?: "unknown"}"
+        }
         // A mode with a chain keeps StreamRoute on the back stack: that route
         // owns the auto-play effect, the attempt counter and the overlay, so
         // popping it is popping the thing that does the retrying.

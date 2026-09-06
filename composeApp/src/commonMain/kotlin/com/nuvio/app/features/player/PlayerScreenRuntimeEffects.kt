@@ -414,6 +414,11 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         // catalogue. See `PlaybackStartupWatchdog` for the whole argument.
         val startedAt = TimeSource.Monotonic.markNow()
         var watch = PlaybackStartupWatchdog.initial()
+        startupLog.i {
+            "watchdog armed: attempt=${args.playbackAttempt} candidate=$activeStreamTitle " +
+                "baselineMs=${args.initialPositionMs}ms"
+        }
+        var lastLoggedProgressMs = 0L
         while (true) {
             delay(PlaybackStartupWatchdog.POLL_INTERVAL_MS)
             val snapshot = playbackSnapshot
@@ -454,6 +459,7 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
             ) {
                 startupLog.w {
                     "abandoning $activeStreamTitle: reason=ImplausibleDuration " +
+                        "attempt=${args.playbackAttempt} " +
                         "duration=${snapshot.durationMs}ms " +
                         "expectedMinutes=${args.expectedRuntimeMinutes} " +
                         "engine=${snapshot.engineName}"
@@ -466,9 +472,24 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
                 return@LaunchedEffect
             }
             watch = PlaybackStartupWatchdog.observe(watch, sample)
+            if (watch.bestProgressMs > lastLoggedProgressMs && watch.bestProgressMs > 0L) {
+                lastLoggedProgressMs = watch.bestProgressMs
+                startupLog.d {
+                    "watchdog progress: attempt=${args.playbackAttempt} candidate=$activeStreamTitle " +
+                        "elapsed=${sample.elapsedMs}ms progress=${watch.bestProgressMs}ms " +
+                        "buffered=${sample.bufferedPositionMs}ms position=${sample.positionMs}ms"
+                }
+            }
             when (watch.verdict) {
                 PlaybackStartupWatchdog.Verdict.Waiting -> Unit
-                PlaybackStartupWatchdog.Verdict.Started -> return@LaunchedEffect
+                PlaybackStartupWatchdog.Verdict.Started -> {
+                    startupLog.i {
+                        "watchdog started: attempt=${args.playbackAttempt} candidate=$activeStreamTitle " +
+                            "elapsed=${sample.elapsedMs}ms progress=${watch.bestProgressMs}ms " +
+                            "duration=${sample.durationMs}ms engine=${snapshot.engineName}"
+                    }
+                    return@LaunchedEffect
+                }
                 PlaybackStartupWatchdog.Verdict.Abandon -> {
                     val reason = watch.reason
                     // ⚠ **A source abandoned in silence is unfalsifiable from outside a device.**
@@ -477,6 +498,7 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
                     // burning three healthy sources looked exactly like three dead ones.
                     startupLog.w {
                         "abandoning $activeStreamTitle: reason=$reason " +
+                            "attempt=${args.playbackAttempt} " +
                             "elapsed=${sample.elapsedMs}ms progress=${watch.bestProgressMs}ms " +
                             "lastAdvance=${watch.lastAdvanceMs}ms duration=${sample.durationMs}ms " +
                             "engine=${snapshot.engineName}"
@@ -1017,6 +1039,9 @@ internal fun PlayerScreenRuntime.failPlaybackFatally(message: String?) {
     if (message == null) {
         errorMessage = null
         return
+    }
+    startupLog.w {
+        "fatal player error: attempt=${args.playbackAttempt} candidate=$activeStreamTitle error=$message"
     }
     if (isDebugBuild && PlaybackDebugSettings.hudEnabled) {
         errorMessage = message
