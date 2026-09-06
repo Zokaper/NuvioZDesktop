@@ -328,9 +328,7 @@ button:disabled {
 }
 
 .next-episode-thumb img,
-.episode-thumb img,
-.opening-artwork,
-.opening-logo {
+.episode-thumb img {
   opacity: 0;
   filter: blur(14px) saturate(.92);
   transform: scale(1.035);
@@ -343,12 +341,32 @@ button:disabled {
 }
 
 .next-episode-thumb img.image-loaded,
-.episode-thumb img.image-loaded,
-.opening-artwork.image-loaded,
-.opening-logo.image-loaded {
+.episode-thumb img.image-loaded {
   opacity: 1;
   filter: blur(0) saturate(1);
   transform: scale(1);
+}
+
+/*
+ * ⚠ **The opening overlay's artwork and logo deliberately have no intro.**
+ *
+ * They used to share the blur/scale/fade above, so the same poster the Compose loading screen was
+ * already showing at rest re-appeared here mid-blur - a 620ms animation played at exactly the
+ * moment the two renderers swap, which reads as the screen reloading itself. `PlaybackLoadingScreen`
+ * has no such transition and cannot be given one (see its "no crossfade on the shared layers"
+ * rule), so matching it means having none here either.
+ *
+ * Everything else on this page keeps the intro; it is only wrong where two renderers must agree.
+ */
+.opening-artwork,
+.opening-logo {
+  opacity: 0;
+  transform-origin: center;
+}
+
+.opening-artwork.image-loaded,
+.opening-logo.image-loaded {
+  opacity: 1;
 }
 
 .image-error::before {
@@ -1335,6 +1353,22 @@ button:disabled {
   }
 }
 
+/*
+ * ⚠ **The overlay itself stays full-bleed; only its *contents* scale.**
+ *
+ * `NuvioTheme` multiplies every desktop dp by `desktopUiScaleForWindow` - measured at 1.4365853 on
+ * the maintainer's window - while this page renders raw CSS px. The two loading screens were
+ * therefore never the same size, and the hand-over read as the screen reloading at a different
+ * zoom. The band's base values already match Compose's (16/12/14/12px, 48px up); only the
+ * multiplier was missing.
+ *
+ * An earlier attempt put `zoom: var(--opening-scale)` on this element with `width`/`height`
+ * dividing it back out. It did not take, and `zoom`'s interaction with a percentage-sized absolute
+ * box is subtle enough that it is not worth a second guess: `transform` on the three content
+ * groups is explicit about what moves and what does not. The backdrop and scrim must **not** scale
+ * - they are full-bleed on both sides of the hand-over and scaling them would crop differently
+ * from the Compose backdrop and from `NativePlayerHost`'s.
+ */
 .opening-overlay {
   position: absolute;
   inset: 0;
@@ -1342,9 +1376,9 @@ button:disabled {
   display: grid;
   place-items: center;
   overflow: hidden;
-  background: rgba(0, 0, 0, .85);
-  opacity: 0;
-  pointer-events: none;
+  background: #0d0d0d;
+  opacity: 1;
+  pointer-events: auto;
   transition: opacity 180ms ease;
 }
 
@@ -1353,19 +1387,26 @@ button:disabled {
   pointer-events: auto;
 }
 
+.opening-overlay:not(.visible) {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .opening-actions {
   position: absolute;
-  top: calc(var(--slider-bottom) + env(safe-area-inset-top));
-  right: var(--hp);
+  top: calc(20px * var(--opening-scale, 1) + env(safe-area-inset-top));
+  left: calc(32px * var(--opening-scale, 1));
+  right: calc(32px * var(--opening-scale, 1));
   z-index: 3;
   display: flex;
   align-items: center;
   gap: 10px;
+  justify-content: space-between;
 }
 
 .opening-button {
-  width: var(--header-button);
-  height: var(--header-button);
+  width: calc(44px * var(--opening-scale, 1));
+  height: calc(44px * var(--opening-scale, 1));
   display: grid;
   place-items: center;
   border-radius: 999px;
@@ -1382,8 +1423,8 @@ button:disabled {
 }
 
 .opening-button svg {
-  width: var(--header-icon);
-  height: var(--header-icon);
+  width: calc(24px * var(--opening-scale, 1));
+  height: calc(24px * var(--opening-scale, 1));
 }
 
 .opening-artwork {
@@ -1399,7 +1440,7 @@ button:disabled {
 }
 
 .opening-overlay.has-artwork .opening-artwork.image-loaded {
-  animation: opening-artwork-drift 14000ms ease-in-out infinite alternate;
+  animation: none;
 }
 
 .opening-scrim {
@@ -1422,6 +1463,9 @@ button:disabled {
 .opening-content {
   position: relative;
   z-index: 2;
+  /* Optically centred like the Compose logo/title block, so it scales about its own centre. */
+  transform: scale(var(--opening-scale, 1));
+  transform-origin: center;
   width: min(100%, 720px);
   min-height: 260px;
   display: flex;
@@ -1447,7 +1491,6 @@ button:disabled {
   height: 100%;
   object-fit: contain;
   transform-origin: center;
-  animation: opening-logo-pulse 2000ms linear infinite alternate !important;
 }
 
 .opening-logo-base {
@@ -1480,48 +1523,87 @@ button:disabled {
   -webkit-text-fill-color: #fff;
   text-shadow: 0 2px 22px rgba(0, 0, 0, .42);
   transform-origin: center;
-  will-change: transform;
-  animation: opening-logo-pulse 2000ms linear infinite alternate !important;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
-.opening-spinner {
-  width: 54px;
-  height: 54px;
-  border-radius: 999px;
-  border: 3px solid var(--theme-buffering-track);
-  border-top-color: var(--theme-buffering);
-  animation: center-spin 760ms linear infinite;
+.opening-band {
+  position: absolute;
+  z-index: 2;
+  left: calc(32px * var(--opening-scale, 1));
+  bottom: calc(48px * var(--opening-scale, 1));
+  /* Transform also scales the width. Compensate before scaling so the right edge stays
+     inside the viewport, with the same 32dp/48dp insets as PlaybackLoadingScreen. */
+  width: calc(100% / var(--opening-scale, 1) - 64px);
+  transform: scale(var(--opening-scale, 1));
+  transform-origin: bottom left;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
 }
 
 .opening-status {
   width: 100%;
-  min-height: 40px;
-  margin-top: 16px;
-  display: grid;
-  place-items: center;
-  color: rgba(255, 255, 255, .72);
-  font-size: 13px;
+  color: #fff;
+  font-size: 16px;
   line-height: 1.35;
   font-weight: 600;
-  text-align: center;
+  text-align: left;
 }
 
 .opening-status span {
-  max-width: min(84vw, 620px);
+  max-width: 100%;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
+.opening-facts { display: flex; flex-wrap: wrap; gap: 24px; }
+.opening-fact { display: flex; flex-direction: column; gap: 2px; }
+.opening-fact-label {
+  font-size: 10px; line-height: 13px; font-weight: 600;
+  letter-spacing: .09em; text-transform: uppercase;
+  color: rgba(255, 255, 255, .45);
+}
+.opening-fact-value {
+  font-size: 15px; line-height: 20px; font-weight: 600;
+  color: rgba(255, 255, 255, .92); white-space: nowrap;
+}
+.opening-fact-value.is-unknown { color: rgba(255, 255, 255, .35); }
+
+.opening-provider {
+  color: rgba(255, 255, 255, .82);
+  font-size: 14px;
+}
+
+.opening-footer {
+  width: 100%; min-height: 36px;
+  display: flex; align-items: center; gap: 16px;
+}
+.opening-release {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(255, 255, 255, .45);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.opening-manual {
+  flex: 0 0 auto; background: none; border: 0; cursor: pointer;
+  padding: 8px 12px; border-radius: 8px;
+  font-size: 14px; font-weight: 600;
+  color: var(--theme-accent);
+}
+.opening-manual:hover { background: rgba(255, 255, 255, .08); }
+
 .opening-progress-track {
-  width: 240px;
-  height: 4px;
-  margin-top: 10px;
+  width: 100%;
+  height: 2px;
   overflow: hidden;
   border-radius: 2px;
   background: rgba(255, 255, 255, .2);
@@ -1533,6 +1615,16 @@ button:disabled {
   border-radius: inherit;
   background: var(--theme-timeline-fill);
   transition: width 900ms cubic-bezier(.4, 0, .2, 1);
+}
+
+.opening-progress-track.indeterminate .opening-progress-bar {
+  width: 25% !important;
+  animation: opening-progress-sweep 1200ms linear infinite;
+}
+
+@keyframes opening-progress-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(400%); }
 }
 
 @keyframes opening-logo-pulse {

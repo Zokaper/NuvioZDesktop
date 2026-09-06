@@ -664,6 +664,32 @@ object StreamsRepository {
     }
 
     /**
+     * "Choose source manually", pressed from inside the player.
+     *
+     * ⚠ **It has to be said here rather than done there, for the same reason a retry does.**
+     * The button reaches `StreamDestination.giveUpToSourceList` through
+     * `PlaybackLoadingController.actions`, and in the automatic modes that route has *stopped
+     * composing* while the player is on top - it stays on the back stack, but its
+     * `rememberSaveable` state has already been saved. Flags written into it from the player are
+     * dropped when the route is restored, so the button flipped state nobody would read and left
+     * the user in the player: it did nothing at all, which is exactly how it was reported.
+     *
+     * The player signals and pops; the route consumes on its way back and uncovers the list.
+     */
+    private var manualSourceRequestPending = false
+
+    fun signalManualSourceRequest() {
+        manualSourceRequestPending = true
+    }
+
+    /** True once, for the request that was signalled. */
+    fun consumeManualSourceRequest(): Boolean {
+        val pending = manualSourceRequestPending
+        manualSourceRequestPending = false
+        return pending
+    }
+
+    /**
      * Why the player gave up on the source it was handed, in the user's language.
      *
      * Written by the player runtime immediately before it invokes `onFatalPlaybackError`, and
@@ -711,6 +737,38 @@ object StreamsRepository {
                 retiredAutoPlayStream = it.autoPlayStream
                 retiredAutoPlayCandidates = it.autoPlayCandidates
             }
+            it.copy(
+                autoPlayStream = null,
+                autoPlayCandidates = emptyList(),
+                isDirectAutoPlayFlow = false,
+                showDirectAutoPlayOverlay = false,
+            )
+        }
+    }
+
+    /**
+     * Ends the automatic play because the user left, rather than because a source failed.
+     *
+     * ⚠ **Not [consumeAutoPlay], and the difference is the whole bug.** That one *retires* the
+     * chain into [retiredAutoPlayStream] so a source that dies after playback started can still
+     * fail over - which is exactly what must not survive a deliberate exit. The retained chain
+     * is what let a back press be answered by the next candidate, and the live one is what
+     * [carriedAutoPlayChain] handed straight back to the next visit to the same title: escaping
+     * a play and returning to it re-attached the same file at the position it was escaped from,
+     * with no catalogue in hand at all - the fetch for that visit was still in flight, and was
+     * cancelled before it ever answered.
+     *
+     * Every piece of chain state goes, the retry signal included. A signal that outlives the
+     * chain it belongs to is how a back press starts reading as a retry in the first place.
+     */
+    fun abandonAutoPlay() {
+        activeRequestKey = null
+        failoverRetryPending = false
+        manualSourceRequestPending = false
+        retiredAutoPlayStream = null
+        retiredAutoPlayCandidates = emptyList()
+        pendingFailureReason = null
+        _uiState.update {
             it.copy(
                 autoPlayStream = null,
                 autoPlayCandidates = emptyList(),

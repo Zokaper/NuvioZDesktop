@@ -50,6 +50,8 @@ import com.nuvio.app.core.ui.secondaryClickAt
 import com.nuvio.app.core.ui.nuvioDesktopDragScroll
 import com.nuvio.app.features.debrid.DebridProviders
 import com.nuvio.app.isDesktop
+import nuvio.composeapp.generated.resources.*
+import org.jetbrains.compose.resources.stringResource
 
 @Composable
 internal fun StreamCard(
@@ -247,7 +249,7 @@ private fun StreamNameWithInstantService(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = stream.streamLabel,
+            text = stream.streamLabel(stringResource(Res.string.stream_default_name)),
             modifier = Modifier.weight(1f, fill = false),
             style = nameStyle,
             color = MaterialTheme.colorScheme.onSurface,

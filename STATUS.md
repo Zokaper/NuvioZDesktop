@@ -1,10 +1,565 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-04
+Last updated: 2026-09-06
+
+## Phase 2 manual-verification finding: Startup watchdog evidence-of-life deadline (2026-09-06)
+
+Branch `claude/phase-2-playback`.
+
+Following Phase 2 manual/diagnostic verification of playback failover, resolved false-positive timeouts where healthy-but-slow sources were prematurely abandoned at 20s despite showing credible evidence of life (parsed container duration, HTTP probe response, demuxer buffer):
+
+1. **Two-Tier Startup Deadline (`PlaybackStartupWatchdog.kt`):**
+   - Retained `NO_PROGRESS_DEADLINE_MS = 20_000L` for completely dead sources with no evidence of life.
+   - Added `EVIDENCE_OF_LIFE_DEADLINE_MS = 35_000L` (`SLOW_STARTUP_DEADLINE_MS`) for slow-starting sources that have demonstrated credible evidence of life but have not yet advanced playback position.
+   - Preserved `STALL_DEADLINE_MS = 12_000L` and `MAX_STARTUP_MS = 60_000L`.
+2. **Evidence-of-Life Signals (`PlaybackStartupWatchdog.kt`, `PlayerScreenRuntimeEffects.kt`):**
+   - Candidate handoff or URL existence alone explicitly does not constitute evidence of life.
+   - Evidence of life is credited when `durationMs > 0L`, `bufferedPositionMs > 0L`, `progressMs > 0L`, or `hasExternalEvidenceOfLife` (successful HTTP probe `PlaybackProbeVerdict.Pass`).
+   - Sticky state in `PlaybackStartupWatchdog.State`: once credible life is established, the 35s deadline protects the startup until first position advance or 35s timeout.
+   - Added diagnostic logging for evidence-of-life transitions and watchdog abandon events.
+3. **Regression Tests (`PlaybackStartupWatchdogTest.kt`):**
+   - Dead sources abandoned at 20s.
+   - Slow-but-alive sources with duration or probe evidence not abandoned at 20s.
+   - Slow-but-alive sources starting between 22–30s succeed without false failover.
+   - Sources with evidence of life that fail to advance by 35s properly abandon.
+   - Stall deadline (12s) preserved after initial progress.
+   - Strict deadline hierarchy enforced: `STALL_DEADLINE_MS < NO_PROGRESS_DEADLINE_MS < EVIDENCE_OF_LIFE_DEADLINE_MS < MAX_STARTUP_MS`.
+4. **Verification & Packages:**
+   - Desktop tests passed clean: all 19 tests in `PlaybackStartupWatchdogTest` passed (`:composeApp:desktopTest`).
+   - Packaged local diagnostic Windows MSI: `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` (258,258,719 bytes) built with `-Pnuvio.desktop.debugTools=true`.
+
+## Phase 2 manual-verification finding: 8K AI upscale & CAM/TS ranking and presentation (2026-09-06)
+
+Branch `claude/phase-2-playback`.
+
+Following Phase 2 manual/watched playback verification, corrected the selector and presentation logic for AI-upscaled releases (particularly nominal 8K streams) and theatrical captures (CAM/TS):
+
+1. **AI Upscale Classification (`ReleaseTags.kt`, `SourceFacts.kt`):**
+   - Added conservative `isAiUpscaled` detection for release title tokens (`AI Upscale`, `AI-Upscaled`, `AI Enhanced`, `AI Remastered`, `Topaz`, `Upscaled`, etc.).
+   - Exposed on `SourceFacts` (preserving desktop regex cache) and pure-suite neighbour stubs.
+2. **Display Capability Propagation (`Platform.kt`, `Platform.desktop.kt`):**
+   - Added `platformDisplayMaxHeight()` to detect desktop monitor height via AWT screen devices and passed through `PlaybackSelectionContext` into `SourceRankingPreferences`.
+3. **Automatic Ranking (`SourceRanking.kt`):**
+   - `resolutionTier`: When display max height is below 8K (< 4320p), 8K and 4K fold into the same resolution tier (tier 5). On displays >= 8K, 8K native retains tier 6.
+   - `mediaScore`: Added `AI_UPSCALE_PENALTY` (-8) and `CAM_TS_PENALTY` (-20).
+   - Both Instant and Best Available inherit the model; proper 4K releases now comfortably beat nominal 8K AI upscales on 4K-or-lower displays.
+4. **CAM/TS Demotion and Restrained Treatment:**
+   - CAM/TS releases assigned `THEATRICAL_CAPTURE_TIER = -1`, ensuring any standard release (even SD) wins over CAM/TS, while preserving selectability if CAM is the sole available source.
+5. **Restrained UI Presentation (`PlaybackQualitySheet.kt`):**
+   - Added `AI Upscale` chip with restrained danger styling (`tokens.colors.danger` at 12% alpha bg, 35% hairline border) without interfering with HDR/DV/Atmos feature chips.
+   - Set CAM/TS provenance text to restrained danger color without adding duplicate badges.
+6. **Verification & Packages:**
+   - Passed regression test Cases A through G (`SourceRankingTest.kt`), `ReleaseTagsTest.kt`, and `PlaybackQualityOptionsTest.kt`.
+   - Pure test suites (453 tests) passed clean outside Gradle.
+   - `.\gradlew.bat desktopTest` passed clean (BUILD SUCCESSFUL).
+   - Packaged Windows MSI: `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` (258,250,529 bytes).
+
+Branch `claude/phase-2-playback`.
+
+### UltraReview #1 remediation
+All six review findings from UltraReview #1 are integrated on desktop:
+1. **Finding 1 (P2P auto-play failover):** Propagated `autoPickedWithFailureChain` for P2P auto-play in `StreamDestination`, kept `StreamRoute` on back stack during active failure chain, updated `lastHandedOffLabel`, and reset `autoPickFailure`.
+2. **Finding 2 (P2P external subtitles):** Propagated `stream.externalSubtitles` into `buildP2pPlayerLaunch` so P2P retains external subtitles.
+3. **Finding 3 (Manual choice routing):** Routed choose-manually paths in quality sheet and uncached stream dialog through canonical `giveUpToSourceList` to preserve provenance and surface rules.
+4. **Finding 4 (Loading escape clock guard):** Added token guard to `PlaybackLoadingSessions.tick` so superseded session escape clock coroutines cannot contaminate subsequent sessions.
+5. **Finding 5 (Pure stream label fallback):** Removed `runBlocking` and Compose resource lookup from `StreamModels.kt`, providing pure stream label fallback and passing localized strings at Compose call sites.
+6. **Finding 6 (Canonical P2P sentinel helper):** Extracted canonical `p2pSentinelUrl` helper to `StreamModels.kt` and eliminated duplicate definitions.
+
+Also synchronized with mobile's back-press lifecycle fix (`autoPlayStream` null check moved into retry branch in `StreamDestination` so back navigation exits cleanly to details instead of being dropped).
+
+### Product decision: P7 deleted
+**P7 (auto source-swap / automatic downshift)** will not ship and is completely removed:
+- Detector (`AutoDownshiftDetector.kt`), candidate builder (`AutoDownshiftCandidates`), and 334-line test suite removed.
+- Diagnostic swap log (`SwapDiagnosticsLog.kt`, `SwapDiagnosticsLogTest.kt`) and HUD forced-swap controls removed.
+- Setting keys (`playback_auto_downshift`), storage actuals, repository state, and settings page UI removed; leftover descriptions cleaned up.
+- **Normal ranked-candidate failover remains completely intact**: automatic candidate failover across Classic/Streamlined/Instant, P2P failure chains, fatal playback error handling, manual fallback, and dead-source reporting are all preserved.
+
+### Verification status
+- Non-device verification (pure test suites: 459 passed, desktop compilation, desktopTest: 489 passed) passes clean.
+- **Manual verification passed on desktop and packaged builds** (2026-09-06) following the two-tier startup watchdog evidence-of-life fix. Exit gate passed; Phase 2 closed.
+
+## Ultra 1 review record (2026-09-05)
+
+Branch `claude/phase-2-playback`. Three PRs exist and only one of them is for merging; the
+distinction matters enough to write down.
+
+| PR | What it is | Scope |
+| --- | --- | --- |
+| [#2](https://github.com/Zokaper/NuvioZDesktop/pull/2) | **The real PR.** Base `codex/upstream-sync-0.1.22-alpha` | 24 commits, 86 files, +7,749/−1,907 |
+| [#3](https://github.com/Zokaper/NuvioZDesktop/pull/3) | **Review scaffolding.** `ultra1-audit` over `ultra1-audit-base` | 38 files, +13,009/−0 |
+| [nuvio-z#1](https://github.com/Zokaper/nuvio-z/pull/1) | Mobile's `/code-review high` companion | 73 files, +6,110/−1,790 |
+
+⚠ **Run `/code-review ultra 3`, not `ultra 2`, and never the no-argument form.** `Dev` does not
+carry the upstream sync - `git merge-base --is-ancestor f0107940 origin/Dev` answers no - so the
+no-argument form bundles **383 commits, 518 files, +41,951/−11,390**, most of it vanilla upstream.
+
+### Why the scaffolding exists
+
+`ultra` reads a diff. Against #2 it would have read **23 of the 56** files in the playback
+surface, and `PlaybackModeRouter`/`PlaybackModeModels` at their edges rather than whole - which
+`ROADMAP.md` predicted in the paragraph under the Ultra 1 line. The 33 it would not have seen
+include `StreamAutoPlaySelector` (239 lines), **Classic's picker**, reached from
+`StreamsRepository.load` whenever `manualSelection` is false. One of the three modes would have
+selected its source through code the review could not read.
+
+#3's diff is therefore the whole playback-mode system. Built as two commits off the phase branch:
+`ultra1-audit-base` deletes the 38 files, `ultra1-audit` restores them byte-identically.
+`git diff b50c44cd..ultra1-audit` is empty - verified at construction against the phase HEAD of
+the moment - so the reviewed tree *is* that branch and only the history differs. ⚠ **Commits made
+to `claude/phase-2-playback` afterwards do not reach #3.** Docs commits are harmless, since no
+`.md` is among the 38 files; a code change is not. If the branch moves before the run, rebuild the
+pair.
+
+⚠ **Head descends from base deliberately.** The obvious construction - deleting the files in a
+base cut from the sync branch - produces modify/delete conflicts on the 23 files Phase 2 changed.
+An unmergeable PR is not something to find out about with a non-renewable run.
+
+⚠ **This replaces the run on #2 rather than supplementing it.** The cost, taken knowingly: the
+agents audit the final code and never see what Phase 2 changed, so the new work is not marked.
+
+Excluded from #3: `StreamCard`, `StreamsTabletLayout`, the `StreamBadge` family, `EpochMs`, the
+per-platform storage actuals - 18 files, 2,064 lines that cannot decide which source plays. The
+quality sheet, loading screen and `StreamsScreen` are in: they carry selection logic, not just
+presentation.
+
+### Scaffolding cleaned up (2026-09-06)
+
+Audit scaffolding PRs #3, #4, and #5 closed; all scaffolding branches (`ultra1-audit*`, `gemini/ultra1-playback-fixes`) pruned from local and remote.
+
+### What the reviewers are reading cold
+
+Two changes from 2026-09-05 have unit coverage and no run on a packaged build:
+
+- `0da891c0` - back was being answered with another play. Two effects in `StreamDestination` wake
+  on the same `autoPlayStream`; the abandon and the failover still share that state.
+- `b50c44cd` - `ChooseManually` now signals through the repository and pops, because the route it
+  must reach has stopped composing while the player is on top. Also logs a throwing
+  `NativePlayerController.snapshot()`, which until now was indistinguishable from a source that
+  never starts.
+
+## Back was taken, then answered with another play (2026-09-05)
+
+Branch `claude/phase-2-playback`. Reported as "pressing Escape mid-loading or mid-player is
+jank - I had to spam it a few times to get out", plus a second report that sounded unrelated:
+after escaping an Instant play, switching to Classic and returning to the same title started
+the source Instant had picked. One bug, both faces.
+
+**Escape was working. The app was restarting the source behind it.** From the z1.44 debug log:
+
+```
+22:03:54.697  PlayerControls action=Back   pos=360902        <- the Escape
+22:03:55.116  loading surface token=2 closed (visibleMs=19229)
+22:03:56.934  StreamsRepo Found 1 addons  (same title)
+22:03:56.938  StreamsRepo Fetching streams ...               <- catalogue request starts
+22:03:57.195  loading surface token=3 opened                 <- 257 ms later, already playing
+22:03:57.326  attach requested ... initialPositionMs=361499
+22:03:58.006  probe total=47595678623 host=store-071...      <- same file as token=2
+22:03:58.578  PlayerControls action=Back   pos=0             <- the second Escape
+```
+
+⚠ **That fetch never logs a `Got ... streams` line - it was cancelled.** So the source that
+relaunched came entirely from state held in `StreamsRepository`, with no catalogue in hand, and
+it re-attached at 361499 ms against the 360902 ms the user had just exited at. Every press was
+answered by a fresh play of the thing being escaped, which is what "spam it a few times" was.
+
+### What was wrong
+
+On the pop back from the player, two effects in `StreamDestination` wake on the same
+`autoPlayStream`: the retry effect, which decides the user left and exits, and the auto-play
+effect, which starts whatever is armed. **Whichever ran first decided what happened.**
+`userAbandonedPlayback` already existed for exactly this distinction and its own KDoc said
+"Read only by the stall backstop" - which was the fault, because the effect that *starts
+playback* never consulted it.
+
+The second face is `consumeAutoPlay`, which **retires** the chain into `retiredAutoPlayStream`
+rather than dropping it. That is right for a source dying after the first frame and wrong for a
+back press: it left the retained chain for `failOverAfterPlaybackStarted` and the live one for
+`carriedAutoPlayChain`, which hands a chain back to the next load of the same request token.
+
+### The fix
+
+- `StreamsRepository.abandonAutoPlay()` - drops the live chain, the retired chain, and the
+  pending retry signal. Deliberately not `consumeAutoPlay`; the difference is the bug.
+- The auto-play effect returns early on `userAbandonedPlayback`. ⚠ Ordering two effects is not
+  a fix - the abandon is a fact, and a fact outranks a race.
+- `leaveToDetails()` abandons the chain and cancels the in-flight fetch, so "takes you back"
+  and "stops what is running" are one action rather than two halves with one written.
+- The route's `onDispose` does the same for exits the route does not own - the window closing,
+  a deep link - keeping the hand-off exemption that lets the surface outlive the route.
+
+**Verified:** `AutoPlayFailoverTest` passes on both repos - 14 tests, 0 failures - including two
+new cases: an abandon leaves nothing for either mechanism, and an abandoned chain is not carried
+into the next load of the same title. ⚠ The existing `a reload for the same video keeps a
+re-armed chain` still passes, so the legitimate carry is intact and only the abandoned case is
+cut.
+
+**Not** verified: not yet watched on a packaged build. The effect race and the route teardown
+are precisely what a hot run cannot exercise; z1.45 / mobile build 28 are cut for this.
+
+## Phase 2 closing polish (2026-09-05)
+
+Branch `claude/phase-2-playback`. Three closing polish designs address presentation feedback on the surfaces built in Phase 2, preparing the branch for Ultra 1 review:
+
+1. **Desktop Streamlined Quality Columns:** The wide-window branch of `PlaybackQualitySheet` (`isWide`, ≥768 dp) leads with Best available as a full-width strip — release, `Size`, `Needs` and the connection meter — and lays the alternatives out as **one column per resolution**, each column stacking only the bands that title actually has. ⚠ **Nothing scrolls, and that is the design.** `VideoResolution` has six members and `optionsForBucket` emits at most four bands each, so the offer is bounded and fits a desktop window once it is spent across the width. Panel max width went 920 → 1200 dp (`wideDialogMaxWidth`). A matching skeleton renders on the same footprint before the figures settle.
+
+   This replaced a quality *table* taken on the same day, which the maintainer reported as "literally just a list". Watched on a debug hot run it was: a 480 dp cap that sliced its last row mid-glyph with no scrollbar; a `RELEASE` column carrying `REMUX · DV` identically for 4K Max and 4K High with ~270 dp of dead air beside it; a `FIT` column that drew five visually identical meters on a 755 Mb/s line; a `1440p` row under a `1440p` header; and `Best available` printing `—` for a size the row beneath it printed as 72 GB.
+
+   ⚠ **A collapsed bucket gets the class it would have been.** `Variant.SINGLE` carries no band
+   - banding needs two sized sources to compare - and the row used to read "Only option", which
+   told the reader nothing about what they would get. `PlaybackQualityOptions.bandFor` derives
+   the class from the row's own bitrate against the same absolute boundaries, so a lone 8K
+   release at 41 Mb/s reads `Mid (Max)`: a Mid-class file, and the best 8K this title has. The
+   one row that keeps a fallback label is a release nobody reported a size for - there is no
+   bitrate to band by, and handing an unmeasurable file a class is exactly what banding on sized
+   sources alone exists to prevent.
+
+   **What a cell says, and in what order.** Band name, then dynamic range and audio as outlined
+   marks, then size and needs, then rip type and host on the last line in muted small caps. That
+   order is the fix for "there isn't much differentiating between the cells": down a column
+   `BLURAY` repeats four times and `DV / Atmos 7.1` does not, so the old order led with the
+   repeating part. `describeProvenance` splits the rip type and host back out of
+   `describeRelease`, which had folded the dynamic range into a sentence, so nothing is printed
+   twice. `SDR` is drawn (via `PlaybackLoadingFacts.dynamicRangeSlot`, the same earned default
+   the loading band uses) but **muted**, never accented - an empty mark row reads as a fact that
+   failed to load, and an accented `SDR` spends the panel's one emphasis on the ordinary case.
+   Cells sit on `surfaceCard`: `surface`, `surfaceElevated` and `surfaceDialog` are the same
+   colour in this theme, so the first attempt tinted the panel over itself and drew nothing.
+   The cell Best available resolves to is outlined rather than restated
+   (`PlaybackQualityOptions.sourceKey`) - it is routinely the very row beneath the hero, and two
+   identical offers side by side read as two files.
+
+   **`High (Max)`.** A resolution whose releases all fall under its Max boundary offers no Max row, so its top row reads "High" — and a lone "High" reads as a middling pick rather than as this title's ceiling at that resolution. `PlaybackQualityOptions.isTopBandBelowMax` marks it and the cell appends the Max word. ⚠ The band word itself is **never** rewritten: the bands are absolute, and relabelling one would be exactly the catalogue-relative naming `Variant` exists to end. `Variant.SINGLE` is excluded — a collapsed bucket has no bands to top — and reads "Only option" instead.
+2. **Fixed 5-Slot Loading Metadata Rail:** The loading band across Compose (`PlaybackLoadingScreen`) and desktop JCEF/HTML (`controls.html`, `controls.css`, `controls.js`) now renders a fixed five-slot spec strip: Resolution, Audio/Subs, Range, Audio, and Size. Absent metadata displays an honest em-dash (`—`) rather than phantom guesses; dynamic range safely falls back to `SDR`; the "Choose source manually" escape hatch resides in a reserved 36 dp row above the progress line so its appearance at 5 seconds never shifts the layout under the reader.
+3. **Seamless Entrance Motion:** Pop and dip artifacts entering playback are resolved via `PlaybackEntranceMotion` (260 ms coordinated curve: color-alpha scrim, logo, and band arrival) and a desktop navigator fade-through on `entry<StreamRoute>` (220 ms in with 90 ms delay + 90 ms out).
+
+**Verified:** `scripts/run-pure-suites.sh` passes, including the new `PlaybackQualityOptionsTest`
+coverage for `bandFor`, `isTopBandBelowMax` and `sourceKey`. `:composeApp:desktopTest` passes for
+`PlaybackSourceSelectorTest` (which the pure runner leaves to CI), `PlaybackEntranceMotionTest`
+and `PlaybackLoadingStateTest`.
+
+**Not** verified: ⚠ **the columns panel has never been watched against real playback**, and the
+one attempt to watch it produced a false alarm worth recording here so the next session does not
+chase it twice. It was run under `scripts/dev-desktop.ps1` (default `-Mode hot`), and a hot run
+cannot reach a first frame: `hotRunDesktop` does not inherit the
+`--add-opens=java.desktop/java.awt=ALL-UNNAMED` that `build.gradle.kts` gives `:composeApp:run`
+and the packaged app, so the native view never attaches. What that looks like from the sheet is
+indistinguishable from a regression in this work - pick a quality, `PlaybackStartupWatchdog`
+abandons each candidate without a frame, the overlay flickers through attempts 1-3, the chain
+spends, and `PlayerDestination`'s `onFatalPlaybackError` toasts "No safe automatic source matched"
+and pops to the details screen. Nothing on the selection path changed here: the cells hand
+`onOptionSelected` the same `PlaybackQualityOption` instances the table did. This needs a debug
+MSI, which is the hot-run rule already recorded for the bridge below.
+
+⚠ **A hot run also writes no debug log**, so there is nothing on disk to read afterwards.
+`isDebugBuild` on desktop is `System.getProperty("nuvio.debugTools")`, set only by
+`-Pnuvio.desktop.debugTools=true` or the debug channel - neither of which `dev-desktop.ps1`
+passes.
+
+**Deliberately NOT changed:**
+- **Phone Card Grid:** The narrow branch of `PlaybackQualitySheet` (<768 dp) retains its proven touch-card layout and bottom sheet mechanics for phones and small tablets.
+- **`entry<PlayerRoute>` No-Transition Rule:** Retains `EnterTransition.None`. Because `PlaybackLoadingHost` draws the identical loading surface across the entire route crossing at `zIndex(18f)`, adding any transition here would create a redundant crossfade between two identical frames.
+- **Connection Figure Latch:** The bandwidth measurement figure and verdict remain latched upon initial determination; late background probes never cause figures or column alignments to jump under the reader.
+
+## Source-to-player jank: the hand-over made continuous (2026-09-05)
+
+Branch `claude/phase-2-playback`. The report was "a stutter, then a grey screen, then the loading
+screen" between choosing a source and the player. It was **six** separate faults stacked on one
+path, each hiding the next, which is why three earlier rounds of plausible-looking fixes changed
+nothing the maintainer could see.
+
+**Nothing here was found by reading the code.** Two probes were added first and everything below
+was measured; the numbers come from the debug log in `%APPDATA%/Nuvio Z/logs/` and from screen
+captures aligned against it by wall clock.
+
+- `EdtStallWatchdog` (`core/debug/EdtStallWatchdog.kt`) - heartbeats the AWT event queue and, when
+  a beat waits >34 ms, samples the event thread's stack **while it is still blocked**. Compose
+  Desktop composes, lays out and draws on that thread, so this names whatever is holding it.
+- A frame-gap probe in `PlaybackLoadingHost` - logs every presented frame gap >34 ms for 2.5 s
+  from the tap, each with its offset. Debug builds only.
+
+### What was actually wrong
+
+| # | Fault | Cost | Where |
+| --- | --- | --- | --- |
+| 1 | The backdrop was scaled **in software, at full source resolution, on the event thread, on every paint** | **2,523 ms** frozen UI | `NativePlayerHost.paintBackdrop` |
+| 2 | Eight `Regex` literals compiled *per stream*, from composition, for the whole list | 265 ms | `SourceFacts.kt` |
+| 3 | `normalizeLanguageCode` compiled a regex and sorted a 100-entry map per call; `languageLabelResForCode` then normalized all 79 language codes per lookup | 35-131 ms, repeatedly | `LanguageCodes.kt`, `PlayerLanguagePreferences.kt` |
+| 4 | `P2pStreamingEngine` class-loading (and an eager `HttpClient`) ran on the UI thread, triggered by `PlayerScreenContent` composing | 311-339 ms | `P2pStreamingEngine.desktop.kt` |
+| 5 | The mpv container window class erased with `BLACK_BRUSH`, and a child HWND covers every Compose layer regardless of z-order | the **black** flash | `native/windows/player_bridge.cpp` |
+| 6 | The loading screen was the only surface on the path with **no `?: poster` fallback**, so a title with no `background` gave it nothing to draw | **1,560 ms** of flat #0D0D0D | `StreamDestination.kt` |
+
+Fault 6 is the one the whole session circled. Every other surface falls back to the poster
+(`StreamsTabletLayout`, and the player overlay's `startingEpisode?.thumbnail ?: background ?:
+poster`); the loading session alone passed `launch.background` and fell through to
+`nuvio.colors.background`. Captured on screen at 1,560 ms, ending exactly as the JCEF overlay
+painted - which is why it read as "grey, *then* the loading screen", and why fixing the canvas and
+the native container never touched it. The comment above that argument already claimed it was
+identical to what the player is handed.
+
+### The surfaces, and the rule they now all obey
+
+Five things can cover this path: the route's hand-off box, the Compose loading surface, the AWT
+canvas, the native container, and the WebView2 controls page. **Every one of them now draws the
+same artwork, and none of them appears before it can.**
+
+- The hand-off box paints the backdrop, and is opaque only when there is no artwork at all - so the
+  one frame before `AsyncImage` resolves shows the list underneath rather than a grey fill.
+- `NativePlayerHost` prepares a cropped, scaled, scrimmed backdrop **once per size on a worker
+  thread** (`paint` does no image maths at all), cached across players, and promotion waits for it.
+- The container is created parked below the client area and promoted only on `didPaintOpening`,
+  which now fires when the page's artwork has *loaded*, not merely when a frame was presented.
+- The attach waits for a genuinely full-size canvas: `notifyFirstPaints` used to unlock it at
+  `width > 1`, which the 1 dp parked panel satisfied, so the whole native player was built at 2 px
+  and then resized - and resizing a live WebView2/mpv container erases it.
+
+### Measured, start of session to end
+
+| | before | after |
+| --- | --- | --- |
+| UI thread freeze | 2,523 ms | gone |
+| `attach requested -> created` | 2,552 ms | ~40 ms |
+| Blocking work in the transition | ~900 ms | gone |
+| Black flash | present | gone |
+| Grey flash | 1,560 ms | ~2 frames |
+| Frames presented in 3 s | 5 | 250+ |
+
+### Also fixed here
+
+- **`openingScale` never reached the controls page.** It was written through the nullable-float
+  writer, which clamps to 0..1, so the opening overlay always rendered at scale 1 and the logo
+  visibly shrank at the takeover. Covered by `NativePlayerControlsJsonTest`.
+- **The loading session leaked on every teardown.** Both owners closed it from the `else` branch of
+  a `LaunchedEffect`, and an effect is *cancelled* on disposal and never runs its `else`. So the
+  surface survived exactly the case its own contract says ends it ("...or when the user leaves"),
+  leaving a loading screen over the app that nothing alive could close. Closed now from
+  `requestBack()` - the one unambiguous user-leave - and from a `DisposableEffect` on the stream
+  route, both exempting a handed-off session so a failover is untouched.
+- **The escape hatch toasted a false failure.** `autoPlayStream == null` guarded the whole
+  back-press effect rather than just the retry branch, so a back press with no armed stream set
+  nothing - including `userAbandonedPlayback`, the one flag that suppresses the dead-end backstop.
+  1.5 s later that backstop uncovered the source list with "No safe sources found". Seen in the log
+  as `outcome=gave_up uncover=dead_end_backstop` with `attempt=1/3`, i.e. no failover at all.
+
+### Tried and rejected - do not repeat
+
+**Parking the player panel by offset instead of size.** Windows erases a heavyweight component with
+its background brush on resize, before Java's `paint()` runs, and that is the last ~2 frames of
+grey. Keeping the panel full-size and translating it off screen removes that erase entirely and
+**breaks playback**: every attempt fails through to "attempt 3 of 3" and drops the user on the
+source list. A native player whose host canvas is outside the window does not start. The two frames
+are the price of a player that works; the warning is at the call site in `PlayerEngine.desktop.kt`.
+
+### Still open
+
+1. **~2 frames of grey at the promotion.** The AWT erase above. Would need the native erase
+   intercepted (`ignoreRepaint`, or taking over painting) - the same paint path that produces the
+   signals unlocking the attach, so getting it wrong stops playback rather than causing a flash.
+2. **Escape from the *loading* screen still needs two presses.** From the player it is now one
+   press, to details, with no false toast. The first press pops the player; the loading surface is
+   one screen across two routes and should exit in one gesture.
+3. **A grey moment while the player tears down** on the way back to details.
+4. **The 500 ms snapshot poll blocks the UI thread 40-120 ms throughout playback**, once measured at
+   1,218 ms: `NativePlayerBridge.isLoading` (a native call) from `PlayerEngine.desktop.kt`'s poll
+   loop. Moving it to a worker needs native handle-lifetime protection first - it is not the
+   one-liner an earlier handoff suggested.
+
+### Toolchain
+
+This machine can now build the native bridge: **MSVC C++ Build Tools** and the **WebView2 SDK**
+(`1.0.4191.47`, in `~/.nuget/packages`) were installed today, and the bridge builds with the full
+JBR **SDK** 25 from `~/.gradle/jdks` - Android Studio's JBR has no JNI headers, which is why this
+was blocked before. Until today `composeApp/build/native/windows/player_bridge.dll` was dated
+**Aug 8** against a Sep 4 source: every local run for a month had been executing a stale bridge,
+and the build printed a warning saying so on every build. Delete the DLL to force a rebuild; the
+old one is kept beside it as `player_bridge.20260808-backup.dll`.
 
 > **The history moved.** Everything before 2026-08-24 is in [`STATUS-ARCHIVE.md`](STATUS-ARCHIVE.md) -
 > 34 sections, kept whole and in order. This file is the live handoff only: the
 > state table above, the work since the last release, and what is still open below.
+
+## Phase 2 Playback: the hand-off made seamless, and a source that is actually there (2026-09-05)
+
+Branch `claude/phase-2-playback`, continuing the work below. Three agents have now worked this
+branch; **the previous round was left entirely uncommitted** - 18 modified files on desktop and 11
+on mobile, with nothing written down anywhere. It is committed now, split by concern: `72029b43`
+(the twelve code-review findings) and `ef5e209d` (the desktop native loading band). See the rule
+about this added to the new parent `AGENTS.md`.
+
+### What was reported
+
+1. Choosing a source produced a UI stutter, then a black screen, then the loading screen popping
+   in. The previous round shortened it but could not remove it.
+2. *The Secret Woman*, 4K High: attempt 1 never produced a frame and cost 20 s; attempt 2 played
+   the debrid provider's "being prepared" slate and the chain stopped there, satisfied. The
+   loading screen also visibly **reloaded** to say "Attempt 2".
+
+### Why the hand-off was not seamless
+
+The pixels were already shared - Phase 2 made both sides render one `PlaybackLoadingState`. **The
+lifetime was not.** A route entry stops composing when it is not on top and is re-created by a pop,
+so the surface was destroyed and rebuilt at every hand-off and every failover. On desktop that
+window contained four further faults, in this order:
+
+| # | What | Where |
+| --- | --- | --- |
+| 1 | `entry<StreamRoute>` fades out over 160 ms while `entry<PlayerRoute>` had **no desktop spec** and fell through to `NavDisplay`'s much longer default - two crossfades running against each other | `MainAppContent.kt` |
+| 2 | the player's root was `Color.Black` under a loading screen painted on `#0D0D0D` | `PlayerEngine.desktop.kt` |
+| 3 | the AWT canvas filled `Color.BLACK` and, being heavyweight, painted over every Compose layer the instant the `SwingPanel` was promoted | `NativePlayerHost.kt` |
+| 4 | the JCEF overlay then faded its artwork in over 260/520/620 ms - a re-entrance of a screen already at rest | `controls.css` |
+
+**The fix is one move: the surface is owned above the navigator.** `PlaybackLoadingController` holds
+one session; `PlaybackLoadingHost` draws it as a sibling of `NavDisplay` at `zIndex(18f)`. The
+navigation now happens *underneath* a screen that never stops drawing, so there is nothing left to
+animate or re-enter - and a failover becomes a state change, which is what "it should just say
+attempt 2 of 3" asks for. `entry<PlayerRoute>` is given an explicit `EnterTransition.None` on
+desktop (an `emptyMap()` is not "no animation"), the native canvas and the JCEF overlay are painted
+the app's own background, and the JCEF artwork intro is gone.
+
+Motion is now exactly two beats, both defined in `PlaybackLoadingMotion`: a 220 ms entrance when the
+source list is replaced (backdrop first, band on an 80 ms stagger) and a 300 ms exit into the first
+frame. **Everything between them is zero-duration by construction.**
+
+### Why a placeholder played
+
+`%APPDATA%\Nuvio Z\logs\nuvio-debug-20260905-005434.log`:
+
+```
+00:55:02.905  attach created  length=3092   <- [TB(bolt)] MediaFusion 2160p, marked cached
+00:55:22.614  abandoning ...: reason=NeverStarted elapsed=20240ms duration=0ms engine=Unknown
+00:55:24.418  attach created  length=1395
+00:55:31.613  updateControls  pos=10160 duration=120960   <- 2:01, for a feature film
+```
+
+**Cache detection was not the fault, and mostly already worked.** `parseDebridCacheMarker` read the
+cached marker correctly. Two other things were true:
+
+- `PlaybackSourceSelector.isDebridBacked` did not recognise AIOStreams. It hands back a plain
+  `https://` link to its own proxy, so a candidate through it had no `debridService`, no
+  `clientResolve` and was not an `isDirectDebridStream` - `isUncachedDebrid` therefore never
+  applied and an **unknown** cache state was auto-played. `isAioStreams` is now on that list.
+- Nothing ever checked what the URL actually *returned*. A stale cached marker was
+  indistinguishable from a true one, and nothing logged the response to a URL handed to the
+  engine - which is why attempt 1's twenty seconds are, in that log, unexplainable after the fact.
+
+So: **one `Range: bytes=0-1` before any frame is attached** (`PlaybackSourceProbe`). Status, content
+type, and the served total against the release's claim. A rejected source never opens the player, so
+the chain steps with nothing on screen changing but the attempt number. Every unknown passes, and a
+failed or timed-out probe passes - it must never block a working play. `PlaybackDurationPlausibility`
+is the backstop for what the probe cannot judge, and is deliberately conservative: both a
+fifth-of-expected ratio **and** an absolute duration under ten minutes.
+
+### Also fixed
+
+- `PlaybackAttemptLog`'s give-up line read `streamsUiState.autoPlayStream` *after* the chain had
+  moved on, so it printed `addon=unknown cached=unknown` on exactly the lines that needed them.
+  It reads `lastHandedOffFacts` now.
+- The stall backstop logged `uncover=dead_end_backstop` six seconds after the user pressed Back -
+  a false entry in the one log that exists to explain why the source list appeared.
+- The loading surface's exit is gated on a **decoded frame** (`videoWidth`/`videoHeight`, or real
+  advancing playback), not on `isLoading` going false, which the engine drops before it has decoded
+  anything. `firstFrameReached` is a second flag rather than a redefinition of
+  `initialLoadCompleted`, which the seek, subtitle and watchdog paths all read and mean the weaker
+  thing by.
+
+### Verified
+
+| | |
+| --- | --- |
+| Pure suites, desktop | **417** (from 397) |
+| Pure suites, mobile | **365** (from 345) |
+| `:composeApp:compileKotlinDesktop` | clean |
+| `:androidApp:compileFullDebugKotlin` | clean |
+| `NativePlayerControlsPageTest` | passes |
+| **Watched run** | **not done - still the exit gate** |
+
+New pure files, both wired into `scripts/run-pure-suites.sh`: `PlaybackLoadingSession.kt` (group 1,
+it reads `SourceFacts`) and `PlaybackSourceProbe.kt` (group 2).
+`scripts/pure-suite-stubs/Neighbours.kt` gained `SourceFacts.isAioStreams` - the stub had drifted
+again, and per the script's own doctrine a failing compile is the alarm and the stub gets fixed.
+
+### Still open
+
+- **Nothing here has been watched.** The whole point is a transition, and a transition cannot be
+  verified by a test or a compiler. It needs a debug MSI - Compose Hot Reload cannot attach the
+  native player bridge, so the player route opens to an empty surface that looks exactly like the
+  bug being fixed.
+- **The remaining desktop hand-over gap is now measurable but has not been measured.** `controls.js`
+  reports `didPaintOpening` and `NativePlayerController` logs `afterAttachMs=`. Read that figure on
+  the first real run before deciding whether anything more is needed there; WebView2 is already
+  warmed at process start, so there may be nothing left to win.
+- The probe adds one round trip to every automatic play. It runs under a loading screen that is
+  already up, so it should be invisible - but it is a real cost and worth watching on a slow
+  connection.
+- Mobile still has no debug build on the post-sync base.
+
+## Phase 2 Playback: implementation complete, watched exit gate open (2026-09-04)
+
+Branch `claude/phase-2-playback`, cut from the Phase 1 sync branch - **not** from trunk, which is
+362 commits behind. Full handoff: `../HANDOFF-phase-2-playback.md`.
+
+**Stages 0-4 and 6 are complete in both repos.** The code review and automated verification pass
+are complete. Stage 5's installed playback matrix remains the release exit gate; Compose Hot
+Reload cannot exercise the native player bridge on this machine.
+
+### The finding that matters most
+
+**The `0.1.22-alpha` sync silently disabled desktop's whole playback recovery path.** The App.kt
+dissolution recorded above moved `MainAppContent`'s `onFatalPlaybackError`/`onPlaybackStarted`
+handler nowhere: `PlayerDestination` stopped passing them, while `PlayerScreen` still declared
+both. Nothing was deleted, everything compiled, and the deletion check the sync brief mandates
+could not see it - a lambda simply stopped being passed.
+
+Three things were dead in production until this phase:
+
+- `PlaybackStartupWatchdog` arms only when `onFatalPlaybackError != null`, so **it never ran**;
+- the post-playback-started failover chain never advanced;
+- `consumeFailoverRetry()` always answered false, so every return from the player read as a back
+  press.
+
+`nuvio-z` kept its copy, which is exactly why the loading loop was reported on desktop only.
+**Worth a rule for the next sync: a lambda that stops being passed is invisible to both the
+conflict list and the deletion sweep.** Grep the callers of anything the dissolution moved.
+
+### What landed
+
+- **One loading surface** from chosen source to first frame, rendered by both the route overlay
+  and the player's opening overlay from one state object. Three loading surfaces and four
+  indeterminate motions became one.
+- **Every duration-derived position bounded** through pure `PlaybackPosition`. The watchdog's
+  baseline ignored the fraction-only resume path, so a dead source could be declared Started -
+  bugs 1 and 2 shared that root.
+- **`AddonStreamGroup.error` stops being discarded**, in the list and as the failure reason.
+- **Content-identity gate**, auto modes only, a partition rather than a filter.
+- **All 13 ways into the source list named and logged**, with `hasSilentUncover` making a
+  reasonless uncover a failing test.
+- **The route audit is closed**: download launches cannot enter auto playback, P2P consent no
+  longer destroys an untried failure chain, rejected external-player launches advance or uncover
+  honestly, and process restoration cannot preserve a phantom in-flight debrid resolve.
+- **Desktop party resolution now outranks local downloads**, so joining a host session resolves
+  the host fingerprint rather than silently playing a different on-device file.
+- **P7 automatic source-swap was deleted**, including its setting/storage/sync key, detector,
+  candidates, forced-swap HUD controls and swap log. It had been held since `0.4.9`, had never run
+  on a device, and Phase 2 confirmed that null direct URLs discarded every unresolved alternative.
+  Passive network measurement and manual in-player source switching remain.
+
+### Verified, and not
+
+Suites green: pure 389 desktop / 337 mobile; Android host 1,312; desktop 1,518. All runs have zero
+failures, errors or skips. Desktop compiled the native bridge and real desktop source set; its one
+reported configuration-cache problem is the existing non-serializable bridge `Exec` task, and
+Gradle discarded that cache entry after the successful run.
+
+⚠ **Nothing here has been exercised against real playback.** Hot reload cannot reach a first
+frame on this machine - the native bridge fails to attach (`java.desktop does not "opens
+java.awt"`), so the player route opens to an empty surface that looks exactly like a hang. That
+is a second, separate reason for the debug-MSI rule already recorded below. The watched matrix is
+still the exit gate: Classic manual selection, Streamlined selection, Instant failover, P2P
+consent/decline, external-player reject, debrid resolution, next episode, and back navigation.
+
+Desktop debug build: **published & packaged** via GitHub Actions [Run 33905579208](https://github.com/Zokaper/NuvioZDesktop/actions/runs/33905579208).
+Release tag [`debug-v0.1.22-alpha-z1.41`](https://github.com/Zokaper/NuvioZDesktop/releases/tag/debug-v0.1.22-alpha-z1.41)
+carries verified packages for Windows x64 (`Nuvio-Z-Debug-Windows-x64-0.1.22-alpha-z1.41.msi`) and Apple Silicon macOS
+(`Nuvio-Z-Debug-macOS-arm64-0.1.22-alpha-z1.41.dmg`). Installed locally for watched testing.
 
 ## Phase 1 Upstream Sync: 0.1.22-alpha-z1 (2026-09-04)
 

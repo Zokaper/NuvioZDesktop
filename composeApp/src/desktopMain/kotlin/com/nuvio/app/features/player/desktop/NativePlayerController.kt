@@ -18,6 +18,7 @@ import com.nuvio.app.features.player.PlayerControlsState
 import com.nuvio.app.features.player.PlayerEngineController
 import com.nuvio.app.features.player.PlayerPlaybackSnapshot
 import com.nuvio.app.features.player.PlayerPartyMember
+import com.nuvio.app.features.player.PlayerOpeningFact
 import com.nuvio.app.features.player.PlayerResizeMode
 import com.nuvio.app.features.player.SUBTITLE_DELAY_MAX_MS
 import com.nuvio.app.features.player.SUBTITLE_DELAY_MIN_MS
@@ -32,6 +33,10 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
+import java.awt.image.BufferedImage
+import java.net.URI
+import java.util.concurrent.ConcurrentHashMap
+import javax.imageio.ImageIO
 import java.util.concurrent.CountDownLatch
 import javax.swing.SwingUtilities
 import kotlin.concurrent.Volatile
@@ -60,6 +65,15 @@ internal class NativePlayerController(
     private val onCreateWaitCompleted: () -> Unit = {},
 ) : PlayerEngineController {
     private companion object {
+        /**
+         * Decoded backdrops, shared across every controller instance and kept for the process.
+         *
+         * Bounded by how many distinct titles are opened in one session, and each entry is one
+         * already-downsized poster/backdrop, so this is small. Being shared is what makes the
+         * *second* play of anything pay nothing at all for the hand-over paint.
+         */
+        val openingBackdropCache = ConcurrentHashMap<String, BufferedImage>()
+
         val json = Json { ignoreUnknownKeys = true }
         val log = Logger.withTag("NativePlayerControls")
 
@@ -82,6 +96,26 @@ internal class NativePlayerController(
 
     @Volatile
     private var handle: Long = 0L
+
+    /**
+     * The handle [snapshot] has already reported a bridge failure for, so it reports each once.
+     *
+     * ⚠ **The watchdog polls [snapshot] once a second, so an unguarded log would be sixty lines
+     * a minute of the same failure** - and the one line that matters is the first, because it
+     * carries the throwable from before the state went bad.
+     */
+    @Volatile
+    private var snapshotFailureReportedFor: Long = 0L
+
+    /**
+     * When the native window for the current source was created, for the `didPaintOpening`
+     * measurement below. Zero until the first attach of this controller.
+     */
+    @Volatile
+    private var openingAttachedAtMs: Long = 0L
+
+    /** The artwork currently decoded or decoding for the hand-over paint. */
+    private var openingBackdropUrl: String? = null
 
     /** Native teardown of the previous player, if one is still running. */
     @Volatile
@@ -337,6 +371,7 @@ internal class NativePlayerController(
                         // After the handle is accepted, so the harness never sees a published
                         // controller with a dead handle. No-op outside a debug build.
                         NativePlayerDiagnosticsRegistry.publish(this@NativePlayerController)
+                        openingAttachedAtMs = System.currentTimeMillis()
                         log.d {
                             "attach created handle=$created source=${resolvedSource.toPlaybackLogKey()} " +
                                 "initialPositionMs=${pending.initialPositionMs}"
@@ -417,6 +452,10 @@ internal class NativePlayerController(
     @Synchronized
     fun updateControls(state: PlayerControlsState) {
         host.setControlsVisible(state.controlsVisible)
+        // Deliberately above the handle check below: the first controls state arrives while the
+        // handle is still 0, which is *before* attach, and that is the whole point - the decode
+        // has to be finished by the time the panel is promoted. See `NativePlayerHost.backdropImage`.
+        prepareOpeningBackdrop(state.openingArtwork.takeIf { state.showOpeningOverlay })
         val currentHandle = handle
         val current = currentHandle.takeIf { it != 0L } ?: run {
             controlsState = state
@@ -439,7 +478,8 @@ internal class NativePlayerController(
         if (structureKey == lastSentControlsStructureKey) return
         lastSentControlsStructureKey = structureKey
         log.d {
-            "updateControls handle=$current title=${stateWithVolume.title.take(40)} " +
+            "updateControls handle=$current openingScale=${stateWithVolume.openingScale} " +
+                "title=${stateWithVolume.title.take(40)} " +
                 "pos=${stateWithVolume.positionMs} duration=${stateWithVolume.durationMs} " +
                 "speed=${stateWithVolume.playbackSpeedLabel} audioLabel=${stateWithVolume.audioLabel} " +
                 "subsLabel=${stateWithVolume.subtitlesLabel} fullscreen=$isFullscreen"
@@ -477,12 +517,84 @@ internal class NativePlayerController(
         }
     }
 
+    /**
+     * Decodes the loading screen's backdrop for [NativePlayerHost] to paint during the hand-over.
+     *
+     * Off the EDT, never blocking, and cached by URL so that only the first play of a title pays
+     * for it at all. A failure is not reported anywhere on purpose: the fallback is the flat fill,
+     * which is exactly the behaviour that existed before this, so there is nothing to recover from
+     * and nothing the user could do about it.
+     */
+    private fun prepareOpeningBackdrop(url: String?) {
+        val wanted = url?.trim()?.takeIf { it.isNotEmpty() }
+        if (wanted == openingBackdropUrl) return
+        openingBackdropUrl = wanted
+        if (wanted == null) {
+            // Genuinely nothing to show, as opposed to the cache miss below. The distinction is
+            // load-bearing; see `NativePlayerHost.backdropPending`.
+            host.backdropPending = false
+            host.backdropImage = null
+            return
+        }
+        openingBackdropCache[wanted]?.let {
+            host.backdropPending = false
+            host.backdropImage = it
+            return
+        }
+        // ⚠ **Set before the null, and cleared only when the decode has finished one way or the
+        // other.** This is what tells the canvas that its artwork is coming, so promotion waits for
+        // it instead of covering the loading screen with a flat fill.
+        host.backdropPending = true
+        host.backdropImage = null
+        Thread(
+            {
+                val decoded = runCatching {
+                    URI(wanted).toURL().openStream().use(ImageIO::read)
+                }.getOrNull()
+                if (decoded != null) {
+                    openingBackdropCache[wanted] = decoded
+                    // The play may already have moved on to another title while this decoded.
+                    synchronized(this) {
+                        if (openingBackdropUrl == wanted) host.backdropImage = decoded
+                    }
+                }
+                // Always, including the failure path: a decode that never produces an image must
+                // release the gate rather than leave it to the caller's deadline.
+                synchronized(this) {
+                    if (openingBackdropUrl == wanted) host.backdropPending = false
+                }
+            },
+            "nuvio-opening-backdrop",
+        ).apply { isDaemon = true }.start()
+    }
+
     private fun handlePlayerEvent(type: String, value: Double) {
         if (type.shouldLogNativeControlEvent()) {
             log.d { "event received handle=$handle type=$type value=$value" }
         }
         when (type) {
             "cursorActivity" -> host.noteCursorActivity()
+            // The controls page has presented its first frame of the opening overlay. Until it
+            // does, the promoted native canvas is covering the Compose loading surface with a
+            // flat fill, so this figure *is* the length of the desktop hand-over gap - the only
+            // part of the "choose a source, then a black screen" report that no log could
+            // previously account for.
+            "didPaintOpening" -> {
+                val attachedAt = openingAttachedAtMs
+                val elapsed = if (attachedAt > 0L) {
+                    System.currentTimeMillis() - attachedAt
+                } else {
+                    -1L
+                }
+                log.i { "opening overlay painted handle=$handle afterAttachMs=$elapsed" }
+                // The page is now drawing the same picture the loading screen is, so the
+                // container may finally come into view. Until this point it is parked below the
+                // client area - see its creation in `native/windows/player_bridge.cpp`.
+                // Windows-only: the other bridges do not define the export.
+                if (DesktopHostOs.current == DesktopHostOs.WINDOWS) {
+                    handle.takeIf { it != 0L }?.let(NativePlayerBridge::promoteOpeningContainer)
+                }
+            }
             "scrubChange" -> {
                 val handled = onScrubChange(value.toLong())
                 log.d { "scrubChange positionMs=${value.toLong()} handled=$handled handle=$handle" }
@@ -639,7 +751,22 @@ internal class NativePlayerController(
                 bufferedPositionMs = NativePlayerBridge.bufferedPositionMs(current),
                 playbackSpeed = NativePlayerBridge.speed(current),
             )
-        }.getOrDefault(PlayerPlaybackSnapshot(isLoading = true))
+        }.getOrElse { error ->
+            // ⚠ **A throwing bridge used to be indistinguishable from a source that never
+            // starts.** The default below is an all-zeros snapshot, so `PlaybackStartupWatchdog`
+            // sees position 0, buffer 0 and duration 0 either way and abandons at
+            // `NO_PROGRESS_DEADLINE_MS` with `NeverStarted` - the same verdict a genuinely dead
+            // source earns. A 2026-09-05 report of three healthy 4K sources abandoned in a row,
+            // fixed by restarting the app, could not be told apart from three slow ones for
+            // exactly this reason: the duration went from real on the first attempt to zero on
+            // the next two, which is what a failing bridge call looks like from out here and
+            // what a cold CDN looks like too. Saying so costs one line and settles it.
+            if (snapshotFailureReportedFor != current) {
+                snapshotFailureReportedFor = current
+                log.w(error) { "snapshot failed handle=$current; reporting an empty loading snapshot" }
+            }
+            PlayerPlaybackSnapshot(isLoading = true)
+        }
     }
 
     /**
@@ -1221,6 +1348,7 @@ private fun String.toPlayerControlsAction(): PlayerControlsAction? =
     when (this) {
         "toggleChrome" -> PlayerControlsAction.ToggleChrome
         "back" -> PlayerControlsAction.Back
+        "chooseManually" -> PlayerControlsAction.ChooseManually
         "toggle" -> PlayerControlsAction.TogglePlayback
         "keyboardToggle" -> PlayerControlsAction.KeyboardTogglePlayback
         "seekBack" -> PlayerControlsAction.SeekBack
@@ -1248,7 +1376,7 @@ private data class NativeControlsStructureKey(
     val isFullscreen: Boolean,
 )
 
-private fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
+internal fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
     buildString {
         append('{')
         appendJsonField("title", title)
@@ -1475,6 +1603,23 @@ private fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
         append(',')
         appendJsonField("openingProgress", openingProgress)
         append(',')
+        // Scale is not a progress fraction: the nullable-float writer clamps values to 0..1.
+        append("\"openingScale\":").append(openingScale.takeIf { it.isFinite() && it > 0f } ?: 1f)
+        append(',')
+        appendJsonField("openingStageLabel", openingStageLabel)
+        append(',')
+        appendJsonField("openingAttemptLabel", openingAttemptLabel)
+        append(',')
+        appendJsonArrayField("openingFacts", openingFacts) { appendOpeningFactJson(it) }
+        append(',')
+        appendJsonField("openingOffersManualEscape", openingOffersManualEscape)
+        append(',')
+        appendJsonField("openingManualEscapeLabel", openingManualEscapeLabel)
+        append(',')
+        appendJsonField("openingProviderLine", openingProviderLine)
+        append(',')
+        appendJsonField("openingReleaseName", openingReleaseName)
+        append(',')
         appendJsonField("partyBannerVisible", partyBannerVisible)
         append(',')
         appendJsonField("partyBannerText", partyBannerText)
@@ -1688,6 +1833,14 @@ private fun StringBuilder.appendSeasonItemJson(item: PlayerControlSeasonItem) {
     appendJsonField("label", item.label)
     append(',')
     appendJsonField("isSelected", item.isSelected)
+    append('}')
+}
+
+private fun StringBuilder.appendOpeningFactJson(item: PlayerOpeningFact) {
+    append('{')
+    appendJsonField("label", item.label)
+    append(',')
+    appendJsonField("value", item.value)
     append('}')
 }
 
