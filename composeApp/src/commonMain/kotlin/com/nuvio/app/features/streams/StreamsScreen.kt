@@ -96,7 +96,6 @@ import com.nuvio.app.core.ui.dismissNuvioBottomSheet
 import com.nuvio.app.core.ui.nuvioDesktopDragScroll
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.ui.withDuplicateSafeLazyKeys
-import com.nuvio.app.features.downloads.DownloadsClock
 import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.downloads.DownloadPreset
 import com.nuvio.app.features.downloads.DownloadSourceOrigin
@@ -106,8 +105,8 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import com.nuvio.app.core.ui.NuvioAsyncImage as AsyncImage
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
 import com.nuvio.app.features.debrid.DebridSettingsRepository
-import com.nuvio.app.features.debrid.DirectDebridPlayableResult
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
+import com.nuvio.app.features.debrid.DirectDebridPlayableResult
 import com.nuvio.app.features.debrid.toastMessage
 import com.nuvio.app.features.details.MetaScreenBackgroundMode
 import com.nuvio.app.features.details.MetaScreenSettingsRepository
@@ -286,50 +285,29 @@ fun StreamsScreen(
         )
     }
     val enqueueSelectedSource: (StreamItem, Long?) -> Unit = { stream, calculatedCapBytes ->
-        val enqueueResolved: (StreamItem, DownloadSourceOrigin?) -> Unit = { downloadable, origin ->
-            val result = DownloadsRepository.enqueueFromStream(
-                contentType = type,
-                videoId = videoId,
-                parentMetaId = parentMetaId,
-                parentMetaType = parentMetaType,
-                title = title,
-                logo = logo,
-                poster = poster,
-                background = background,
-                seasonNumber = seasonNumber,
-                episodeNumber = episodeNumber,
-                episodeTitle = episodeTitle,
-                episodeThumbnail = episodeThumbnail,
-                stream = downloadable,
-                calculatedCapBytes = calculatedCapBytes,
-                sourceOrigin = origin,
-                sourceUrlResolvedAtEpochMs = origin?.let { DownloadsClock.nowEpochMs() },
-            )
-            NuvioToastController.show(result.toastMessage())
-        }
-        if (DirectDebridPlaybackResolver.shouldResolveToPlayableStream(stream)) {
-            downloadScope.launch {
-                when (val resolved = DirectDebridPlaybackResolver.resolveToPlayableStream(
-                    stream = stream,
-                    season = seasonNumber,
-                    episode = episodeNumber,
-                )) {
-                    // The unresolved stream travels with the download so its link can be
-                    // minted again; the one being enqueued expires within the hour.
-                    is DirectDebridPlayableResult.Success -> enqueueResolved(
-                        resolved.stream,
-                        DownloadSourceOrigin(
-                            stream = stream,
-                            season = seasonNumber,
-                            episode = episodeNumber,
-                        ),
-                    )
-                    else -> resolved.toastMessage()?.let(NuvioToastController::show)
-                }
-            }
+        val origin = if (DirectDebridPlaybackResolver.shouldResolveToPlayableStream(stream)) {
+            DownloadSourceOrigin(stream, seasonNumber, episodeNumber)
         } else {
-            enqueueResolved(stream, null)
+            null
         }
+        val result = DownloadsRepository.enqueueFromStream(
+            contentType = type,
+            videoId = videoId,
+            parentMetaId = parentMetaId,
+            parentMetaType = parentMetaType,
+            title = title,
+            logo = logo,
+            poster = poster,
+            background = background,
+            seasonNumber = seasonNumber,
+            episodeNumber = episodeNumber,
+            episodeTitle = episodeTitle,
+            episodeThumbnail = episodeThumbnail,
+            stream = stream,
+            calculatedCapBytes = calculatedCapBytes,
+            sourceOrigin = origin,
+        )
+        NuvioToastController.show(result.toastMessage())
     }
 
     val enqueueWithPreset: (StreamItem, DownloadPreset) -> Unit = { stream, preset ->
