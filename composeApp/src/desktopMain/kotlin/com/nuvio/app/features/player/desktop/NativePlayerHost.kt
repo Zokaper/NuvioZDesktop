@@ -18,6 +18,7 @@ import java.awt.event.MouseEvent
 import java.awt.event.MouseMotionAdapter
 import java.awt.image.BufferedImage
 import javax.swing.SwingUtilities
+import javax.swing.JComponent
 
 internal class NativePlayerHost : Canvas() {
     var onPeerReady: (() -> Unit)? = null
@@ -121,8 +122,33 @@ internal class NativePlayerHost : Canvas() {
         set(value) {
             field = value
             background = value
+            parent?.background = value
             repaint()
         }
+
+    /**
+     * Removes the whole Swing interop allocation from native airspace at player exit.
+     *
+     * Hiding only this Canvas leaves Compose's opaque `SwingInteropViewGroup` parent fullscreen.
+     * That JPanel paints its Windows default background through the Skia interop hole until the
+     * next Compose layout parks the `SwingPanel`. Collapse and hide the wrapper on the EDT in the
+     * same operation as the Canvas; the Compose state callback keeps 1dp as the declarative state.
+     */
+    fun concealInteropAirspaceForExit() {
+        isVisible = false
+        val wrapper = parent ?: return
+        wrapper.background = surfaceBackground
+        (wrapper as? JComponent)?.isOpaque = true
+        wrapper.setBounds(
+            wrapper.x + (wrapper.width - 1).coerceAtLeast(0),
+            wrapper.y + (wrapper.height - 1).coerceAtLeast(0),
+            1,
+            1,
+        )
+        wrapper.isVisible = false
+        wrapper.revalidate()
+        wrapper.repaint()
+    }
 
     init {
         isVisible = false
@@ -456,6 +482,7 @@ internal class NativePlayerHost : Canvas() {
 
     override fun addNotify() {
         super.addNotify()
+        parent?.background = surfaceBackground
         onDisplayableChanged?.invoke(true)
         repaint()
         onPeerReady?.invoke()

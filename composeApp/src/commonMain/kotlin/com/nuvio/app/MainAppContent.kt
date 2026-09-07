@@ -36,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -1316,7 +1317,14 @@ internal fun MainAppContent(
                 ) {
                 NavDisplay(
                     backStack = navBackStack,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .drawWithContent {
+                            drawContent()
+                            if (currentRoute !is PlayerRoute) {
+                                PlayerExitDiagnostics.recordT2("NavDisplay")
+                            }
+                        },
                     onBack = {
                         val routeAtRequest = navController.currentRoute
                         if (routeAtRequest is PlayerRoute) {
@@ -1627,7 +1635,11 @@ internal fun MainAppContent(
                         isDesktop -> NavDisplay.transitionSpec {
                             EnterTransition.None togetherWith ExitTransition.None
                         } + NavDisplay.popTransitionSpec {
-                            EnterTransition.None togetherWith ExitTransition.None
+                            fadeIn(
+                                tween(180, delayMillis = 60, easing = NuvioTokens.Motion.decelerate),
+                            ) togetherWith fadeOut(
+                                tween(90, easing = NuvioTokens.Motion.accelerate),
+                            )
                         }
                         else -> emptyMap()
                     },

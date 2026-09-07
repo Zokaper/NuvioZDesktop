@@ -1,5 +1,6 @@
 package com.nuvio.app.features.player.desktop
 
+import com.nuvio.app.features.player.PlayerExitDiagnostics
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -19,6 +20,26 @@ private val failNativeCreate: NativePlayerCreate = { _, _, _, _, _, _, _, _, _ -
 }
 
 class NativePlayerControllerTeardownTest {
+    @Test
+    fun exitDefersNativeTeardownUntilPreviousDestinationDraws() {
+        val released = CountDownLatch(1)
+        val disposeStarted = CountDownLatch(1)
+        val controller = NativePlayerController(
+            host = NativePlayerHost(),
+            nativeCreate = failNativeCreate,
+            nativeDispose = { disposeStarted.countDown() },
+        )
+        controller.setNativeHandleForTest(42L)
+
+        PlayerExitDiagnostics.recordT0("unit_test")
+        controller.releaseBeforeNavigation { released.countDown() }
+
+        assertTrue(released.await(2, TimeUnit.SECONDS), "navigation must still be released immediately")
+        assertFalse(disposeStarted.await(100, TimeUnit.MILLISECONDS), "teardown must wait for T2")
+        PlayerExitDiagnostics.recordT2("unit_test")
+        assertTrue(disposeStarted.await(2, TimeUnit.SECONDS), "T2 must release native teardown")
+    }
+
     @Test
     fun completesNavigationImmediatelyWhileDisposingNativeHandleAsynchronously() {
         val events = Collections.synchronizedList(mutableListOf<String>())

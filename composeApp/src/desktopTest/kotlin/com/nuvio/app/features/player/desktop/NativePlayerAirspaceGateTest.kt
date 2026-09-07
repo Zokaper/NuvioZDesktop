@@ -2,8 +2,10 @@ package com.nuvio.app.features.player.desktop
 
 import com.nuvio.app.features.playback.PlaybackHandover
 import com.nuvio.app.features.player.PlayerExitDiagnostics
+import java.awt.Color
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import javax.swing.JPanel
 import javax.swing.SwingUtilities
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -52,6 +54,11 @@ class NativePlayerAirspaceGateTest {
     @Test
     fun releaseBeforeNavigationConcealsHostImmediately() {
         val host = NativePlayerHost()
+        val wrapper = JPanel(null).apply {
+            setBounds(0, 0, 1920, 1080)
+            add(host)
+        }
+        host.surfaceBackground = Color(13, 13, 13)
         val controller = NativePlayerController(
             host = host,
             nativeCreate = { _, _, _, _, _, _, _, _, _ -> 42L },
@@ -83,8 +90,13 @@ class NativePlayerAirspaceGateTest {
         }
         assertTrue(releaseLatch.await(2, TimeUnit.SECONDS))
         assertFalse(host.isVisible, "Host canvas must be concealed immediately at T0 upon releaseBeforeNavigation")
+        assertFalse(wrapper.isVisible, "The fullscreen Swing interop wrapper must be concealed too")
+        assertEquals(1, wrapper.width)
+        assertEquals(1, wrapper.height)
+        assertEquals(host.surfaceBackground, wrapper.background)
         assertFalse(controller.isNativeSurfacePromoted(), "Controller must mark surface unpromoted on releaseBeforeNavigation")
         assertEquals(false, notifiedPromoted, "onSurfacePromotedChanged must fire with false upon releaseBeforeNavigation")
+        PlayerExitDiagnostics.recordT2("unit_test")
     }
 
     @Test

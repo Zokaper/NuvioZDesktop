@@ -851,7 +851,7 @@ internal class NativePlayerController(
         }
         nativeSurfacePromoted = false
         val concealAction = Runnable {
-            host.isVisible = false
+            host.concealInteropAirspaceForExit()
             onSurfacePromotedChanged?.invoke(false)
             PlayerExitDiagnostics.recordT3("releaseBeforeNavigation conceal")
             log.i { "nativeSurface=CONCEALED reason=releaseBeforeNavigation" }
@@ -867,7 +867,8 @@ internal class NativePlayerController(
         var shouldStart = false
         var immediateFailure: String? = null
         val worker = synchronized(lifecycleLock) {
-            val active = releaseInFlight?.takeIf { it.isAlive }
+            // A teardown deferred behind T2 is still active while its thread is NEW.
+            val active = releaseInFlight?.takeIf { it.state != Thread.State.TERMINATED }
             when {
                 terminalReleaseFailure != null -> {
                     immediateFailure = terminalReleaseFailure
@@ -922,7 +923,13 @@ internal class NativePlayerController(
             return
         }
         if (shouldStart) {
-            worker.start()
+            val deferred = PlayerExitDiagnostics.runAfterPreviousDraw {
+                // T2 is recorded from inside Compose's draw. One queued EDT turn lets that frame
+                // present before Win32/MPV destruction starts; this is a readiness barrier, not a
+                // time-based delay.
+                SwingUtilities.invokeLater { worker.start() }
+            }
+            if (!deferred) worker.start()
         }
         val notifyReleased = Runnable {
             runCatching(callback.onReleased)

@@ -14,6 +14,8 @@ import co.touchlab.kermit.Logger
  */
 object PlayerExitDiagnostics {
     private val log = Logger.withTag("PlayerExit")
+    private val lock = Any()
+    private val afterPreviousDraw = mutableListOf<() -> Unit>()
 
     @Volatile
     private var t0Nanos: Long = 0L
@@ -32,11 +34,14 @@ object PlayerExitDiagnostics {
 
     fun recordT0(source: String = "back_action") {
         val now = System.nanoTime()
-        t0Nanos = now
-        t1Nanos = 0L
-        t2Nanos = 0L
-        t3Nanos = 0L
-        t4Nanos = 0L
+        synchronized(lock) {
+            t0Nanos = now
+            t1Nanos = 0L
+            t2Nanos = 0L
+            t3Nanos = 0L
+            t4Nanos = 0L
+            afterPreviousDraw.clear()
+        }
         log.i { "T0 [0 ms] Escape/back received source=$source" }
     }
 
@@ -48,12 +53,23 @@ object PlayerExitDiagnostics {
     }
 
     fun recordT2(destination: String = "") {
-        if (t0Nanos == 0L || t2Nanos != 0L) return
         val now = System.nanoTime()
-        t2Nanos = now
+        val callbacks = synchronized(lock) {
+            if (t0Nanos == 0L || t2Nanos != 0L) return
+            t2Nanos = now
+            afterPreviousDraw.toList().also { afterPreviousDraw.clear() }
+        }
         val elapsedMs = elapsedFromT0(now)
         val fromT1 = if (t1Nanos > 0L) (now - t1Nanos) / 1_000_000L else -1L
         log.i { "T2 [+$elapsedMs ms, +$fromT1 ms from T1] Previous destination drew: $destination" }
+        callbacks.forEach { it() }
+    }
+
+    /** Defers work until the destination under the player has really drawn. */
+    fun runAfterPreviousDraw(action: () -> Unit): Boolean = synchronized(lock) {
+        if (t0Nanos == 0L || t2Nanos != 0L) return@synchronized false
+        afterPreviousDraw += action
+        true
     }
 
     fun recordT3(details: String = "") {

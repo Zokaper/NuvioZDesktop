@@ -42,6 +42,7 @@ import com.nuvio.app.features.debrid.toastMessage
 import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.downloads.SourceFacts
 import com.nuvio.app.features.downloads.SourceFactsExtractor
+import com.nuvio.app.features.downloads.SourceRanking
 import com.nuvio.app.features.p2p.P2pConsentDialog
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.playback.ConnectionProbeSettlement
@@ -1308,9 +1309,20 @@ internal fun StreamDestination(
                 // progress figure that stops moving is a hang wearing a number.
                 // `PlayerNextEpisodeAutoPlay` already took the same budget and
                 // its comment claimed the two paths agreed; now they do.
-                StreamsRepository.seedAutoPlayCandidates(
-                    playbackChain(result.stream, result.fallbacks),
-                )
+                val canonicalChain = playbackChain(result.stream, result.fallbacks)
+                streamLog.i {
+                    canonicalChain.mapIndexed { index, stream ->
+                        val candidate = playbackCandidates.firstOrNull { it.stream === stream }
+                        val facts = candidate?.facts ?: SourceFactsExtractor.extract(stream)
+                        val preferences = playbackSelectionContext.rankingPreferences
+                        "#${index + 1}{resolution=${facts.resolution.qualityLabel.ifBlank { "unknown" }} " +
+                            "range=${facts.dynamicRange.sorted()} language=${SourceRanking.languageScore(facts, preferences)} " +
+                            "media=${SourceRanking.mediaScore(facts, preferences)} cached=${facts.isDebridReady} " +
+                            "size=${facts.sizeBytes ?: -1L} release=${facts.releaseQuality ?: "unknown"} " +
+                            "provider=${facts.debridService ?: facts.providerName ?: stream.addonName}}"
+                    }.joinToString(prefix = "canonical failure chain ", separator = " -> ")
+                }
+                StreamsRepository.seedAutoPlayCandidates(canonicalChain)
             }
             is PlaybackSelectionResult.AskUncached -> {
                 pendingUncachedStream = result.stream
