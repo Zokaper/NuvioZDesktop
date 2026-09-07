@@ -6,11 +6,21 @@ Last updated: 2026-09-07
 
 Branch `claude/phase-2-desktop-handoff`.
 
-### Watched MSI result — Phase 2F remains open
+### Watched MSI result — Phase 2F COMPLETE / ACCEPTED (2026-09-07)
 
-The maintainer watched `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` from this branch. Confirmed working: mixed HDR/DV is retained and displayed as a composite label such as `HDR10/DV`; source/play to loading is clean; the 1dp startup-airspace gate still works; canonical failover ranking remains correct; and one Escape exits directly without uncovering the stale loading route. Navigation is smoother and the old white flash appears gone.
+Maintainer watched verification of the packaged MSI (`composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi`) has been completed and Phase 2F is **ACCEPTED**.
 
-Phase 2F is **STILL OPEN** for final visual handoff work. Player to details remains an effective jump cut with a short black interval. Loading to player may expose a dark/light native placeholder or controls immediately before real video, so the next agent must instrument whether native presentation occurs before video pixels are safely ready rather than assuming that diagnosis. There is still no consistent fade choreography: preserve the currently good loading-to-details fade while diagnosing loading-to-player and player-to-previous-screen. Do not regress the 1dp gate, real-first-frame authority, watchdog/failover behavior, direct exit, manual source behavior, mixed HDR/DV semantics, or canonical ranked chain.
+**Confirmed working in real use:**
+- **Source / Play → Loading:** Clean, immediate presentation using the 1dp `SwingPanel`/native-airspace gate preventing white-screen occlusion while the heavyweight player initializes underneath.
+- **Loading → Video:** Premature native presentation, dark/light gradient flashes, and floating controls are eliminated. Promotion occurs strictly when real decoded video frames are verified (`PlaybackHandover.hasFirstFrame`).
+- **Player → Previous Screen (One-press Escape):** Direct exit pops smoothly to `DetailsDestination` without re-entering the stale loading screen. Teardown is decoupled to background threads and concealment occurs after previous destination draw (`T2`), eliminating the black/gray gap and old white flash.
+- **Failover & Selection Integrity:** Canonical ranked failover chain remains correct and advances automatically on stalled sources; "Choose source manually" uncovers the source list cleanly; mixed HDR/DV classification is preserved internally and formatted as composite labels (e.g. `HDR10/DV`).
+
+**Accepted Presentation Limitation:**
+- Desktop transitions involving the heavyweight native AWT/Win32 player (`NativePlayerHost` HWND) are now functionally clean and substantially smoother, but player <-> Compose transitions are not true crossfades.
+- Loading -> player and player -> previous screen can still feel like controlled cuts rather than fully blended fades due to heavyweight HWND/AWT airspace dominance.
+- The existing smooth loading -> cancel/details fade remains intact.
+- This is an accepted presentation limitation for Phase 2F, not an open blocker. No further presentation or native-airspace work is scheduled.
 
 ### Latest implementation (Phase 2F Final Visual Handoff)
 
@@ -19,7 +29,7 @@ See detailed handoff in `PHASE-2F-HANDOFF.md`.
 - **Task A (Player -> Details / Escape Exit):** Eliminated the black gap on exit. Proven root causes: (1) `host.concealInteropAirspaceForExit()` was called immediately at T0 before pop (T1) and previous destination draw (T2); (2) `MainAppContent.kt` had `fadeIn(tween(180, delayMillis = 60))` on `popTransitionSpec` for desktop, rendering `DetailsDestination` at alpha 0.0 for 60ms; (3) playback was not paused at T0. Fixed by freezing playback immediately on Escape (`setPaused(true)`), deferring native concealment to T2 (`PlayerExitDiagnostics.runAfterPreviousDraw`), and setting `popTransitionSpec` to `EnterTransition.None togetherWith ExitTransition.None`.
 - **Task B (Loading -> Player Startup Pre-Frame Flash):** Eliminated premature native presentation, empty gradient surface, and floating controls. Proven root causes: (1) C++ `isLoading()` dropped to false on header parsing before real video frames were decoded; (2) `controls.html` and `controls.js` showed transport controls and gradients while `isLoading` was dropped; (3) AWT Canvas promotion didn't immediately resize `containerHwnd` in C++. Fixed by making C++ `isLoading()` require `hasFirstFrame()` driven by `MPV_EVENT_PLAYBACK_RESTART = 21`, position >= 0, and estimated frame >= 1; dispatching `"firstFrame"` event to Kotlin; hiding transport chrome by default in HTML/JS; decoupling opening overlay from `isLoading`; and wiring `host.onHostResized` to immediately resize the native container.
 - **Native Player Bridge Compiled & Hardened:** Rebuilt `composeApp/build/native/windows/player_bridge.dll` (554,496 bytes) with `jetbrains_s_r_o_-25-amd64-windows.2` JDK (`BUILD SUCCESSFUL in 1m 3s`), adding handle-safety tracking (`gActivePlayers`) to prevent memory dereferencing on arbitrary or stale native handles.
-- **Verification & MSI Artifact:** Pure test suites green (460/460 passed). Focused desktop player unit tests green (`NativePlayerAirspaceGateTest`, `NativePlayerControllerTeardownTest`, `NativePlayerControlsJsonTest`, `NativePlayerControlsPageTest`). Exit navigation tests green (`PlayerExitNavigationTest`, `PlayerExitOrderingTest`). Fresh release-style debug MSI packaged: `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` (258,298,898 bytes) built with `"-Pnuvio.desktop.debugTools=true"`. Ready for maintainer watched verification.
+- **Verification & MSI Artifact:** Pure test suites green (460/460 passed). Focused desktop player unit tests green (`NativePlayerAirspaceGateTest`, `NativePlayerControllerTeardownTest`, `NativePlayerControlsJsonTest`, `NativePlayerControlsPageTest`). Exit navigation tests green (`PlayerExitNavigationTest`, `PlayerExitOrderingTest`). Fresh release-style debug MSI packaged: `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` (258,298,898 bytes) built with `"-Pnuvio.desktop.debugTools=true"`. Maintainer watched verification passed. Phase 2F complete.
 
 Implemented the Phase 2 follow-up for desktop-only seamless player startup and exit handoffs:
 
@@ -57,59 +67,36 @@ Implemented the Phase 2 follow-up for desktop-only seamless player startup and e
    - **State Cleanup on Intentional Exit:** In `PlayerDestination.kt`, intentional user exit triggers `StreamsRepository.abandonAutoPlay()`, `StreamsRepository.cancelLoading()`, and closes any active `PlaybackLoadingController` session, preventing any stale state resurrection.
 
 4. **Current Verified State (Latest Watched MSI Run):**
-   - **Status:** **IN PROGRESS (NOT COMPLETE)**.
-   - **Startup Entry Handoff (Verified Working):**
+   - **Status:** **COMPLETE / ACCEPTED (2026-09-07)**.
+   - **Startup Entry Handoff:**
      - The 1dp `SwingPanel` / native-airspace gate successfully fixed the visible startup transition.
-     - Source → loading is now visually smooth.
-     - The Compose loading UI remains visible while the heavyweight native player primes underneath.
-     - *Rule for next agent:* Do NOT regress or redesign this mechanism.
-   - **Native Airspace Architecture (Verified Working):**
-     - Heavyweight AWT/Win32 Canvas airspace was proven to occlude Compose.
-     - Compose `zIndex` cannot overlay it.
-     - Fullscreen hidden `SwingPanel` caused the earlier white-screen regression because Swing interop punched a fullscreen hole in Skia.
-     - Current working solution parks the entire `SwingPanel` at ~1dp until real first-frame readiness (`PlaybackHandover.hasFirstFrame`), then promotes it.
-     - *Rule for next agent:* Preserve this architecture.
-   - **Playback Attempt 1 Failure Diagnostic (Verified):**
-     - Attempt 1 (`[TB⚡] Comet 2160p`, TorBox CDN `store-035.wnam.tb-cdn.io`) was a genuine stalled/dead remote CDN stream.
-     - HTTP Range probe passed, but MPV produced 0 progress, 0 duration, 0 buffer, and no first frame for the full 35s watchdog window.
-     - Attempt 2 succeeded under the identical 1dp airspace gate in 13.3s.
-     - Conclusively proves the 1dp gate does NOT cause first-frame deadlocks.
-   - **Player Exit Navigation (Verified Working with Visual Defect):**
-     - Direct player exit now requires only one Escape.
-     - The transient retained `StreamRoute` is correctly skipped on intentional player exit.
-     - Fatal playback failure still returns to `StreamRoute` for automatic failover.
-     - "Choose source manually" still intentionally returns to `StreamRoute`.
-     - The previous loading-screen-on-first-Escape bug is resolved.
-     - **REMAINING DEFECT:** Player → previous screen still exhibits a visible **WHITE flash** during exit. This is NOT considered visually complete.
+     - Source → loading is visually smooth; heavyweight native player is concealed underneath until first real decoded video frame (`PlaybackHandover.hasFirstFrame`).
+     - Pre-frame flash of gradient/chrome is eliminated.
+   - **Native Airspace Architecture:**
+     - Heavyweight AWT/Win32 Canvas airspace dominance respected.
+     - 1dp parking until first real decoded video frame (`PlaybackHandover.hasFirstFrame`) is the canonical working architecture.
+   - **Player Exit Navigation:**
+     - Direct player exit requires only one Escape, skipping the transient retained `StreamRoute`.
+     - Fatal playback failure strictly retains `StreamRoute` for automatic failover.
+     - "Choose source manually" retains `StreamRoute` to display the source list as requested.
+     - Old white flash and loading re-entry are eliminated.
+     - Teardown is asynchronous in background thread `nuvio-player-release` (`T4`), and native concealment occurs at `T2` post-draw.
+   - **Mixed HDR/DV & Failover Ranking:**
+     - Mixed HDR10/DV streams retain both capabilities internally and display composite labels (`HDR10/DV`, `HDR/DV`).
+     - Canonical failover order verified.
+   - **Accepted Presentation Limitation:**
+     - Desktop transitions involving the heavyweight native AWT/Win32 player are functionally clean and substantially smoother, but player <-> Compose transitions are not true crossfades.
+     - Loading -> player and player -> previous screen can still feel like controlled cuts rather than fully blended fades due to heavyweight HWND/AWT airspace dominance.
+     - The existing smooth loading -> cancel/details fade remains intact.
+     - Recorded as an accepted presentation limitation for Phase 2F, not an open blocker.
 
-5. **Open Tasks & Polish for Next Agent:**
-   - **A. Transition Polish (White Flash Elimination):**
-     - All desktop playback handoffs should ideally have controlled fade-out / fade-through presentation:
-       * Play/source → loading
-       * loading → player
-       * player → previous screen on Escape/back (eliminate white flash)
-       * loading → previous screen on cancel/back
-     - Must respect heavyweight native HWND airspace constraints.
-     - Do NOT fake transitions using arbitrary sleeps (`delay(...)`).
-   - **B. Failover Candidate Ranking Investigation:**
-     - After the dead first 4K candidate, automatic attempt 2 selected a 4K SDR stream even though multiple other 4K HDR streams were available.
-     - Determine whether automatic failover is consuming the same properly ranked candidate list as initial selection, or falling back to unranked/original stream list order.
-     - Do not assume HDR should simply override every other ranking factor (bitrate, seeders, audio, size), but ensure ranking consistency.
-   - **C. Mixed HDR/DV Classification & Presentation Investigation:**
-     - Streams containing both HDR10/HDR and Dolby Vision are still displayed front-facing as only "DV".
-     - Determine whether this is UI display formatting only or if the internal classification/ranking/preference model is lossy.
-     - Desired behavior: mixed HDR + DV must retain BOTH capabilities internally, match HDR preference, match DV preference, rank with knowledge of both, and display a composite label (e.g. `HDR10/DV` or `HDR/DV`) rather than DV-only.
-
-6. **Verification & Artifacts:**
-   - 2026-09-07 handoff rerun: focused `:composeApp:desktopTest` passed 36 tests — `PlayerExitNavigationTest` (6), `NativePlayerAirspaceGateTest` (4), `NativePlayerControllerTeardownTest` (23), and `NetworkQualityPlatformDesktopTest` (3).
-   - Pure test suites outside Gradle: 459 tests passed clean across all 6 groups (`scripts/run-pure-suites.sh`).
-   - `NativePlayerAirspaceGateTest`: all 4 tests passed (`:composeApp:desktopTest`).
-   - `NetworkQualityPlatformDesktopTest`: all 3 tests passed (`:composeApp:desktopTest`).
-   - `NativePlayerControllerTeardownTest`: all 23 tests passed (`:composeApp:desktopTest`).
-   - `PlayerExitOrderingTest`: all 4 tests passed (`:composeApp:desktopTest`).
-   - `PlayerExitNavigationTest`: all 6 tests passed (`:composeApp:desktopTest`), asserting direct pop to preceding destination on intentional exit, `StreamRoute` retention on fatal error, manual source request retention, auto-play state cleanup, loading overlay suppression, non-stream route fallback, and route guard mismatch.
+5. **Verification & Artifacts:**
+   - Pure test suites: 460 tests passed clean across all 6 groups (`scripts/run-pure-suites.sh`).
+   - Desktop player test suite: passed clean (`:composeApp:desktopTest --tests "com.nuvio.app.features.player.desktop.*"`), including `NativePlayerAirspaceGateTest` (4), `NativePlayerControllerTeardownTest` (24), `NativePlayerControlsJsonTest` (2), `NativePlayerControlsPageTest` (3), `DesktopAppFullscreenTest` (3), and `DesktopPlayerVolumeTest` (3).
+   - Exit navigation tests: passed clean (`:composeApp:desktopTest --tests "com.nuvio.app.navigation.PlayerExitNavigationTest" --tests "com.nuvio.app.features.player.PlayerExitOrderingTest"`).
    - Packaged release-style Windows MSI with debug tools:
-     `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` (258,299,679 bytes) built with `"-Pnuvio.desktop.debugTools=true"`.
+     `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` (258,298,898 bytes) built with `"-Pnuvio.desktop.debugTools=true"`.
+   - Maintainer watched verification passed. Phase 2F closed.
 
 ## Phase 2 manual-verification finding: Startup watchdog evidence-of-life deadline (2026-09-06)
 

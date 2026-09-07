@@ -2,7 +2,8 @@
 
 **Date:** 2026-09-07  
 **Branch:** `claude/phase-2-desktop-handoff`  
-**Working Directory:** `nuviozdesktop`
+**Working Directory:** `nuviozdesktop`  
+**Status:** **COMPLETE / ACCEPTED (2026-09-07)**
 
 ---
 
@@ -13,7 +14,9 @@ Phase 2F addresses the final visual transition defects on desktop:
 2. **Task B (Loading -> Player Startup):** Eliminate the pre-frame flash that exposed an empty dark/light gradient surface and floating player transport controls before real video frames were ready.
 3. **Task C (Deterministic Choreography):** Coordinate transitions respecting heavyweight AWT/Win32 airspace dominance without fake Compose fades or arbitrary sleeps (`delay(...)`).
 
-All code changes across C++, HTML, JavaScript, and Kotlin have been fully written and verified. `composeApp/build/native/windows/player_bridge.dll` has been cleanly recompiled and verified against the new C++ code.
+All code changes across C++, HTML, JavaScript, and Kotlin have been fully written, tested, and verified. `composeApp/build/native/windows/player_bridge.dll` has been cleanly recompiled with native handle-safety tracking (`gActivePlayers`). Maintainer watched verification passed on packaged debug MSI.
+
+**Accepted Presentation Limitation:** Desktop transitions involving the heavyweight native AWT/Win32 player (`NativePlayerHost` HWND) are now functionally clean and substantially smoother, but player <-> Compose transitions are not true crossfades. Loading -> player and player -> previous screen can still feel like controlled cuts rather than fully blended fades due to heavyweight HWND/AWT airspace dominance. The existing smooth loading -> cancel/details fade remains intact. This is an accepted presentation limitation for Phase 2F, not an open blocker. No further presentation or native-airspace work is scheduled.
 
 ---
 
