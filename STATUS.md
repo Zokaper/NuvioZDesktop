@@ -6,7 +6,13 @@ Last updated: 2026-09-07
 
 Branch `claude/phase-2-desktop-handoff`.
 
-### Latest implementation — awaiting watched MSI verification
+### Watched MSI result — Phase 2F remains open
+
+The maintainer watched `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` from this branch. Confirmed working: mixed HDR/DV is retained and displayed as a composite label such as `HDR10/DV`; source/play to loading is clean; the 1dp startup-airspace gate still works; canonical failover ranking remains correct; and one Escape exits directly without uncovering the stale loading route. Navigation is smoother and the old white flash appears gone.
+
+Phase 2F is **STILL OPEN** for final visual handoff work. Player to details remains an effective jump cut with a short black interval. Loading to player may expose a dark/light native placeholder or controls immediately before real video, so the next agent must instrument whether native presentation occurs before video pixels are safely ready rather than assuming that diagnosis. There is still no consistent fade choreography: preserve the currently good loading-to-details fade while diagnosing loading-to-player and player-to-previous-screen. Do not regress the 1dp gate, real-first-frame authority, watchdog/failover behavior, direct exit, manual source behavior, mixed HDR/DV semantics, or canonical ranked chain.
+
+### Latest implementation
 
 - **Exit white-flash diagnosis/fix:** T0–T4 evidence showed the Canvas was hidden while Compose's fullscreen `SwingInteropViewGroup` remained in native airspace; that default opaque `JPanel` supplied the white frame, and starting MPV/Win32 disposal before T2 also delayed the previous Compose paint. Exit now synchronously hides and collapses the whole interop wrapper to 1x1 on the EDT, navigates immediately, and starts native teardown only after the previous destination's actual T2 draw (queued to the next EDT turn). No timer or sleep was added.
 - **Transition choreography:** the proven 1dp startup gate and real-first-frame promotion are unchanged. Player pop now uses a short fade-through only after native airspace has been removed; existing loading-surface entry/cancel fades remain Compose-owned.
