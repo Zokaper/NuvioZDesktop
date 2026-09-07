@@ -26,6 +26,7 @@ internal class NativePlayerHost : Canvas() {
     var onFirstPaint: (() -> Unit)? = null
     var onFirstFullSizePaint: (() -> Unit)? = null
     var onCursorActivity: (() -> Unit)? = null
+    var onHostResized: ((width: Int, height: Int) -> Unit)? = null
 
     /**
      * The canvas has something to draw, so it is safe to promote over the loading screen.
@@ -169,6 +170,7 @@ internal class NativePlayerHost : Canvas() {
             override fun componentShown(event: ComponentEvent) = onLaidOut()
 
             private fun onLaidOut() {
+                onHostResized?.invoke(width, height)
                 // Every platform: promotion to full size is the earliest moment the final canvas
                 // size is known, and starting the scale here is what lets the first full-size
                 // paint blit a ready backdrop instead of falling back to the flat fill. See
@@ -500,6 +502,7 @@ internal class NativePlayerHost : Canvas() {
         onPeerReady = null
         onFirstPaint = null
         onFirstFullSizePaint = null
+        onHostResized = null
         resetCursorVisibility()
         super.removeNotify()
     }

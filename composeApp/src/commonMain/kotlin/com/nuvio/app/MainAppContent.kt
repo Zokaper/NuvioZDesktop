@@ -1635,11 +1635,7 @@ internal fun MainAppContent(
                         isDesktop -> NavDisplay.transitionSpec {
                             EnterTransition.None togetherWith ExitTransition.None
                         } + NavDisplay.popTransitionSpec {
-                            fadeIn(
-                                tween(180, delayMillis = 60, easing = NuvioTokens.Motion.decelerate),
-                            ) togetherWith fadeOut(
-                                tween(90, easing = NuvioTokens.Motion.accelerate),
-                            )
+                            EnterTransition.None togetherWith ExitTransition.None
                         }
                         else -> emptyMap()
                     },

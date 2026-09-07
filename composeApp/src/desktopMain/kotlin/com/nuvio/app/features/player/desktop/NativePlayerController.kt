@@ -158,6 +158,14 @@ internal class NativePlayerController(
 
     var onSurfacePromotedChanged: ((Boolean) -> Unit)? = null
 
+    init {
+        host.onHostResized = { _, _ ->
+            if (nativeSurfacePromoted && handle != 0L) {
+                nativePromoteOpeningContainer(handle)
+            }
+        }
+    }
+
     fun promoteNativeSurface() {
         val current = handle
         if (current == 0L || releaseRequested) return
@@ -181,6 +189,7 @@ internal class NativePlayerController(
     }
 
     fun isNativeSurfacePromoted(): Boolean = nativeSurfacePromoted
+    fun hasFirstFrame(): Boolean = runCatching { NativePlayerBridge.hasFirstFrame(handle) }.getOrDefault(false)
 
     fun attach(
         sourceUrl: String,
@@ -616,6 +625,10 @@ internal class NativePlayerController(
         }
         when (type) {
             "cursorActivity" -> host.noteCursorActivity()
+            "firstFrame" -> {
+                log.i { "firstFrame event received handle=$handle" }
+                promoteNativeSurface()
+            }
             // The controls page has presented its first frame of the opening overlay. Until it
             // does, the promoted native canvas is covering the Compose loading surface with a
             // flat fill, so this figure *is* the length of the desktop hand-over gap - the only
@@ -849,17 +862,26 @@ internal class NativePlayerController(
         synchronized(lifecycleLock) {
             releaseRequested = true
         }
-        nativeSurfacePromoted = false
+        val currentHandle = handle
+        if (currentHandle != 0L) {
+            runCatching { NativePlayerBridge.setPaused(currentHandle, true) }
+        }
         val concealAction = Runnable {
+            nativeSurfacePromoted = false
             host.concealInteropAirspaceForExit()
             onSurfacePromotedChanged?.invoke(false)
-            PlayerExitDiagnostics.recordT3("releaseBeforeNavigation conceal")
-            log.i { "nativeSurface=CONCEALED reason=releaseBeforeNavigation" }
+            PlayerExitDiagnostics.recordT3("releaseBeforeNavigation conceal (post-T2)")
+            log.i { "nativeSurface=CONCEALED reason=releaseBeforeNavigation(post-T2)" }
         }
-        if (SwingUtilities.isEventDispatchThread()) {
-            concealAction.run()
-        } else {
+        val deferredConceal = PlayerExitDiagnostics.runAfterPreviousDraw {
             SwingUtilities.invokeLater(concealAction)
+        }
+        if (!deferredConceal) {
+            if (SwingUtilities.isEventDispatchThread()) {
+                concealAction.run()
+            } else {
+                SwingUtilities.invokeLater(concealAction)
+            }
         }
         host.resetCursorVisibility()
         invalidateForRelease()

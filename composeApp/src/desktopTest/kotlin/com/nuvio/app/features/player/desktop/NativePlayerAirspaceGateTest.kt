@@ -89,14 +89,22 @@ class NativePlayerAirspaceGateTest {
             }
         }
         assertTrue(releaseLatch.await(2, TimeUnit.SECONDS))
-        assertFalse(host.isVisible, "Host canvas must be concealed immediately at T0 upon releaseBeforeNavigation")
+        assertTrue(host.isVisible, "Host canvas must remain visible until T2 (previous destination draws)")
+
+        val t2Latch = CountDownLatch(1)
+        PlayerExitDiagnostics.recordT2("unit_test")
+        SwingUtilities.invokeLater {
+            t2Latch.countDown()
+        }
+        assertTrue(t2Latch.await(2, TimeUnit.SECONDS))
+
+        assertFalse(host.isVisible, "Host canvas must be concealed after T2")
         assertFalse(wrapper.isVisible, "The fullscreen Swing interop wrapper must be concealed too")
         assertEquals(1, wrapper.width)
         assertEquals(1, wrapper.height)
         assertEquals(host.surfaceBackground, wrapper.background)
-        assertFalse(controller.isNativeSurfacePromoted(), "Controller must mark surface unpromoted on releaseBeforeNavigation")
-        assertEquals(false, notifiedPromoted, "onSurfacePromotedChanged must fire with false upon releaseBeforeNavigation")
-        PlayerExitDiagnostics.recordT2("unit_test")
+        assertFalse(controller.isNativeSurfacePromoted(), "Controller must mark surface unpromoted after T2 conceal")
+        assertEquals(false, notifiedPromoted, "onSurfacePromotedChanged must fire with false upon T2 conceal")
     }
 
     @Test

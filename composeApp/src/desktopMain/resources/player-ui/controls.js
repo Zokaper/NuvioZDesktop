@@ -282,7 +282,7 @@ let state = {
   themeBorderDefaultColor: "rgba(255, 255, 255, .12)",
   isPlaying: false,
   isLoading: true,
-  controlsVisible: true,
+  controlsVisible: false,
   parentalWarnings: [],
   showParentalGuide: false,
   showOpeningOverlay: false,
@@ -1939,7 +1939,7 @@ const renderOpeningOverlay = suppress => {
   const hasProgress = progress !== null;
   const openingBootstrap = !hasReceivedPlayerControls;
   const wantsOpening = Boolean(openingBootstrap || state.showOpeningOverlay);
-  const showOpening = Boolean(!suppress && wantsOpening && state.isLoading);
+  const showOpening = Boolean(!suppress && wantsOpening);
   const titleText = String(state.openingTitle || state.title || "").trim();
   const messageText = String(state.openingMessage || state.openingStageLabel || "").trim();
   const attemptText = String(state.openingAttemptLabel || "").trim();
@@ -2208,7 +2208,7 @@ const renderNativePlaybackPrompts = () => {
 };
 
 const isOpeningOverlayActive = () =>
-  Boolean((!hasReceivedPlayerControls || state.showOpeningOverlay) && state.isLoading);
+  Boolean(!hasReceivedPlayerControls || state.showOpeningOverlay);
 
 const isChromeInteractionTarget = target =>
   Boolean(target && target.closest && target.closest(chromeInteractionSelector));

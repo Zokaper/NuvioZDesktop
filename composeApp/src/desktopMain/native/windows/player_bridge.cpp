@@ -46,6 +46,7 @@ typedef enum mpv_format {
 typedef enum mpv_event_id {
     MPV_EVENT_NONE = 0,
     MPV_EVENT_SHUTDOWN = 1,
+    MPV_EVENT_PLAYBACK_RESTART = 21,
 } mpv_event_id;
 
 typedef struct mpv_event {
@@ -1017,10 +1018,9 @@ public:
         });
     }
 
-    /** Brings the parked container into view; see its creation. Idempotent. */
+    /** Brings the parked container into view; see its creation. */
     void promoteOpeningContainer() {
         postUiTask([self = shared_from_this()]() {
-            if (self->containerPromoted) return;
             self->containerPromoted = true;
             self->layoutNativeSubviews();
         });
@@ -1135,7 +1135,25 @@ public:
         return (long long)std::llround(std::max(buffered, 0.0) * 1000.0);
     }
 
+    bool hasFirstFrame() {
+        if (firstFrameRendered.load()) return true;
+        if (int64Property("video-params/w", 0) <= 0 && int64Property("track-list/count", 0) > 0) {
+            if (doubleProperty("time-pos", -1.0) >= 0.0) {
+                firstFrameRendered.store(true);
+                return true;
+            }
+        }
+        double timePos = doubleProperty("time-pos", -1.0);
+        int64_t frames = int64Property("estimated-frame-number", 0);
+        if (timePos >= 0.0 && frames >= 1) {
+            firstFrameRendered.store(true);
+            return true;
+        }
+        return false;
+    }
+
     bool isLoading() {
+        if (!hasFirstFrame()) return true;
         bool paused = isPaused();
         bool eofReached = isEnded();
         bool idle = flagProperty("core-idle", true);
@@ -1410,6 +1428,7 @@ private:
     std::atomic_bool stopping = false;
     std::atomic_bool shuttingDown = false;
     std::atomic_bool hwdecLogged = false;  // one-shot log for hwdec-current
+    std::atomic_bool firstFrameRendered = false;
 
     bool hasAppliedSubtitleStyle = false;
     bool appliedSubtitleUseLibass = false;
@@ -2028,6 +2047,10 @@ private:
             if (event->event_id == MPV_EVENT_SHUTDOWN) {
                 return;
             }
+            if (event->event_id == MPV_EVENT_PLAYBACK_RESTART) {
+                firstFrameRendered.store(true);
+                sendPlayerEvent("firstFrame", 1.0);
+            }
         }
     }
 
@@ -2555,6 +2578,12 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_isPaused(JNIEnv *, jobject, jlong handle) {
     auto player = playerFromHandle(handle);
     return !player || player->isPaused() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_hasFirstFrame(JNIEnv *, jobject, jlong handle) {
+    auto player = playerFromHandle(handle);
+    return player && player->hasFirstFrame() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jfloat JNICALL

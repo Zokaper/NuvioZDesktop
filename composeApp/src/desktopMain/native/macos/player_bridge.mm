@@ -2867,6 +2867,17 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_isPaused(
     return [player isPaused] ? JNI_TRUE : JNI_FALSE;
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_hasFirstFrame(
+    JNIEnv * /* env */,
+    jobject /* bridge */,
+    jlong handle
+) {
+    if (handle == 0) return JNI_FALSE;
+    MpvWebPlayer *player = (__bridge MpvWebPlayer *)(void *)(intptr_t)handle;
+    return ![player isLoading] && [player positionMs] > 0 ? JNI_TRUE : JNI_FALSE;
+}
+
 extern "C" JNIEXPORT jfloat JNICALL
 Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_speed(
     JNIEnv * /* env */,

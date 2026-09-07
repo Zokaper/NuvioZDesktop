@@ -73,6 +73,7 @@ internal object NativePlayerBridge {
     external fun isLoading(handle: Long): Boolean
     external fun isEnded(handle: Long): Boolean
     external fun isPaused(handle: Long): Boolean
+    external fun hasFirstFrame(handle: Long): Boolean
     external fun speed(handle: Long): Float
     external fun videoWidth(handle: Long): Int
     external fun videoHeight(handle: Long): Int
