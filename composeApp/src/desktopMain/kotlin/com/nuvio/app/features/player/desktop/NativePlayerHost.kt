@@ -125,6 +125,7 @@ internal class NativePlayerHost : Canvas() {
         }
 
     init {
+        isVisible = false
         background = surfaceBackground
         ignoreRepaint = false
         addMouseMotionListener(object : MouseMotionAdapter() {
@@ -461,6 +462,7 @@ internal class NativePlayerHost : Canvas() {
     }
 
     override fun removeNotify() {
+        isVisible = false
         PlayerExitDiagnostics.recordT3("NativePlayerHost.removeNotify")
         onDisplayableChanged?.invoke(false)
         firstPaintNotified = false

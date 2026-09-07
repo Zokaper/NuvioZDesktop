@@ -22,4 +22,13 @@ class NetworkQualityPlatformDesktopTest {
         )
         assertNull(parseWindowsNetworkProbe("permission denied"))
     }
+
+    @Test
+    fun currentReturnsPromptlyWithoutBlockingCaller() {
+        val start = System.currentTimeMillis()
+        val quality = NetworkQualityPlatform.current()
+        val elapsed = System.currentTimeMillis() - start
+        assertTrue(elapsed < 200, "current() took ${elapsed}ms; should return immediately without blocking")
+        assertTrue(quality.networkId.isNotBlank())
+    }
 }

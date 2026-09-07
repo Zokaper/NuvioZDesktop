@@ -1900,3 +1900,14 @@ configurations.all {
     exclude(group = "androidx.media3", module = "media3-exoplayer")
     exclude(group = "androidx.media3", module = "media3-ui")
 }
+
+tasks.withType<Test>().configureEach {
+    jvmArgs(
+        "--add-opens=java.desktop/java.awt=ALL-UNNAMED",
+        "--add-opens=java.desktop/sun.lwawt=ALL-UNNAMED",
+        "--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED",
+        "--add-opens=java.desktop/sun.awt.windows=ALL-UNNAMED",
+        "--add-opens=java.desktop/sun.awt.X11=ALL-UNNAMED",
+    )
+}
+

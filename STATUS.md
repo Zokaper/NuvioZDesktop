@@ -1,40 +1,44 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-06
+Last updated: 2026-09-07
 
-## Phase 2 follow-up: Seamless desktop player handoff (2026-09-06)
+## Phase 2 follow-up: Seamless desktop player handoff (2026-09-07)
 
 Branch `claude/phase-2-desktop-handoff`.
 
 Implemented the Phase 2 follow-up for desktop-only seamless player startup and exit handoffs:
 
-1. **Part A: Source → Player Startup (`StreamDestination.kt`, `PlayerScreenRuntimeUi.kt`):**
+1. **Part A: Source → Player Startup & Airspace Gating (`StreamDestination.kt`, `PlayerScreenRuntimeUi.kt`, `PlayerEngine.desktop.kt`, `NativePlayerHost.kt`, `NativePlayerController.kt`):**
    - Elevated the existing Phase 2 loading surface (`PlaybackLoadingController` / `PlaybackLoadingHost`) across all 3 playback modes (Classic, Streamlined, Instant).
-   - In `StreamDestination.kt`, manual and streamlined candidate selection (`openSelectedStream`) opens the persistent loading session immediately upon user action, displaying candidate facts and artwork before route navigation or debrid link resolution begins.
+   - In `StreamDestination.kt`, candidate selection opens the persistent loading session immediately upon user action, displaying candidate facts and artwork before route navigation or debrid link resolution begins.
    - Handed off the active loading token into the player route via `loadingToken?.let(PlaybackLoadingController::handOff)`.
    - Prevented failover attempt 2 reload stutter in `PlayerScreenRuntimeUi.kt`: kept `openingOverlayWanted = true` during fatal playback errors when failovers are active (`args.onFatalPlaybackError != null`), ensuring the loading screen persists seamlessly across automatic candidate failovers without snapping or recreating.
-   - Preserved canonical teardown: session properly closes on user escape/back (`giveUpToSourceList` or `leaveToDetails`) and candidate exhaustion.
-   - Gated loading overlay dismissal strictly on first rendered video frame (`PlaybackHandover.hasFirstFrame`).
+   - **Native Airspace Gate:** The heavyweight Win32 child HWND (`NativePlayerHost`) is kept concealed (`isVisible = false`) across source resolution, player creation, buffering, and retries (attempt N -> N+1), preventing it from occluding the Compose loading surface.
+   - `SwingPanel` uses `Modifier.fillMaxSize()`, so the concealed HWND is created at full window dimensions (1920x1080) for native player initialization without resize erasure or repaint artifacts.
+   - Avoided first-frame deadlock by decoupling `controller.attach()` from paint callbacks (removed `hostFirstFullSizePaintComplete` wait while concealed).
+   - Promotes native surface (`promoteNativeSurface()`) and child container (`NativePlayerBridge.promoteOpeningContainer`) strictly when the active attempt produces a real decoded video frame (`PlaybackHandover.hasFirstFrame`).
 
-2. **Part B: Player → Previous Screen Exit (`PlayerExitDiagnostics.kt`, `NativePlayerController.kt`, `PlayerEngine.desktop.kt`, `NativePlayerBridge.kt`, `player_bridge.cpp`):**
+2. **Part B: Player → Previous Screen Exit & EDT Stall Elimination (`NativePlayerController.kt`, `NativePlayerHost.kt`, `PlayerExitDiagnostics.kt`, `NetworkQualityPlatform.desktop.kt`):**
    - Instrumented timestamped diagnostics across the entire exit pipeline:
      - `T0`: Escape/back action received (`requestBack` or `systemBack`).
      - `T1`: Navigation pop requested (`rememberGuardedPlayerPopBackStack`).
      - `T2`: Previous Compose destination drawn (`DetailsDestination` / `StreamDestination`).
-     - `T3`: Native player surface detached/hidden (`NativePlayerHost.removeNotify`).
+     - `T3`: Native player surface detached/hidden (`NativePlayerHost.removeNotify` / synchronous EDT conceal).
      - `T4`: Native player teardown completed in background thread.
-   - Decoupled navigation pop from native player teardown:
-     - In `NativePlayerController.releaseBeforeNavigation`, `onReleased` is invoked immediately on the EDT, allowing `PlayerRoute` to pop instantly (`T1`) and Compose to paint the previous destination (`T2`, ~16 ms).
-     - Native player disposal runs in the background thread `nuvio-player-release` (`T4`), completely eliminating the momentary `#0D0D0D` dark gray screen caused by premature window hiding while `PlayerRoute` remained mounted.
+   - Synchronously concealed native surface on Swing EDT (`host.isVisible = false`, `T3`) at `T0` inside `releaseBeforeNavigation`, guaranteeing `T3` occurs at 0 ms before `T1` (pop) and `T2` (previous destination draw at ~16 ms), completely eliminating the ~1.5s `#0D0D0D` dark gray screen occlusion window.
+   - Decoupled navigation pop from native player teardown: native player disposal runs in the background thread `nuvio-player-release` (`T4`).
+   - Fixed EDT freeze in `NetworkQualityPlatform.desktop.kt`: offloaded the ~891 ms synchronous Windows PowerShell network probe to a background daemon executor guarded by `AtomicBoolean`, returning cached values or fallback immediately (< 1 ms).
    - Moved snapshot polling off the Swing EDT to `Dispatchers.IO` in `PlayerEngine.desktop.kt` with adaptive polling intervals (50 ms before first frame, 500 ms steady-state).
-   - Added native video dimensions querying via JNI (`NativePlayerBridge.videoWidth` and `videoHeight` reading mpv's `video-params/w` and `video-params/h`), populating `snapshot.videoWidth` and `videoHeight` for precise first-frame detection.
-   - Rebuilt MSVC Windows player bridge DLL (`composeApp/build/native/windows/player_bridge.dll`).
+   - Added native video dimensions querying via JNI (`NativePlayerBridge.videoWidth` and `videoHeight`), populating `snapshot.videoWidth` and `videoHeight` for precise first-frame detection.
 
-3. **Verification:**
+3. **Verification & Artifacts:**
    - Pure test suites outside Gradle: 459 tests passed clean across all 6 groups (`scripts/run-pure-suites.sh`).
+   - `NativePlayerAirspaceGateTest`: all 4 tests passed (`:composeApp:desktopTest`).
+   - `NetworkQualityPlatformDesktopTest`: all 3 tests passed (`:composeApp:desktopTest`), including non-blocking EDT benchmark.
    - `NativePlayerControllerTeardownTest`: all 23 tests passed (`:composeApp:desktopTest`).
    - `PlayerExitOrderingTest`: all 4 tests passed (`:composeApp:desktopTest`).
-   - Kotlin desktop compilation: clean without errors.
+   - Packaged release-style Windows MSI with debug tools:
+     `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` (258,291,488 bytes) built with `-Pnuvio.desktop.debugTools=true`.
 
 ## Phase 2 manual-verification finding: Startup watchdog evidence-of-life deadline (2026-09-06)
 

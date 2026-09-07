@@ -1,24 +1,57 @@
 package com.nuvio.app.core.network
 
 import java.net.NetworkInterface
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 private const val NETWORK_PROBE_CACHE_MS = 30_000L
 
 actual object NetworkQualityPlatform {
+    @Volatile
     private var cachedAtMs: Long = 0L
+
+    @Volatile
     private var cached: PlatformNetworkQuality? = null
+
+    private val isProbing = AtomicBoolean(false)
+
+    private val probeExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "nuvio-network-probe").apply { isDaemon = true }
+    }
 
     actual fun current(): PlatformNetworkQuality {
         val now = System.currentTimeMillis()
-        cached?.takeIf { now - cachedAtMs < NETWORK_PROBE_CACHE_MS }?.let { return it }
-        return probeWindowsNetworkQuality() ?: fallbackNetworkQuality().also {
-            cached = it
-            cachedAtMs = now
+        val existing = cached
+        if (existing != null && now - cachedAtMs < NETWORK_PROBE_CACHE_MS) {
+            return existing
         }
+
+        if (isProbing.compareAndSet(false, true)) {
+            probeExecutor.execute {
+                try {
+                    val probed = probeWindowsNetworkQuality()
+                    if (probed != null) {
+                        cached = probed
+                        cachedAtMs = System.currentTimeMillis()
+                    }
+                } finally {
+                    isProbing.set(false)
+                }
+            }
+        }
+
+        if (existing != null) {
+            return existing
+        }
+
+        val fallback = fallbackNetworkQuality()
+        cached = fallback
+        cachedAtMs = now
+        return fallback
     }
 
-    private fun probeWindowsNetworkQuality(): PlatformNetworkQuality? {
+    internal fun probeWindowsNetworkQuality(): PlatformNetworkQuality? {
         if (!System.getProperty("os.name").orEmpty().contains("windows", ignoreCase = true)) return null
         val script = """
             ${'$'}type = [Windows.Networking.Connectivity.NetworkInformation,Windows.Networking.Connectivity,ContentType=WindowsRuntime]
@@ -40,10 +73,7 @@ actual object NetworkQualityPlatform {
                 return null
             }
             parseWindowsNetworkProbe(process.inputStream.bufferedReader().readText())
-        }.getOrNull()?.also {
-            cached = it
-            cachedAtMs = System.currentTimeMillis()
-        }
+        }.getOrNull()
     }
 }
 

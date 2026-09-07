@@ -59,6 +59,11 @@ internal class NativePlayerController(
     private val nativeCreate: NativePlayerCreate = NativePlayerBridge::create,
     private val nativeDispose: (Long) -> Unit = NativePlayerBridge::dispose,
     private val nativeSeekTo: (Long, Long) -> Unit = NativePlayerBridge::seekTo,
+    private val nativePromoteOpeningContainer: (Long) -> Unit = { handle ->
+        if (DesktopHostOs.current == DesktopHostOs.WINDOWS) {
+            NativePlayerBridge.promoteOpeningContainer(handle)
+        }
+    },
     private val isHostDisplayable: () -> Boolean = { host.isDisplayable },
     private val resolveHostView: () -> Long = { AwtNativeViewResolver.resolveNativeViewPointer(host) },
     private val createWaitTimeoutMs: Long = 5_000L,
@@ -126,6 +131,8 @@ internal class NativePlayerController(
     private var pendingSource: PendingSource? = null
     @Volatile
     private var releaseRequested: Boolean = false
+    @Volatile
+    private var nativeSurfacePromoted: Boolean = false
     private val createsInFlight = mutableSetOf<Thread>()
     private var createWaitInFlight: Thread? = null
     private val releaseCallbacks = mutableListOf<ReleaseCallback>()
@@ -149,6 +156,29 @@ internal class NativePlayerController(
         }
     }
 
+    fun promoteNativeSurface() {
+        val current = handle
+        if (current == 0L || releaseRequested) return
+        if (nativeSurfacePromoted) return
+        nativeSurfacePromoted = true
+        log.i { "nativeSurface=PROMOTED handle=$current" }
+        nativePromoteOpeningContainer(current)
+        val showAction = Runnable {
+            if (!releaseRequested && handle == current) {
+                host.isVisible = true
+                host.repaint()
+                requestKeyboardFocus()
+            }
+        }
+        if (SwingUtilities.isEventDispatchThread()) {
+            showAction.run()
+        } else {
+            SwingUtilities.invokeLater(showAction)
+        }
+    }
+
+    fun isNativeSurfacePromoted(): Boolean = nativeSurfacePromoted
+
     fun attach(
         sourceUrl: String,
         sourceHeaders: Map<String, String>,
@@ -158,6 +188,12 @@ internal class NativePlayerController(
         nvidiaRtxSuperResolutionEnabled: Boolean,
         onError: (String?) -> Unit,
     ) {
+        nativeSurfacePromoted = false
+        val concealAction = Runnable {
+            host.isVisible = false
+        }
+        if (SwingUtilities.isEventDispatchThread()) concealAction.run() else SwingUtilities.invokeLater(concealAction)
+        log.i { "nativeSurface=CONCEALED source=${sourceUrl.toPlaybackLogKey()}" }
         val pending = PendingSource(
             sourceUrl = sourceUrl,
             headerLines = sourceHeaders.toHeaderLines(),
@@ -404,6 +440,7 @@ internal class NativePlayerController(
                 }
                 else -> {
                     createsInFlight += createWorker
+                    log.i { "nativeSurface=PRIMING source=${pending.sourceUrl.toPlaybackLogKey()}" }
                     createWorker.start()
                     true
                 }
@@ -588,13 +625,6 @@ internal class NativePlayerController(
                     -1L
                 }
                 log.i { "opening overlay painted handle=$handle afterAttachMs=$elapsed" }
-                // The page is now drawing the same picture the loading screen is, so the
-                // container may finally come into view. Until this point it is parked below the
-                // client area - see its creation in `native/windows/player_bridge.cpp`.
-                // Windows-only: the other bridges do not define the export.
-                if (DesktopHostOs.current == DesktopHostOs.WINDOWS) {
-                    handle.takeIf { it != 0L }?.let(NativePlayerBridge::promoteOpeningContainer)
-                }
             }
             "scrubChange" -> {
                 val handled = onScrubChange(value.toLong())
@@ -815,6 +845,16 @@ internal class NativePlayerController(
         synchronized(lifecycleLock) {
             releaseRequested = true
         }
+        val concealAction = Runnable {
+            host.isVisible = false
+            PlayerExitDiagnostics.recordT3("releaseBeforeNavigation conceal")
+            log.i { "nativeSurface=CONCEALED reason=releaseBeforeNavigation" }
+        }
+        if (SwingUtilities.isEventDispatchThread()) {
+            concealAction.run()
+        } else {
+            SwingUtilities.invokeLater(concealAction)
+        }
         host.resetCursorVisibility()
         invalidateForRelease()
         val callback = ReleaseCallback(onReleased, onReleaseFailed)
@@ -917,6 +957,16 @@ internal class NativePlayerController(
     }
 
     fun dispose() {
+        nativeSurfacePromoted = false
+        val concealAction = Runnable {
+            host.isVisible = false
+            log.i { "nativeSurface=CONCEALED reason=dispose" }
+        }
+        if (SwingUtilities.isEventDispatchThread()) {
+            concealAction.run()
+        } else {
+            SwingUtilities.invokeLater(concealAction)
+        }
         host.resetCursorVisibility()
         NativePlayerDiagnosticsRegistry.clear(this)
         val accepted = synchronized(lifecycleLock) {
