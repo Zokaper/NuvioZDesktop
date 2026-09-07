@@ -26,6 +26,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 using Microsoft::WRL::Callback;
@@ -2381,8 +2382,13 @@ LRESULT CALLBACK containerWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPA
     }
 }
 
+static std::mutex gActivePlayersMutex;
+static std::unordered_set<jlong> gActivePlayers;
+
 std::shared_ptr<WindowsMpvWebPlayer> playerFromHandle(jlong handle) {
     if (handle == 0) return nullptr;
+    std::lock_guard<std::mutex> lock(gActivePlayersMutex);
+    if (gActivePlayers.find(handle) == gActivePlayers.end()) return nullptr;
     auto *holder = reinterpret_cast<std::shared_ptr<WindowsMpvWebPlayer> *>(handle);
     return holder ? *holder : nullptr;
 }
@@ -2455,6 +2461,10 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_create(
 
     auto *holder = new std::shared_ptr<WindowsMpvWebPlayer>(player);
     jlong handle = (jlong)(intptr_t)holder;
+    {
+        std::lock_guard<std::mutex> lock(gActivePlayersMutex);
+        gActivePlayers.insert(handle);
+    }
     return handle;
 }
 
@@ -2477,9 +2487,16 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_setWindowsDisplayS
 extern "C" JNIEXPORT void JNICALL
 Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_dispose(JNIEnv *, jobject, jlong handle) {
     if (handle == 0) return;
-    auto *holder = reinterpret_cast<std::shared_ptr<WindowsMpvWebPlayer> *>(handle);
-    std::shared_ptr<WindowsMpvWebPlayer> player = *holder;
-    delete holder;
+    std::shared_ptr<WindowsMpvWebPlayer> player;
+    {
+        std::lock_guard<std::mutex> lock(gActivePlayersMutex);
+        auto it = gActivePlayers.find(handle);
+        if (it == gActivePlayers.end()) return;
+        gActivePlayers.erase(it);
+        auto *holder = reinterpret_cast<std::shared_ptr<WindowsMpvWebPlayer> *>(handle);
+        player = *holder;
+        delete holder;
+    }
     if (player) player->shutdown();
 }
 

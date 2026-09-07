@@ -64,6 +64,8 @@ class NativePlayerAirspaceGateTest {
             nativeCreate = { _, _, _, _, _, _, _, _, _ -> 42L },
             nativeDispose = {},
             nativePromoteOpeningContainer = {},
+            nativeSetPaused = { _, _ -> },
+            nativeHasFirstFrame = { true },
         )
         setNativeHandleForTest(controller, 42L)
 

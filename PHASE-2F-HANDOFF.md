@@ -124,30 +124,21 @@ export JAVA_HOME="/c/Users/Rayoa/.gradle/jdks/jetbrains_s_r_o_-25-amd64-windows.
 export PATH="$JAVA_HOME/bin:$PATH"
 ```
 
-### Verified Compilation Status
-- `.\gradlew.bat :composeApp:buildWindowsPlayerBridge` passed with exit code 0 (`BUILD SUCCESSFUL in 37s`).
-- `composeApp/build/native/windows/player_bridge.dll` (551,936 bytes) was built freshly and is present on disk.
+### Verified Compilation & Test Status
+- `.\gradlew.bat :composeApp:buildWindowsPlayerBridge` passed with exit code 0 (`BUILD SUCCESSFUL in 1m 3s`).
+- `composeApp/build/native/windows/player_bridge.dll` (554,496 bytes) rebuilt cleanly with handle-safety tracking (`gActivePlayers`) to guard against invalid handle dereferencing.
+- Pure test suites: 460 tests passed clean across all 6 groups (`bash scripts/run-pure-suites.sh`).
+- Desktop player unit tests: passed clean (`:composeApp:desktopTest --tests "com.nuvio.app.features.player.desktop.*"`), including `NativePlayerAirspaceGateTest` (4), `NativePlayerControllerTeardownTest` (24), `NativePlayerControlsJsonTest` (2), and `NativePlayerControlsPageTest` (3).
+- Exit navigation tests: passed clean (`:composeApp:desktopTest --tests "com.nuvio.app.navigation.PlayerExitNavigationTest" --tests "com.nuvio.app.features.player.PlayerExitOrderingTest"`), asserting direct pop, failover retention, and auto-play state cleanup.
+- Fresh release-style debug MSI packaged: `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` (258,298,898 bytes) built with `"-Pnuvio.desktop.debugTools=true"`.
 
 ---
 
-## 5. Next Steps for Next Agent
+## 5. Next Steps — Maintainer Verification
 
-1. **Verify Unit Tests:**
-   Run desktop unit tests:
-   ```powershell
-   $env:JAVA_HOME = "C:\Users\Rayoa\.gradle\jdks\jetbrains_s_r_o_-25-amd64-windows.2"; $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"; .\gradlew.bat :composeApp:desktopTest --tests "com.nuvio.app.features.player.desktop.*"
-   ```
-   Run pure suites:
-   ```powershell
-   & 'C:\Program Files\Git\bin\bash.exe' -c 'export JAVA_HOME="/c/Users/Rayoa/.gradle/jdks/jetbrains_s_r_o_-25-amd64-windows.2"; export PATH="$JAVA_HOME/bin:$PATH"; bash scripts/run-pure-suites.sh'
-   ```
+The code, native player bridge DLL, and unit tests are complete and green. The packaged MSI is ready for maintainer verification.
 
-2. **Package Fresh MSI:**
-   ```powershell
-   $env:JAVA_HOME = "C:\Users\Rayoa\.gradle\jdks\jetbrains_s_r_o_-25-amd64-windows.2"; $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"; .\gradlew.bat :composeApp:packageMsi -Pnuvio.desktop.debugTools=true
-   ```
-
-3. **Maintainer Verification:**
-   Request maintainer to watch the packaged MSI and verify:
-   - Escape from playback returns to `DetailsDestination` seamlessly with no black gap or jump.
-   - Startup from loading to video shows no pre-frame flash of gradient/chrome before video pixels take over.
+Request maintainer to watch the packaged MSI (`composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi`) and verify:
+1. **Escape from playback:** returns to `DetailsDestination` seamlessly with no black gap, jump cut, or white flash.
+2. **Startup from loading to video:** shows no pre-frame flash of dark/light gradient or transport controls before video pixels take over.
+3. **Automatic failover & watchdog:** confirm canonical failover order and watchdog behavior remain intact on dead/slow streams.

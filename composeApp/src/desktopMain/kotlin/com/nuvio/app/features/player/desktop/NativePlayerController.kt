@@ -64,6 +64,8 @@ internal class NativePlayerController(
             NativePlayerBridge.promoteOpeningContainer(handle)
         }
     },
+    private val nativeSetPaused: (Long, Boolean) -> Unit = NativePlayerBridge::setPaused,
+    private val nativeHasFirstFrame: (Long) -> Boolean = NativePlayerBridge::hasFirstFrame,
     private val isHostDisplayable: () -> Boolean = { host.isDisplayable },
     private val resolveHostView: () -> Long = { AwtNativeViewResolver.resolveNativeViewPointer(host) },
     private val createWaitTimeoutMs: Long = 5_000L,
@@ -189,7 +191,7 @@ internal class NativePlayerController(
     }
 
     fun isNativeSurfacePromoted(): Boolean = nativeSurfacePromoted
-    fun hasFirstFrame(): Boolean = runCatching { NativePlayerBridge.hasFirstFrame(handle) }.getOrDefault(false)
+    fun hasFirstFrame(): Boolean = runCatching { nativeHasFirstFrame(handle) }.getOrDefault(false)
 
     fun attach(
         sourceUrl: String,
@@ -864,7 +866,7 @@ internal class NativePlayerController(
         }
         val currentHandle = handle
         if (currentHandle != 0L) {
-            runCatching { NativePlayerBridge.setPaused(currentHandle, true) }
+            runCatching { nativeSetPaused(currentHandle, true) }
         }
         val concealAction = Runnable {
             nativeSurfacePromoted = false
@@ -1124,12 +1126,12 @@ internal class NativePlayerController(
 
     override fun play() {
         log.d { "play handle=$handle" }
-        handle.takeIf { it != 0L }?.let { NativePlayerBridge.setPaused(it, false) }
+        handle.takeIf { it != 0L }?.let { nativeSetPaused(it, false) }
     }
 
     override fun pause() {
         log.d { "pause handle=$handle" }
-        handle.takeIf { it != 0L }?.let { NativePlayerBridge.setPaused(it, true) }
+        handle.takeIf { it != 0L }?.let { nativeSetPaused(it, true) }
     }
 
     /**
