@@ -41,7 +41,52 @@ Implemented the Phase 2 follow-up for desktop-only seamless player startup and e
      - Exposed `StreamsRepository.isManualSourceRequestPending`: clicking "Choose source manually" in the player sets this flag, causing `skipRetainedStreamRoute` to evaluate to `false` and uncovering `StreamRoute`'s source list as requested.
    - **State Cleanup on Intentional Exit:** In `PlayerDestination.kt`, intentional user exit triggers `StreamsRepository.abandonAutoPlay()`, `StreamsRepository.cancelLoading()`, and closes any active `PlaybackLoadingController` session, preventing any stale state resurrection.
 
-4. **Verification & Artifacts:**
+4. **Current Verified State (Latest Watched MSI Run):**
+   - **Status:** **IN PROGRESS (NOT COMPLETE)**.
+   - **Startup Entry Handoff (Verified Working):**
+     - The 1dp `SwingPanel` / native-airspace gate successfully fixed the visible startup transition.
+     - Source → loading is now visually smooth.
+     - The Compose loading UI remains visible while the heavyweight native player primes underneath.
+     - *Rule for next agent:* Do NOT regress or redesign this mechanism.
+   - **Native Airspace Architecture (Verified Working):**
+     - Heavyweight AWT/Win32 Canvas airspace was proven to occlude Compose.
+     - Compose `zIndex` cannot overlay it.
+     - Fullscreen hidden `SwingPanel` caused the earlier white-screen regression because Swing interop punched a fullscreen hole in Skia.
+     - Current working solution parks the entire `SwingPanel` at ~1dp until real first-frame readiness (`PlaybackHandover.hasFirstFrame`), then promotes it.
+     - *Rule for next agent:* Preserve this architecture.
+   - **Playback Attempt 1 Failure Diagnostic (Verified):**
+     - Attempt 1 (`[TB⚡] Comet 2160p`, TorBox CDN `store-035.wnam.tb-cdn.io`) was a genuine stalled/dead remote CDN stream.
+     - HTTP Range probe passed, but MPV produced 0 progress, 0 duration, 0 buffer, and no first frame for the full 35s watchdog window.
+     - Attempt 2 succeeded under the identical 1dp airspace gate in 13.3s.
+     - Conclusively proves the 1dp gate does NOT cause first-frame deadlocks.
+   - **Player Exit Navigation (Verified Working with Visual Defect):**
+     - Direct player exit now requires only one Escape.
+     - The transient retained `StreamRoute` is correctly skipped on intentional player exit.
+     - Fatal playback failure still returns to `StreamRoute` for automatic failover.
+     - "Choose source manually" still intentionally returns to `StreamRoute`.
+     - The previous loading-screen-on-first-Escape bug is resolved.
+     - **REMAINING DEFECT:** Player → previous screen still exhibits a visible **WHITE flash** during exit. This is NOT considered visually complete.
+
+5. **Open Tasks & Polish for Next Agent:**
+   - **A. Transition Polish (White Flash Elimination):**
+     - All desktop playback handoffs should ideally have controlled fade-out / fade-through presentation:
+       * Play/source → loading
+       * loading → player
+       * player → previous screen on Escape/back (eliminate white flash)
+       * loading → previous screen on cancel/back
+     - Must respect heavyweight native HWND airspace constraints.
+     - Do NOT fake transitions using arbitrary sleeps (`delay(...)`).
+   - **B. Failover Candidate Ranking Investigation:**
+     - After the dead first 4K candidate, automatic attempt 2 selected a 4K SDR stream even though multiple other 4K HDR streams were available.
+     - Determine whether automatic failover is consuming the same properly ranked candidate list as initial selection, or falling back to unranked/original stream list order.
+     - Do not assume HDR should simply override every other ranking factor (bitrate, seeders, audio, size), but ensure ranking consistency.
+   - **C. Mixed HDR/DV Classification & Presentation Investigation:**
+     - Streams containing both HDR10/HDR and Dolby Vision are still displayed front-facing as only "DV".
+     - Determine whether this is UI display formatting only or if the internal classification/ranking/preference model is lossy.
+     - Desired behavior: mixed HDR + DV must retain BOTH capabilities internally, match HDR preference, match DV preference, rank with knowledge of both, and display a composite label (e.g. `HDR10/DV` or `HDR/DV`) rather than DV-only.
+
+6. **Verification & Artifacts:**
+   - 2026-09-07 handoff rerun: focused `:composeApp:desktopTest` passed 36 tests — `PlayerExitNavigationTest` (6), `NativePlayerAirspaceGateTest` (4), `NativePlayerControllerTeardownTest` (23), and `NetworkQualityPlatformDesktopTest` (3).
    - Pure test suites outside Gradle: 459 tests passed clean across all 6 groups (`scripts/run-pure-suites.sh`).
    - `NativePlayerAirspaceGateTest`: all 4 tests passed (`:composeApp:desktopTest`).
    - `NetworkQualityPlatformDesktopTest`: all 3 tests passed (`:composeApp:desktopTest`).
