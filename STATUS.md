@@ -13,10 +13,12 @@ Implemented the Phase 2 follow-up for desktop-only seamless player startup and e
    - In `StreamDestination.kt`, candidate selection opens the persistent loading session immediately upon user action, displaying candidate facts and artwork before route navigation or debrid link resolution begins.
    - Handed off the active loading token into the player route via `loadingToken?.let(PlaybackLoadingController::handOff)`.
    - Prevented failover attempt 2 reload stutter in `PlayerScreenRuntimeUi.kt`: kept `openingOverlayWanted = true` during fatal playback errors when failovers are active (`args.onFatalPlaybackError != null`), ensuring the loading screen persists seamlessly across automatic candidate failovers without snapping or recreating.
-   - **Native Airspace Gate:** The heavyweight Win32 child HWND (`NativePlayerHost`) is kept concealed (`isVisible = false`) across source resolution, player creation, buffering, and retries (attempt N -> N+1), preventing it from occluding the Compose loading surface.
-   - `SwingPanel` uses `Modifier.fillMaxSize()`, so the concealed HWND is created at full window dimensions (1920x1080) for native player initialization without resize erasure or repaint artifacts.
-   - Avoided first-frame deadlock by decoupling `controller.attach()` from paint callbacks (removed `hostFirstFullSizePaintComplete` wait while concealed).
-   - Promotes native surface (`promoteNativeSurface()`) and child container (`NativePlayerBridge.promoteOpeningContainer`) strictly when the active attempt produces a real decoded video frame (`PlaybackHandover.hasFirstFrame`).
+   - **Native Airspace Gate & White Screen Resolution:**
+     - The heavyweight Win32 child HWND (`NativePlayerHost`) is kept concealed (`isVisible = false`) across source resolution, player creation, buffering, and retries (attempt N -> N+1).
+     - **Resolved White Screen Regression:** Compose's `SwingPanel` wraps the child Canvas in an internal `SwingInteropViewGroup` (`JPanel`) that is opaque and white by default (`RGB(240, 240, 240)` on Windows), placed above Skia, with Compose punching a clear hole via `BlendMode.Clear`. Unconditional `Modifier.fillMaxSize()` prior to first frame occluded Compose with a blank white client area.
+     - **Size-Gated Concealment:** `SwingPanel` modifier is now parked at `Modifier.align(Alignment.BottomEnd).requiredSize(1.dp)` while unpromoted (`!isNativeSurfacePromoted()`). It transitions to `Modifier.fillMaxSize()` strictly when `PlaybackHandover.hasFirstFrame` fires and `promoteNativeSurface()` is called.
+     - Coupled controller promotion state to Compose via `onSurfacePromotedChanged`, resetting immediately to concealed / 1.dp on `releaseBeforeNavigation` (`T3`), `attach`, and `dispose`.
+     - Promotes native surface (`promoteNativeSurface()`) and child container (`NativePlayerBridge.promoteOpeningContainer`) strictly when the active attempt produces a real decoded video frame (`PlaybackHandover.hasFirstFrame`).
 
 2. **Part B: Player → Previous Screen Exit & EDT Stall Elimination (`NativePlayerController.kt`, `NativePlayerHost.kt`, `PlayerExitDiagnostics.kt`, `NetworkQualityPlatform.desktop.kt`):**
    - Instrumented timestamped diagnostics across the entire exit pipeline:

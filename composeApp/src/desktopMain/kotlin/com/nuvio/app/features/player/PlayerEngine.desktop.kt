@@ -16,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.awt.SwingPanel
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -218,6 +219,16 @@ private fun NativePlayerSurface(
         }
     }
 
+    var isSurfacePromoted by remember(controller) { mutableStateOf(controller.isNativeSurfacePromoted()) }
+    DisposableEffect(controller) {
+        controller.onSurfacePromotedChanged = { promoted ->
+            isSurfacePromoted = promoted
+        }
+        onDispose {
+            controller.onSurfacePromotedChanged = null
+        }
+    }
+
     LaunchedEffect(controller) {
         var hasFirstFrame = false
         while (true) {
@@ -235,6 +246,7 @@ private fun NativePlayerSurface(
             if (!hasFirstFrame && frameReady) {
                 hasFirstFrame = true
                 controller.promoteNativeSurface()
+                isSurfacePromoted = true
             }
             val pollDelayMs = if (hasFirstFrame) 500L else 50L
             delay(pollDelayMs)
@@ -255,7 +267,20 @@ private fun NativePlayerSurface(
                 factory = {
                     host
                 },
-                modifier = Modifier.fillMaxSize(),
+                // ⚠ Parked by size until real video frames are decoded.
+                //
+                // Compose's SwingPanel wraps `host` in an internal `SwingInteropViewGroup` (a JPanel)
+                // that is opaque and white by default, and punches a clear-hole through Compose's
+                // Skia layer with BlendMode.Clear across the allocated bounds. Holding the panel
+                // at requiredSize(1.dp) until `PlaybackHandover.hasFirstFrame` prevents the Swing peer
+                // from occluding Compose or flashing white during startup, buffering, and retries.
+                modifier = if (isSurfacePromoted) {
+                    Modifier.fillMaxSize()
+                } else {
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .requiredSize(1.dp)
+                },
                 background = surfaceGround,
             )
         }

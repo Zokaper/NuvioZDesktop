@@ -30,6 +30,9 @@ class NativePlayerAirspaceGateTest {
         )
         setNativeHandleForTest(controller, 42L)
 
+        var notifiedPromoted: Boolean? = null
+        controller.onSurfacePromotedChanged = { promoted -> notifiedPromoted = promoted }
+
         assertFalse(controller.isNativeSurfacePromoted())
         assertFalse(host.isVisible)
 
@@ -42,6 +45,7 @@ class NativePlayerAirspaceGateTest {
 
         assertTrue(controller.isNativeSurfacePromoted())
         assertTrue(host.isVisible, "Host canvas must become visible upon promotion")
+        assertEquals(true, notifiedPromoted, "onSurfacePromotedChanged must fire with true upon promotion")
         assertEquals(42L, promotedHandle, "nativePromoteOpeningContainer must be called with the active handle")
     }
 
@@ -56,6 +60,9 @@ class NativePlayerAirspaceGateTest {
         )
         setNativeHandleForTest(controller, 42L)
 
+        var notifiedPromoted: Boolean? = null
+        controller.onSurfacePromotedChanged = { promoted -> notifiedPromoted = promoted }
+
         // First promote
         val latch = CountDownLatch(1)
         SwingUtilities.invokeLater {
@@ -64,6 +71,7 @@ class NativePlayerAirspaceGateTest {
         }
         assertTrue(latch.await(2, TimeUnit.SECONDS))
         assertTrue(host.isVisible)
+        assertEquals(true, notifiedPromoted)
 
         // Then releaseBeforeNavigation (simulating Escape/Back at T0)
         PlayerExitDiagnostics.recordT0("unit_test")
@@ -75,6 +83,8 @@ class NativePlayerAirspaceGateTest {
         }
         assertTrue(releaseLatch.await(2, TimeUnit.SECONDS))
         assertFalse(host.isVisible, "Host canvas must be concealed immediately at T0 upon releaseBeforeNavigation")
+        assertFalse(controller.isNativeSurfacePromoted(), "Controller must mark surface unpromoted on releaseBeforeNavigation")
+        assertEquals(false, notifiedPromoted, "onSurfacePromotedChanged must fire with false upon releaseBeforeNavigation")
     }
 
     @Test

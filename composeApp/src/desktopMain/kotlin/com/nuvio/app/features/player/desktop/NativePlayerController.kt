@@ -156,6 +156,8 @@ internal class NativePlayerController(
         }
     }
 
+    var onSurfacePromotedChanged: ((Boolean) -> Unit)? = null
+
     fun promoteNativeSurface() {
         val current = handle
         if (current == 0L || releaseRequested) return
@@ -168,6 +170,7 @@ internal class NativePlayerController(
                 host.isVisible = true
                 host.repaint()
                 requestKeyboardFocus()
+                onSurfacePromotedChanged?.invoke(true)
             }
         }
         if (SwingUtilities.isEventDispatchThread()) {
@@ -191,6 +194,7 @@ internal class NativePlayerController(
         nativeSurfacePromoted = false
         val concealAction = Runnable {
             host.isVisible = false
+            onSurfacePromotedChanged?.invoke(false)
         }
         if (SwingUtilities.isEventDispatchThread()) concealAction.run() else SwingUtilities.invokeLater(concealAction)
         log.i { "nativeSurface=CONCEALED source=${sourceUrl.toPlaybackLogKey()}" }
@@ -845,8 +849,10 @@ internal class NativePlayerController(
         synchronized(lifecycleLock) {
             releaseRequested = true
         }
+        nativeSurfacePromoted = false
         val concealAction = Runnable {
             host.isVisible = false
+            onSurfacePromotedChanged?.invoke(false)
             PlayerExitDiagnostics.recordT3("releaseBeforeNavigation conceal")
             log.i { "nativeSurface=CONCEALED reason=releaseBeforeNavigation" }
         }
@@ -960,6 +966,7 @@ internal class NativePlayerController(
         nativeSurfacePromoted = false
         val concealAction = Runnable {
             host.isVisible = false
+            onSurfacePromotedChanged?.invoke(false)
             log.i { "nativeSurface=CONCEALED reason=dispose" }
         }
         if (SwingUtilities.isEventDispatchThread()) {
