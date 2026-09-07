@@ -19,6 +19,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import com.nuvio.app.features.playback.PlaybackLoadingController
 import com.nuvio.app.features.streams.StreamsRepository
 import org.jetbrains.compose.resources.stringResource
 import nuvio.composeapp.generated.resources.Res
@@ -52,7 +53,17 @@ internal fun PlayerDestination(
     val onBack = rememberGuardedPlayerPopBackStack(
         navController = navController,
         route = route,
-        beforePop = ResumePromptRepository::markPlayerExitedNormally,
+        skipRetainedStreamRoute = {
+            launch.autoPickedWithFailureChain && !StreamsRepository.isManualSourceRequestPending
+        },
+        beforePop = {
+            ResumePromptRepository.markPlayerExitedNormally()
+            if (launch.autoPickedWithFailureChain && !StreamsRepository.isManualSourceRequestPending) {
+                StreamsRepository.abandonAutoPlay()
+                StreamsRepository.cancelLoading()
+                PlaybackLoadingController.activeToken?.let(PlaybackLoadingController::close)
+            }
+        },
     )
     val registerSystemBack = remember(route, onSystemBackHandlerChanged) {
         { handler: (() -> Unit)? -> onSystemBackHandlerChanged(route, handler) }

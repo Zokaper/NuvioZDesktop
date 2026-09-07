@@ -678,6 +678,9 @@ object StreamsRepository {
      */
     private var manualSourceRequestPending = false
 
+    val isManualSourceRequestPending: Boolean
+        get() = manualSourceRequestPending
+
     fun signalManualSourceRequest() {
         manualSourceRequestPending = true
     }

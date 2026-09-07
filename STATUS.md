@@ -33,14 +33,23 @@ Implemented the Phase 2 follow-up for desktop-only seamless player startup and e
    - Moved snapshot polling off the Swing EDT to `Dispatchers.IO` in `PlayerEngine.desktop.kt` with adaptive polling intervals (50 ms before first frame, 500 ms steady-state).
    - Added native video dimensions querying via JNI (`NativePlayerBridge.videoWidth` and `videoHeight`), populating `snapshot.videoWidth` and `videoHeight` for precise first-frame detection.
 
-3. **Verification & Artifacts:**
+3. **Part C: Player → Previous Destination Direct Exit on Intentional Escape / Back (`NuvioNavigator.kt`, `StreamsRepository.kt`, `AppShellComponents.kt`, `PlayerDestination.kt`):**
+   - **Root Cause of Exit Loading Loop:** For launches where `StreamRoute` was retained specifically to host the auto-play failure chain (`[DetailRoute, StreamRoute, PlayerRoute]`), pressing Escape/Back popped `PlayerRoute` back to `StreamRoute`. `StreamRoute` resumed with preserved state, evaluated `showLoadingSurface = true`, acquired a new `PlaybackLoadingController` token (`token=2`), and re-executed `StreamsRepository.load`, trapping the user on the loading screen until a second Escape.
+   - **Atomic Retained-Route Bypass:** Added `NuvioNavigator.popPlayerExit(expectedRoute, skipRetainedStreamRoute)`. When `skipRetainedStreamRoute = true` and `StreamRoute` immediately precedes `PlayerRoute`, atomically removes both destinations via `backStack.subList(backStack.size - 2, backStack.size).clear()`, returning smoothly to the previous real destination (`DetailRoute`) in a single logical pop without ever composing `StreamRoute`.
+   - **Preserved Failover Chains & Manual Source Selection:**
+     - Fatal playback errors (`onFatalPlaybackError`) continue calling standard `popBack()`, retaining `StreamRoute` as top destination to advance the automatic failover retry chain.
+     - Exposed `StreamsRepository.isManualSourceRequestPending`: clicking "Choose source manually" in the player sets this flag, causing `skipRetainedStreamRoute` to evaluate to `false` and uncovering `StreamRoute`'s source list as requested.
+   - **State Cleanup on Intentional Exit:** In `PlayerDestination.kt`, intentional user exit triggers `StreamsRepository.abandonAutoPlay()`, `StreamsRepository.cancelLoading()`, and closes any active `PlaybackLoadingController` session, preventing any stale state resurrection.
+
+4. **Verification & Artifacts:**
    - Pure test suites outside Gradle: 459 tests passed clean across all 6 groups (`scripts/run-pure-suites.sh`).
    - `NativePlayerAirspaceGateTest`: all 4 tests passed (`:composeApp:desktopTest`).
-   - `NetworkQualityPlatformDesktopTest`: all 3 tests passed (`:composeApp:desktopTest`), including non-blocking EDT benchmark.
+   - `NetworkQualityPlatformDesktopTest`: all 3 tests passed (`:composeApp:desktopTest`).
    - `NativePlayerControllerTeardownTest`: all 23 tests passed (`:composeApp:desktopTest`).
    - `PlayerExitOrderingTest`: all 4 tests passed (`:composeApp:desktopTest`).
+   - `PlayerExitNavigationTest`: all 6 tests passed (`:composeApp:desktopTest`), asserting direct pop to preceding destination on intentional exit, `StreamRoute` retention on fatal error, manual source request retention, auto-play state cleanup, loading overlay suppression, non-stream route fallback, and route guard mismatch.
    - Packaged release-style Windows MSI with debug tools:
-     `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` (258,291,488 bytes) built with `-Pnuvio.desktop.debugTools=true`.
+     `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` (258,299,679 bytes) built with `"-Pnuvio.desktop.debugTools=true"`.
 
 ## Phase 2 manual-verification finding: Startup watchdog evidence-of-life deadline (2026-09-06)
 

@@ -216,11 +216,12 @@ internal data class AppTabActions(
 internal fun rememberGuardedPlayerPopBackStack(
     navController: NuvioNavigator,
     route: AppRoute,
+    skipRetainedStreamRoute: () -> Boolean = { false },
     beforePop: () -> Unit = {},
 ): PlayerBackRequest {
     val guard = remember(route) { PlayerBackReleaseGuard() }
 
-    return remember(navController, route, beforePop, guard) {
+    return remember(navController, route, skipRetainedStreamRoute, beforePop, guard) {
         { releaseBeforeBack ->
             guard.request(
                 canStart = {
@@ -232,7 +233,10 @@ internal fun rememberGuardedPlayerPopBackStack(
                 pop = {
                     PlayerExitDiagnostics.recordT1(route.toString())
                     navController.currentRoute == route &&
-                        navController.popBackStack(expectedRoute = route)
+                        navController.popPlayerExit(
+                            expectedRoute = route,
+                            skipRetainedStreamRoute = skipRetainedStreamRoute(),
+                        )
                 },
             )
         }
