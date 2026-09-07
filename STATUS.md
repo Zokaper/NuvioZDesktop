@@ -6,6 +6,15 @@ Last updated: 2026-09-07
 
 Branch `claude/phase-2-desktop-handoff`.
 
+### Latest implementation — awaiting watched MSI verification
+
+- **Exit white-flash diagnosis/fix:** T0–T4 evidence showed the Canvas was hidden while Compose's fullscreen `SwingInteropViewGroup` remained in native airspace; that default opaque `JPanel` supplied the white frame, and starting MPV/Win32 disposal before T2 also delayed the previous Compose paint. Exit now synchronously hides and collapses the whole interop wrapper to 1x1 on the EDT, navigates immediately, and starts native teardown only after the previous destination's actual T2 draw (queued to the next EDT turn). No timer or sleep was added.
+- **Transition choreography:** the proven 1dp startup gate and real-first-frame promotion are unchanged. Player pop now uses a short fade-through only after native airspace has been removed; existing loading-surface entry/cancel fades remain Compose-owned.
+- **Failover/ranking diagnosis:** the watched attempt 2 was not SDR. Its release was `DoVi HDR10` (and Atmos); the shared formatter collapsed mixed capability to `DV`. The canonical ranked list is passed unchanged through selection, `playbackChain`, repository seeding, and skip-to-next. A regression now proves attempt N+1 walks that same order. Safe per-candidate ranking diagnostics (no URLs) were added for watched verification.
+- **Mixed HDR/DV:** the parser and `SourceFacts.dynamicRange` set were already non-lossy and both HDR and DV preference predicates matched. The UI formatter alone was lossy. Mixed streams now display `HDR10/DV`, `HDR10+/DV`, or fallback `HDR/DV`, with coverage for `HDR10 DV`, `HDR10.DV`, `DV HDR10`, and `DoVi HDR`.
+- **Verification:** focused affected desktop tests passed (103/103), the full desktop test task passed (1,624/1,624), and all six pure groups passed (460/460). Fresh MSI built with `-Pnuvio.desktop.debugTools=true`: `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` (258,299,680 bytes; SHA-256 `62484E7E59B3E2334060490A84932DABECA1BEA85F07DE7C7310B2821C5D8FCC`).
+- **Status:** code and automated verification are complete for this pass; Phase 2F remains **IN PROGRESS** until the maintainer watches this fresh MSI.
+
 Implemented the Phase 2 follow-up for desktop-only seamless player startup and exit handoffs:
 
 1. **Part A: Source → Player Startup & Airspace Gating (`StreamDestination.kt`, `PlayerScreenRuntimeUi.kt`, `PlayerEngine.desktop.kt`, `NativePlayerHost.kt`, `NativePlayerController.kt`):**
