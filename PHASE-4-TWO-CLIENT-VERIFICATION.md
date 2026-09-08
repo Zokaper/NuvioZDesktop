@@ -2,14 +2,15 @@
 
 Status: **NOT EXECUTED**. This worksheet prepares the physical Stage 14 run; it records no manual result.
 
-Authoritative criteria: `../../PLAN-phase-4.md`, section 14. Use two installed desktop clients with different real social profiles and isolated data directories. Prefer two machines; two Windows processes with separate `APPDATA` roots are acceptable.
+Authoritative criteria: `../PLAN-phase-4.md`, section 14. Use two installed desktop clients with different real social profiles and isolated data directories. Prefer two machines; two Windows processes with separate `APPDATA` roots are acceptable.
 
 ## Build under test
 
 - MSI: `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi`
 - Size: `252,670,144` bytes
-- SHA-256: `CEAC1492575A1B399A4ECAF534573B200A5153B9393F92CBCE08BCDC9D4215A0`
+- SHA-256: `9083BFE6B7A2C1C579475635CE532612EF1CD1CCA27C4475DB8C568BF1B7A4B9`
 - Build command: `./gradlew :composeApp:packageReleaseMsi "-Pnuvio.desktop.debugTools=true" --console=plain`
+- Native bridge: rebuilt from the current `player_bridge.cpp` with the installed MSVC toolchain before the final MSI package.
 - Backend prerequisite: deploy the two locally verified Phase 4 migrations only to Supabase project `pzbpghmmordvzcfbayoh`. Never deploy to `api.nuvio.tv`.
 
 ## Per-scenario evidence

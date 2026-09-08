@@ -15,7 +15,7 @@ Automated verification is green:
 - full `:composeApp:desktopTest`: 1,647/1,647, zero failures/errors/skips;
 - backend remains at the handoff's locally verified 130/130 pgTAP result because no backend SQL changed in this continuation.
 
-Release-style debug-tools MSI built successfully at `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` (252,670,144 bytes; SHA-256 `CEAC1492575A1B399A4ECAF534573B200A5153B9393F92CBCE08BCDC9D4215A0`). The exact physical checklist is `PHASE-4-TWO-CLIENT-VERIFICATION.md` and every scenario remains **NOT RUN**.
+Release-style debug-tools MSI, including a freshly rebuilt Windows native player bridge, was built successfully at `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` (252,670,144 bytes; SHA-256 `9083BFE6B7A2C1C579475635CE532612EF1CD1CCA27C4475DB8C568BF1B7A4B9`). The exact physical checklist is `PHASE-4-TWO-CLIENT-VERIFICATION.md` and every scenario remains **NOT RUN**.
 
 Phase 4 is **not complete**. The two-client watched matrix has not been executed, and the two backend migrations have not been deployed to live Supabase project `pzbpghmmordvzcfbayoh`. Never deploy them to `api.nuvio.tv`.
 
