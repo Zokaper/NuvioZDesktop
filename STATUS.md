@@ -2,6 +2,23 @@
 
 Last updated: 2026-09-08
 
+## Watch Together deterministic architecture — Stage 0 instrumentation (2026-09-08)
+
+Branch `codex/watch-together-architecture`. Added debug-gated, privacy-safe `WatchPartyTrace`
+correlation for T0 input, T1 permission/acceptance, T2 Realtime send outcome and duration, T3 peer
+receipt/validation, and T4 native-engine directive application. The same trace records channel
+instances/lifecycle, independent observed API/Realtime/poll facts, durable command and snapshot
+arrival, clock/tick freshness, and guest hold start/release evidence. No playback, send ordering,
+health, source, navigation, or lifecycle behavior has been changed. The physical procedure is
+`WATCH-TOGETHER-STAGE0-TRACE.md`.
+
+Verification on the final source: desktop compilation passes; focused Watch Together/player-launch
+tests pass (96/96). The immediately preceding complete instrumentation revision passed the full
+desktop suite (1,674/1,674), and the final revision only tightened debug gating and added trace-only
+outcomes before the focused rerun. The physical two-client 10 pause/resume + 10 seek matrix and
+controlled Realtime interruption remain **NOT RUN**, so Stage 0 remains `IN_PROGRESS` and no
+behavioral Stage 1 work may begin.
+
 ## Phase 4 follow-up hardening: lifecycle resilience, truthful presence & UI fidelity (2026-09-08)
 
 Completed an ironclad hardening pass for Watch Together covering disconnects, app exits, stale parties, reconnects, lobby/player transitions, truthful presence, and remaining Phase 4 UI issues:

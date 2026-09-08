@@ -92,6 +92,7 @@ internal object WatchPartySync {
     private var tick: PartyTick? = null
     private val guestRttMs = mutableMapOf<String, Long>()
     private val guestStatus = mutableMapOf<String, WatchPartyStatus>()
+    private val guestLastTelemetryAtPartyMs = mutableMapOf<String, Long>()
     private val outstandingPings = mutableMapOf<String, Long>()
     private var commandCounter = 0L
     private var peerStatus: WatchPartyStatus? = null
@@ -146,7 +147,31 @@ internal object WatchPartySync {
      * neither of those is a message, so it has to be driven from a read rather than from `observe`.
      */
     private fun advanceBufferWatch(): List<String> {
+        val before = bufferWatch
         bufferWatch = bufferWatch.advance(partyNowMs())
+        val now = partyNowMs()
+        (bufferWatch.heldSinceByProfile.keys - before.heldSinceByProfile.keys).forEach { profileId ->
+            WatchPartyDiagnostics.hold(
+                partyId = boundPartyId,
+                profileId = profileId,
+                event = "start",
+                engineState = guestStatus[profileId],
+                telemetryAgeMs = guestLastTelemetryAtPartyMs[profileId]?.let { now - it } ?: -1L,
+                holdAgeMs = 0L,
+                classification = "genuine-stall-candidate",
+            )
+        }
+        (before.heldSinceByProfile.keys - bufferWatch.heldSinceByProfile.keys).forEach { profileId ->
+            WatchPartyDiagnostics.hold(
+                partyId = boundPartyId,
+                profileId = profileId,
+                event = "release",
+                engineState = guestStatus[profileId],
+                telemetryAgeMs = guestLastTelemetryAtPartyMs[profileId]?.let { now - it } ?: -1L,
+                holdAgeMs = before.heldSinceByProfile[profileId]?.let { now - it } ?: -1L,
+                classification = if (guestStatus[profileId] == WatchPartyStatus.playing) "recovered" else "telemetry-stale",
+            )
+        }
         return bufferWatch.holdingProfiles
     }
 
@@ -171,6 +196,7 @@ internal object WatchPartySync {
         detach()
         this.channel = channel
         boundPartyId = partyId
+        WatchPartyDiagnostics.channelAttached(partyId)
         log.i { "attach party=${partyId.shortId()} role=${if (isHost()) "host" else "guest"}" }
         collector = channel.broadcastFlow<JsonObject>(WatchPartySyncEvent)
             .onEach { payload -> receive(payload) }
@@ -179,6 +205,7 @@ internal object WatchPartySync {
     }
 
     fun detach() {
+        WatchPartyDiagnostics.channelDetached(boundPartyId)
         collector?.cancel(); collector = null
         clockJob?.cancel(); clockJob = null
         channel = null
@@ -190,6 +217,7 @@ internal object WatchPartySync {
         _ticks.resetReplayCache()
         guestRttMs.clear()
         guestStatus.clear()
+        guestLastTelemetryAtPartyMs.clear()
         outstandingPings.clear()
         commandCounter = 0
         peerStatus = null
@@ -242,11 +270,21 @@ internal object WatchPartySync {
         startAtPartyMs: Long,
         playbackSpeed: Float,
         playAfter: Boolean = true,
+        diagnosticInputId: String? = null,
     ): PartyCommand? {
         val ui = WatchPartyRepository.uiState.value
-        val party = ui.party ?: return null
-        val profileId = ui.activeProfileId ?: return null
-        if (!mayControl(profileId, party)) return null
+        val party = ui.party ?: run {
+            diagnosticInputId?.let { WatchPartyDiagnostics.rejected(it, kind, null, ui.activeProfileId, "party-missing") }
+            return null
+        }
+        val profileId = ui.activeProfileId ?: run {
+            diagnosticInputId?.let { WatchPartyDiagnostics.rejected(it, kind, party, null, "profile-missing") }
+            return null
+        }
+        if (!mayControl(profileId, party)) {
+            diagnosticInputId?.let { WatchPartyDiagnostics.rejected(it, kind, party, profileId, "permission") }
+            return null
+        }
         commandCounter += 1
         val command = PartyCommand(
             commandId = Uuid.random().toString(),
@@ -267,6 +305,7 @@ internal object WatchPartySync {
                 "playAfter=$playAfter"
         }
         commandLog = commandLog.record(command)
+        WatchPartyDiagnostics.accepted(diagnosticInputId, command, party)
         send(PartyCommandMessage(partyId = party.id, command = command))
         _commands.tryEmit(command)
         return command
@@ -299,11 +338,25 @@ internal object WatchPartySync {
     }
 
     private suspend fun send(message: PartySyncMessage) {
-        val live = channel ?: return
+        val commandMessage = message as? PartyCommandMessage
+        val startedAt = currentEpochMs()
+        val live = channel
+        if (live == null) {
+            commandMessage?.let {
+                WatchPartyDiagnostics.send(it.command, it.partyId, startedAt, outcome = "unavailable")
+            }
+            return
+        }
         // A send that throws is a socket that has gone away, and the poll underneath this is what
         // covers that. Failing loudly here would put a banner on every transient reconnect.
         runCatching { live.broadcast(WatchPartySyncEvent, encodePartySyncMessage(message)) }
-            .onFailure { cause -> log.d { "send failed kind=${message::class.simpleName} cause=${cause.message}" } }
+            .onSuccess {
+                commandMessage?.let { WatchPartyDiagnostics.send(it.command, it.partyId, startedAt, outcome = "success") }
+            }
+            .onFailure { cause ->
+                commandMessage?.let { WatchPartyDiagnostics.send(it.command, it.partyId, startedAt, outcome = "failed") }
+                log.d { "send failed kind=${message::class.simpleName} cause=${cause.message}" }
+            }
     }
 
     private fun receive(payload: JsonObject) {
@@ -397,17 +450,25 @@ internal object WatchPartySync {
 
     private fun acceptCommand(message: PartyCommandMessage, party: WatchPartyState) {
         val command = message.command
-        if (!mayControl(command.issuedByProfileId, party)) return
+        if (!mayControl(command.issuedByProfileId, party)) {
+            WatchPartyDiagnostics.received(command, party.id, outcome = "rejected-permission")
+            return
+        }
         if (
             command.contentGeneration != party.contentGeneration ||
             command.sourceGeneration != party.sourceGeneration ||
             command.authorityEpoch != party.authorityEpoch
         ) {
+            WatchPartyDiagnostics.received(command, party.id, outcome = "rejected-generation")
             WatchPartyRepository.requestRefresh()
             return
         }
-        if (!commandLog.accepts(command)) return
+        if (!commandLog.accepts(command)) {
+            WatchPartyDiagnostics.received(command, party.id, outcome = "rejected-duplicate")
+            return
+        }
         commandLog = commandLog.record(command)
+        WatchPartyDiagnostics.received(command, party.id, outcome = "accepted")
         log.i {
             "command party=${party.id.shortId()} kind=${command.kind} posMs=${command.startPositionMs} " +
                 "inMs=${command.startAtPartyMs - partyNowMs()} from=${command.issuedByProfileId.shortId()}"
@@ -418,6 +479,7 @@ internal object WatchPartySync {
     private fun acceptPeerStatus(message: PartyPeerStatusMessage) {
         if (!isHost()) return
         if (message.rttMs >= 0) guestRttMs[message.fromProfileId] = message.rttMs
+        guestLastTelemetryAtPartyMs[message.fromProfileId] = message.atPartyMs
         val before = advanceBufferWatch()
         bufferWatch = bufferWatch.observe(
             profileId = message.fromProfileId,

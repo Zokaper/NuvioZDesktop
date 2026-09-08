@@ -345,21 +345,32 @@ object WatchPartyRepository {
         installSnapshot(snapshot, reopenChannel = false)
     }
 
-    suspend fun submit(command: WatchPartyCommand): Result<Unit> = call {
-        log.i {
-            "command party=${_uiState.value.party?.id.shortId()} profile=${_uiState.value.activeProfileId.shortId()} " +
-                "type=${command.type} positionMs=${command.positionMs} speed=${command.playbackSpeed}"
+    suspend fun submit(command: WatchPartyCommand): Result<Unit> {
+        val startedAt = currentEpochMs()
+        val partyAtStart = _uiState.value.party
+        val result = call {
+            log.i {
+                "command party=${_uiState.value.party?.id.shortId()} profile=${_uiState.value.activeProfileId.shortId()} " +
+                    "type=${command.type} positionMs=${command.positionMs} speed=${command.playbackSpeed}"
+            }
+            val party=requireParty()
+            val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_submit_command_v2", buildJsonObject {
+                put("p_party_id", party.id); put("p_profile_id", requireProfile()); put("p_command_id", command.commandId)
+                put("p_command_type", command.type); put("p_payload", buildJsonObject {
+                    command.positionMs?.let { put("position_ms", it) }; command.playbackSpeed?.let { put("playback_speed", it) }
+                })
+                put("p_content_generation",party.contentGeneration);put("p_source_generation",party.sourceGeneration)
+                put("p_authority_epoch",party.authorityEpoch)
+            }).decodeAs<WatchPartyState>()
+            installSnapshot(snapshot, reopenChannel = false)
         }
-        val party=requireParty()
-        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_submit_command_v2", buildJsonObject {
-            put("p_party_id", party.id); put("p_profile_id", requireProfile()); put("p_command_id", command.commandId)
-            put("p_command_type", command.type); put("p_payload", buildJsonObject {
-                command.positionMs?.let { put("position_ms", it) }; command.playbackSpeed?.let { put("playback_speed", it) }
-            })
-            put("p_content_generation",party.contentGeneration);put("p_source_generation",party.sourceGeneration)
-            put("p_authority_epoch",party.authorityEpoch)
-        }).decodeAs<WatchPartyState>()
-        installSnapshot(snapshot, reopenChannel = false)
+        WatchPartyDiagnostics.durableCommand(
+            command = command,
+            party = partyAtStart,
+            outcome = if (result.isSuccess) "success" else "failed",
+            durationMs = (currentEpochMs() - startedAt).coerceAtLeast(0L),
+        )
+        return result
     }
 
     @OptIn(ExperimentalUuidApi::class)
@@ -557,11 +568,13 @@ object WatchPartyRepository {
      */
     private fun startPolling() {
         if (pollJob?.isActive == true) return
+        WatchPartyDiagnostics.poll(_uiState.value.party?.id, running = true, api = "idle")
         pollJob = scope.launch {
             while (true) {
                 delay(WatchPartySnapshotIntervalMs)
                 val partyId = _uiState.value.party?.id ?: break
                 val profileId = _uiState.value.activeProfileId ?: break
+                val pollStartedAt = currentEpochMs()
                 // Drift is measured against the server's clock, so the offset has to be taken for
                 // every party - including one whose channel never opens, which is where this used
                 // to live. Without it a guest corrects towards this machine's idea of now, and two
@@ -589,6 +602,13 @@ object WatchPartyRepository {
                 }.onSuccess {
                     lastSuccessfulContactEpochMs = currentEpochMs()
                     lastLoggedPollFailure = null
+                    WatchPartyDiagnostics.poll(
+                        partyId,
+                        running = true,
+                        api = "success",
+                        sequence = _uiState.value.party?.sequence,
+                        durationMs = (currentEpochMs() - pollStartedAt).coerceAtLeast(0L),
+                    )
                     if (_uiState.value.connection != PartyConnectionState.connected || _uiState.value.connectionBannerMessage != null) {
                         _uiState.value = _uiState.value.copy(
                             connection = PartyConnectionState.connected,
@@ -596,6 +616,12 @@ object WatchPartyRepository {
                         )
                     }
                 }.onFailure { cause ->
+                    WatchPartyDiagnostics.poll(
+                        partyId,
+                        running = true,
+                        api = "failed",
+                        durationMs = (currentEpochMs() - pollStartedAt).coerceAtLeast(0L),
+                    )
                     val now = currentEpochMs()
                     val elapsedSinceContact = if (lastSuccessfulContactEpochMs > 0L) now - lastSuccessfulContactEpochMs else 0L
                     if (elapsedSinceContact > 15_000L) {
@@ -617,6 +643,7 @@ object WatchPartyRepository {
                 }
             }
             pollJob = null
+            WatchPartyDiagnostics.poll(_uiState.value.party?.id, running = false, api = "idle")
         }
     }
 
@@ -665,6 +692,7 @@ object WatchPartyRepository {
             val age = serverTimeMs?.let { currentEpochMs() + _uiState.value.serverClockOffsetMs - it }
             "broadcast party=${held.id.shortId()} seq=$sequence status=$status ageMs=${age ?: -1} applied=$newer"
         }
+        WatchPartyDiagnostics.durableState(held.id, sequence, status, applied = newer)
         if (!newer) return true
 
         _uiState.value = _uiState.value.copy(
@@ -702,6 +730,7 @@ object WatchPartyRepository {
 
     private fun stopPolling() {
         pollJob?.cancel(); pollJob = null
+        WatchPartyDiagnostics.poll(_uiState.value.party?.id, running = false, api = "idle")
     }
 
     /**
@@ -726,6 +755,7 @@ object WatchPartyRepository {
     }
 
     private suspend fun openChannel(partyId: String) {
+        WatchPartyDiagnostics.transport("subscribe-start", partyId, realtime = "subscribing")
         // The party topic is a private channel gated by RLS on realtime.messages, so the socket must
         // carry the Z token rather than the publishable key.
         val profileId = _uiState.value.activeProfileId
@@ -778,6 +808,12 @@ object WatchPartyRepository {
             // is this party going away underneath the attempt, and a banner written on the way out
             // would outlive the thing it describes.
             if (cause !is CancellationException || cause is TimeoutCancellationException) {
+                WatchPartyDiagnostics.transport(
+                    "subscribe-failed",
+                    partyId,
+                    realtime = "disconnected",
+                    detail = cause::class.simpleName,
+                )
                 log.w { "realtime party=${partyId.shortId()} state=disconnected cause=${cause.message ?: cause::class.simpleName}" }
                 closeChannel()
                 _uiState.value = _uiState.value.copy(
@@ -786,6 +822,7 @@ object WatchPartyRepository {
                 )
             }
         }.onSuccess {
+            WatchPartyDiagnostics.transport("subscribe-complete", partyId, realtime = "subscribed")
             log.i { "realtime party=${partyId.shortId()} state=connected" }
             _uiState.value = _uiState.value.copy(connection = PartyConnectionState.connected, errorMessage = null)
             refresh()
@@ -793,6 +830,7 @@ object WatchPartyRepository {
     }
 
     private suspend fun closeChannel() {
+        val closingPartyId = channelPartyId ?: _uiState.value.party?.id
         channelSubscribed = false
         WatchPartySync.detach()
         collector?.cancel(); collector = null
@@ -804,6 +842,7 @@ object WatchPartyRepository {
             runCatching { withTimeout(WatchPartyChannelCloseTimeoutMs) { ZSupabaseProvider.client.realtime.removeChannel(it) } }
         }
         channel = null
+        WatchPartyDiagnostics.transport("channel-closed", closingPartyId, realtime = "disconnected")
     }
 
     private suspend fun partyCall(name: String, params: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit): Result<Unit> = call {

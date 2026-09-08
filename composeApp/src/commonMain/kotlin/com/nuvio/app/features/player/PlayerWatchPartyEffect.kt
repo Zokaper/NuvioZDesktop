@@ -18,6 +18,7 @@ import com.nuvio.app.features.watchparty.SourceResolutionState
 import com.nuvio.app.features.watchparty.PartySourceMatch
 import com.nuvio.app.features.watchparty.StallHoldBudget
 import com.nuvio.app.features.watchparty.WatchPartyControlMode
+import com.nuvio.app.features.watchparty.WatchPartyDiagnostics
 import com.nuvio.app.features.watchparty.WatchPartyHostGraceMs
 import com.nuvio.app.features.watchparty.WatchPartyIdleTickIntervalMs
 import com.nuvio.app.features.watchparty.WatchPartyPausedAlignToleranceMs
@@ -662,9 +663,16 @@ private suspend fun awaitPartyInstant(atPartyMs: Long) {
  * code agreeing.
  */
 private suspend fun PlayerScreenRuntime.executePartyBarrier(command: PartyCommand) {
-    val controller = playerController ?: return
+    val partyId = WatchPartyRepository.uiState.value.party?.id
+    val controller = playerController ?: run {
+        WatchPartyDiagnostics.applied(command, partyId, outcome = "skipped-no-controller")
+        return
+    }
     val durationMs = playbackSnapshot.durationMs
-    if (durationMs <= 0L) return
+    if (durationMs <= 0L) {
+        WatchPartyDiagnostics.applied(command, partyId, outcome = "skipped-no-duration")
+        return
+    }
     val sample = samplePlaybackPosition()
     // A client with no clock estimate cannot be scheduled against one, and pretending otherwise
     // would put the barrier hours away or hours past. Reading the command as though it had arrived
@@ -701,10 +709,12 @@ private suspend fun PlayerScreenRuntime.executePartyBarrier(command: PartyComman
                 controller.pause()
             }
             controller.setPlaybackSpeed(plan.speed)
+            WatchPartyDiagnostics.applied(command, partyId, outcome = "pause")
         }
         PartyCommandKind.speed -> {
             if (clockUsable) awaitPartyInstant(command.startAtPartyMs)
             controller.setPlaybackSpeed(plan.speed)
+            WatchPartyDiagnostics.applied(command, partyId, outcome = "speed")
         }
         PartyCommandKind.play, PartyCommandKind.seek -> {
             partyBarrierAtMs = command.startAtPartyMs
@@ -731,10 +741,12 @@ private suspend fun PlayerScreenRuntime.executePartyBarrier(command: PartyComman
             if (!plan.playAfter) {
                 shouldPlay = false
                 controller.pause()
+                WatchPartyDiagnostics.applied(command, partyId, outcome = "seek-paused")
                 return
             }
             shouldPlay = true
             controller.play()
+            WatchPartyDiagnostics.applied(command, partyId, outcome = "${command.kind}-playing")
         }
     }
 }
@@ -952,7 +964,19 @@ private fun PlayerScreenRuntime.refusePartyControl(): Boolean {
 }
 
 /** Starts, or restarts, shared playback at an instant everyone can reach. */
-private fun PlayerScreenRuntime.startPartyPlayback(positionMs: Long, source: String) {
+private fun PlayerScreenRuntime.startPartyPlayback(
+    positionMs: Long,
+    source: String,
+    diagnosticInputId: String? = null,
+) {
+    val uiAtInput = WatchPartyRepository.uiState.value
+    val inputId = diagnosticInputId ?: WatchPartyDiagnostics.input(
+        kind = PartyCommandKind.play,
+        positionMs = positionMs,
+        party = uiAtInput.party,
+        actorProfileId = uiAtInput.activeProfileId,
+        source = source,
+    )
     scope.launch {
         // Named for the same reason a pause is: a party that starts and stops has to say who kept
         // asking it to, and "who" is the difference between a user, a readiness gate and a stall
@@ -968,6 +992,7 @@ private fun PlayerScreenRuntime.startPartyPlayback(positionMs: Long, source: Str
             startPositionMs = positionMs,
             startAtPartyMs = startAt,
             playbackSpeed = playbackSnapshot.playbackSpeed,
+            diagnosticInputId = inputId,
         )
         // The durable record follows the barrier rather than carrying it. A late joiner reads this;
         // nobody waits on it.
@@ -975,7 +1000,19 @@ private fun PlayerScreenRuntime.startPartyPlayback(positionMs: Long, source: Str
     }
 }
 
-private fun PlayerScreenRuntime.pausePartyPlayback(positionMs: Long, source: String) {
+private fun PlayerScreenRuntime.pausePartyPlayback(
+    positionMs: Long,
+    source: String,
+    diagnosticInputId: String? = null,
+) {
+    val uiAtInput = WatchPartyRepository.uiState.value
+    val inputId = diagnosticInputId ?: WatchPartyDiagnostics.input(
+        kind = PartyCommandKind.pause,
+        positionMs = positionMs,
+        party = uiAtInput.party,
+        actorProfileId = uiAtInput.activeProfileId,
+        source = source,
+    )
     scope.launch {
         // Every pause names where it came from. A pause with no origin is exactly what the
         // 2026-09-02 run could not explain: the host's player stopped, no command was issued, and
@@ -990,6 +1027,7 @@ private fun PlayerScreenRuntime.pausePartyPlayback(positionMs: Long, source: Str
             // ignores the instant for a pause, not the sender.
             startAtPartyMs = WatchPartySync.partyNowMs(),
             playbackSpeed = playbackSnapshot.playbackSpeed,
+            diagnosticInputId = inputId,
         )
         if (command != null) WatchPartyRepository.pause(positionMs, command.commandId)
     }
@@ -1004,7 +1042,13 @@ private fun PlayerScreenRuntime.pausePartyPlayback(positionMs: Long, source: Str
  */
 internal fun PlayerScreenRuntime.submitPartyPlayPause(isPlaying: Boolean, positionMs: Long): Boolean {
     if (!partyOwnsTransport()) return false
-    if (!mayControlParty()) return refusePartyControl()
+    val uiAtInput = WatchPartyRepository.uiState.value
+    val kind = if (isPlaying) PartyCommandKind.play else PartyCommandKind.pause
+    val inputId = WatchPartyDiagnostics.input(kind, positionMs, uiAtInput.party, uiAtInput.activeProfileId, source = "user")
+    if (!mayControlParty()) {
+        WatchPartyDiagnostics.rejected(inputId, kind, uiAtInput.party, uiAtInput.activeProfileId, reason = "permission")
+        return refusePartyControl()
+    }
     val party = WatchPartyRepository.uiState.value.party ?: return true
     // Pressing play while the gate is still holding is the force start: the host has decided not to
     // wait, and the command that follows is what tells everyone else the film has begun.
@@ -1017,16 +1061,15 @@ internal fun PlayerScreenRuntime.submitPartyPlayPause(isPlaying: Boolean, positi
     // decision it did not take.
     partyAutoPausedForGuests = emptyList()
     if (isPlaying) {
-        startPartyPlayback(positionMs, source = "user")
+        startPartyPlayback(positionMs, source = "user", diagnosticInputId = inputId)
     } else {
-        pausePartyPlayback(positionMs, source = "user")
+        pausePartyPlayback(positionMs, source = "user", diagnosticInputId = inputId)
     }
     return true
 }
 
 internal fun PlayerScreenRuntime.submitPartySeek(positionMs: Long): Boolean {
     if (!partyOwnsTransport()) return false
-    if (!mayControlParty()) return refusePartyControl()
     // Scrubbing a paused party is how anybody finds a scene, and the barrier used to resume everyone
     // when it landed - so dragging the bar on a paused film started it again, on every member. The
     // seek carries what the party was doing, because a guest cannot tell a scrub-while-paused from a
@@ -1038,6 +1081,24 @@ internal fun PlayerScreenRuntime.submitPartySeek(positionMs: Long): Boolean {
     // last frame and stop. Bounded once, at the one place they all pass through.
     val durationMs = playbackSnapshot.durationMs
     val targetMs = if (durationMs > 0L) positionMs.coerceIn(0L, durationMs - 1L) else positionMs.coerceAtLeast(0L)
+    val uiAtInput = WatchPartyRepository.uiState.value
+    val inputId = WatchPartyDiagnostics.input(
+        PartyCommandKind.seek,
+        targetMs,
+        uiAtInput.party,
+        uiAtInput.activeProfileId,
+        source = "user",
+    )
+    if (!mayControlParty()) {
+        WatchPartyDiagnostics.rejected(
+            inputId,
+            PartyCommandKind.seek,
+            uiAtInput.party,
+            uiAtInput.activeProfileId,
+            reason = "permission",
+        )
+        return refusePartyControl()
+    }
     scope.launch {
         val startAt = WatchPartySync.partyNowMs() + WatchPartySync.barrierLeadMs()
         val command = WatchPartySync.issueCommand(
@@ -1046,6 +1107,7 @@ internal fun PlayerScreenRuntime.submitPartySeek(positionMs: Long): Boolean {
             startAtPartyMs = startAt,
             playbackSpeed = playbackSnapshot.playbackSpeed,
             playAfter = resumeAfter,
+            diagnosticInputId = inputId,
         )
         if (command != null) WatchPartyRepository.seek(targetMs, command.commandId)
     }
@@ -1054,14 +1116,33 @@ internal fun PlayerScreenRuntime.submitPartySeek(positionMs: Long): Boolean {
 
 internal fun PlayerScreenRuntime.submitPartySpeed(speed: Float): Boolean {
     if (!partyOwnsTransport()) return false
-    if (!mayControlParty()) return refusePartyControl()
+    val uiAtInput = WatchPartyRepository.uiState.value
+    val inputId = WatchPartyDiagnostics.input(
+        PartyCommandKind.speed,
+        playbackSnapshot.positionMs,
+        uiAtInput.party,
+        uiAtInput.activeProfileId,
+        source = "user",
+    )
+    if (!mayControlParty()) {
+        WatchPartyDiagnostics.rejected(
+            inputId,
+            PartyCommandKind.speed,
+            uiAtInput.party,
+            uiAtInput.activeProfileId,
+            reason = "permission",
+        )
+        return refusePartyControl()
+    }
     scope.launch {
         val startAt = WatchPartySync.partyNowMs() + WatchPartySync.barrierLeadMs()
+        val positionMs = samplePlaybackPosition().positionMs
         val command = WatchPartySync.issueCommand(
             kind = PartyCommandKind.speed,
-            startPositionMs = samplePlaybackPosition().positionMs,
+            startPositionMs = positionMs,
             startAtPartyMs = startAt,
             playbackSpeed = speed,
+            diagnosticInputId = inputId,
         )
         if (command != null) WatchPartyRepository.setSpeed(speed, command.commandId)
     }
