@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import com.nuvio.app.features.details.MetaDetailsScreen
 import com.nuvio.app.features.player.PlayerExitDiagnostics
+import com.nuvio.app.features.watchparty.PartyContent
 import com.nuvio.app.features.details.PersonDetailScreen
 import com.nuvio.app.features.details.TmdbEntityBrowseScreen
 import com.nuvio.app.features.home.MetaPreview
@@ -78,6 +79,7 @@ internal fun DetailsDestination(
     navController: NuvioNavigator,
     onPlay: ContentPlayAction,
     onPlayManually: ContentPlayAction,
+    onWatchTogether: (PartyContent) -> Unit,
     sharedTransitionScope: SharedTransitionScope,
     animatedVisibilityScope: AnimatedVisibilityScope,
 ) {
@@ -92,6 +94,7 @@ internal fun DetailsDestination(
         onBack = onBack,
         onPlay = onPlay,
         onPlayManually = onPlayManually,
+        onWatchTogether = onWatchTogether,
         onOpenMeta = onOpenMeta,
         modifier = Modifier
             .fillMaxSize()

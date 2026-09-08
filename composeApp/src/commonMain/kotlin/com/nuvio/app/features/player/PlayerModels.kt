@@ -75,6 +75,8 @@ data class PlayerLaunch(
      * rather than guessing. See `PlaybackDurationPlausibility`.
      */
     val expectedRuntimeMinutes: Int? = null,
+    /** Credential-free identity captured before any local debrid resolution. */
+    val partySourceDescriptor: com.nuvio.app.features.watchparty.PartySourceDescriptorV2? = null,
 )
 
 object PlayerLaunchStore {

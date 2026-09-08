@@ -139,6 +139,8 @@ data class PartyCommand(
      * send it behaves the way that build's own barrier did.
      */
     val playAfter: Boolean = true,
+    val sourceGeneration: Int = 0,
+    val authorityEpoch: Long = 0L,
 )
 
 /**

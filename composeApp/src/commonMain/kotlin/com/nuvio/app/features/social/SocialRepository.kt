@@ -29,6 +29,8 @@ import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.put
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
+import com.nuvio.app.features.watchparty.PartySourceContractVersion
+import com.nuvio.app.features.watchparty.WatchPartyState
 
 /** How long to wait for the social channel to report itself subscribed before giving up on it. */
 private const val SocialChannelSubscribeTimeoutMs = 12_000L
@@ -74,6 +76,7 @@ object SocialRepository {
                 friends = cached?.friends.orEmpty(),
                 requests = cached?.requests.orEmpty(),
                 partyInvites = cached?.partyInvites.orEmpty(),
+                notifications = cached?.notifications.orEmpty(),
                 watchingNow = cached?.watchingNow.orEmpty(),
                 activity = cached?.activity.orEmpty(),
                 isOfflineCache = cached != null,
@@ -113,12 +116,14 @@ object SocialRepository {
                 put("p_limit", SocialPageSize)
                 current.selectedFriendId?.let { put("p_filter_profile_id", it) }
             }
-            ZSupabaseProvider.client.postgrest.rpc("social_get_state", params).decodeAs<SocialStatePayload>()
+            val rpcName=if (current.capabilities.partyContractVersion>=PartySourceContractVersion) "social_get_state_v2" else "social_get_state"
+            ZSupabaseProvider.client.postgrest.rpc(rpcName, params).decodeAs<SocialStatePayload>()
         }.onSuccess { payload ->
             val activity = if (append) (current.activity + payload.activity).distinctBy(RecentActivityRun::runId) else payload.activity
             val next = payload.activity.lastOrNull()?.let { SocialActivityCursor(it.lastEventTime, it.runId) }
             _uiState.value = _uiState.value.copy(
                 me = payload.me, friends = payload.friends, requests = payload.requests, partyInvites = payload.partyInvites,
+                notifications = payload.notifications,
                 watchingNow = payload.watchingNow.take(SocialHomeItemLimit), activity = activity,
                 nextCursor = next, isLoading = false, isLoadingMore = false, isOfflineCache = false, errorMessage = null,
             )
@@ -143,6 +148,34 @@ object SocialRepository {
         ZSupabaseProvider.client.postgrest.rpc("social_set_privacy", buildJsonObject {
             put("p_profile_id", profileId); put("p_share_watching_now", shareWatchingNow); put("p_share_recently_watched", shareRecentlyWatched)
         })
+    }
+
+    suspend fun setDefaultJoinPolicy(policy: WatchJoinPolicy): Result<Unit> = socialMutation("social_set_default_join_policy") {
+        put("p_profile_id",requireActiveProfile());put("p_policy",policy.name)
+    }
+
+    suspend fun setPresenceJoinPolicy(deviceId:String,sessionId:String,policy:WatchJoinPolicy): Result<Unit> =
+        socialMutation("social_set_presence_join_policy") {
+            put("p_profile_id",requireActiveProfile());put("p_device_id",deviceId);put("p_session_id",sessionId);put("p_policy",policy.name)
+        }
+
+    suspend fun joinWatching(item:WatchingNowItem): Result<SocialActionResult> = socialCall {
+        require(_uiState.value.capabilities.partyContractVersion>=PartySourceContractVersion) { "Watch Together update required" }
+        ZSupabaseProvider.client.postgrest.rpc("social_join_watching",buildJsonObject {
+            put("p_requester_profile_id",requireActiveProfile());put("p_receiver_profile_id",item.profile.profileId)
+            put("p_presence_session_id",item.sessionId);put("p_contract_version",PartySourceContractVersion)
+        }).decodeAs<SocialActionResult>().also { refresh(false) }
+    }
+
+    suspend fun notificationAction(id:String,action:SocialNotificationAction): Result<SocialActionResult> = socialCall {
+        ZSupabaseProvider.client.postgrest.rpc("social_notification_action",buildJsonObject {
+            put("p_profile_id",requireActiveProfile());put("p_notification_id",id);put("p_action",action.name.lowercase())
+            put("p_contract_version",PartySourceContractVersion)
+        }).decodeAs<SocialActionResult>().also { refresh(false) }
+    }
+
+    suspend fun markNotificationsRead(ids:Set<String>): Result<Unit> = socialMutation("social_mark_notifications_read") {
+        put("p_profile_id",requireActiveProfile());put("p_notification_ids",json.encodeToJsonElement(ids.toList()))
     }
 
     suspend fun searchProfiles(query: String): Result<List<SocialProfileSummary>> = socialCall {
@@ -283,6 +316,13 @@ object SocialRepository {
         return runCatching { block() }
     }
 }
+
+@Serializable
+data class SocialActionResult(
+    val outcome:String,
+    @SerialName("request_id") val requestId:String?=null,
+    val party:WatchPartyState?=null,
+)
 
 @Serializable
 private sealed class SocialOutboxEntry {

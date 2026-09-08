@@ -16,7 +16,6 @@ import com.nuvio.app.features.watchparty.PartyPlaybackGate
 import com.nuvio.app.features.watchparty.PartyTick
 import com.nuvio.app.features.watchparty.SourceResolutionState
 import com.nuvio.app.features.watchparty.PartySourceMatch
-import com.nuvio.app.features.watchparty.SourceFingerprint
 import com.nuvio.app.features.watchparty.StallHoldBudget
 import com.nuvio.app.features.watchparty.WatchPartyControlMode
 import com.nuvio.app.features.watchparty.WatchPartyHostGraceMs
@@ -34,8 +33,8 @@ import com.nuvio.app.features.watchparty.arePartyDurationsCompatible
 import com.nuvio.app.features.watchparty.currentEpochMs
 import com.nuvio.app.features.watchparty.expectedPartyPositionMs
 import com.nuvio.app.features.watchparty.matchesPlayback
-import com.nuvio.app.features.watchparty.normalizeReleaseFingerprint
-import com.nuvio.app.features.watchparty.sourceFingerprintMatchScore
+import com.nuvio.app.features.watchparty.PartySourceMatchTier
+import com.nuvio.app.features.watchparty.partySourceMatchTier
 import com.nuvio.app.features.watchparty.partyBarrierPlan
 import com.nuvio.app.features.watchparty.partyFallbackDriftCorrection
 import com.nuvio.app.features.watchparty.partyMembersAwaitingSource
@@ -300,14 +299,14 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
     LaunchedEffect(generationKey, mediaLoaded) {
         if (generationKey == null) return@LaunchedEffect
         if (mediaLoaded) {
-            val localFingerprint = SourceFingerprint(
-                addonId = activeProviderAddonId,
-                infoHash = activeTorrentInfoHash,
-                fileIndex = activeTorrentFileIdx,
-                releaseFingerprint = normalizeReleaseFingerprint(activeStreamTitle),
-            )
             val match = matchingParty?.sourceFingerprint?.let { target ->
-                if (sourceFingerprintMatchScore(target, localFingerprint) >= 4_000) {
+                val local = activePartySourceDescriptor
+                if (local != null && partySourceMatchTier(target,local) in setOf(
+                        PartySourceMatchTier.ExactTorrentFile,
+                        PartySourceMatchTier.ExactOriginRelease,
+                        PartySourceMatchTier.ExactRelease,
+                        PartySourceMatchTier.EquivalentMedia,
+                    )) {
                     PartySourceMatch.exact
                 } else {
                     PartySourceMatch.alternate
@@ -963,7 +962,7 @@ private fun PlayerScreenRuntime.startPartyPlayback(positionMs: Long, source: Str
         // the window it made the party's first act a play followed instantly by a hold.
         WatchPartySync.resetStallWatch()
         val startAt = WatchPartySync.partyNowMs() + WatchPartySync.barrierLeadMs()
-        WatchPartySync.issueCommand(
+        val command = WatchPartySync.issueCommand(
             kind = PartyCommandKind.play,
             startPositionMs = positionMs,
             startAtPartyMs = startAt,
@@ -971,7 +970,7 @@ private fun PlayerScreenRuntime.startPartyPlayback(positionMs: Long, source: Str
         )
         // The durable record follows the barrier rather than carrying it. A late joiner reads this;
         // nobody waits on it.
-        WatchPartyRepository.play(positionMs)
+        if (command != null) WatchPartyRepository.play(positionMs, command.commandId)
     }
 }
 
@@ -981,7 +980,7 @@ private fun PlayerScreenRuntime.pausePartyPlayback(positionMs: Long, source: Str
         // 2026-09-02 run could not explain: the host's player stopped, no command was issued, and
         // the guests learned about it only from the timeline's status.
         partyLog.i { "pause src=$source positionMs=$positionMs" }
-        WatchPartySync.issueCommand(
+        val command = WatchPartySync.issueCommand(
             kind = PartyCommandKind.pause,
             startPositionMs = positionMs,
             // Pause carries no lead. Pausing 60ms apart is worth far more than pausing together and
@@ -991,7 +990,7 @@ private fun PlayerScreenRuntime.pausePartyPlayback(positionMs: Long, source: Str
             startAtPartyMs = WatchPartySync.partyNowMs(),
             playbackSpeed = playbackSnapshot.playbackSpeed,
         )
-        WatchPartyRepository.pause(positionMs)
+        if (command != null) WatchPartyRepository.pause(positionMs, command.commandId)
     }
 }
 
@@ -1040,14 +1039,14 @@ internal fun PlayerScreenRuntime.submitPartySeek(positionMs: Long): Boolean {
     val targetMs = if (durationMs > 0L) positionMs.coerceIn(0L, durationMs - 1L) else positionMs.coerceAtLeast(0L)
     scope.launch {
         val startAt = WatchPartySync.partyNowMs() + WatchPartySync.barrierLeadMs()
-        WatchPartySync.issueCommand(
+        val command = WatchPartySync.issueCommand(
             kind = PartyCommandKind.seek,
             startPositionMs = targetMs,
             startAtPartyMs = startAt,
             playbackSpeed = playbackSnapshot.playbackSpeed,
             playAfter = resumeAfter,
         )
-        WatchPartyRepository.seek(targetMs)
+        if (command != null) WatchPartyRepository.seek(targetMs, command.commandId)
     }
     return true
 }
@@ -1057,13 +1056,13 @@ internal fun PlayerScreenRuntime.submitPartySpeed(speed: Float): Boolean {
     if (!mayControlParty()) return refusePartyControl()
     scope.launch {
         val startAt = WatchPartySync.partyNowMs() + WatchPartySync.barrierLeadMs()
-        WatchPartySync.issueCommand(
+        val command = WatchPartySync.issueCommand(
             kind = PartyCommandKind.speed,
             startPositionMs = samplePlaybackPosition().positionMs,
             startAtPartyMs = startAt,
             playbackSpeed = speed,
         )
-        WatchPartyRepository.setSpeed(speed)
+        if (command != null) WatchPartyRepository.setSpeed(speed, command.commandId)
     }
     return true
 }

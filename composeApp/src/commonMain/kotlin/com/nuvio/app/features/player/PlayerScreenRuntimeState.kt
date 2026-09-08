@@ -105,6 +105,7 @@ internal class PlayerScreenRuntime(
     val initialProgressFraction: Float? get() = args.initialProgressFraction
     val externalSubtitles: List<com.nuvio.app.features.streams.StreamSubtitle> get() = args.externalSubtitles
     val isSeries: Boolean get() = parentMetaType == "series"
+    val initialPartySourceDescriptor get() = args.partySourceDescriptor
 
     lateinit var scope: CoroutineScope
     lateinit var hapticFeedback: HapticFeedback
@@ -161,6 +162,7 @@ internal class PlayerScreenRuntime(
     var activeStreamSubtitle by mutableStateOf(streamSubtitle)
     var activeProviderName by mutableStateOf(providerName)
     var activeProviderAddonId by mutableStateOf(providerAddonId)
+    var activePartySourceDescriptor by mutableStateOf(args.partySourceDescriptor)
     var currentStreamBingeGroup by mutableStateOf(initialBingeGroup)
     var activeSeasonNumber by mutableStateOf(seasonNumber)
     var activeEpisodeNumber by mutableStateOf(episodeNumber)

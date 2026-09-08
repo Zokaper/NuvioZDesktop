@@ -69,7 +69,7 @@ data class WatchPartyUiState(
      * had so much as looked at who was in the room. Held here rather than in the lobby's own
      * composition because the lobby leaves composition while the source list is on top of it.
      */
-    val stagedHostSource: SourceFingerprint? = null,
+    val stagedHostSource: PartySourceDescriptorV2? = null,
     /** How [stagedHostSource] reads in the lobby - the release the host picked, in their words. */
     val stagedHostSourceLabel: String? = null,
     val isWorking: Boolean = false,
@@ -113,6 +113,30 @@ object WatchPartyRepository {
     // The periodic and transition heartbeats sample playback independently. If their requests are
     // allowed to overlap, an older sample can finish last and overwrite the newer host state.
     private val heartbeatMutex = Mutex()
+
+    fun installAuthorizedSnapshot(snapshot:WatchPartyState) = installSnapshot(snapshot)
+
+    suspend fun restoreActive():Result<WatchPartyState?> = call {
+        val snapshot=ZSupabaseProvider.client.postgrest.rpc("party_get_active",buildJsonObject {
+            put("p_profile_id",requireProfile());put("p_contract_version",PartySourceContractVersion)
+        }).decodeAs<WatchPartyState?>()
+        snapshot?.let(::installSnapshot)
+        snapshot
+    }
+
+    suspend fun promotePresence(sessionId:String):Result<Unit> = call {
+        val snapshot=ZSupabaseProvider.client.postgrest.rpc("party_promote_presence",buildJsonObject {
+            put("p_profile_id",requireProfile());put("p_presence_session_id",sessionId);put("p_contract_version",PartySourceContractVersion)
+        }).decodeAs<WatchPartyState>()
+        installSnapshot(snapshot)
+    }
+
+    suspend fun setClientLocation(location:String):Result<Unit> = call {
+        val snapshot=ZSupabaseProvider.client.postgrest.rpc("party_set_client_location",buildJsonObject {
+            put("p_party_id",requireParty().id);put("p_profile_id",requireProfile());put("p_location",location)
+        }).decodeAs<WatchPartyState>()
+        installSnapshot(snapshot,reopenChannel=false)
+    }
 
     /**
      * Coalesces broadcast-driven refreshes.
@@ -170,7 +194,7 @@ object WatchPartyRepository {
      * Deliberately local: the party is only told when the host starts it, and until then the
      * lobby is the one screen that knows a source exists.
      */
-    fun stageHostSource(fingerprint: SourceFingerprint, label: String?) {
+    fun stageHostSource(fingerprint: PartySourceDescriptorV2, label: String?) {
         log.i { "staged host source party=${_uiState.value.party?.id.shortId()} label=$label" }
         _uiState.value = _uiState.value.copy(
             stagedHostSource = fingerprint,
@@ -186,7 +210,7 @@ object WatchPartyRepository {
 
     suspend fun create(
         content: PartyContent,
-        sourceFingerprint: SourceFingerprint? = null,
+        sourceFingerprint: PartySourceDescriptorV2? = null,
         qualityIntent: JsonObject? = null,
         controlMode: WatchPartyControlMode = WatchPartyControlMode.host_only,
         initialPositionMs: Long = 0L,
@@ -194,14 +218,15 @@ object WatchPartyRepository {
     ): Result<String> = call {
         val profileId = requireProfile()
         val code = generateInviteCode()
-        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_create", buildJsonObject {
+        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_create_v2", buildJsonObject {
             put("p_host_profile_id", profileId); put("p_invite_code", code)
             put("p_content", json.encodeToJsonElement(content))
-            sourceFingerprint?.let { put("p_source_fingerprint", json.encodeToJsonElement(it)) }
-            qualityIntent?.let { put("p_quality_intent", it) }
+            sourceFingerprint?.let { put("p_source_descriptor", json.encodeToJsonElement(it)) }
+            qualityIntent?.let { put("p_track_intent", it) }
             put("p_control_mode", controlMode.name)
             put("p_position_ms", initialPositionMs.coerceAtLeast(0L))
             put("p_playback_speed", initialPlaybackSpeed.coerceIn(0.25f, 4f))
+            put("p_contract_version", PartySourceContractVersion)
         }).decodeAs<WatchPartyState>()
         log.i { "create party=${snapshot.id.shortId()} host=${profileId.shortId()} code=****${code.takeLast(4)}" }
         installSnapshot(snapshot)
@@ -291,14 +316,17 @@ object WatchPartyRepository {
     }
 
     suspend fun selectSource(
-        fingerprint: SourceFingerprint,
+        fingerprint: PartySourceDescriptorV2,
         expectedSourceGeneration: Int,
     ): Result<Unit> = call {
-        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_select_source", buildJsonObject {
-            put("p_party_id", requireParty().id)
+        val party=requireParty()
+        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_select_source_v2", buildJsonObject {
+            put("p_party_id", party.id)
             put("p_host_profile_id", requireProfile())
+            put("p_expected_content_generation",party.contentGeneration)
             put("p_expected_source_generation", expectedSourceGeneration)
-            put("p_source_fingerprint", json.encodeToJsonElement(fingerprint))
+            put("p_source_descriptor", json.encodeToJsonElement(fingerprint))
+            put("p_contract_version",PartySourceContractVersion)
         }).decodeAs<WatchPartyState>()
         installSnapshot(snapshot, reopenChannel = false)
     }
@@ -308,23 +336,30 @@ object WatchPartyRepository {
             "command party=${_uiState.value.party?.id.shortId()} profile=${_uiState.value.activeProfileId.shortId()} " +
                 "type=${command.type} positionMs=${command.positionMs} speed=${command.playbackSpeed}"
         }
-        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_submit_command", buildJsonObject {
-            put("p_party_id", requireParty().id); put("p_profile_id", requireProfile()); put("p_command_id", command.commandId)
+        val party=requireParty()
+        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_submit_command_v2", buildJsonObject {
+            put("p_party_id", party.id); put("p_profile_id", requireProfile()); put("p_command_id", command.commandId)
             put("p_command_type", command.type); put("p_payload", buildJsonObject {
                 command.positionMs?.let { put("position_ms", it) }; command.playbackSpeed?.let { put("playback_speed", it) }
             })
+            put("p_content_generation",party.contentGeneration);put("p_source_generation",party.sourceGeneration)
+            put("p_authority_epoch",party.authorityEpoch)
         }).decodeAs<WatchPartyState>()
         installSnapshot(snapshot, reopenChannel = false)
     }
 
     @OptIn(ExperimentalUuidApi::class)
-    suspend fun play(positionMs: Long) = submit(WatchPartyCommand(Uuid.random().toString(), "play", positionMs))
+    suspend fun play(positionMs: Long, commandId: String = Uuid.random().toString()) =
+        submit(WatchPartyCommand(commandId, "play", positionMs))
     @OptIn(ExperimentalUuidApi::class)
-    suspend fun pause(positionMs: Long) = submit(WatchPartyCommand(Uuid.random().toString(), "pause", positionMs))
+    suspend fun pause(positionMs: Long, commandId: String = Uuid.random().toString()) =
+        submit(WatchPartyCommand(commandId, "pause", positionMs))
     @OptIn(ExperimentalUuidApi::class)
-    suspend fun seek(positionMs: Long) = submit(WatchPartyCommand(Uuid.random().toString(), "seek", positionMs))
+    suspend fun seek(positionMs: Long, commandId: String = Uuid.random().toString()) =
+        submit(WatchPartyCommand(commandId, "seek", positionMs))
     @OptIn(ExperimentalUuidApi::class)
-    suspend fun setSpeed(speed: Float) = submit(WatchPartyCommand(Uuid.random().toString(), "speed", playbackSpeed = speed))
+    suspend fun setSpeed(speed: Float, commandId: String = Uuid.random().toString()) =
+        submit(WatchPartyCommand(commandId, "speed", playbackSpeed = speed))
 
     /**
      * The durable position, aged forward to roughly when the server will write it.
@@ -367,10 +402,13 @@ object WatchPartyRepository {
         }
     }
 
-    suspend fun changeContent(content: PartyContent, fingerprint: SourceFingerprint?, qualityIntent: JsonObject? = null): Result<Unit> = call {
-        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_change_content", buildJsonObject {
-            put("p_party_id", requireParty().id); put("p_host_profile_id", requireProfile()); put("p_content", json.encodeToJsonElement(content))
-            fingerprint?.let { put("p_source_fingerprint", json.encodeToJsonElement(it)) }; qualityIntent?.let { put("p_quality_intent", it) }
+    suspend fun changeContent(content: PartyContent, fingerprint: PartySourceDescriptorV2?, qualityIntent: JsonObject? = null): Result<Unit> = call {
+        val party=requireParty()
+        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_change_content_v2", buildJsonObject {
+            put("p_party_id", party.id); put("p_host_profile_id", requireProfile());put("p_expected_content_generation",party.contentGeneration)
+            put("p_content", json.encodeToJsonElement(content))
+            fingerprint?.let { put("p_source_descriptor", json.encodeToJsonElement(it)) }; qualityIntent?.let { put("p_track_intent", it) }
+            put("p_contract_version",PartySourceContractVersion)
         }).decodeAs<WatchPartyState>()
         installSnapshot(snapshot, reopenChannel = false)
     }
@@ -418,28 +456,21 @@ object WatchPartyRepository {
         val profile = _uiState.value.activeProfileId
             ?: throw IllegalStateException("No active profile")
         log.i { "depart mode=$mode party=${party.id.shortId()} profile=${profile.shortId()}" }
-        // Local teardown is unconditional. The caller still awaits the bounded RPC so normal
-        // navigation and window shutdown give host transfer/end a chance to complete.
+        try {
+            withTimeout(WatchPartyChannelCloseTimeoutMs) {
+                ZSupabaseProvider.client.postgrest.rpc("party_depart_v2",buildJsonObject {
+                    put("p_party_id",party.id);put("p_profile_id",profile)
+                    put("p_mode",if(mode==PartyDepartureMode.END_PARTY) "end" else "leave_transfer")
+                    put("p_contract_version",PartySourceContractVersion)
+                })
+            }
+        } catch (failure: Throwable) {
+            log.w(failure) { "departure rpc failed party=${party.id.shortId()}, retaining local state for retry" }
+            throw failure
+        }
         stopPolling(); stopChannel(); clockOffsetPartyId = null
         launchedSourceGeneration = null
         _uiState.value = WatchPartyUiState(activeProfileId = profile)
-        try {
-            withTimeout(WatchPartyChannelCloseTimeoutMs) {
-                when (mode) {
-                    PartyDepartureMode.END_PARTY ->
-                    ZSupabaseProvider.client.postgrest.rpc("party_end", buildJsonObject {
-                        put("p_party_id", party.id); put("p_host_profile_id", profile)
-                    })
-                    PartyDepartureMode.LEAVE_AND_TRANSFER ->
-                    ZSupabaseProvider.client.postgrest.rpc("party_leave", buildJsonObject {
-                        put("p_party_id", party.id); put("p_profile_id", profile)
-                    })
-                }
-            }
-        } catch (failure: Throwable) {
-            log.w(failure) { "departure rpc failed party=${party.id.shortId()}, already dropped locally" }
-            throw failure
-        }
         Unit
     }
 

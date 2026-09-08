@@ -8,7 +8,10 @@ import com.nuvio.app.core.sync.SyncClientIdentity
 import com.nuvio.app.features.social.SocialPlaybackState
 import com.nuvio.app.features.social.SocialPresenceHeartbeatMs
 import com.nuvio.app.features.social.SocialPresencePublish
+import com.nuvio.app.features.social.SocialPresenceSession
 import com.nuvio.app.features.social.SocialRepository
+import com.nuvio.app.features.watchparty.ActivePlaybackContext
+import com.nuvio.app.features.watchparty.WatchPartySessionCoordinator
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.uuid.ExperimentalUuidApi
@@ -20,7 +23,14 @@ import kotlin.uuid.Uuid
 internal fun PlayerScreenRuntime.BindSocialPresenceEffect() {
     val deviceId = remember { SyncClientIdentity.currentClientId() }
     val sessionId = remember { Uuid.random().toString() }
+    val attachmentId = remember { Uuid.random().toString() }
     val videoKey = "$parentMetaType:$parentMetaId:$activeVideoId:$activeSeasonNumber:$activeEpisodeNumber"
+    val defaultJoinPolicy = SocialRepository.uiState.value.me?.defaultJoinPolicy
+        ?: com.nuvio.app.features.social.WatchJoinPolicy.approval
+
+    LaunchedEffect(deviceId, sessionId, defaultJoinPolicy) {
+        SocialPresenceSession.attach(deviceId, sessionId, defaultJoinPolicy)
+    }
 
     suspend fun publishCurrent() {
         val snapshot = playbackSnapshot
@@ -34,6 +44,8 @@ internal fun PlayerScreenRuntime.BindSocialPresenceEffect() {
                 videoId = playbackSession.videoId,
                 title = title,
                 poster = poster,
+                background = background,
+                episodeThumbnail = activeEpisodeThumbnail,
                 season = activeSeasonNumber,
                 episode = activeEpisodeNumber,
                 episodeTitle = activeEpisodeTitle,
@@ -41,8 +53,22 @@ internal fun PlayerScreenRuntime.BindSocialPresenceEffect() {
                 durationMs = snapshot.durationMs,
                 playbackSpeed = snapshot.playbackSpeed,
                 state = if (snapshot.isPlaying) SocialPlaybackState.playing else SocialPlaybackState.paused,
+                effectiveJoinPolicy = SocialPresenceSession.state.value.effectivePolicy,
+                sourceFingerprint = activePartySourceDescriptor,
             ),
         )
+    }
+
+    LaunchedEffect(videoKey,activePartySourceDescriptor,playbackSnapshot.positionMs,playbackSnapshot.durationMs,playbackSnapshot.playbackSpeed) {
+        activePartySourceDescriptor?.let { descriptor ->
+            WatchPartySessionCoordinator.registerPlayback(
+                ActivePlaybackContext(
+                    attachmentId=attachmentId,contentId=parentMetaId,videoId=playbackSession.videoId,
+                    descriptor=descriptor,positionMs=playbackSnapshot.positionMs,durationMs=playbackSnapshot.durationMs,
+                    playbackSpeed=playbackSnapshot.playbackSpeed,
+                ),sessionId,deviceId,
+            )
+        }
     }
 
     // Immediate updates for play/pause, item/source transition, and first known duration.
@@ -56,6 +82,10 @@ internal fun PlayerScreenRuntime.BindSocialPresenceEffect() {
         }
     }
     DisposableEffect(deviceId) {
-        onDispose { scope.launch { SocialRepository.clearPresence(deviceId) } }
+        onDispose {
+            WatchPartySessionCoordinator.unregisterPlayback(attachmentId)
+            SocialPresenceSession.detach(deviceId, sessionId)
+            scope.launch { SocialRepository.clearPresence(deviceId) }
+        }
     }
 }

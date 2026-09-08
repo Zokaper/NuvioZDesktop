@@ -94,6 +94,12 @@ import com.nuvio.app.features.streams.StreamLaunchStore
 import com.nuvio.app.features.streams.PartyStreamLaunchPurpose
 import com.nuvio.app.features.streams.StreamsRepository
 import com.nuvio.app.features.streams.StreamsScreen
+import com.nuvio.app.features.watchparty.PartySourceCandidate
+import com.nuvio.app.features.watchparty.PartySourceDescriptorV2
+import com.nuvio.app.features.watchparty.PartySourceMatchTier
+import com.nuvio.app.features.watchparty.WatchPartyRepository
+import com.nuvio.app.features.watchparty.tierPartySourceCandidates
+import com.nuvio.app.features.watchparty.toPartySourceDescriptor
 import com.nuvio.app.features.updater.formatFileSize
 import com.nuvio.app.navigation.*
 import kotlinx.coroutines.delay
@@ -166,6 +172,7 @@ internal fun buildP2pPlayerLaunch(
     sourceFacts = SourceFactsExtractor.extract(stream),
     playbackAttempt = autoPickAttempt,
     expectedRuntimeMinutes = launch.runtimeMinutes,
+    partySourceDescriptor = stream.toPartySourceDescriptor(),
 )
 
 @Composable
@@ -212,6 +219,7 @@ internal fun StreamDestination(
     // outlive the sheet, which leaves composition the moment `onDismiss` runs.
     var exitRequested by rememberSaveable(route.launchId) { mutableStateOf(false) }
     val noAutomaticSourceMessage = stringResource(Res.string.playback_quality_no_match)
+    val hostSourceUnavailableMessage = stringResource(Res.string.watch_party_host_source_unavailable)
 
     /**
      * Which of the ways into the source list was taken, or null while none has been.
@@ -445,12 +453,20 @@ internal fun StreamDestination(
         PlayerSettingsRepository.ensureLoaded()
         PlayerSettingsRepository.uiState
     }.collectAsStateWithLifecycle()
+    val partyResolutionContext = launch.partyContext?.takeIf {
+        it.purpose == PartyStreamLaunchPurpose.RESOLVE_PLAYBACK && it.targetFingerprint != null
+    }
+    val isPartyResolution = partyResolutionContext != null
     // Streamlined and Instant own source selection. Passing them through the
     // legacy auto-play policy would run two pickers over the same candidates.
     val streamManualSelection = launch.manualSelection ||
         // A download-intent launch must never auto-play: the user pressed
         // Download, so every automatic playback path stays out of the way.
         launch.downloadIntent ||
+        // Party playback has its own strict source matcher. Marking the repository request as
+        // manual prevents Classic's legacy auto-play policy from seeding an ordinary ranked
+        // source before that matcher has seen the complete catalogue.
+        isPartyResolution ||
         playerSettings.playbackMode != PlaybackMode.CLASSIC
 
     fun openP2pStream(
@@ -461,7 +477,8 @@ internal fun StreamDestination(
     ) {
         val infoHash = stream.p2pInfoHash ?: return
         val sentinelUrl = p2pSentinelUrl(infoHash, stream.p2pFileIdx)
-        val hasFailureChain = replaceStreamRoute && playerSettings.playbackMode != PlaybackMode.CLASSIC
+        val hasFailureChain = replaceStreamRoute &&
+            (isPartyResolution || playerSettings.playbackMode != PlaybackMode.CLASSIC)
         val playerLaunch = buildP2pPlayerLaunch(
             launch = launch,
             stream = stream,
@@ -639,7 +656,7 @@ internal fun StreamDestination(
             // guard is inert for them: a manual pick is the user reading the release name and
             // choosing anyway, and overriding that would be a refusal wearing a helper's name.
             identity = if (
-                playerSettings.playbackMode != PlaybackMode.CLASSIC &&
+                (isPartyResolution || playerSettings.playbackMode != PlaybackMode.CLASSIC) &&
                 !launch.manualSelection &&
                 !launch.downloadIntent
             ) {
@@ -661,6 +678,49 @@ internal fun StreamDestination(
     // returned. A quality nobody released simply produces no row.
     val playbackQualityOptions = remember(playbackCandidates, playbackSelectionContext) {
         PlaybackQualityOptions.build(playbackCandidates, playbackSelectionContext)
+    }
+    val partyTieredSources = remember(
+        partyResolutionContext,
+        playbackCandidates,
+        playbackQualityOptions,
+        playbackSelectionContext,
+    ) {
+        val host = partyResolutionContext?.targetFingerprint ?: return@remember null
+        val normalOrder = playbackQualityOptions.firstOrNull()?.candidates.orEmpty()
+        tierPartySourceCandidates(
+            host = host,
+            candidates = playbackCandidates.mapNotNull { candidate ->
+                val descriptor = candidate.stream.toPartySourceDescriptor(candidate.facts)
+                    ?: return@mapNotNull null
+                val identity = playbackSelectionContext.identity
+                val contentMatches = identity == null || ContentIdentityGuard.evaluate(
+                    releaseName = candidate.facts.filename ?: candidate.stream.name,
+                    requestedSeason = identity.season,
+                    requestedEpisode = identity.episode,
+                    requestedYear = identity.year,
+                ) == null
+                val normalIndex = normalOrder.indexOfFirst { it.stream === candidate.stream }
+                PartySourceCandidate(
+                    value = candidate,
+                    descriptor = descriptor,
+                    normalRank = if (normalIndex >= 0) normalOrder.size - normalIndex else 0,
+                    contentMatches = contentMatches,
+                    protocolSafe = PlaybackSourceSelector.isPlaybackProtocolEligible(
+                        candidate,
+                        playbackSelectionContext.allowTorrentSources,
+                    ),
+                    // Stream groups are built only from the currently enabled addon/plugin set.
+                    addonAllowed = true,
+                    languageWatchable = playbackSelectionContext.languageStrictness !=
+                        com.nuvio.app.features.playback.LanguageStrictness.REQUIRE ||
+                        playbackSelectionContext.preferredAudioLanguage.isNullOrBlank() ||
+                        SourceRanking.isLanguageWatchable(
+                            candidate.facts,
+                            playbackSelectionContext.rankingPreferences,
+                        ),
+                )
+            },
+        )
     }
     // Resolved here because the band names are `stringResource`s and the effect
     // that announces a skipped sheet is not composable. Built from the same
@@ -697,6 +757,56 @@ internal fun StreamDestination(
                     launch.partyContext.targetFingerprint != null,
             ),
         )
+    }
+
+    var partyResolutionHandled by rememberSaveable(
+        route.launchId,
+        partyResolutionContext?.partyId,
+        partyResolutionContext?.sourceGeneration,
+        partyResolutionContext?.targetFingerprint?.releaseFingerprint,
+    ) { mutableStateOf(false) }
+    LaunchedEffect(
+        isPartyResolution,
+        partyResolutionHandled,
+        partyTieredSources,
+        streamsUiState.requestToken,
+        streamsUiState.isAnyLoading,
+        streamsUiState.emptyStateReason,
+    ) {
+        if (!isPartyResolution || partyResolutionHandled) return@LaunchedEffect
+        if (
+            !com.nuvio.app.features.playback.isStreamlinedSelectionReady(
+                requestToken = streamsUiState.requestToken,
+                expectedRequestToken = expectedStreamsRequestToken,
+                isAnyLoading = streamsUiState.isAnyLoading,
+                candidateCount = playbackCandidates.size,
+                hasTerminalEmptyState = streamsUiState.emptyStateReason != null,
+                hasStreams = streamsUiState.groups.any { it.streams.isNotEmpty() },
+            )
+        ) return@LaunchedEffect
+
+        partyResolutionHandled = true
+        val tiered = partyTieredSources
+        if (tiered == null || tiered.tier == PartySourceMatchTier.None || tiered.candidates.isEmpty()) {
+            streamLog.w {
+                "party source unavailable: party=${partyResolutionContext?.partyId?.take(8)} " +
+                    "sourceGeneration=${partyResolutionContext?.sourceGeneration} " +
+                    "fallbackAvailable=${tiered?.fallback != null}"
+            }
+            // A fallback is only an offer. Never seed or open it: the user must explicitly choose
+            // an alternate from the uncovered list, and the lobby remains the durable owner.
+            giveUpToSourceList(hostSourceUnavailableMessage, path = "party_source_unavailable")
+            return@LaunchedEffect
+        }
+
+        streamLog.i {
+            "party source matched: party=${partyResolutionContext?.partyId?.take(8)} " +
+                "sourceGeneration=${partyResolutionContext?.sourceGeneration} " +
+                "tier=${tiered.tier} candidates=${tiered.candidates.size}"
+        }
+        qualitySheetDismissed = true
+        autoPlaybackStarting = true
+        StreamsRepository.seedAutoPlayCandidates(tiered.candidates.map { it.value.stream })
     }
 
     /**
@@ -889,13 +999,16 @@ internal fun StreamDestination(
         // One flag, asked once: "is there a next candidate to fall to?".
         // Answering that in two ways is how the chain ends up half-wired - which
         // is why this is not `mode == STREAMLINED || mode == INSTANT`.
-        val hasFailureChain =
-            playerSettings.playbackMode != PlaybackMode.CLASSIC &&
-                autoPlaybackStarting
+        val hasFailureChain = autoPlaybackStarting &&
+            (isPartyResolution || playerSettings.playbackMode != PlaybackMode.CLASSIC)
         if (!isClassicAutoPlay && !hasFailureChain) return@LaunchedEffect
         if (autoPlayHandled && !hasFailureChain) return@LaunchedEffect
         if (streamsUiState.requestToken != expectedStreamsRequestToken) return@LaunchedEffect
         val selectedStream = streamsUiState.autoPlayStream ?: return@LaunchedEffect
+        val safePartySource = selectedStream.toPartySourceDescriptor(
+            playbackCandidates.firstOrNull { it.stream === selectedStream }?.facts
+                ?: SourceFactsExtractor.extract(selectedStream),
+        )
         val stream = if (DirectDebridPlaybackResolver.shouldResolveToPlayableStream(selectedStream)) {
             streamLog.i {
                 "debrid resolving: attempt=$autoPickAttempt candidate=${sourceFailureLabel(selectedStream)}"
@@ -1012,6 +1125,7 @@ internal fun StreamDestination(
                 ?: SourceFactsExtractor.extract(stream),
             playbackAttempt = autoPickAttempt,
             expectedRuntimeMinutes = launch.runtimeMinutes,
+            partySourceDescriptor = safePartySource,
         )
         if (playerSettings.playbackMode == PlaybackMode.INSTANT) {
             val openedFacts = playbackCandidates
@@ -1113,10 +1227,32 @@ internal fun StreamDestination(
         resolvedResumeProgressFraction: Float?,
         forceExternal: Boolean,
         forceInternal: Boolean,
+        safePartySource: PartySourceDescriptorV2? = null,
     ) {
         val willOpenInternally = forceInternal || (!forceExternal && !playerSettings.externalPlayerEnabled && !stream.shouldOpenExternally)
         val streamFacts = playbackCandidates.firstOrNull { it.stream === stream }?.facts
             ?: SourceFactsExtractor.extract(stream)
+        val retainedPartySource = safePartySource ?: stream.toPartySourceDescriptor(streamFacts)
+        val partySelection = launch.partyContext?.takeIf {
+            it.purpose == PartyStreamLaunchPurpose.SELECT_SOURCE
+        }
+        if (partySelection != null) {
+            val currentParty = WatchPartyRepository.uiState.value.party
+            val selectionIsCurrent = currentParty?.id == partySelection.partyId &&
+                currentParty.sourceGeneration == partySelection.sourceGeneration
+            if (retainedPartySource == null || !selectionIsCurrent) {
+                NuvioToastController.show(hostSourceUnavailableMessage)
+                return
+            }
+
+            // Source preparation is a credential-free choice, never a playback attempt. The
+            // original descriptor is staged before any debrid resolution or URL/header access,
+            // then this transient source route returns to the durable lobby.
+            WatchPartyRepository.stageHostSource(retainedPartySource, stream.streamLabel)
+            StreamsRepository.cancelLoading()
+            navController.popBackStack(route)
+            return
+        }
         if (willOpenInternally) {
             manualCandidateFacts = streamFacts
             manualPlaybackStarting = true
@@ -1152,6 +1288,7 @@ internal fun StreamDestination(
                         resolvedResumeProgressFraction = resolvedResumeProgressFraction,
                         forceExternal = forceExternal,
                         forceInternal = forceInternal,
+                        safePartySource = retainedPartySource,
                     )
                     else -> {
                         manualPlaybackStarting = false
@@ -1228,6 +1365,7 @@ internal fun StreamDestination(
                 ?: SourceFactsExtractor.extract(stream),
             playbackAttempt = autoPickAttempt,
             expectedRuntimeMinutes = launch.runtimeMinutes,
+            partySourceDescriptor = retainedPartySource,
         )
 
         if (!forceInternal && (forceExternal || playerSettings.externalPlayerEnabled)) {
@@ -1421,7 +1559,8 @@ internal fun StreamDestination(
      * is being derived from.
      */
     val awaitingMeteredAnswer =
-        playbackRouteDecision is PlaybackRouteDecision.AutoPick &&
+        !isPartyResolution &&
+            playbackRouteDecision is PlaybackRouteDecision.AutoPick &&
             sheetNetworkQuality.isMetered &&
             meteredChoice == null
     LaunchedEffect(
@@ -1436,9 +1575,10 @@ internal fun StreamDestination(
         // Both automatic modes need this. Streamlined shows the figure and
         // withholds it while it moves; Instant never shows it and *decides* on
         // it, which is the stricter of the two requirements.
-        val needsConnectionFigure =
+        val needsConnectionFigure = !isPartyResolution && (
             playbackRouteDecision is PlaybackRouteDecision.ShowQualitySheet ||
                 playbackRouteDecision is PlaybackRouteDecision.AutoPick
+            )
         if (!needsConnectionFigure) return@LaunchedEffect
         if (qualitySheetDismissed) return@LaunchedEffect
         // This effect re-runs often - `qualityProbeTarget` is rebuilt every
@@ -1537,7 +1677,7 @@ internal fun StreamDestination(
     // deciding whether to spend their data can easily take longer than twenty
     // seconds. Firing there would toast "sources timed out" at a question the app
     // itself had asked.
-    val automaticSelectionPending = !awaitingMeteredAnswer && (
+    val automaticSelectionPending = !isPartyResolution && !awaitingMeteredAnswer && (
         streamlinedSelectionPending ||
         (
             playbackRouteDecision is PlaybackRouteDecision.AutoPick &&
@@ -1624,6 +1764,7 @@ internal fun StreamDestination(
         streamsUiState.emptyStateReason,
     ) {
         if (playbackRouteDecision !is PlaybackRouteDecision.AutoPick) return@LaunchedEffect
+        if (isPartyResolution) return@LaunchedEffect
         if (instantSelectionHandled) return@LaunchedEffect
         if (qualitySheetDismissed || manualSourceListRequested) return@LaunchedEffect
         if (

@@ -564,6 +564,60 @@ button:disabled {
 
 .party-panel.visible { display: block; }
 
+.party-panel-actions,
+.social-notification-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.party-panel-actions button,
+.social-notification-actions button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--theme-border-default);
+  border-radius: 10px;
+  background: var(--theme-surface-card);
+  color: var(--theme-text-primary);
+  cursor: pointer;
+}
+
+.party-panel-actions button:hover,
+.social-notification-actions button:hover { background: var(--theme-selected-surface); }
+.party-panel-actions button.danger { color: #ef7a90; }
+
+.social-notification,
+.party-ended-choice {
+  position: absolute;
+  top: calc(76px + env(safe-area-inset-top));
+  right: var(--hp);
+  z-index: 10;
+  display: none;
+  width: min(360px, calc(100% - (var(--hp) * 2)));
+  padding: 16px 44px 16px 18px;
+  border: 1px solid var(--theme-border-default);
+  border-radius: 16px;
+  background: rgba(15, 16, 21, .94);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .36);
+}
+
+.social-notification.visible,
+.party-ended-choice.visible { display: grid; gap: 4px; }
+.social-notification > span,
+.party-ended-choice > span { color: var(--theme-text-muted); font-size: 13px; }
+.party-ended-choice { top: 50%; left: 50%; right: auto; transform: translate(-50%, -50%); }
+.social-notification-dismiss {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  border: 0;
+  background: transparent;
+  color: var(--theme-text-muted);
+  font-size: 22px;
+  cursor: pointer;
+}
+
 .party-panel-header,
 .party-member {
   display: flex;
@@ -3545,4 +3599,15 @@ svg {
   fill: currentColor;
   stroke: none;
   pointer-events: none;
+}
+.presence-policy-button {
+  width: auto;
+  min-width: 88px;
+  padding: 0 12px;
+}
+
+.presence-policy-button span {
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
 }

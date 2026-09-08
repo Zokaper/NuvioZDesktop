@@ -12,7 +12,11 @@ const val SocialPresenceStaleMs = 90_000L
 data class SocialCapabilities(
     @SerialName("social_enabled") val socialEnabled: Boolean = false,
     @SerialName("watch_party_enabled") val watchPartyEnabled: Boolean = false,
+    @SerialName("party_contract_version") val partyContractVersion: Int = 1,
 )
+
+@Serializable
+enum class WatchJoinPolicy { direct, approval, disabled }
 
 @Serializable
 data class SocialProfileSummary(
@@ -24,6 +28,7 @@ data class SocialProfileSummary(
     @SerialName("is_friend") val isFriend: Boolean = false,
     @SerialName("share_watching_now") val shareWatchingNow: Boolean = true,
     @SerialName("share_recently_watched") val shareRecentlyWatched: Boolean = true,
+    @SerialName("default_join_policy") val defaultJoinPolicy: WatchJoinPolicy = WatchJoinPolicy.approval,
 )
 
 @Serializable
@@ -53,6 +58,10 @@ data class WatchingNowItem(
     @SerialName("video_id") val videoId: String,
     val title: String,
     val poster: String? = null,
+    val background: String? = null,
+    @SerialName("episode_thumbnail") val episodeThumbnail: String? = null,
+    @SerialName("session_id") val sessionId: String = "",
+    @SerialName("effective_join_policy") val effectiveJoinPolicy: WatchJoinPolicy = WatchJoinPolicy.approval,
     val season: Int? = null,
     val episode: Int? = null,
     @SerialName("episode_title") val episodeTitle: String? = null,
@@ -78,6 +87,8 @@ data class RecentActivityRun(
     @SerialName("video_id") val videoId: String? = null,
     val title: String,
     val poster: String? = null,
+    val background: String? = null,
+    @SerialName("episode_thumbnail") val episodeThumbnail: String? = null,
     val season: Int? = null,
     val episode: Int? = null,
     @SerialName("episode_title") val episodeTitle: String? = null,
@@ -92,6 +103,7 @@ data class SocialStatePayload(
     val friends: List<SocialProfileSummary> = emptyList(),
     val requests: List<FriendRequest> = emptyList(),
     @SerialName("party_invites") val partyInvites: List<SocialInboxItem> = emptyList(),
+    val notifications: List<SocialNotification> = emptyList(),
     @SerialName("watching_now") val watchingNow: List<WatchingNowItem> = emptyList(),
     val activity: List<RecentActivityRun> = emptyList(),
 )
@@ -103,6 +115,7 @@ data class SocialUiState(
     val friends: List<SocialProfileSummary> = emptyList(),
     val requests: List<FriendRequest> = emptyList(),
     val partyInvites: List<SocialInboxItem> = emptyList(),
+    val notifications: List<SocialNotification> = emptyList(),
     val watchingNow: List<WatchingNowItem> = emptyList(),
     val activity: List<RecentActivityRun> = emptyList(),
     val selectedFriendId: String? = null,
@@ -112,7 +125,9 @@ data class SocialUiState(
     val isOfflineCache: Boolean = false,
     val errorMessage: String? = null,
 ) {
-    val unreadCount: Int get() = requests.size + partyInvites.size
+    val unreadCount: Int get() = if (capabilities.partyContractVersion>=2) {
+        notifications.count { it.readAt==null && it.availableActions.isNotEmpty() }
+    } else requests.size + partyInvites.size
     val needsHandleSetup: Boolean get() = capabilities.socialEnabled && activeProfileId != null && me == null
 }
 
@@ -127,6 +142,8 @@ data class SocialPresencePublish(
     @SerialName("video_id") val videoId: String,
     val title: String,
     val poster: String? = null,
+    val background: String? = null,
+    @SerialName("episode_thumbnail") val episodeThumbnail: String? = null,
     val season: Int? = null,
     val episode: Int? = null,
     @SerialName("episode_title") val episodeTitle: String? = null,
@@ -134,6 +151,9 @@ data class SocialPresencePublish(
     @SerialName("duration_ms") val durationMs: Long,
     @SerialName("playback_speed") val playbackSpeed: Float,
     val state: SocialPlaybackState,
+    @SerialName("effective_join_policy") val effectiveJoinPolicy: WatchJoinPolicy = WatchJoinPolicy.approval,
+    @SerialName("source_fingerprint") val sourceFingerprint: com.nuvio.app.features.watchparty.PartySourceDescriptorV2? = null,
+    @SerialName("track_intent") val trackIntent: com.nuvio.app.features.watchparty.PartyTrackIntent? = null,
 )
 
 @Serializable

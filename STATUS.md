@@ -1,5 +1,24 @@
 # Nuvio Z Status
 
+Last updated: 2026-09-08
+
+## Phase 4: automated implementation gate green; watched matrix pending (2026-09-08)
+
+Phase 4 desktop Stages 1-13 are implemented. Stage 12 is now complete: the Home and Social activity surfaces share `TitlePresentationCard`, title artwork selection is import-light and covered by the pure harness, and `SocialActivityChip` is retired. The native notification renderer now maps its three allowed actions to explicit bridge commands rather than synthesizing command names.
+
+Automated verification is green:
+
+- focused native controls JSON/page tests: 7/7;
+- pure suites: 481/481 across eight groups;
+- `:composeApp:compileKotlinDesktop` passes;
+- targeted player/navigation/social/watchparty desktop tests pass;
+- full `:composeApp:desktopTest`: 1,647/1,647, zero failures/errors/skips;
+- backend remains at the handoff's locally verified 130/130 pgTAP result because no backend SQL changed in this continuation.
+
+Release-style debug-tools MSI built successfully at `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` (252,670,144 bytes; SHA-256 `CEAC1492575A1B399A4ECAF534573B200A5153B9393F92CBCE08BCDC9D4215A0`). The exact physical checklist is `PHASE-4-TWO-CLIENT-VERIFICATION.md` and every scenario remains **NOT RUN**.
+
+Phase 4 is **not complete**. The two-client watched matrix has not been executed, and the two backend migrations have not been deployed to live Supabase project `pzbpghmmordvzcfbayoh`. Never deploy them to `api.nuvio.tv`.
+
 Last updated: 2026-09-07
 
 ## Phase 2 follow-up: Seamless desktop player handoff (2026-09-07)

@@ -61,6 +61,28 @@ class NativePlayerControlsPageTest {
         assertFalse(css.contains("animation: opening-artwork-drift"))
     }
 
+    @Test
+    fun partyAndNotificationActionsAreWiredThroughTheNativePage() {
+        val html = resourceText("/player-ui/controls.html")
+        val script = resourceText("/player-ui/controls.js")
+
+        listOf(
+            "partyLobby",
+            "partyToggleControlMode",
+            "partyLeave",
+            "partyEnd",
+            "partyEndContinue",
+            "partyEndExit",
+            "socialNotificationDismiss",
+            "presenceJoinPolicyCycle",
+        ).forEach { command ->
+            assertTrue(html.contains("data-command=\"$command\""), "missing native command $command")
+        }
+        listOf("socialNotificationAccept", "socialNotificationDecline", "socialNotificationJoin").forEach { command ->
+            assertTrue(script.contains(command), "missing dynamic notification command $command")
+        }
+    }
+
     private fun resourceText(path: String): String =
         checkNotNull(javaClass.getResourceAsStream(path)) { "Missing test resource: $path" }
             .bufferedReader()

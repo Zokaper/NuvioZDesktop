@@ -261,21 +261,54 @@ rm -rf "$WORK/out-watchparty"
 kotlinc -nowarn -cp "$CP_BUILD:$CP_JSON" -Xplugin="$WORK/serialization-plugin-${KOTLIN_VERSION}.jar" \
   -d "$WORK/out-watchparty" \
   "$M/features/watchparty/WatchPartyModels.kt" \
+  "$M/features/watchparty/PartySourceDescriptorV2.kt" \
+  "$M/features/watchparty/WatchPartySessionState.kt" \
   "$M/features/watchparty/WatchPartyClock.kt" \
   "$M/features/watchparty/WatchPartyTimeline.kt" \
   "$M/features/watchparty/WatchPartyBarrier.kt" \
   "$M/features/watchparty/WatchPartySyncProtocol.kt" \
   "$T/features/watchparty/WatchPartyModelsTest.kt" \
+  "$T/features/watchparty/PartySourceDescriptorV2Test.kt" \
+  "$T/features/watchparty/WatchPartySessionStateTest.kt" \
   "$T/features/watchparty/WatchPartySyncTest.kt" \
   2>&1 | grep -v "^warning:" | grep -v "Picked up JAVA" || true
 
 java -cp "$WORK/out-watchparty:$CP_RUN:$CP_JSON" org.junit.runner.JUnitCore \
   com.nuvio.app.features.watchparty.WatchPartyModelsTest \
+  com.nuvio.app.features.watchparty.PartySourceDescriptorV2Test \
+  com.nuvio.app.features.watchparty.WatchPartySessionStateTest \
   com.nuvio.app.features.watchparty.WatchPartyClockTest \
   com.nuvio.app.features.watchparty.WatchPartyTimelineTest \
   com.nuvio.app.features.watchparty.WatchPartyBarrierTest \
   com.nuvio.app.features.watchparty.WatchPartyPendingSeekTest \
   com.nuvio.app.features.watchparty.WatchPartySyncProtocolTest 2>&1 | grep -v "Picked up JAVA_TOOL"
+
+# --- Group 7: the unified social notification reducer ---------------------------------------
+rm -rf "$WORK/out-social"
+kotlinc -nowarn -cp "$CP_BUILD:$CP_JSON" -Xplugin="$WORK/serialization-plugin-${KOTLIN_VERSION}.jar" \
+  -d "$WORK/out-social" \
+  "$M/features/watchparty/WatchPartyModels.kt" \
+  "$M/features/watchparty/PartySourceDescriptorV2.kt" \
+  "$M/features/social/SocialModels.kt" \
+  "$M/features/social/SocialNotifications.kt" \
+  "$T/features/social/SocialNotificationsTest.kt" \
+  2>&1 | grep -v "^warning:" | grep -v "Picked up JAVA" || true
+
+java -cp "$WORK/out-social:$CP_RUN:$CP_JSON" org.junit.runner.JUnitCore \
+  com.nuvio.app.features.social.SocialNotificationsTest 2>&1 | grep -v "Picked up JAVA_TOOL"
+
+# --- Group 8: shared Continue Watching/social title artwork selection -------------------------
+# The style enum is a neighbour stub because its shipped file reaches the full watch-progress
+# model graph; the title presentation decision itself is compiled from the shipped source.
+rm -rf "$WORK/out-title-presentation"
+kotlinc -nowarn -cp "$CP_BUILD" -d "$WORK/out-title-presentation" \
+  "$STUBS/title/ContinueWatchingSectionStyleStub.kt" \
+  "$M/features/home/components/TitlePresentation.kt" \
+  "$T/features/home/components/TitlePresentationTest.kt" \
+  2>&1 | grep -v "^warning:" | grep -v "Picked up JAVA" || true
+
+java -cp "$WORK/out-title-presentation:$CP_RUN" org.junit.runner.JUnitCore \
+  com.nuvio.app.features.home.components.TitlePresentationTest 2>&1 | grep -v "Picked up JAVA_TOOL"
 
 # Deliberately not run here, and CI is the gate for all three:
 #   PlaybackSourceSelectorTest  - reaches the real AIO types

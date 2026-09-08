@@ -39,7 +39,7 @@ import kotlinx.serialization.json.put
  * An unreadable or unknown message decodes to null, the client falls back to the database anchor,
  * and the party works less well instead of not at all.
  */
-const val WatchPartySyncProtocolVersion = 1
+const val WatchPartySyncProtocolVersion = 2
 
 /** One broadcast event carries all of it, so a single collector sees every message in order. */
 const val WatchPartySyncEvent = "sync"
@@ -53,6 +53,9 @@ private const val TypePeerStatus = "peer"
 sealed interface PartySyncMessage {
     val partyId: String
     val fromProfileId: String
+    val contentGeneration: Int
+    val sourceGeneration: Int
+    val authorityEpoch: Long
 }
 
 /** The host's position, paired with the instant it was read. See [PartyTick]. */
@@ -61,6 +64,9 @@ data class PartyTickMessage(
     val tick: PartyTick,
 ) : PartySyncMessage {
     override val partyId: String get() = tick.partyId
+    override val contentGeneration: Int get() = tick.contentGeneration
+    override val sourceGeneration: Int get() = tick.sourceGeneration
+    override val authorityEpoch: Long get() = tick.authorityEpoch
 }
 
 /** A transport action addressed to a party instant. See [PartyCommand]. */
@@ -69,6 +75,9 @@ data class PartyCommandMessage(
     val command: PartyCommand,
 ) : PartySyncMessage {
     override val fromProfileId: String get() = command.issuedByProfileId
+    override val contentGeneration: Int get() = command.contentGeneration
+    override val sourceGeneration: Int get() = command.sourceGeneration
+    override val authorityEpoch: Long get() = command.authorityEpoch
 }
 
 /** A guest asking the host what time it is. */
@@ -77,6 +86,9 @@ data class PartyClockPingMessage(
     override val fromProfileId: String,
     val exchangeId: String,
     val sentAtMs: Long,
+    override val contentGeneration: Int = 0,
+    override val sourceGeneration: Int = 0,
+    override val authorityEpoch: Long = 0L,
 ) : PartySyncMessage
 
 /**
@@ -93,6 +105,9 @@ data class PartyClockPongMessage(
     val exchangeId: String,
     val sentAtMs: Long,
     val hostAtMs: Long,
+    override val contentGeneration: Int = 0,
+    override val sourceGeneration: Int = 0,
+    override val authorityEpoch: Long = 0L,
 ) : PartySyncMessage
 
 /**
@@ -108,15 +123,23 @@ data class PartyPeerStatusMessage(
     val status: WatchPartyStatus,
     val atPartyMs: Long,
     val rttMs: Long = -1L,
+    override val contentGeneration: Int = 0,
+    override val sourceGeneration: Int = 0,
+    override val authorityEpoch: Long = 0L,
 ) : PartySyncMessage
 
 fun encodePartySyncMessage(message: PartySyncMessage): JsonObject = buildJsonObject {
     put("v", WatchPartySyncProtocolVersion)
     put("p", message.partyId)
     put("f", message.fromProfileId)
+    put("sender_profile_id", message.fromProfileId)
+    put("content_generation", message.contentGeneration)
+    put("source_generation", message.sourceGeneration)
+    put("authority_epoch", message.authorityEpoch)
     when (message) {
         is PartyTickMessage -> {
             put("t", TypeTick)
+            put("type", TypeTick)
             put("g", message.tick.contentGeneration)
             put("q", message.tick.sequence)
             put("s", message.tick.status.name)
@@ -127,6 +150,7 @@ fun encodePartySyncMessage(message: PartySyncMessage): JsonObject = buildJsonObj
         }
         is PartyCommandMessage -> {
             put("t", TypeCommand)
+            put("type", message.command.kind.name)
             put("id", message.command.commandId)
             put("k", message.command.kind.name)
             put("n", message.command.counter)
@@ -138,11 +162,13 @@ fun encodePartySyncMessage(message: PartySyncMessage): JsonObject = buildJsonObj
         }
         is PartyClockPingMessage -> {
             put("t", TypeClockPing)
+            put("type", TypeClockPing)
             put("id", message.exchangeId)
             put("t0", message.sentAtMs)
         }
         is PartyClockPongMessage -> {
             put("t", TypeClockPong)
+            put("type", TypeClockPong)
             put("id", message.exchangeId)
             put("to", message.toProfileId)
             put("t0", message.sentAtMs)
@@ -150,6 +176,7 @@ fun encodePartySyncMessage(message: PartySyncMessage): JsonObject = buildJsonObj
         }
         is PartyPeerStatusMessage -> {
             put("t", TypePeerStatus)
+            put("type", TypePeerStatus)
             put("s", message.status.name)
             put("at", message.atPartyMs)
             put("rtt", message.rttMs)
@@ -173,6 +200,9 @@ fun decodePartySyncMessage(payload: JsonObject): PartySyncMessage? {
     if (version > WatchPartySyncProtocolVersion) return null
     val partyId = str("p") ?: return null
     val from = str("f") ?: return null
+    val contentGeneration = int("content_generation") ?: return null
+    val sourceGeneration = int("source_generation") ?: return null
+    val authorityEpoch = long("authority_epoch") ?: return null
 
     return when (str("t")) {
         TypeTick -> PartyTickMessage(
@@ -187,6 +217,8 @@ fun decodePartySyncMessage(payload: JsonObject): PartySyncMessage? {
                 capturedAtPartyMs = long("at") ?: return null,
                 playbackSpeed = float("spd") ?: return null,
                 durationMs = long("dur") ?: 0L,
+                sourceGeneration = sourceGeneration,
+                authorityEpoch = authorityEpoch,
             ),
         )
         TypeCommand -> PartyCommandMessage(
@@ -203,6 +235,8 @@ fun decodePartySyncMessage(payload: JsonObject): PartySyncMessage? {
                 playbackSpeed = float("spd") ?: 1f,
                 // Absent from a build that predates the field, and there it always resumed.
                 playAfter = bool("run") ?: true,
+                sourceGeneration = sourceGeneration,
+                authorityEpoch = authorityEpoch,
             ),
         )
         TypeClockPing -> PartyClockPingMessage(
@@ -210,6 +244,9 @@ fun decodePartySyncMessage(payload: JsonObject): PartySyncMessage? {
             fromProfileId = from,
             exchangeId = str("id") ?: return null,
             sentAtMs = long("t0") ?: return null,
+            contentGeneration = contentGeneration,
+            sourceGeneration = sourceGeneration,
+            authorityEpoch = authorityEpoch,
         )
         TypeClockPong -> PartyClockPongMessage(
             partyId = partyId,
@@ -218,6 +255,9 @@ fun decodePartySyncMessage(payload: JsonObject): PartySyncMessage? {
             exchangeId = str("id") ?: return null,
             sentAtMs = long("t0") ?: return null,
             hostAtMs = long("t1") ?: return null,
+            contentGeneration = contentGeneration,
+            sourceGeneration = sourceGeneration,
+            authorityEpoch = authorityEpoch,
         )
         TypePeerStatus -> PartyPeerStatusMessage(
             partyId = partyId,
@@ -226,6 +266,9 @@ fun decodePartySyncMessage(payload: JsonObject): PartySyncMessage? {
                 ?: return null,
             atPartyMs = long("at") ?: return null,
             rttMs = long("rtt") ?: -1L,
+            contentGeneration = contentGeneration,
+            sourceGeneration = sourceGeneration,
+            authorityEpoch = authorityEpoch,
         )
         else -> null
     }

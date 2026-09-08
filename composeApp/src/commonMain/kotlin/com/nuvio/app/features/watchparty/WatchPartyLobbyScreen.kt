@@ -94,7 +94,6 @@ import com.nuvio.app.features.profiles.parseHexColor
 import com.nuvio.app.features.social.SocialProfileSummary
 import com.nuvio.app.features.social.SocialRepository
 import com.nuvio.app.features.streams.PartyStreamLaunchPurpose
-import com.nuvio.app.navigation.WatchPartyLobbyRoute
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.Res
@@ -144,7 +143,6 @@ private val EpisodeStillBlur = 12.dp
 
 @Composable
 fun WatchPartyLobbyScreen(
-    route: WatchPartyLobbyRoute,
     onBack: () -> Unit,
     onOpenContent: (contentType: String, contentId: String, title: String) -> Unit = { _, _, _ -> },
     onChooseSource: (WatchPartyState, PartyStreamLaunchPurpose) -> Unit = { _, _ -> },
@@ -190,53 +188,6 @@ fun WatchPartyLobbyScreen(
         if (!WatchPartyRepository.claimSourceLaunch(party.sourceGeneration)) return@LaunchedEffect
         lobbyLog.i { "launching party=${party.id.shortId()} generation=${party.sourceGeneration}" }
         onChooseSource(party, PartyStreamLaunchPurpose.RESOLVE_PLAYBACK)
-    }
-
-    LaunchedEffect(route) {
-        // Skipping whenever any party was held meant a stale one from earlier in the session
-        // suppressed creation entirely: the host was shown somebody else's old lobby, with no
-        // invite code, and nothing explained why. Only a party that actually satisfies this route
-        // counts as already open.
-        val held = state.party
-        val heldSatisfiesRoute = held != null && held.status != WatchPartyStatus.ended && when {
-            route.partyId != null -> held.id == route.partyId
-            !route.inviteCode.isNullOrBlank() -> true
-            route.videoId != null -> held.content.videoId == route.videoId
-            else -> true
-        }
-        lobbyLog.i {
-            "open route partyId=${route.partyId.shortId()} code=${if (route.inviteCode.isNullOrBlank()) "-" else "****" + route.inviteCode.takeLast(4)} " +
-                "content=${route.contentId} video=${route.videoId} held=${held?.id.shortId()} satisfies=$heldSatisfiesRoute"
-        }
-        if (heldSatisfiesRoute) return@LaunchedEffect
-        if (route.partyId != null) {
-            WatchPartyRepository.join(partyId = route.partyId)
-        } else if (!route.inviteCode.isNullOrBlank()) {
-            WatchPartyRepository.join(inviteCode = route.inviteCode)
-        } else if (route.contentId != null && route.contentType != null && route.videoId != null) {
-            WatchPartyRepository.create(
-                PartyContent(
-                    contentId = route.contentId,
-                    contentType = route.contentType,
-                    videoId = route.videoId,
-                    title = route.title.orEmpty(),
-                    poster = route.poster,
-                    season = route.season,
-                    episode = route.episode,
-                    episodeTitle = route.episodeTitle,
-                ),
-                sourceFingerprint = route.sourceReleaseFingerprint?.let {
-                    SourceFingerprint(
-                        addonId = route.sourceAddonId,
-                        infoHash = route.sourceInfoHash,
-                        fileIndex = route.sourceFileIndex,
-                        releaseFingerprint = it,
-                    )
-                },
-                initialPositionMs = route.initialPositionMs,
-                initialPlaybackSpeed = route.initialPlaybackSpeed,
-            )
-        }
     }
 
     val party = state.party

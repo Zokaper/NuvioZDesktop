@@ -388,6 +388,8 @@ object PlayerStreamsRepository {
                             addonId = addon.addonId,
                             addonLogo = addon.manifest.logoUrl,
                             addonManifestUrl = addon.manifest.transportUrl,
+                            partyOriginId = addon.manifest.id,
+                            partyOriginVersion = addon.manifest.version,
                         )
                     }.fold(
                         onSuccess = { streams ->

@@ -954,7 +954,13 @@ fun HomeScreen(
                         onItemLongPress = onContinueWatchingLongPress,
                         disintegrationRequest = continueWatchingDisintegrationRequest,
                     )
-                    homeSocialSections(socialUiState.watchingNow, socialUiState.activity, homeSectionPadding) { type, id, title ->
+                    homeSocialSections(
+                        watchingNow = socialUiState.watchingNow,
+                        activity = socialUiState.activity,
+                        sectionPadding = homeSectionPadding,
+                        style = continueWatchingPreferences.style,
+                        useEpisodeThumbnails = continueWatchingPreferences.useEpisodeThumbnails,
+                    ) { type, id, title ->
                         onPosterClick?.invoke(MetaPreview(id = id, type = type, name = title, poster = null))
                     }
                     items(3) {
@@ -1084,7 +1090,13 @@ fun HomeScreen(
                         onItemLongPress = onContinueWatchingLongPress,
                         disintegrationRequest = continueWatchingDisintegrationRequest,
                     )
-                    homeSocialSections(socialUiState.watchingNow, socialUiState.activity, homeSectionPadding) { type, id, title ->
+                    homeSocialSections(
+                        watchingNow = socialUiState.watchingNow,
+                        activity = socialUiState.activity,
+                        sectionPadding = homeSectionPadding,
+                        style = continueWatchingPreferences.style,
+                        useEpisodeThumbnails = continueWatchingPreferences.useEpisodeThumbnails,
+                    ) { type, id, title ->
                         onPosterClick?.invoke(MetaPreview(id = id, type = type, name = title, poster = null))
                     }
 

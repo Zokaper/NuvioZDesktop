@@ -123,6 +123,8 @@ data class PartyTick(
     val capturedAtPartyMs: Long,
     val playbackSpeed: Float,
     val durationMs: Long,
+    val sourceGeneration: Int = 0,
+    val authorityEpoch: Long = 0L,
 ) {
     /**
      * Where the party is at [partyNowMs].

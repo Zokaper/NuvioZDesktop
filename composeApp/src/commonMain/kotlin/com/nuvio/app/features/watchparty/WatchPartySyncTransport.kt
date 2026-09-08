@@ -221,6 +221,8 @@ internal object WatchPartySync {
             capturedAtPartyMs = capturedAtPartyMs,
             playbackSpeed = playbackSpeed,
             durationMs = durationMs,
+            sourceGeneration = party.sourceGeneration,
+            authorityEpoch = party.authorityEpoch,
         )
         tick = next
         _ticks.tryEmit(next)
@@ -256,6 +258,8 @@ internal object WatchPartySync {
             startAtPartyMs = startAtPartyMs,
             playbackSpeed = playbackSpeed,
             playAfter = playAfter,
+            sourceGeneration = party.sourceGeneration,
+            authorityEpoch = party.authorityEpoch,
         )
         log.i {
             "issue party=${party.id.shortId()} kind=$kind posMs=$startPositionMs " +
@@ -287,6 +291,9 @@ internal object WatchPartySync {
                 status = status,
                 atPartyMs = partyNowMs(),
                 rttMs = clock.bestRttMs,
+                contentGeneration = party.contentGeneration,
+                sourceGeneration = party.sourceGeneration,
+                authorityEpoch = party.authorityEpoch,
             ),
         )
     }
@@ -308,25 +315,36 @@ internal object WatchPartySync {
         val self = ui.activeProfileId ?: return
         if (message.partyId != party.id) return
         if (message.fromProfileId == self) return
+        if (
+            message.contentGeneration != party.contentGeneration ||
+            message.sourceGeneration != party.sourceGeneration ||
+            message.authorityEpoch != party.authorityEpoch
+        ) {
+            WatchPartyRepository.requestRefresh()
+            return
+        }
         when (message) {
-            is PartyClockPingMessage -> if (isHost()) scope.launch { answerPing(message, party.id, self) }
+            is PartyClockPingMessage -> if (isHost()) scope.launch { answerPing(message, party, self) }
             is PartyClockPongMessage -> acceptPong(message, party.hostProfileId, self)
-            is PartyTickMessage -> acceptTick(message, party.hostProfileId)
+            is PartyTickMessage -> acceptTick(message, party)
             is PartyCommandMessage -> acceptCommand(message, party)
             is PartyPeerStatusMessage -> acceptPeerStatus(message)
         }
     }
 
-    private suspend fun answerPing(ping: PartyClockPingMessage, partyId: String, self: String) {
+    private suspend fun answerPing(ping: PartyClockPingMessage, party: WatchPartyState, self: String) {
         send(
             PartyClockPongMessage(
-                partyId = partyId,
+                partyId = party.id,
                 fromProfileId = self,
                 toProfileId = ping.fromProfileId,
                 exchangeId = ping.exchangeId,
                 sentAtMs = ping.sentAtMs,
                 // The host is the clock, so this is the whole of what the exchange is for.
                 hostAtMs = currentEpochMs(),
+                contentGeneration = party.contentGeneration,
+                sourceGeneration = party.sourceGeneration,
+                authorityEpoch = party.authorityEpoch,
             ),
         )
     }
@@ -353,11 +371,19 @@ internal object WatchPartySync {
         publishState()
     }
 
-    private fun acceptTick(message: PartyTickMessage, hostProfileId: String) {
+    private fun acceptTick(message: PartyTickMessage, party: WatchPartyState) {
         // Only the host publishes a timeline. A payload cannot promote itself: the durable snapshot
         // is the only thing that says who the host is.
-        if (message.fromProfileId != hostProfileId) return
+        if (message.fromProfileId != party.hostProfileId) return
         val next = message.tick
+        if (
+            next.contentGeneration != party.contentGeneration ||
+            next.sourceGeneration != party.sourceGeneration ||
+            next.authorityEpoch != party.authorityEpoch
+        ) {
+            WatchPartyRepository.requestRefresh()
+            return
+        }
         val held = tick
         if (held != null && next.contentGeneration != held.contentGeneration) {
             // Content moved under us. The tick cannot say what to, so ask the thing that can.
@@ -372,7 +398,11 @@ internal object WatchPartySync {
     private fun acceptCommand(message: PartyCommandMessage, party: WatchPartyState) {
         val command = message.command
         if (!mayControl(command.issuedByProfileId, party)) return
-        if (command.contentGeneration != party.contentGeneration) {
+        if (
+            command.contentGeneration != party.contentGeneration ||
+            command.sourceGeneration != party.sourceGeneration ||
+            command.authorityEpoch != party.authorityEpoch
+        ) {
             WatchPartyRepository.requestRefresh()
             return
         }
@@ -433,7 +463,18 @@ internal object WatchPartySync {
             // An exchange that is never answered would otherwise accumulate forever on a host that
             // is on an older build, which is exactly the case this has to survive.
             outstandingPings.entries.removeAll { (_, at) -> sentAt - at > WatchPartyClockStaleMs }
-            send(PartyClockPingMessage(partyId, profileId, exchangeId, sentAt))
+            val party = WatchPartyRepository.uiState.value.party ?: break
+            send(
+                PartyClockPingMessage(
+                    partyId = partyId,
+                    fromProfileId = profileId,
+                    exchangeId = exchangeId,
+                    sentAtMs = sentAt,
+                    contentGeneration = party.contentGeneration,
+                    sourceGeneration = party.sourceGeneration,
+                    authorityEpoch = party.authorityEpoch,
+                ),
+            )
             peerStatus?.let { publishPeerStatus(it) }
             delay(watchPartyClockPingDelayMs(clock.samples.size))
         }

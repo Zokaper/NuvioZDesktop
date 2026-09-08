@@ -15,6 +15,7 @@ import com.nuvio.app.features.player.PlayerScreen
 import com.nuvio.app.features.watchprogress.ResumePromptRepository
 import com.nuvio.app.navigation.NuvioNavigator
 import com.nuvio.app.navigation.PlayerRoute
+import com.nuvio.app.navigation.WatchPartyLobbyRoute
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -50,6 +51,7 @@ internal fun PlayerDestination(
         Box(modifier = Modifier.fillMaxSize())
         return
     }
+    var requestedPartyLobbyId by remember { mutableStateOf<String?>(null) }
     val onBack = rememberGuardedPlayerPopBackStack(
         navController = navController,
         route = route,
@@ -62,6 +64,14 @@ internal fun PlayerDestination(
                 StreamsRepository.abandonAutoPlay()
                 StreamsRepository.cancelLoading()
                 PlaybackLoadingController.activeToken?.let(PlaybackLoadingController::close)
+            }
+        },
+        afterPop = {
+            requestedPartyLobbyId?.let { partyId ->
+                requestedPartyLobbyId = null
+                navController.navigate(WatchPartyLobbyRoute(partyId = partyId)) {
+                    launchSingleTop = true
+                }
             }
         },
     )
@@ -111,6 +121,11 @@ internal fun PlayerDestination(
         sourceFacts = launch.sourceFacts,
         playbackAttempt = launch.playbackAttempt,
         expectedRuntimeMinutes = launch.expectedRuntimeMinutes,
+        partySourceDescriptor = launch.partySourceDescriptor,
+        onStartWatchTogether = { _, _, _, _ ->
+            com.nuvio.app.features.watchparty.WatchPartySessionCoordinator.promoteCurrentPlayback()
+        },
+        onPartyLobbyRequested = { partyId -> requestedPartyLobbyId = partyId },
         onBack = onBack,
         onSystemBackHandlerChanged = registerSystemBack,
         onOpenInExternalPlayer = if (com.nuvio.app.core.build.AppFeaturePolicy.externalPlayerSupported) { { request ->

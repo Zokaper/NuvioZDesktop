@@ -102,6 +102,8 @@ import com.nuvio.app.features.settings.NavBarStyle
 import com.nuvio.app.features.settings.SettingsScreen
 import com.nuvio.app.features.settings.ThemeSettingsRepository
 import com.nuvio.app.features.social.SocialScreen
+import com.nuvio.app.features.social.SocialNotification
+import com.nuvio.app.features.social.SocialNotificationAction
 import com.nuvio.app.features.social.WatchingNowItem
 import com.nuvio.app.features.watchprogress.ContinueWatchingItem
 import com.nuvio.app.isDesktop
@@ -193,6 +195,7 @@ internal data class AppTabActions(
     val onJoinParty: ((String) -> Unit)? = null,
     val onJoinInvitedParty: ((String) -> Unit)? = null,
     val onStartPartyOnContent: ((WatchingNowItem) -> Unit)? = null,
+    val onSocialNotificationAction: ((SocialNotification, SocialNotificationAction) -> Unit)? = null,
     val onSwitchProfile: (() -> Unit)? = null,
     val onSettingsPageClick: ((pageName: String, title: String) -> Unit)? = null,
     val onHomescreenSettingsClick: () -> Unit = {},
@@ -218,10 +221,11 @@ internal fun rememberGuardedPlayerPopBackStack(
     route: AppRoute,
     skipRetainedStreamRoute: () -> Boolean = { false },
     beforePop: () -> Unit = {},
+    afterPop: () -> Unit = {},
 ): PlayerBackRequest {
     val guard = remember(route) { PlayerBackReleaseGuard() }
 
-    return remember(navController, route, skipRetainedStreamRoute, beforePop, guard) {
+    return remember(navController, route, skipRetainedStreamRoute, beforePop, afterPop, guard) {
         { releaseBeforeBack ->
             guard.request(
                 canStart = {
@@ -232,11 +236,13 @@ internal fun rememberGuardedPlayerPopBackStack(
                 beforePop = beforePop,
                 pop = {
                     PlayerExitDiagnostics.recordT1(route.toString())
-                    navController.currentRoute == route &&
+                    val popped = navController.currentRoute == route &&
                         navController.popPlayerExit(
                             expectedRoute = route,
                             skipRetainedStreamRoute = skipRetainedStreamRoute(),
                         )
+                    if (popped) afterPop()
+                    popped
                 },
             )
         }
@@ -338,6 +344,7 @@ internal fun AppTabHost(
                                 onJoinParty = actions.onJoinParty ?: {},
                                 onJoinInvitedParty = actions.onJoinInvitedParty ?: {},
                                 onStartParty = actions.onStartPartyOnContent ?: {},
+                                onNotificationAction = actions.onSocialNotificationAction ?: { _, _ -> },
                             )
                         }
 

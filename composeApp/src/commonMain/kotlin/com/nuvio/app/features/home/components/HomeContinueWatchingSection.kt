@@ -140,32 +140,10 @@ private fun ContinueWatchingItem.isCloudLibraryItem(): Boolean =
 
 private fun ContinueWatchingItem.continueWatchingArtworkUrl(
     useEpisodeThumbnails: Boolean,
-): String? = when {
-    isNextUp && useEpisodeThumbnails -> firstNonBlank(
-        episodeThumbnail,
-        poster,
-        background,
-        imageUrl,
-    )
-    isNextUp -> firstNonBlank(
-        poster,
-        background,
-        episodeThumbnail,
-        imageUrl,
-    )
-    useEpisodeThumbnails -> firstNonBlank(
-        episodeThumbnail,
-        poster,
-        background,
-        imageUrl,
-    )
-    else -> firstNonBlank(
-        poster,
-        background,
-        episodeThumbnail,
-        imageUrl,
-    )
-}
+): String? = titlePresentation().artwork(
+    style = ContinueWatchingSectionStyle.Wide,
+    useEpisodeThumbnails = useEpisodeThumbnails,
+)
 
 private fun ContinueWatchingItem.continueWatchingPosterArtworkUrl(
     useEpisodeThumbnails: Boolean,
@@ -179,53 +157,30 @@ private fun ContinueWatchingItem.continueWatchingPosterArtworkUrl(
         ?.trim()
         ?.takeIf { it.isNotBlank() && it != normalizedEpisodeThumbnail }
 
-    return firstNonBlank(
-        poster,
-        background,
-        nonEpisodeImageUrl,
-        if (useEpisodeThumbnails) episodeThumbnail else null,
-        imageUrl,
-    )
+    return titlePresentation().copy(
+        episodeThumbnail = if (useEpisodeThumbnails) episodeThumbnail else null,
+        fallbackArtwork = nonEpisodeImageUrl ?: imageUrl,
+    ).artwork(ContinueWatchingSectionStyle.Poster, useEpisodeThumbnails)
 }
 
 private fun ContinueWatchingItem.continueWatchingCardArtworkUrl(
     useEpisodeThumbnails: Boolean,
     preferBackdropForNextUp: Boolean,
-): String? = when {
-    isNextUp && preferBackdropForNextUp -> firstNonBlank(
-        background,
-        poster,
-        episodeThumbnail,
-        imageUrl,
-    )
-    isNextUp && useEpisodeThumbnails -> firstNonBlank(
-        episodeThumbnail,
-        background,
-        poster,
-        imageUrl,
-    )
-    isNextUp -> firstNonBlank(
-        background,
-        poster,
-        episodeThumbnail,
-        imageUrl,
-    )
-    useEpisodeThumbnails -> firstNonBlank(
-        episodeThumbnail,
-        background,
-        poster,
-        imageUrl,
-    )
-    else -> firstNonBlank(
-        background,
-        poster,
-        episodeThumbnail,
-        imageUrl,
-    )
-}
+): String? = titlePresentation().copy(
+    episodeThumbnail = episodeThumbnail.takeUnless { isNextUp && preferBackdropForNextUp },
+).artwork(ContinueWatchingSectionStyle.Card, useEpisodeThumbnails)
 
-private fun firstNonBlank(vararg values: String?): String? =
-    values.firstOrNull { value -> !value.isNullOrBlank() }?.trim()
+private fun ContinueWatchingItem.titlePresentation(): TitlePresentation = TitlePresentation(
+    title = title,
+    poster = poster,
+    background = background,
+    episodeThumbnail = episodeThumbnail,
+    fallbackArtwork = imageUrl,
+    season = seasonNumber,
+    episode = episodeNumber,
+    episodeTitle = episodeTitle,
+    progress = progressFraction,
+)
 
 internal fun ContinueWatchingItem.shouldBlurContinueWatchingArtwork(
     blurUnwatchedEpisodes: Boolean,

@@ -129,6 +129,7 @@
       <header class="header">
         <nav class="header-actions" aria-label="Player actions">
           <button class="header-button" id="watchTogetherButton" data-command="watchTogether" aria-label="Watch Together"><svg><use href="#icon-people"></use></svg></button>
+          <button class="header-button presence-policy-button" id="presenceJoinPolicyButton" data-command="presenceJoinPolicyCycle" aria-label="Session join policy"><span id="presenceJoinPolicyLabel">Join: Ask first</span></button>
           <button class="header-button" id="submitIntroButton" data-command="submitIntro" aria-label="Submit intro"><svg><use href="#icon-flag"></use></svg></button>
           <button class="header-button" id="videoSettingsButton" data-command="videoSettings" aria-label="Video settings"><svg><use href="#icon-build"></use></svg></button>
           <button class="header-button" id="fullscreenButton" data-command="toggleFullscreen" aria-label="Enter fullscreen"><svg><use id="fullscreenIcon" href="#icon-fullscreen"></use></svg></button>
@@ -152,6 +153,28 @@
           <span id="partyControlMode"></span>
         </div>
         <div class="party-member-list" id="partyMemberList"></div>
+        <div class="party-panel-actions">
+          <button type="button" data-command="partyLobby">Open lobby</button>
+          <button type="button" id="partyControlModeButton" data-command="partyToggleControlMode">Change controls</button>
+          <button type="button" data-command="partyLeave">Leave</button>
+          <button type="button" id="partyEndButton" class="danger" data-command="partyEnd">End party</button>
+        </div>
+      </aside>
+
+      <aside class="social-notification" id="socialNotification" aria-live="polite" aria-hidden="true">
+        <button class="social-notification-dismiss" type="button" data-command="socialNotificationDismiss" aria-label="Dismiss">&times;</button>
+        <strong id="socialNotificationActor"></strong>
+        <span id="socialNotificationMessage"></span>
+        <div class="social-notification-actions" id="socialNotificationActions"></div>
+      </aside>
+
+      <aside class="party-ended-choice" id="partyEndedChoice" aria-live="assertive" aria-hidden="true">
+        <strong>The host ended Watch Together</strong>
+        <span>You can keep watching this source normally or exit the player.</span>
+        <div class="social-notification-actions">
+          <button type="button" data-command="partyEndContinue">Continue watching</button>
+          <button type="button" data-command="partyEndExit">Exit player</button>
+        </div>
       </aside>
 
       <section class="center-status" id="bufferingStatus" aria-label="Buffering" aria-hidden="true">

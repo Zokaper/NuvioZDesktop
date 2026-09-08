@@ -42,6 +42,8 @@ const nextEpisodeLabel = document.getElementById("nextEpisodeLabel");
 const submitIntroButton = document.getElementById("submitIntroButton");
 const videoSettingsButton = document.getElementById("videoSettingsButton");
 const watchTogetherButton = document.getElementById("watchTogetherButton");
+const presenceJoinPolicyButton = document.getElementById("presenceJoinPolicyButton");
+const presenceJoinPolicyLabel = document.getElementById("presenceJoinPolicyLabel");
 const backButton = document.getElementById("backButton");
 const openingOverlay = document.getElementById("openingOverlay");
 const openingArtwork = document.getElementById("openingArtwork");
@@ -64,6 +66,13 @@ const partyBannerText = document.getElementById("partyBannerText");
 const partyPanel = document.getElementById("partyPanel");
 const partyControlMode = document.getElementById("partyControlMode");
 const partyMemberList = document.getElementById("partyMemberList");
+const partyControlModeButton = document.getElementById("partyControlModeButton");
+const partyEndButton = document.getElementById("partyEndButton");
+const socialNotification = document.getElementById("socialNotification");
+const socialNotificationActor = document.getElementById("socialNotificationActor");
+const socialNotificationMessage = document.getElementById("socialNotificationMessage");
+const socialNotificationActions = document.getElementById("socialNotificationActions");
+const partyEndedChoice = document.getElementById("partyEndedChoice");
 const openingProgressTrack = document.getElementById("openingProgressTrack");
 const openingProgressBar = document.getElementById("openingProgressBar");
 const parentalGuide = document.getElementById("parentalGuide");
@@ -305,7 +314,13 @@ let state = {
   partyControlModeLabel: "",
   partyReadySummary: "",
   partyTransportEnabled: true,
+  partyIsHost: false,
   partyMembers: [],
+  socialNotificationVisible: false,
+  socialNotificationActor: "",
+  socialNotificationMessage: "",
+  socialNotificationActions: [],
+  partyEndedChoiceVisible: false,
   skipPromptVisible: false,
   skipPromptLabel: "Skip",
   skipPromptStartMs: 0,
@@ -321,6 +336,8 @@ let state = {
   showSubmitIntro: false,
   showVideoSettings: false,
   showWatchTogether: false,
+  presenceJoinPolicyVisible: false,
+  presenceJoinPolicyLabel: "",
   showSources: false,
   showEpisodes: false,
   showNextEpisode: false,
@@ -2052,6 +2069,8 @@ const renderPartyPanel = suppress => {
   const mode = String(state.partyControlModeLabel || "").trim();
   partyControlMode.textContent = summary && mode ? `${summary} · ${mode}` : (summary || mode);
   partyMemberList.replaceChildren();
+  partyControlModeButton.hidden = !state.partyIsHost;
+  partyEndButton.hidden = !state.partyIsHost;
   (state.partyMembers || []).forEach(member => {
     const row = document.createElement("div");
     row.className = `party-member${member.connected ? "" : " offline"}`;
@@ -2087,6 +2106,38 @@ const renderPartyPanel = suppress => {
     row.append(avatar, copy);
     partyMemberList.append(row);
   });
+};
+
+const renderSocialNotification = suppress => {
+  const show = Boolean(!suppress && state.socialNotificationVisible);
+  socialNotification.classList.toggle("visible", show);
+  socialNotification.setAttribute("aria-hidden", show ? "false" : "true");
+  socialNotificationActor.textContent = String(state.socialNotificationActor || "");
+  socialNotificationMessage.textContent = String(state.socialNotificationMessage || "");
+  socialNotificationActions.replaceChildren();
+  (state.socialNotificationActions || []).forEach(action => {
+    const normalized = String(action || "").toLowerCase();
+    const command = {
+      accept: "socialNotificationAccept",
+      decline: "socialNotificationDecline",
+      join: "socialNotificationJoin",
+    }[normalized];
+    if (!command) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = normalized.charAt(0).toUpperCase() + normalized.slice(1);
+    button.addEventListener("click", event => {
+      event.stopPropagation();
+      send(command, 0);
+    });
+    socialNotificationActions.append(button);
+  });
+};
+
+const renderPartyEndedChoice = suppress => {
+  const show = Boolean(!suppress && state.partyEndedChoiceVisible);
+  partyEndedChoice.classList.toggle("visible", show);
+  partyEndedChoice.setAttribute("aria-hidden", show ? "false" : "true");
 };
 
 const renderPlaybackError = () => {
@@ -2355,6 +2406,8 @@ const renderChrome = () => {
   renderPauseMetadataOverlay(showOpening || showError);
   renderPartyBanner(showOpening || showError || Boolean(activeModal));
   renderPartyPanel(showOpening || showError || Boolean(activeModal));
+  renderSocialNotification(showOpening || showError || Boolean(activeModal));
+  renderPartyEndedChoice(showOpening || showError || Boolean(activeModal));
   const partyTransportLocked = state.partyPanelVisible && !state.partyTransportEnabled;
   root.classList.toggle("party-transport-locked", partyTransportLocked);
   [toggle, seek, ...document.querySelectorAll('[data-command="seekBack"], [data-command="seekForward"], [data-command="speed"], [data-command="nextEpisode"]')]
@@ -2387,6 +2440,9 @@ const renderChrome = () => {
   setVisible(submitIntroButton, Boolean(state.showSubmitIntro));
   setVisible(videoSettingsButton, Boolean(state.showVideoSettings));
   setVisible(watchTogetherButton, Boolean(state.showWatchTogether));
+  setVisible(presenceJoinPolicyButton, Boolean(state.presenceJoinPolicyVisible));
+  presenceJoinPolicyLabel.textContent = state.presenceJoinPolicyLabel || "Join: Ask first";
+  presenceJoinPolicyButton.setAttribute("aria-label", `Session policy, ${presenceJoinPolicyLabel.textContent}. Activate to change.`);
   setVisible(sourcesButton, Boolean(state.showSources));
   setVisible(episodesButton, Boolean(state.showEpisodes));
   setVisible(nextEpisodeButton, Boolean(state.showNextEpisode));

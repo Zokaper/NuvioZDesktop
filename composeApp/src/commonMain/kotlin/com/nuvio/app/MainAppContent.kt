@@ -143,6 +143,10 @@ import com.nuvio.app.features.settings.MetaScreenSettingsScreen
 import com.nuvio.app.features.settings.PluginsSettingsScreen
 import com.nuvio.app.features.settings.SupportersContributorsSettingsScreen
 import com.nuvio.app.features.settings.ThemeSettingsRepository
+import com.nuvio.app.features.social.SocialRepository
+import com.nuvio.app.features.social.SocialNotification
+import com.nuvio.app.features.social.SocialNotificationAction
+import com.nuvio.app.features.social.SocialNotificationKind
 import com.nuvio.app.features.social.WatchingNowItem
 import com.nuvio.app.features.streams.BingeGroupCacheRepository
 import com.nuvio.app.features.streams.StreamAutoPlayPolicy
@@ -173,6 +177,8 @@ import com.nuvio.app.features.watchprogress.WatchProgressSourceCoordinator
 import com.nuvio.app.features.watchprogress.continueWatchingItemKey
 import com.nuvio.app.features.watchprogress.nextUpDismissKey
 import com.nuvio.app.features.watchprogress.toContinueWatchingItem
+import com.nuvio.app.features.watchparty.WatchPartyRepository
+import com.nuvio.app.features.watchparty.WatchPartySessionCoordinator
 import com.nuvio.app.navigation.*
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
@@ -311,6 +317,7 @@ internal fun MainAppContent(
         WatchedRepository.uiState
     }.collectAsStateWithLifecycle()
     val fullyWatchedSeriesKeys by WatchedRepository.fullyWatchedSeriesKeys.collectAsStateWithLifecycle()
+    val socialUiState by SocialRepository.uiState.collectAsStateWithLifecycle()
     val downloadsUiState by remember {
         DownloadsRepository.ensureLoaded()
         DownloadsRepository.uiState
@@ -633,6 +640,43 @@ internal fun MainAppContent(
                     }
                 }
             }
+        }
+    }
+
+    val activeSocialProfileId = profileState.activeProfile?.id?.takeIf(String::isNotBlank)
+    LaunchedEffect(ownsAppRuntime, activeSocialProfileId) {
+        if (!ownsAppRuntime) return@LaunchedEffect
+        SocialRepository.activate(activeSocialProfileId)
+        WatchPartyRepository.setActiveProfile(activeSocialProfileId)
+        if (activeSocialProfileId != null) {
+            WatchPartySessionCoordinator.restore()
+        }
+    }
+
+    fun handleSocialNotificationAction(
+        notification: SocialNotification,
+        action: SocialNotificationAction,
+    ) {
+        coroutineScope.launch {
+            SocialRepository.notificationAction(notification.id, action)
+                .onFailure { failure ->
+                    NuvioToastController.show(failure.message ?: "That request could not be completed")
+                }
+                .onSuccess { result ->
+                    val party = result.party
+                    if (party != null) {
+                        WatchPartySessionCoordinator.installAuthorizedParty(party)
+                    }
+                    when {
+                        result.outcome == "stale" -> {
+                            NuvioToastController.show("This request is no longer available.")
+                        }
+                        notification.kind == SocialNotificationKind.PartyInvitation &&
+                            action == SocialNotificationAction.Join && party != null -> {
+                            navController.navigate(WatchPartyLobbyRoute(partyId = party.id))
+                        }
+                    }
+                }
         }
     }
 
@@ -1460,22 +1504,41 @@ internal fun MainAppContent(
                                     )
                                 },
                                 onJoinParty = { code ->
-                                    navController.navigate(WatchPartyLobbyRoute(inviteCode = code))
+                                    coroutineScope.launch {
+                                        WatchPartyRepository.join(inviteCode = code).onSuccess {
+                                            WatchPartyRepository.uiState.value.party?.let { party ->
+                                                navController.navigate(WatchPartyLobbyRoute(partyId = party.id))
+                                            }
+                                        }
+                                    }
                                 },
                                 onJoinInvitedParty = { partyId ->
-                                    navController.navigate(WatchPartyLobbyRoute(partyId = partyId))
+                                    coroutineScope.launch {
+                                        WatchPartyRepository.join(partyId = partyId).onSuccess {
+                                            navController.navigate(WatchPartyLobbyRoute(partyId = partyId))
+                                        }
+                                    }
                                 },
                                 onStartPartyOnContent = { watching ->
-                                    navController.navigate(
-                                        WatchPartyLobbyRoute(
-                                            contentId = watching.contentId,
-                                            contentType = watching.contentType,
-                                            videoId = watching.videoId,
-                                            title = watching.title,
-                                            poster = watching.poster,
-                                        ),
-                                    )
+                                    coroutineScope.launch {
+                                        SocialRepository.joinWatching(watching)
+                                            .onSuccess { result ->
+                                                result.party?.let { party ->
+                                                    WatchPartySessionCoordinator.installAuthorizedParty(party)
+                                                    navController.navigate(
+                                                        WatchPartyLobbyRoute(partyId = party.id),
+                                                    )
+                                                } ?: when (result.outcome) {
+                                                    "approval_required" -> NuvioToastController.show("Join request sent")
+                                                    "disabled" -> NuvioToastController.show("This playback is not open to joining")
+                                                    "stale" -> NuvioToastController.show("This playback is no longer available")
+                                                    "full" -> NuvioToastController.show("This party is full")
+                                                    else -> Unit
+                                                }
+                                            }
+                                    }
                                 },
+                                onSocialNotificationAction = ::handleSocialNotificationAction,
                                 onSwitchProfile = onSwitchProfile,
                                 onSettingsPageClick = if (useNativeNavigation && !isTabletLayout) {
                                     { pageName, title ->
@@ -1576,6 +1639,18 @@ internal fun MainAppContent(
                         navController = navController,
                         onPlay = onPlay,
                         onPlayManually = onPlayManually,
+                        onWatchTogether = { content ->
+                            coroutineScope.launch {
+                                WatchPartyRepository.create(
+                                    content = content,
+                                    sourceFingerprint = null,
+                                ).onSuccess {
+                                    WatchPartyRepository.uiState.value.party?.let { party ->
+                                        navController.navigate(WatchPartyLobbyRoute(partyId = party.id))
+                                    }
+                                }
+                            }
+                        },
                         sharedTransitionScope = this@SharedTransitionLayout,
                         animatedVisibilityScope = LocalNavAnimatedContentScope.current,
                     )
@@ -1590,6 +1665,13 @@ internal fun MainAppContent(
                 }
                 entry<EntityBrowseRoute> { route ->
                     EntityDestination(route = route, navController = navController)
+                }
+                entry<WatchPartyLobbyRoute> { route ->
+                    WatchPartyLobbyDestination(
+                        route = route,
+                        navController = navController,
+                        playbackProfileId = activePlaybackProfileId,
+                    )
                 }
                 entry<StreamRoute>(
                     metadata = if (isDesktop) {
@@ -2157,6 +2239,52 @@ internal fun MainAppContent(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .zIndex(15f),
+            )
+
+            val socialNotification = socialUiState.notifications.firstOrNull {
+                it.readAt == null && it.availableActions.isNotEmpty()
+            }
+            val socialNotificationPrimaryAction = socialNotification?.availableActions?.let { actions ->
+                when {
+                    SocialNotificationAction.Join in actions -> SocialNotificationAction.Join
+                    SocialNotificationAction.Accept in actions -> SocialNotificationAction.Accept
+                    else -> actions.firstOrNull()
+                }
+            }
+            NuvioFloatingPrompt(
+                visible = socialNotification != null &&
+                    socialNotificationPrimaryAction != null &&
+                    currentRoute !is PlayerRoute,
+                imageUrl = socialNotification?.actor?.avatarUrl,
+                title = socialNotification?.actor?.displayName.orEmpty(),
+                subtitle = when (socialNotification?.kind) {
+                    SocialNotificationKind.FriendRequest -> "sent you a friend request"
+                    SocialNotificationKind.PartyInvitation -> "invited you to Watch Together"
+                    SocialNotificationKind.WatchingNowJoinRequest -> "asked to join your playback"
+                    null -> ""
+                },
+                progressFraction = 0f,
+                actionLabel = when (socialNotificationPrimaryAction) {
+                    SocialNotificationAction.Accept -> "Accept"
+                    SocialNotificationAction.Decline -> "Decline"
+                    SocialNotificationAction.Join -> "Join"
+                    null -> ""
+                },
+                onAction = {
+                    val notification = socialNotification ?: return@NuvioFloatingPrompt
+                    val action = socialNotificationPrimaryAction ?: return@NuvioFloatingPrompt
+                    handleSocialNotificationAction(notification, action)
+                },
+                onDismiss = {
+                    socialNotification?.let { notification ->
+                        coroutineScope.launch {
+                            SocialRepository.markNotificationsRead(setOf(notification.id))
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .zIndex(16f),
             )
 
             // ⚠ **Above `NavDisplay`, and that placement is the whole point.** The loading

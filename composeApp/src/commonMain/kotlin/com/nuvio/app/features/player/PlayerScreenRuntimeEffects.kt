@@ -25,6 +25,7 @@ import com.nuvio.app.features.playback.logKey
 import com.nuvio.app.features.playback.probePlaybackSource
 import com.nuvio.app.features.playback.PlaybackPosition
 import com.nuvio.app.features.playback.PlaybackStartupWatchdog
+import com.nuvio.app.features.watchparty.toPartySourceDescriptor
 import com.nuvio.app.features.player.skip.AutoSkipSegmentType
 import com.nuvio.app.features.player.skip.NextEpisodeInfo
 import com.nuvio.app.features.player.skip.PlayerNextEpisodeRules
@@ -1176,6 +1177,7 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
         activeStreamSubtitle = stream.streamSubtitle
         activeProviderName = stream.addonName
         activeProviderAddonId = stream.addonId
+        activePartySourceDescriptor = stream.toPartySourceDescriptor()
         currentStreamBingeGroup = stream.behaviorHints.bingeGroup
         activeInitialPositionMs = savedPositionMs
         activeInitialProgressFraction = null

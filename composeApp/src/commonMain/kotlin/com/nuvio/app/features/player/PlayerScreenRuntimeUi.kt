@@ -21,7 +21,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.features.watchparty.PartyContent
-import com.nuvio.app.features.watchparty.SourceFingerprint
 import com.nuvio.app.features.watchparty.WatchPartyControlMode
 import com.nuvio.app.features.watchparty.readyCount
 import com.nuvio.app.features.watchparty.readyLabel
@@ -30,7 +29,6 @@ import com.nuvio.app.features.watchparty.wireName
 import com.nuvio.app.features.watchparty.WatchPartyRepository
 import com.nuvio.app.features.watchparty.displayName
 import com.nuvio.app.features.watchparty.matchesPlayback
-import com.nuvio.app.features.watchparty.normalizeReleaseFingerprint
 import androidx.compose.ui.layout.onSizeChanged
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.format.formatReleaseDateForDisplay
@@ -84,6 +82,11 @@ import com.nuvio.app.core.ui.LocalNuvioPlatformDensity
 import com.nuvio.app.features.playback.PlaybackHandover
 import com.nuvio.app.features.playback.PlaybackLoadingActions
 import com.nuvio.app.features.updater.formatFileSize
+import com.nuvio.app.features.social.SocialNotificationAction
+import com.nuvio.app.features.social.SocialNotificationKind
+import com.nuvio.app.features.social.SocialRepository
+import com.nuvio.app.features.social.SocialPresenceSession
+import com.nuvio.app.features.watchparty.WatchPartySessionCoordinator
 
 private val playerControlsLog = Logger.withTag("PlayerControls")
 
@@ -91,6 +94,9 @@ private val playerControlsLog = Logger.withTag("PlayerControls")
 internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     val runtime = this
     val watchPartyUiState by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
+    val socialUiState by SocialRepository.uiState.collectAsStateWithLifecycle()
+    val socialPresenceSession by SocialPresenceSession.state.collectAsStateWithLifecycle()
+    val partySessionState by WatchPartySessionCoordinator.state.collectAsStateWithLifecycle()
     val systemBackRegistration = args.onSystemBackHandlerChanged
     DisposableEffect(runtime, systemBackRegistration) {
         systemBackRegistration { runtime.requestBack() }
@@ -124,6 +130,18 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     val watchPartyBanner = rememberWatchPartyStatus().bannerText()
     val activeParty = watchPartyUiState.party?.takeIf {
         it.matchesPlayback(parentMetaId, playbackSession.videoId)
+    }
+    val activeSocialNotification = socialUiState.notifications.firstOrNull {
+        it.readAt == null && it.availableActions.isNotEmpty()
+    }
+    LaunchedEffect(watchPartyUiState.party?.id, watchPartyUiState.party?.status) {
+        val party = watchPartyUiState.party ?: return@LaunchedEffect
+        if (
+            party.status == com.nuvio.app.features.watchparty.WatchPartyStatus.ended &&
+            party.hostProfileId != watchPartyUiState.activeProfileId
+        ) {
+            WatchPartySessionCoordinator.partyEnded(viewerWasHost = false)
+        }
     }
     val partyMayControl = activeParty == null ||
         activeParty.hostProfileId == watchPartyUiState.activeProfileId ||
@@ -568,6 +586,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             null -> ""
         },
         partyTransportEnabled = partyMayControl,
+        partyIsHost = activeParty?.hostProfileId == watchPartyUiState.activeProfileId,
         partyReadySummary = activeParty?.let {
             "${it.readyCount()} of ${it.members.count { member -> member.connected }} ready"
         }.orEmpty(),
@@ -584,6 +603,24 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                 connected = member.connected,
             )
         },
+        presenceJoinPolicyVisible = activeParty == null && socialPresenceSession.sessionId != null,
+        presenceJoinPolicyLabel = when (socialPresenceSession.effectivePolicy) {
+            com.nuvio.app.features.social.WatchJoinPolicy.direct -> "Join: Direct"
+            com.nuvio.app.features.social.WatchJoinPolicy.approval -> "Join: Ask first"
+            com.nuvio.app.features.social.WatchJoinPolicy.disabled -> "Join: Off"
+        },
+        socialNotificationVisible = activeSocialNotification != null && !playerControlsLocked,
+        socialNotificationActor = activeSocialNotification?.actor?.displayName.orEmpty(),
+        socialNotificationMessage = when (activeSocialNotification?.kind) {
+            SocialNotificationKind.FriendRequest -> "sent you a friend request"
+            SocialNotificationKind.PartyInvitation -> "invited you to Watch Together"
+            SocialNotificationKind.WatchingNowJoinRequest -> "asked to join your playback"
+            null -> ""
+        },
+        socialNotificationActions = activeSocialNotification?.availableActions.orEmpty()
+            .map { it.name.lowercase() }
+            .sorted(),
+        partyEndedChoiceVisible = partySessionState.guestPostEndChoice && !playerControlsLocked,
         skipPromptVisible = nativeSkipInterval != null && !playerControlsLocked,
         skipPromptLabel = skipPromptLabel(nativeSkipInterval?.type),
         skipPromptStartMs = ((nativeSkipInterval?.startTime ?: 0.0) * 1000).toLong().coerceAtLeast(0L),
@@ -1060,7 +1097,7 @@ private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControl
 
 private fun PlayerScreenRuntime.startWatchTogetherFromCurrentPlayback() {
     val callback = args.onStartWatchTogether ?: return
-    playerController?.pause()
+    val descriptor = activePartySourceDescriptor ?: return
     callback(
         PartyContent(
             contentId = parentMetaId,
@@ -1072,12 +1109,7 @@ private fun PlayerScreenRuntime.startWatchTogetherFromCurrentPlayback() {
             episode = activeEpisodeNumber,
             episodeTitle = activeEpisodeTitle,
         ),
-        SourceFingerprint(
-            addonId = activeProviderAddonId,
-            infoHash = activeTorrentInfoHash,
-            fileIndex = activeTorrentFileIdx,
-            releaseFingerprint = normalizeReleaseFingerprint(activeStreamTitle),
-        ),
+        descriptor,
         playbackSnapshot.positionMs,
         playbackSnapshot.playbackSpeed,
     )
@@ -1119,6 +1151,44 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
         "reloadSources" -> {
             prepareSourcesForPlayerControls(forceRefresh = true)
         }
+        "partyLobby" -> {
+            val partyId = WatchPartyRepository.uiState.value.party?.id ?: return true
+            args.onPartyLobbyRequested?.invoke(partyId)
+            requestBack()
+        }
+        "presenceJoinPolicyCycle" -> scope.launch { SocialPresenceSession.cyclePolicy() }
+        "partyLeave" -> WatchPartySessionCoordinator.leave()
+        "partyEnd" -> WatchPartySessionCoordinator.end()
+        "partyToggleControlMode" -> {
+            val party = WatchPartyRepository.uiState.value.party ?: return true
+            if (party.hostProfileId != WatchPartyRepository.uiState.value.activeProfileId) return true
+            val mode = if (party.controlMode == WatchPartyControlMode.host_only) {
+                WatchPartyControlMode.collaborative
+            } else {
+                WatchPartyControlMode.host_only
+            }
+            scope.launch { WatchPartyRepository.setControlMode(mode) }
+        }
+        "partyEndContinue" -> WatchPartySessionCoordinator.continueAfterPartyEnd()
+        "partyEndExit" -> {
+            WatchPartySessionCoordinator.continueAfterPartyEnd()
+            requestBack()
+        }
+        "socialNotificationDismiss" -> {
+            val notification = SocialRepository.uiState.value.notifications.firstOrNull {
+                it.readAt == null && it.availableActions.isNotEmpty()
+            } ?: return true
+            scope.launch { SocialRepository.markNotificationsRead(setOf(notification.id)) }
+        }
+        "socialNotificationAccept",
+        "socialNotificationDecline",
+        "socialNotificationJoin" -> handleSocialNotificationAction(
+            when (type) {
+                "socialNotificationAccept" -> SocialNotificationAction.Accept
+                "socialNotificationJoin" -> SocialNotificationAction.Join
+                else -> SocialNotificationAction.Decline
+            },
+        )
         "selectSource" -> {
             val streams = sourceStreamsState.groups.flatMap { it.streams }
             val stream = streams.getOrNull(value.toInt()) ?: return true
@@ -1299,6 +1369,35 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
         else -> return false
     }
     return true
+}
+
+private fun PlayerScreenRuntime.handleSocialNotificationAction(action: SocialNotificationAction) {
+    val notification = SocialRepository.uiState.value.notifications.firstOrNull {
+        it.readAt == null && action in it.availableActions
+    } ?: return
+    scope.launch {
+        SocialRepository.notificationAction(notification.id, action)
+            .onFailure { failure ->
+                playerNotificationMessage = failure.message ?: "That request could not be completed"
+                playerNotificationToken += 1
+            }
+            .onSuccess { result ->
+                val party = result.party
+                if (party != null) WatchPartySessionCoordinator.installAuthorizedParty(party)
+                if (result.outcome == "stale") {
+                    playerNotificationMessage = "This request is no longer available."
+                    playerNotificationToken += 1
+                }
+                if (
+                    notification.kind == SocialNotificationKind.PartyInvitation &&
+                    action == SocialNotificationAction.Join &&
+                    party != null
+                ) {
+                    args.onPartyLobbyRequested?.invoke(party.id)
+                    requestBack()
+                }
+            }
+    }
 }
 
 private fun PlayerScreenRuntime.requestP2pConsentForPlayerControls(

@@ -15,6 +15,7 @@ import com.nuvio.app.core.network.NetworkQualityRepository
 import com.nuvio.app.core.network.NetworkThroughputMeter
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.p2pSentinelUrl
+import com.nuvio.app.features.watchparty.toPartySourceDescriptor
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import com.nuvio.app.features.watchprogress.buildPlaybackVideoId
 import nuvio.composeapp.generated.resources.Res
@@ -151,6 +152,7 @@ internal fun PlayerScreenRuntime.switchToP2pSourceStream(stream: StreamItem) {
     activeStreamSubtitle = stream.streamSubtitle
     activeProviderName = stream.addonName
     activeProviderAddonId = stream.addonId
+    activePartySourceDescriptor = stream.toPartySourceDescriptor()
     currentStreamBingeGroup = stream.behaviorHints.bingeGroup
     activeInitialPositionMs = currentPositionMs
     activeInitialProgressFraction = null
@@ -361,6 +363,7 @@ internal fun PlayerScreenRuntime.switchToSource(stream: StreamItem) {
     activeStreamSubtitle = stream.streamSubtitle
     activeProviderName = stream.addonName
     activeProviderAddonId = stream.addonId
+    activePartySourceDescriptor = stream.toPartySourceDescriptor()
     currentStreamBingeGroup = stream.behaviorHints.bingeGroup
     activeInitialPositionMs = currentPositionMs
     activeInitialProgressFraction = null
@@ -451,6 +454,7 @@ internal fun PlayerScreenRuntime.switchToDownloadedEpisode(downloadItem: Downloa
     activeStreamSubtitle = downloadItem.streamSubtitle
     activeProviderName = downloadItem.providerName.ifBlank { downloadedLabel }
     activeProviderAddonId = downloadItem.providerAddonId
+    activePartySourceDescriptor = null
     currentStreamBingeGroup = null
     activeSeasonNumber = episode.season
     activeEpisodeNumber = episode.episode
@@ -841,6 +845,7 @@ private fun PlayerScreenRuntime.applyEpisodeStreamMetadata(
     activeStreamSubtitle = stream.streamSubtitle
     activeProviderName = stream.addonName
     activeProviderAddonId = stream.addonId
+    activePartySourceDescriptor = stream.toPartySourceDescriptor()
     currentStreamBingeGroup = stream.behaviorHints.bingeGroup
     activeSeasonNumber = episode.season
     activeEpisodeNumber = episode.episode

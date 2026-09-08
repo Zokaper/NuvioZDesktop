@@ -1,25 +1,23 @@
 package com.nuvio.app.features.social
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.nuvio.app.features.home.components.TitlePresentation
+import com.nuvio.app.features.home.components.TitlePresentationCard
+import com.nuvio.app.features.watchprogress.ContinueWatchingSectionStyle
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.social_recently_watched
 import nuvio.composeapp.generated.resources.social_watching_now
@@ -29,6 +27,8 @@ fun LazyListScope.homeSocialSections(
     watchingNow: List<WatchingNowItem>,
     activity: List<RecentActivityRun>,
     sectionPadding: Dp,
+    style: ContinueWatchingSectionStyle,
+    useEpisodeThumbnails: Boolean,
     onOpenContent: (contentType: String, contentId: String, title: String) -> Unit,
 ) {
     if (watchingNow.isNotEmpty()) {
@@ -39,17 +39,24 @@ fun LazyListScope.homeSocialSections(
                 items = watchingNow.take(SocialHomeItemLimit),
                 key = { "${it.profile.profileId}:${it.videoId}" },
             ) { item ->
-                SocialActivityChip(
-                    profile = item.profile,
-                    title = item.title,
-                    poster = item.poster,
-                    season = item.season,
-                    episode = item.episode,
-                    episodeTitle = item.episodeTitle,
-                    status = if (item.state == SocialPlaybackState.playing) "Playing" else "Paused",
-                    progress = item.progressFraction,
-                    trailing = "${item.roundedProgressPercent}%",
-                    compact = true,
+                TitlePresentationCard(
+                    item = TitlePresentation(
+                        title = item.title,
+                        poster = item.poster,
+                        background = item.background,
+                        episodeThumbnail = item.episodeThumbnail,
+                        season = item.season,
+                        episode = item.episode,
+                        episodeTitle = item.episodeTitle,
+                        progress = item.progressFraction,
+                    ),
+                    style = style,
+                    useEpisodeThumbnails = useEpisodeThumbnails,
+                    modifier = Modifier.width(310.dp),
+                    leading = {
+                        SocialActivityIdentity(item.profile, if (item.state == SocialPlaybackState.playing) "Playing" else "Paused")
+                    },
+                    trailing = { Text("${item.roundedProgressPercent}%", style = MaterialTheme.typography.labelMedium) },
                     onClick = { onOpenContent(item.contentType, item.contentId, item.title) },
                 )
             }
@@ -63,16 +70,25 @@ fun LazyListScope.homeSocialSections(
                 items = activity.take(SocialHomeItemLimit),
                 key = RecentActivityRun::runId,
             ) { run ->
-                SocialActivityChip(
-                    profile = run.profile,
-                    title = run.title,
-                    poster = run.poster,
-                    season = run.season,
-                    episode = run.episode,
-                    episodeTitle = run.episodeTitle,
-                    status = "Recently watched",
-                    trailing = if (run.eventCount > 1) "${run.eventCount} episodes" else null,
-                    compact = true,
+                TitlePresentationCard(
+                    item = TitlePresentation(
+                        title = run.title,
+                        poster = run.poster,
+                        background = run.background,
+                        episodeThumbnail = run.episodeThumbnail,
+                        season = run.season,
+                        episode = run.episode,
+                        episodeTitle = run.episodeTitle,
+                    ),
+                    style = style,
+                    useEpisodeThumbnails = useEpisodeThumbnails,
+                    modifier = Modifier.width(310.dp),
+                    leading = { SocialActivityIdentity(run.profile, "Recently watched") },
+                    trailing = if (run.eventCount > 1) {
+                        { Text("${run.eventCount} episodes", style = MaterialTheme.typography.labelMedium) }
+                    } else {
+                        null
+                    },
                     onClick = { onOpenContent(run.contentType, run.contentId, run.title) },
                 )
             }
@@ -106,16 +122,12 @@ private fun <T> SocialHomeRow(
 }
 
 @Composable
-private fun SocialHomeCard(title: String, subtitle: String, progress: Float? = null, onClick: () -> Unit) {
-    Surface(
-        modifier = Modifier.width(210.dp).clickable(onClick = onClick),
-        shape = MaterialTheme.shapes.large,
-        tonalElevation = 2.dp,
+private fun SocialActivityIdentity(profile: SocialProfileSummary, status: String) {
+    androidx.compose.foundation.layout.Row(
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            Text(title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-            Text(subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
-            progress?.let { LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth()) }
-        }
+        SocialAvatar(profile.displayName, profile.avatarUrl, profile.avatarColorHex, 20.dp)
+        Text("${profile.displayName} · $status", style = MaterialTheme.typography.labelMedium, maxLines = 1)
     }
 }

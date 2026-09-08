@@ -373,7 +373,7 @@ object PlaybackSourceSelector {
     // been wiring them into nothing. `PlaybackQualityOptions.rankingFor` is the ordering, and
     // now it is the only one.
 
-    private fun isPlaybackProtocolEligible(
+    internal fun isPlaybackProtocolEligible(
         candidate: PlaybackSourceCandidate,
         allowTorrentSources: Boolean,
     ): Boolean {

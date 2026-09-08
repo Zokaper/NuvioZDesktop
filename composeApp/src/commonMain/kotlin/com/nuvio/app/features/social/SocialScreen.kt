@@ -47,6 +47,7 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -83,7 +84,10 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.NuvioAsyncImage
 import com.nuvio.app.core.ui.NuvioTokens
+import com.nuvio.app.features.home.components.TitlePresentation
+import com.nuvio.app.features.home.components.TitlePresentationCard
 import com.nuvio.app.features.profiles.parseHexColor
+import com.nuvio.app.features.watchprogress.ContinueWatchingPreferencesRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
@@ -124,8 +128,10 @@ fun SocialScreen(
     onJoinParty: (inviteCode: String) -> Unit = {},
     onJoinInvitedParty: (partyId: String) -> Unit = {},
     onStartParty: (WatchingNowItem) -> Unit = {},
+    onNotificationAction: (SocialNotification, SocialNotificationAction) -> Unit = { _, _ -> },
 ) {
     val state by SocialRepository.uiState.collectAsStateWithLifecycle()
+    val titlePreferences by ContinueWatchingPreferencesRepository.uiState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     var handle by rememberSaveable { mutableStateOf("") }
@@ -141,6 +147,9 @@ fun SocialScreen(
     var partyCode by rememberSaveable { mutableStateOf("") }
     var shareWatching by rememberSaveable(state.me?.profileId) { mutableStateOf(true) }
     var shareRecent by rememberSaveable(state.me?.profileId) { mutableStateOf(true) }
+    var defaultJoinPolicy by rememberSaveable(state.me?.profileId) {
+        mutableStateOf(WatchJoinPolicy.approval)
+    }
 
     // Shared by the search button and the keyboard's search action, so pressing Enter does what the
     // button does. The server refuses queries under three characters, so that is reported here
@@ -191,9 +200,15 @@ fun SocialScreen(
         }
     }
 
-    LaunchedEffect(state.me?.profileId, state.me?.shareWatchingNow, state.me?.shareRecentlyWatched) {
+    LaunchedEffect(
+        state.me?.profileId,
+        state.me?.shareWatchingNow,
+        state.me?.shareRecentlyWatched,
+        state.me?.defaultJoinPolicy,
+    ) {
         shareWatching = state.me?.shareWatchingNow ?: true
         shareRecent = state.me?.shareRecentlyWatched ?: true
+        defaultJoinPolicy = state.me?.defaultJoinPolicy ?: WatchJoinPolicy.approval
     }
 
     LaunchedEffect(scrollToTopRequests) {
@@ -317,6 +332,7 @@ fun SocialScreen(
                                         scope.launch { SocialRepository.respondFriendRequest(id, accept) }
                                     },
                                     onJoinInvitedParty = onJoinInvitedParty,
+                                    onNotificationAction = onNotificationAction,
                                 )
 
                                 item {
@@ -344,6 +360,8 @@ fun SocialScreen(
                                     ) { watching ->
                                         SocialPresenceCard(
                                             item = watching,
+                                            style = titlePreferences.style,
+                                            useEpisodeThumbnails = titlePreferences.useEpisodeThumbnails,
                                             watchPartyEnabled = state.capabilities.watchPartyEnabled,
                                             onOpen = {
                                                 onOpenContent(
@@ -373,6 +391,8 @@ fun SocialScreen(
                                     items(state.activity, key = { "activity:${it.runId}" }) { run ->
                                         SocialRecentRow(
                                             run = run,
+                                            style = titlePreferences.style,
+                                            useEpisodeThumbnails = titlePreferences.useEpisodeThumbnails,
                                             onOpen = { onOpenContent(run.contentType, run.contentId, run.title) },
                                         )
                                     }
@@ -406,6 +426,7 @@ fun SocialScreen(
                                             onSelectFriend = SocialRepository::selectFriend,
                                             shareWatching = shareWatching,
                                             shareRecent = shareRecent,
+                                            defaultJoinPolicy = defaultJoinPolicy,
                                             onShareWatching = {
                                                 shareWatching = it
                                                 scope.launch {
@@ -417,6 +438,10 @@ fun SocialScreen(
                                                 scope.launch {
                                                     SocialRepository.setPrivacy(shareWatching, shareRecent)
                                                 }
+                                            },
+                                            onDefaultJoinPolicy = { policy ->
+                                                defaultJoinPolicy = policy
+                                                scope.launch { SocialRepository.setDefaultJoinPolicy(policy) }
                                             },
                                         )
                                     }
@@ -449,6 +474,7 @@ fun SocialScreen(
                                 onSelectFriend = SocialRepository::selectFriend,
                                 shareWatching = shareWatching,
                                 shareRecent = shareRecent,
+                                defaultJoinPolicy = defaultJoinPolicy,
                                 onShareWatching = {
                                     shareWatching = it
                                     scope.launch { SocialRepository.setPrivacy(shareWatching, shareRecent) }
@@ -456,6 +482,10 @@ fun SocialScreen(
                                 onShareRecent = {
                                     shareRecent = it
                                     scope.launch { SocialRepository.setPrivacy(shareWatching, shareRecent) }
+                                },
+                                onDefaultJoinPolicy = { policy ->
+                                    defaultJoinPolicy = policy
+                                    scope.launch { SocialRepository.setDefaultJoinPolicy(policy) }
                                 },
                             )
                         }
@@ -598,7 +628,54 @@ private fun LazyListScope.socialInbox(
     state: SocialUiState,
     onRespond: (String, Boolean) -> Unit,
     onJoinInvitedParty: (String) -> Unit,
+    onNotificationAction: (SocialNotification, SocialNotificationAction) -> Unit,
 ) {
+    if (state.capabilities.partyContractVersion >= 2) {
+        val actionable = state.notifications.filter { it.availableActions.isNotEmpty() }
+        if (actionable.isEmpty()) return
+        item {
+            SocialSectionHeader(stringResource(Res.string.social_inbox), state.unreadCount)
+        }
+        items(actionable, key = { "notification:${it.id}" }) { notification ->
+            SocialPanel(accent = notification.readAt == null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    SocialAvatar(
+                        notification.actor.displayName,
+                        notification.actor.avatarUrl,
+                        notification.actor.avatarColorHex,
+                        40.dp,
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(notification.actor.displayName, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                        Text(
+                            when (notification.kind) {
+                                SocialNotificationKind.FriendRequest -> "sent a friend request"
+                                SocialNotificationKind.PartyInvitation -> "invited you to Watch Together"
+                                SocialNotificationKind.WatchingNowJoinRequest -> "asked to join your playback"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    notification.availableActions.sortedBy { it.name }.forEach { action ->
+                        TextButton(onClick = { onNotificationAction(notification, action) }) {
+                            Text(
+                                when (action) {
+                                    SocialNotificationAction.Accept -> "Accept"
+                                    SocialNotificationAction.Decline -> "Decline"
+                                    SocialNotificationAction.Join -> "Join"
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        return
+    }
     if (state.requests.isEmpty() && state.partyInvites.isEmpty()) return
     item {
         SocialSectionHeader(stringResource(Res.string.social_inbox), state.unreadCount)
@@ -669,121 +746,91 @@ private fun LazyListScope.socialInbox(
 @Composable
 private fun SocialPresenceCard(
     item: WatchingNowItem,
+    style: com.nuvio.app.features.watchprogress.ContinueWatchingSectionStyle,
+    useEpisodeThumbnails: Boolean,
     watchPartyEnabled: Boolean,
     onOpen: () -> Unit,
     onStartParty: () -> Unit,
 ) {
     val playing = item.state == SocialPlaybackState.playing
-    Surface(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
-        shape = RoundedCornerShape(NuvioTokens.Radius.card),
-        color = MaterialTheme.colorScheme.surface,
-    ) {
-        Row(
-            Modifier.padding(14.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            SocialPoster(item.poster, 74.dp)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SocialAvatar(item.profile.displayName, item.profile.avatarUrl, item.profile.avatarColorHex, 22.dp)
-                    Text(
-                        item.profile.displayName,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    SocialLiveBadge(playing)
-                }
-                Text(
-                    item.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                item.episode?.let { episode ->
-                    Text(
-                        "S${item.season ?: 1} E$episode" +
-                            item.episodeTitle?.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                Spacer(Modifier.height(2.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    LinearProgressIndicator(
-                        progress = { item.progressFraction },
-                        modifier = Modifier.weight(1f).height(4.dp).clip(CircleShape),
-                        color = if (playing) SocialLiveColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                        drawStopIndicator = {},
-                    )
-                    Text(
-                        "${item.roundedProgressPercent}%",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+    TitlePresentationCard(
+        item = TitlePresentation(
+            title = item.title,
+            poster = item.poster,
+            background = item.background,
+            episodeThumbnail = item.episodeThumbnail,
+            season = item.season,
+            episode = item.episode,
+            episodeTitle = item.episodeTitle,
+            progress = item.progressFraction,
+        ),
+        style = style,
+        useEpisodeThumbnails = useEpisodeThumbnails,
+        onClick = onOpen,
+        leading = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SocialAvatar(item.profile.displayName, item.profile.avatarUrl, item.profile.avatarColorHex, 22.dp)
+                Text(item.profile.displayName, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+            }
+        },
+        trailing = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SocialLiveBadge(playing)
                 if (watchPartyEnabled) {
-                    Spacer(Modifier.height(2.dp))
-                    // The one feature that makes this tab worth having was unreachable from the feed:
-                    // the only thing a presence card did was open the details page.
-                    TextButton(onClick = onStartParty, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) {
+                    TextButton(
+                        onClick = onStartParty,
+                        enabled = item.effectiveJoinPolicy != WatchJoinPolicy.disabled,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    ) {
                         Icon(Icons.Rounded.Groups, null, Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Watch together")
+                        Spacer(Modifier.width(5.dp))
+                        Text(when (item.effectiveJoinPolicy) {
+                            WatchJoinPolicy.direct -> "Join"
+                            WatchJoinPolicy.approval -> "Ask to join"
+                            WatchJoinPolicy.disabled -> "Not joinable"
+                        })
                     }
                 }
             }
-        }
-    }
+        },
+    )
 }
 
 @Composable
-private fun SocialRecentRow(run: RecentActivityRun, onOpen: () -> Unit) {
-    Surface(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
-        shape = RoundedCornerShape(NuvioTokens.Radius.compactCard),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
-    ) {
-        Row(
-            Modifier.padding(10.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            SocialPoster(run.poster, 38.dp)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+private fun SocialRecentRow(
+    run: RecentActivityRun,
+    style: com.nuvio.app.features.watchprogress.ContinueWatchingSectionStyle,
+    useEpisodeThumbnails: Boolean,
+    onOpen: () -> Unit,
+) {
+    TitlePresentationCard(
+        item = TitlePresentation(
+            title = run.title,
+            poster = run.poster,
+            background = run.background,
+            episodeThumbnail = run.episodeThumbnail,
+            season = run.season,
+            episode = run.episode,
+            episodeTitle = run.episodeTitle,
+        ),
+        style = style,
+        useEpisodeThumbnails = useEpisodeThumbnails,
+        onClick = onOpen,
+        leading = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                SocialAvatar(run.profile.displayName, run.profile.avatarUrl, run.profile.avatarColorHex, 18.dp)
                 Text(
-                    run.title,
-                    fontWeight = FontWeight.SemiBold,
+                    buildString {
+                        append(run.profile.displayName)
+                        if (run.eventCount > 1) append(" · ${run.eventCount} episodes")
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    SocialAvatar(run.profile.displayName, run.profile.avatarUrl, run.profile.avatarColorHex, 18.dp)
-                    Text(
-                        buildString {
-                            append(run.profile.displayName)
-                            run.episode?.let { append(" · S${run.season ?: 1} E$it") }
-                            if (run.eventCount > 1) append(" · ${run.eventCount} episodes")
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
             }
-        }
-    }
+        },
+    )
 }
 
 /**
@@ -808,8 +855,10 @@ private fun SocialFriendsPanel(
     onSelectFriend: (String?) -> Unit,
     shareWatching: Boolean,
     shareRecent: Boolean,
+    defaultJoinPolicy: WatchJoinPolicy,
     onShareWatching: (Boolean) -> Unit,
     onShareRecent: (Boolean) -> Unit,
+    onDefaultJoinPolicy: (WatchJoinPolicy) -> Unit,
 ) {
     // What each friend is watching, so the roster answers the same question the feed does rather
     // than listing names next to nothing.
@@ -942,6 +991,28 @@ private fun SocialFriendsPanel(
             )
             PrivacyToggle(stringResource(Res.string.social_share_watching), shareWatching, onShareWatching)
             PrivacyToggle(stringResource(Res.string.social_share_recent), shareRecent, onShareRecent)
+            Text(
+                "Who can join new playback",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                WatchJoinPolicy.entries.forEach { policy ->
+                    FilterChip(
+                        selected = defaultJoinPolicy == policy,
+                        onClick = { onDefaultJoinPolicy(policy) },
+                        label = {
+                            Text(
+                                when (policy) {
+                                    WatchJoinPolicy.direct -> "Direct"
+                                    WatchJoinPolicy.approval -> "Ask first"
+                                    WatchJoinPolicy.disabled -> "Off"
+                                },
+                            )
+                        },
+                    )
+                }
+            }
         }
     }
 }

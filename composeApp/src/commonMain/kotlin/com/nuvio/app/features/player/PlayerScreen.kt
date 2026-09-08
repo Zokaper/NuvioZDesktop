@@ -3,7 +3,7 @@ package com.nuvio.app.features.player
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.nuvio.app.features.watchparty.PartyContent
-import com.nuvio.app.features.watchparty.SourceFingerprint
+import com.nuvio.app.features.watchparty.PartySourceDescriptorV2
 
 @Composable
 internal fun PlayerScreen(
@@ -26,7 +26,8 @@ internal fun PlayerScreen(
     onOpenExternalUrl: ((String) -> Unit)? = null,
     onFatalPlaybackError: (() -> Unit)? = null,
     onPlaybackStarted: (() -> Unit)? = null,
-    onStartWatchTogether: ((PartyContent, SourceFingerprint, Long, Float) -> Unit)? = null,
+    onStartWatchTogether: ((PartyContent, PartySourceDescriptorV2, Long, Float) -> Unit)? = null,
+    onPartyLobbyRequested: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier,
     logo: String? = null,
     poster: String? = null,
@@ -50,6 +51,7 @@ internal fun PlayerScreen(
     sourceFacts: com.nuvio.app.features.downloads.SourceFacts? = null,
     playbackAttempt: Int = 1,
     expectedRuntimeMinutes: Int? = null,
+    partySourceDescriptor: PartySourceDescriptorV2? = null,
 ) {
     PlayerScreenContent(
         PlayerScreenArgs(
@@ -73,6 +75,7 @@ internal fun PlayerScreen(
             onFatalPlaybackError = onFatalPlaybackError,
             onPlaybackStarted = onPlaybackStarted,
             onStartWatchTogether = onStartWatchTogether,
+            onPartyLobbyRequested = onPartyLobbyRequested,
             modifier = modifier,
             logo = logo,
             poster = poster,
@@ -96,6 +99,7 @@ internal fun PlayerScreen(
             sourceFacts = sourceFacts,
             playbackAttempt = playbackAttempt,
             expectedRuntimeMinutes = expectedRuntimeMinutes,
+            partySourceDescriptor = partySourceDescriptor,
         )
     )
 }

@@ -2,7 +2,7 @@ package com.nuvio.app.features.player
 
 import androidx.compose.ui.Modifier
 import com.nuvio.app.features.watchparty.PartyContent
-import com.nuvio.app.features.watchparty.SourceFingerprint
+import com.nuvio.app.features.watchparty.PartySourceDescriptorV2
 
 internal typealias PlayerReleaseBeforeBack = (
     onReleased: () -> Unit,
@@ -29,7 +29,8 @@ internal data class PlayerScreenArgs(
     val onOpenExternalUrl: ((String) -> Unit)?,
     val onFatalPlaybackError: (() -> Unit)? = null,
     val onPlaybackStarted: (() -> Unit)? = null,
-    val onStartWatchTogether: ((PartyContent, SourceFingerprint, Long, Float) -> Unit)? = null,
+    val onStartWatchTogether: ((PartyContent, PartySourceDescriptorV2, Long, Float) -> Unit)? = null,
+    val onPartyLobbyRequested: ((String) -> Unit)? = null,
     val modifier: Modifier,
     val logo: String?,
     val poster: String?,
@@ -69,4 +70,5 @@ internal data class PlayerScreenArgs(
      * the user is already watching.
      */
     val expectedRuntimeMinutes: Int? = null,
+    val partySourceDescriptor: PartySourceDescriptorV2? = null,
 )

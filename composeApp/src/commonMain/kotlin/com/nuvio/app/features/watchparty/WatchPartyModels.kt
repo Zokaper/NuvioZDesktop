@@ -78,6 +78,7 @@ data class PartyContent(
 )
 
 @Serializable
+@Deprecated("V1 compatibility only; new party flows use PartySourceDescriptorV2")
 data class SourceFingerprint(
     @SerialName("addon_id") val addonId: String? = null,
     @SerialName("info_hash") val infoHash: String? = null,
@@ -114,13 +115,16 @@ data class WatchPartyState(
     @SerialName("source_generation") val sourceGeneration: Int = 0,
     val stage: WatchPartyStage = WatchPartyStage.lobby,
     val content: PartyContent,
-    @SerialName("source_fingerprint") val sourceFingerprint: SourceFingerprint? = null,
+    @SerialName("source_fingerprint") val sourceFingerprint: PartySourceDescriptorV2? = null,
     @SerialName("position_ms") val positionMs: Long,
     @SerialName("duration_ms") val durationMs: Long,
     @SerialName("playback_speed") val playbackSpeed: Float,
     val sequence: Long,
     @SerialName("state_updated_at") val stateUpdatedAt: String,
     val members: List<WatchPartyParticipant> = emptyList(),
+    @SerialName("authority_epoch") val authorityEpoch: Long = 0,
+    @SerialName("origin_presence_session_id") val originPresenceSessionId: String? = null,
+    @SerialName("ended_reason") val endedReason: String? = null,
 )
 
 @Serializable
