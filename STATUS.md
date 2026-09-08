@@ -13,11 +13,13 @@ Automated verification is green:
 - `:composeApp:compileKotlinDesktop` passes;
 - targeted player/navigation/social/watchparty desktop tests pass;
 - full `:composeApp:desktopTest`: 1,647/1,647, zero failures/errors/skips;
-- backend remains at the handoff's locally verified 130/130 pgTAP result because no backend SQL changed in this continuation.
+- backend pgTAP passes 130/130 after the reconciliation migration was updated to preserve `party_member_broadcast_update` across the live `source_match` type conversion (`nuvio-z-backend` commit `3ddc6eb`).
 
 Release-style debug-tools MSI, including a freshly rebuilt Windows native player bridge, was built successfully at `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` (252,670,144 bytes; SHA-256 `9083BFE6B7A2C1C579475635CE532612EF1CD1CCA27C4475DB8C568BF1B7A4B9`). The exact physical checklist is `PHASE-4-TWO-CLIENT-VERIFICATION.md` and every scenario remains **NOT RUN**.
 
-Phase 4 is **not complete**. The two-client watched matrix has not been executed, and the two backend migrations have not been deployed to live Supabase project `pzbpghmmordvzcfbayoh`. Never deploy them to `api.nuvio.tv`.
+The two scoped Phase 4 migrations, `202609030003` and `202609040001`, are deployed and recorded on Nuvio Z Supabase project `pzbpghmmordvzcfbayoh`. Live catalog verification confirms the four new enums and labels, `watch_join_requests`, all Phase 4 columns, both partial unique indexes, the checked-in RPC signatures, lifecycle/Realtime helpers, and the Realtime validator policy. `get_social_capabilities()` reports contract version 2 while preserving `social_enabled=true` and `watch_party_enabled=true`; live sanitizer probes reject URI-, URL-, header-, and credential-bearing source descriptors. No client scenario was run during deployment.
+
+Phase 4 is **not complete**. The two-client watched matrix has not been executed. Never deploy Nuvio Z schema changes to `api.nuvio.tv`.
 
 Last updated: 2026-09-07
 
