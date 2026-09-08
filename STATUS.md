@@ -27,6 +27,18 @@ SHA-256 `133AEEA118C756CC326DD4EC33CA85B7F84A1C7513DED44476176DBC92E63F25`). The
 published artifact and both `main-release/msi` copies are byte-identical. This is the required
 physical Stage 0 test build; packaging does not advance the stage.
 
+A partial same-machine physical run used two installed clients and produced distinct host/guest
+logs. It covered five pauses, four resumes, and three seeks. Every host T2 send reported success,
+yet the guest recorded zero T3 receives and no timing-plane clock/tick traffic while both clients
+claimed `realtime=subscribed`. The guest followed durable state via `fallbackHold`/`fallbackDrift`:
+11 observed user-command sequences arrived in 1,045–6,097 ms (median 3,560 ms; average 3,730.5 ms),
+and one short pause was overwritten before the guest observed its sequence. Host T1–T2 itself cost
+468–766 ms because local emission follows the awaited broadcast. This reproduces and attributes the
+reported delay to absent live peer delivery plus durable fallback, but the private-channel failure's
+cause is not yet established. The exact evidence is recorded in `WATCH-TOGETHER-STAGE0-TRACE.md`.
+Seven more seeks and the controlled interruption/recovery segment remain required, so Stage 0 stays
+`IN_PROGRESS` and Stage 1 remains blocked.
+
 ## Phase 4 follow-up hardening: lifecycle resilience, truthful presence & UI fidelity (2026-09-08)
 
 Completed an ironclad hardening pass for Watch Together covering disconnects, app exits, stale parties, reconnects, lobby/player transitions, truthful presence, and remaining Phase 4 UI issues:
