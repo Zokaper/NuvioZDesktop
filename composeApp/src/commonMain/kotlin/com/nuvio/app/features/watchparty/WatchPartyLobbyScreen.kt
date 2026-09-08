@@ -255,24 +255,31 @@ fun WatchPartyLobbyScreen(
                     }
                 }
                 val onStart: () -> Unit = {
-                    val fingerprint = chosenSource
-                    if (fingerprint != null) {
-                        scope.launch {
-                            // Begin, then select: begin bumps the generation, so pressing Start on
-                            // the same source a second time - after everyone backed out to the
-                            // lobby - is still a new launch that the lobby's latch lets through.
-                            WatchPartyRepository.beginSourceSelection(addonSignature).onSuccess {
-                                val selecting = WatchPartyRepository.uiState.value.party
-                                    ?: return@onSuccess
-                                // Nobody navigates from here. Publishing the source is the signal,
-                                // and the lobby's launch effect acts on it for host and guests
-                                // alike - see its comment for why that is one path and not two.
-                                WatchPartyRepository.selectSource(
-                                    fingerprint = fingerprint,
-                                    expectedSourceGeneration = selecting.sourceGeneration,
-                                )
+                    when (
+                        partyPlaybackEntryAction(
+                            authoritativeSourcePublished = party.sourceFingerprint != null,
+                            stagedHostSourceAvailable = state.stagedHostSource != null,
+                            reusableLocalLaunchAvailable = false,
+                            viewerIsHost = isHost,
+                        )
+                    ) {
+                        PartyPlaybackEntryAction.PublishStagedHostSource -> {
+                            state.stagedHostSource?.let { fingerprint ->
+                                scope.launch {
+                                    // Choosing the source already began this generation. Publish it
+                                    // exactly once against that generation; beginning again here was
+                                    // the lifecycle reset that sent every guest back to waiting.
+                                    WatchPartyRepository.selectSource(
+                                        fingerprint = fingerprint,
+                                        expectedSourceGeneration = party.sourceGeneration,
+                                    )
+                                }
                             }
                         }
+                        PartyPlaybackEntryAction.ReuseLocalLaunch,
+                        PartyPlaybackEntryAction.ResolveAuthoritativeSource ->
+                            onChooseSource(party, PartyStreamLaunchPurpose.RESOLVE_PLAYBACK)
+                        PartyPlaybackEntryAction.AwaitHostSource -> Unit
                     }
                 }
                 val onLeave: () -> Unit = {

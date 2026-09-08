@@ -1829,6 +1829,7 @@ internal fun StreamDestination(
         awaitingMeteredAnswer
     val streamSurface = streamRouteSurface(
         StreamRouteSurfaceInputs(
+            isPartyResolution = isPartyResolution,
             isClassic = playerSettings.playbackMode == PlaybackMode.CLASSIC,
             isManualLaunch = launch.manualSelection || launch.downloadIntent,
             manualSourceListRequested = manualSourceListRequested,

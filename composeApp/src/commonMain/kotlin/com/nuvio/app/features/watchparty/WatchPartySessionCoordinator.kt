@@ -20,11 +20,16 @@ object WatchPartySessionCoordinator {
     private var presenceDeviceId:String?=null
 
     fun registerPlayback(context:ActivePlaybackContext,sessionId:String,deviceId:String) {
+        val wasAttached = _state.value.playback?.attachmentId == context.attachmentId &&
+            _state.value.phase == PartyClientPhase.ActivePlayer
         presenceSessionId=sessionId
         presenceDeviceId=deviceId
         val party=WatchPartyRepository.uiState.value.party
         val generation=party?.generationKey()
         _state.value=reducePartySession(_state.value,PartySessionEvent.PlayerAttached(context,generation))
+        if (party != null && !wasAttached) {
+            scope.launch { WatchPartyRepository.setClientLocation("player") }
+        }
     }
 
     fun unregisterPlayback(attachmentId:String) {

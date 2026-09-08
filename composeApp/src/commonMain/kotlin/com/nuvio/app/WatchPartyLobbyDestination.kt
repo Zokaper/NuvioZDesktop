@@ -11,12 +11,15 @@ import com.nuvio.app.features.streams.PartyStreamLaunchContext
 import com.nuvio.app.features.streams.PartyStreamLaunchPurpose
 import com.nuvio.app.features.streams.StreamLaunch
 import com.nuvio.app.features.streams.StreamLaunchStore
+import com.nuvio.app.features.player.PartyPlayerLaunchKey
+import com.nuvio.app.features.player.PlayerLaunchStore
 import com.nuvio.app.features.watchparty.WatchPartyLobbyScreen
 import com.nuvio.app.features.watchparty.WatchPartyRepository
 import com.nuvio.app.features.watchparty.WatchPartyState
 import com.nuvio.app.features.watchparty.WatchPartyStatus
 import com.nuvio.app.navigation.DetailRoute
 import com.nuvio.app.navigation.NuvioNavigator
+import com.nuvio.app.navigation.PlayerRoute
 import com.nuvio.app.navigation.StreamRoute
 import com.nuvio.app.navigation.WatchPartyLobbyRoute
 
@@ -64,6 +67,27 @@ internal fun WatchPartyLobbyDestination(
         }
         if (purpose == PartyStreamLaunchPurpose.RESOLVE_PLAYBACK && target == null) return
 
+        if (target != null) {
+            val key = PartyPlayerLaunchKey(
+                partyId = party.id,
+                contentGeneration = party.contentGeneration,
+                sourceGeneration = party.sourceGeneration,
+                descriptor = target,
+            )
+            PlayerLaunchStore.reusablePartyLaunch(key)?.let { retained ->
+                val playerLaunch = retained.copy(
+                    initialPositionMs = WatchPartyRepository.authoritativePositionMs(party),
+                    initialProgressFraction = null,
+                    // The retained StreamRoute was deliberately removed on lobby exit. This is a
+                    // direct attachment, not a fresh failure chain owned by a source route.
+                    autoPickedWithFailureChain = false,
+                )
+                val playerLaunchId = PlayerLaunchStore.put(playerLaunch)
+                navController.navigate(PlayerRoute(playerLaunchId, playerLaunch.title))
+                return
+            }
+        }
+
         val content = party.content
         val launchId = StreamLaunchStore.put(
             StreamLaunch(
@@ -77,7 +101,7 @@ internal fun WatchPartyLobbyDestination(
                 seasonNumber = content.season,
                 episodeNumber = content.episode,
                 episodeTitle = content.episodeTitle,
-                resumePositionMs = party.positionMs.coerceAtLeast(0L),
+                resumePositionMs = WatchPartyRepository.authoritativePositionMs(party),
                 manualSelection = purpose == PartyStreamLaunchPurpose.SELECT_SOURCE,
                 partyContext = PartyStreamLaunchContext(
                     partyId = party.id,

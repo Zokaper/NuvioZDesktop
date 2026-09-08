@@ -341,12 +341,13 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
         }
     }
 
-    // Backing out to the source list gives up the resolved stream. Saying so is what lets a host who
-    // has not started yet go back to waiting instead of starting without them.
+    // PlayerRoute disposal is only a local attachment transition. The durable source realization
+    // remains valid for this generation and must not be downgraded to `resolving`: doing that made
+    // a lobby visit look like a new preparation round to every member. A real source/content
+    // generation change resets readiness on the backend and starts the matching flow explicitly.
     DisposableEffect(generationKey) {
         onDispose {
             if (generationKey != null) {
-                WatchPartyRepository.updateReadyDetached(SourceResolutionState.resolving)
                 partyBarrierAtMs = 0L
                 partyReportedPeerStatus = null
                 partyHoldingForBarrier = false

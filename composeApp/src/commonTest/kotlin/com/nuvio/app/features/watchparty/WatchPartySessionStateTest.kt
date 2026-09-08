@@ -29,6 +29,7 @@ class WatchPartySessionStateTest {
         assertEquals(PartyClientPhase.Lobby,lobby.phase)
         assertTrue(lobby.membershipRetained)
         assertNull(lobby.playback)
+        assertEquals(generation,lobby.generation)
     }
 
     @Test fun promotionAttachesWithoutReplacingPlayback() {
@@ -43,6 +44,31 @@ class WatchPartySessionStateTest {
         val changed=reducePartySession(active,PartySessionEvent.SnapshotAdvanced(generation.copy(sourceGeneration=3)))
         assertEquals(PartyClientPhase.MatchingHostSource,changed.phase)
         assertFalse(generation.accepts(changed.generation!!))
+    }
+
+    @Test fun sameGenerationSnapshotDoesNotRestartMatching() {
+        val active=reducePartySession(PartySessionState(),PartySessionEvent.PlayerAttached(playback,generation))
+        val unchanged=reducePartySession(active,PartySessionEvent.SnapshotAdvanced(generation))
+        assertEquals(PartyClientPhase.ActivePlayer,unchanged.phase)
+        assertEquals(generation,unchanged.generation)
+    }
+
+    @Test fun repeatedPlayerLobbyCyclesAreIdempotent() {
+        var state=PartySessionState()
+        repeat(3) {
+            state=reducePartySession(state,PartySessionEvent.PlayerAttached(playback,generation))
+            assertEquals(PartyClientPhase.ActivePlayer,state.phase)
+            state=reducePartySession(state,PartySessionEvent.PlayerExited("party"))
+            assertEquals(PartyClientPhase.Lobby,state.phase)
+            assertEquals(generation,state.generation)
+            assertTrue(state.membershipRetained)
+        }
+    }
+
+    @Test fun contentGenerationChangeStartsNewMatchingFlow() {
+        val active=reducePartySession(PartySessionState(),PartySessionEvent.PlayerAttached(playback,generation))
+        val changed=reducePartySession(active,PartySessionEvent.SnapshotAdvanced(generation.copy(contentGeneration=2)))
+        assertEquals(PartyClientPhase.MatchingHostSource,changed.phase)
     }
 
     @Test fun hostEndKeepsNormalPlaybackWhileGuestGetsChoice() {

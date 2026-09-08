@@ -3,6 +3,8 @@ package com.nuvio.app.features.watchparty
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.network.ZSessionBridge
 import com.nuvio.app.core.network.ZSupabaseProvider
+import com.nuvio.app.features.player.PartyPlayerLaunchKey
+import com.nuvio.app.features.player.PlayerLaunchStore
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.rpc
 import io.github.jan.supabase.realtime.RealtimeChannel
@@ -113,6 +115,10 @@ object WatchPartyRepository {
     // The periodic and transition heartbeats sample playback independently. If their requests are
     // allowed to overlap, an older sample can finish last and overwrite the newer host state.
     private val heartbeatMutex = Mutex()
+    // Location and readiness mutate different columns on the same member but each RPC returns a
+    // whole snapshot. Serializing them prevents an earlier response from arriving last and
+    // restoring the pre-ready member row over the newer local state.
+    private val memberStateMutex = Mutex()
 
     fun installAuthorizedSnapshot(snapshot:WatchPartyState) = installSnapshot(snapshot)
 
@@ -131,11 +137,25 @@ object WatchPartyRepository {
         installSnapshot(snapshot)
     }
 
-    suspend fun setClientLocation(location:String):Result<Unit> = call {
-        val snapshot=ZSupabaseProvider.client.postgrest.rpc("party_set_client_location",buildJsonObject {
-            put("p_party_id",requireParty().id);put("p_profile_id",requireProfile());put("p_location",location)
-        }).decodeAs<WatchPartyState>()
-        installSnapshot(snapshot,reopenChannel=false)
+    suspend fun setClientLocation(location:String):Result<Unit> = memberStateMutex.withLock {
+        call {
+            val snapshot=ZSupabaseProvider.client.postgrest.rpc("party_set_client_location",buildJsonObject {
+                put("p_party_id",requireParty().id);put("p_profile_id",requireProfile());put("p_location",location)
+            }).decodeAs<WatchPartyState>()
+            installSnapshot(snapshot,reopenChannel=false)
+        }
+    }
+
+    fun authoritativePositionMs(party: WatchPartyState = requireParty()): Long {
+        val updatedAt = parseIsoEpochMs(party.stateUpdatedAt) ?: return party.positionMs.coerceAtLeast(0L)
+        val serverNow = currentEpochMs() + _uiState.value.serverClockOffsetMs
+        return expectedPartyPositionMs(
+            statePositionMs = party.positionMs,
+            stateUpdatedAtEpochMs = updatedAt,
+            serverNowEpochMs = serverNow,
+            status = party.status,
+            playbackSpeed = party.playbackSpeed,
+        ).coerceAtLeast(0L)
     }
 
     /**
@@ -176,8 +196,9 @@ object WatchPartyRepository {
      * the latch stored in the lobby's composition it was lost on that same back navigation, which
      * is the same trap. It lives here because it has to outlive both screens.
      *
-     * Each start bumps `source_generation` (the host runs `party_begin_source_selection` before
-     * publishing), so re-starting the same source still counts as a new launch.
+     * Only choosing/changing a source bumps `source_generation`. Reattaching a player for the same
+     * generation deliberately bypasses this automatic launch latch and is initiated by the user's
+     * lobby action instead.
      */
     private var launchedSourceGeneration: Int? = null
 
@@ -259,29 +280,18 @@ object WatchPartyRepository {
         error: String? = null,
         sourceGeneration: Int? = null,
         sourceMatch: PartySourceMatch? = null,
-    ): Result<Unit> = call {
-        val party = requireParty()
-        log.i { "ready party=${party.id.shortId()} profile=${_uiState.value.activeProfileId.shortId()} state=$state durationMs=$durationMs error=$error" }
-        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_set_ready", buildJsonObject {
-            put("p_party_id", party.id); put("p_profile_id", requireProfile()); put("p_ready_state", state.name)
-            durationMs?.let { put("p_duration_ms", it) }; error?.let { put("p_error", it) }
-            sourceGeneration?.let { put("p_source_generation", it) }
-            sourceMatch?.let { put("p_source_match", it.name) }
-        }).decodeAs<WatchPartyState>()
-        installSnapshot(snapshot, reopenChannel = false)
-    }
-
-    /**
-     * Marks readiness without a caller waiting on the result.
-     *
-     * Leaving the player has to say so - a member who backed out to the source list is not holding
-     * a resolved stream any more, and a host gated on readiness would otherwise wait on a report
-     * that is no longer true. The composition that noticed is already going away, so the call
-     * cannot run on its scope.
-     */
-    fun updateReadyDetached(state: SourceResolutionState) {
-        if (_uiState.value.party == null) return
-        scope.launch { runCatching { updateReady(state) } }
+    ): Result<Unit> = memberStateMutex.withLock {
+        call {
+            val party = requireParty()
+            log.i { "ready party=${party.id.shortId()} profile=${_uiState.value.activeProfileId.shortId()} state=$state durationMs=$durationMs error=$error" }
+            val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_set_ready", buildJsonObject {
+                put("p_party_id", party.id); put("p_profile_id", requireProfile()); put("p_ready_state", state.name)
+                durationMs?.let { put("p_duration_ms", it) }; error?.let { put("p_error", it) }
+                sourceGeneration?.let { put("p_source_generation", it) }
+                sourceMatch?.let { put("p_source_match", it.name) }
+            }).decodeAs<WatchPartyState>()
+            installSnapshot(snapshot, reopenChannel = false)
+        }
     }
 
     /**
@@ -479,6 +489,14 @@ object WatchPartyRepository {
     suspend fun leave(): Result<Unit> = depart(PartyDepartureMode.LEAVE_AND_TRANSFER)
 
     private fun installSnapshot(snapshot: WatchPartyState, reopenChannel: Boolean = true) {
+        val held = _uiState.value.party
+        if (held != null && isStalePartySnapshot(held, snapshot)) {
+            log.i {
+                "discard stale snapshot party=${snapshot.id.shortId()} gen=${snapshot.contentGeneration} " +
+                    "srcGen=${snapshot.sourceGeneration} epoch=${snapshot.authorityEpoch} seq=${snapshot.sequence}"
+            }
+            return
+        }
         // The authoritative state, logged only when it actually moves. This is the line to line up
         // between two machines: same sequence and same state_updated_at means they agree, and a
         // client whose sequence has stopped advancing has lost both realtime and the poll.
@@ -490,12 +508,24 @@ object WatchPartyRepository {
         // A different party is a different everything: neither the host's staged pick nor the launch
         // latch means anything about this one. Cleared in the same update that installs the snapshot,
         // so no frame is ever composed with one party's state and another's pick.
-        val carriesOver = _uiState.value.party?.id == snapshot.id
+        val previousParty = _uiState.value.party
+        val carriesOver = previousParty?.id == snapshot.id
+        val stagedPickCarriesOver = shouldRetainStagedHostSource(previousParty, snapshot)
         if (!carriesOver) launchedSourceGeneration = null
+        PlayerLaunchStore.invalidateRetainedPartyLaunchUnless(
+            snapshot.sourceFingerprint?.let { descriptor ->
+                PartyPlayerLaunchKey(
+                    partyId = snapshot.id,
+                    contentGeneration = snapshot.contentGeneration,
+                    sourceGeneration = snapshot.sourceGeneration,
+                    descriptor = descriptor,
+                )
+            },
+        )
         _uiState.value = _uiState.value.copy(
             party = snapshot,
-            stagedHostSource = _uiState.value.stagedHostSource.takeIf { carriesOver },
-            stagedHostSourceLabel = _uiState.value.stagedHostSourceLabel.takeIf { carriesOver },
+            stagedHostSource = _uiState.value.stagedHostSource.takeIf { stagedPickCarriesOver },
+            stagedHostSourceLabel = _uiState.value.stagedHostSourceLabel.takeIf { stagedPickCarriesOver },
             isWorking = false,
             errorMessage = null,
         )

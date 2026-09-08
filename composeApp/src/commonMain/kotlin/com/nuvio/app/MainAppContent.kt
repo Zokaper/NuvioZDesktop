@@ -179,6 +179,7 @@ import com.nuvio.app.features.watchprogress.nextUpDismissKey
 import com.nuvio.app.features.watchprogress.toContinueWatchingItem
 import com.nuvio.app.features.watchparty.WatchPartyRepository
 import com.nuvio.app.features.watchparty.WatchPartySessionCoordinator
+import com.nuvio.app.features.watchparty.resolveWatchPartyEntry
 import com.nuvio.app.navigation.*
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
@@ -1641,13 +1642,23 @@ internal fun MainAppContent(
                         onPlayManually = onPlayManually,
                         onWatchTogether = { content ->
                             coroutineScope.launch {
-                                WatchPartyRepository.create(
-                                    content = content,
-                                    sourceFingerprint = null,
-                                ).onSuccess {
-                                    WatchPartyRepository.uiState.value.party?.let { party ->
-                                        navController.navigate(WatchPartyLobbyRoute(partyId = party.id))
-                                    }
+                                resolveWatchPartyEntry(
+                                    heldParty = WatchPartyRepository.uiState.value.party,
+                                    restoreActive = WatchPartyRepository::restoreActive,
+                                    createParty = {
+                                        WatchPartyRepository.create(
+                                            content = content,
+                                            sourceFingerprint = null,
+                                        ).mapCatching {
+                                            checkNotNull(WatchPartyRepository.uiState.value.party) {
+                                                "Party creation returned no active party"
+                                            }
+                                        }
+                                    },
+                                ).onSuccess { party ->
+                                    navController.navigate(WatchPartyLobbyRoute(partyId = party.id))
+                                }.onFailure {
+                                    NuvioToastController.show("Could not open Watch Together. Try again.")
                                 }
                             }
                         },

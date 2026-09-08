@@ -2,6 +2,14 @@
 
 Last updated: 2026-09-08
 
+## Phase 4 Stage 14 PlayerRoute/lobby lifecycle correction (2026-09-08)
+
+Physical two-client testing found that leaving `PlayerRoute` was incorrectly treated as losing the durable party source: player disposal published `ready_state=resolving`, and pressing Start in the lobby called `party_begin_source_selection` again. That backend RPC correctly opened a new source generation, cleared the selected descriptor, and reset connected members to `waiting_for_host`; the desktop client was invoking it for a local attachment transition. The lobby also had no reusable resolved-launch cache and party rematching initially inherited Classic mode's source-list surface, causing the observed list flash.
+
+Desktop now separates durable source publication, process-local source realization, and player attachment. Player disposal changes only local attachment/location; a published descriptor is reused for its exact party/content/source generation, or locally rematched without republishing; real generation changes invalidate the retained launch and any staged host pick. Location/readiness snapshot RPCs are serialized, delayed older generation/epoch/sequence snapshots are rejected, and normal player attachment publishes `client_location=player`. Party resolution is a loading route from its first frame and cannot expose the ordinary source list unless matching explicitly fails. The existing held/restored-party entry fix is included so reopening Watch Together does not create a second party.
+
+Automated verification is green: pure suites 495/495; focused Watch Party/player/navigation/route-surface desktop tests pass; full `:composeApp:desktopTest` 1,672/1,672 with zero failures/errors/skips; and `:composeApp:compileKotlinDesktop` passes. A release-style debug-tools MSI was built without rebuilding the unchanged native bridge: `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` (258,590,495 bytes; SHA-256 `67C32A059D7866A21B478AC46A5FD346CA551825F46BD794B506DA5D744796D6`). Backend code/schema was not changed or deployed. Stage 14 remains pending maintainer physical retest and is not marked PASS; Phase 4 is not complete.
+
 ## Phase 4 Stage 14 live source-selection hotfix (2026-09-08)
 
 The first physical two-client run exposed a backend contract bug: `WatchPartyRepository` legitimately serialized nullable descriptor fields as explicit JSON `null`, while the deployed `sanitize_source_descriptor_v2` rejected any present `file_index` key when `info_hash` was null. Backend migration `202609080001_accept_null_party_file_index.sql` now accepts and strips an explicit-null unknown index while preserving rejection of negative indices and real indices without an info hash. It is deployed and recorded only on Nuvio Z project `pzbpghmmordvzcfbayoh`.

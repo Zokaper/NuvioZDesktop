@@ -263,6 +263,7 @@ kotlinc -nowarn -cp "$CP_BUILD:$CP_JSON" -Xplugin="$WORK/serialization-plugin-${
   "$M/features/watchparty/WatchPartyModels.kt" \
   "$M/features/watchparty/PartySourceDescriptorV2.kt" \
   "$M/features/watchparty/WatchPartySessionState.kt" \
+  "$M/features/watchparty/WatchPartyPlaybackLifecycle.kt" \
   "$M/features/watchparty/WatchPartyClock.kt" \
   "$M/features/watchparty/WatchPartyTimeline.kt" \
   "$M/features/watchparty/WatchPartyBarrier.kt" \
@@ -270,6 +271,7 @@ kotlinc -nowarn -cp "$CP_BUILD:$CP_JSON" -Xplugin="$WORK/serialization-plugin-${
   "$T/features/watchparty/WatchPartyModelsTest.kt" \
   "$T/features/watchparty/PartySourceDescriptorV2Test.kt" \
   "$T/features/watchparty/WatchPartySessionStateTest.kt" \
+  "$T/features/watchparty/WatchPartyPlaybackLifecycleTest.kt" \
   "$T/features/watchparty/WatchPartySyncTest.kt" \
   2>&1 | grep -v "^warning:" | grep -v "Picked up JAVA" || true
 
@@ -277,6 +279,7 @@ java -cp "$WORK/out-watchparty:$CP_RUN:$CP_JSON" org.junit.runner.JUnitCore \
   com.nuvio.app.features.watchparty.WatchPartyModelsTest \
   com.nuvio.app.features.watchparty.PartySourceDescriptorV2Test \
   com.nuvio.app.features.watchparty.WatchPartySessionStateTest \
+  com.nuvio.app.features.watchparty.WatchPartyPlaybackLifecycleTest \
   com.nuvio.app.features.watchparty.WatchPartyClockTest \
   com.nuvio.app.features.watchparty.WatchPartyTimelineTest \
   com.nuvio.app.features.watchparty.WatchPartyBarrierTest \
