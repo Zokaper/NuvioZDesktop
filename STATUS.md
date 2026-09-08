@@ -2,6 +2,12 @@
 
 Last updated: 2026-09-08
 
+## Phase 4 Stage 14 live source-selection hotfix (2026-09-08)
+
+The first physical two-client run exposed a backend contract bug: `WatchPartyRepository` legitimately serialized nullable descriptor fields as explicit JSON `null`, while the deployed `sanitize_source_descriptor_v2` rejected any present `file_index` key when `info_hash` was null. Backend migration `202609080001_accept_null_party_file_index.sql` now accepts and strips an explicit-null unknown index while preserving rejection of negative indices and real indices without an info hash. It is deployed and recorded only on Nuvio Z project `pzbpghmmordvzcfbayoh`.
+
+No desktop production code changed, so the current Stage 14 MSI remains the retest artifact. Focused descriptor/source tests pass, pure suites pass 484/484, and backend pgTAP passes 142/142. The physical two-client scenario remains pending maintainer retest and is not marked PASS.
+
 ## Phase 4: automated implementation gate green; watched matrix pending (2026-09-08)
 
 Phase 4 desktop Stages 1-13 are implemented. Stage 12 is now complete: the Home and Social activity surfaces share `TitlePresentationCard`, title artwork selection is import-light and covered by the pure harness, and `SocialActivityChip` is retired. The native notification renderer now maps its three allowed actions to explicit bridge commands rather than synthesizing command names.

@@ -1,14 +1,20 @@
 package com.nuvio.app.features.watchparty
 
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class PartySourceDescriptorV2Test {
     private val hashA = "0123456789abcdef0123456789abcdef01234567"
     private val hashB = "1123456789abcdef0123456789abcdef01234567"
+    private val repositoryJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     @Test fun fingerprintIsStableAcrossEquivalentPresentation() {
         assertEquals(
@@ -34,6 +40,29 @@ class PartySourceDescriptorV2Test {
         assertEquals(PartySourceMatchTier.ExactTorrentFile, partySourceMatchTier(host, descriptor(infoHash = hashA, fileIndex = 4)))
         assertEquals(PartySourceMatchTier.None, partySourceMatchTier(host, descriptor(infoHash = hashA, fileIndex = 5)))
         assertEquals(PartySourceMatchTier.None, partySourceMatchTier(host, descriptor(infoHash = hashA, fileIndex = null)))
+    }
+
+    @Test fun unknownTorrentFileIndexRemainsNullAcrossRepositorySerialization() {
+        val descriptor = descriptor(infoHash = hashA, fileIndex = null)
+        val encoded = repositoryJson.parseToJsonElement(repositoryJson.encodeToString(descriptor)).jsonObject
+        assertEquals(hashA, encoded.getValue("info_hash").toString().trim('"'))
+        assertSame(JsonNull, encoded.getValue("file_index"))
+        assertNull(repositoryJson.decodeFromString<PartySourceDescriptorV2>(encoded.toString()).fileIndex)
+        assertEquals(
+            PartySourceMatchTier.None,
+            partySourceMatchTier(descriptor(infoHash = hashA, fileIndex = 3), descriptor),
+        )
+    }
+
+    @Test fun nonTorrentNullIdentityFieldsMatchRepositoryWireShape() {
+        val encoded = repositoryJson.parseToJsonElement(repositoryJson.encodeToString(descriptor())).jsonObject
+        assertSame(JsonNull, encoded.getValue("info_hash"))
+        assertSame(JsonNull, encoded.getValue("file_index"))
+    }
+
+    @Test fun invalidFileIndexRelationshipsCannotEnterTheClientModel() {
+        assertFailsWith<IllegalArgumentException> { descriptor(infoHash = hashA, fileIndex = -1) }
+        assertFailsWith<IllegalArgumentException> { descriptor(infoHash = null, fileIndex = 0) }
     }
 
     @Test fun originReleasePrecedesCrossOriginRelease() {
