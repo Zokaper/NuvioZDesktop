@@ -39,6 +39,11 @@ cause is not yet established. The exact evidence is recorded in `WATCH-TOGETHER-
 Seven more seeks and the controlled interruption/recovery segment remain required, so Stage 0 stays
 `IN_PROGRESS` and Stage 1 remains blocked.
 
+Maintainer decision after reviewing that evidence: Stage 0 is `DONE` and the remaining five
+ordinary seeks plus controlled Realtime interruption/recovery segment are **SKIPPED**, not passed.
+Stage 1 is now `IN_PROGRESS`. Missing private-channel delivery remains an open defect; Stage 1/2
+must diagnose and correct live delivery and truthful health rather than shorten the durable poll.
+
 ## Phase 4 follow-up hardening: lifecycle resilience, truthful presence & UI fidelity (2026-09-08)
 
 Completed an ironclad hardening pass for Watch Together covering disconnects, app exits, stale parties, reconnects, lobby/player transitions, truthful presence, and remaining Phase 4 UI issues:

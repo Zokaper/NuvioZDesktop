@@ -114,6 +114,10 @@ timing message. The peer followed the slower durable state path, whose roughly f
 and intermittent API failures produced variable multi-second arrival and occasional coalescing.
 This does not yet identify why private-channel broadcast delivery was absent.
 
-Stage 0 remains `IN_PROGRESS`. To complete the required matrix, collect seven more seeks total and
-the controlled Realtime interruption/recovery segment (pause, resume, and seek while interrupted;
-then repeat after restoration). Preserve the new pair of original logs outside the repository.
+On 2026-09-08 the maintainer accepted this evidence as sufficient attribution and explicitly
+authorized Stage 0 closure without the remaining five ordinary seeks or controlled Realtime
+interruption/recovery segment. Those cases are **SKIPPED BY MAINTAINER DECISION**, not passed. The
+original logs remain preserved outside the repository.
+
+Stage 0 is `DONE`. The missing private-channel delivery is not solved: Stage 1/2 must diagnose and
+correct the actual Realtime delivery and health architecture rather than reduce polling latency.
