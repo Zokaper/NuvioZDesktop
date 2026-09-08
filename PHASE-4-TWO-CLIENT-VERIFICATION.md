@@ -7,11 +7,11 @@ Authoritative criteria: `../PLAN-phase-4.md`, section 14. Use two installed desk
 ## Build under test
 
 - MSI: `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi`
-- Size: `258,590,495` bytes
-- SHA-256: `67C32A059D7866A21B478AC46A5FD346CA551825F46BD794B506DA5D744796D6`
+- Size: `258,619,167` bytes
+- SHA-256: `935F0A239BA845AE714B50BF7F056B519A716028BB3E85B293FE792CDA29D937`
 - Build command: `./gradlew :composeApp:packageReleaseMsi "-Pnuvio.desktop.debugTools=true" --console=plain`
 - Native bridge: unchanged; the verified existing runtime was reused while the Kotlin application payload was rebuilt.
-- Backend prerequisite: deploy the two locally verified Phase 4 migrations only to Supabase project `pzbpghmmordvzcfbayoh`. Never deploy to `api.nuvio.tv`.
+- Backend prerequisite: deploy verified Phase 4 migrations (`202609030003`, `202609040001`, `202609080001`, and `202609080002`) only to Supabase project `pzbpghmmordvzcfbayoh`. Never deploy to `api.nuvio.tv`.
 
 ## Per-scenario evidence
 

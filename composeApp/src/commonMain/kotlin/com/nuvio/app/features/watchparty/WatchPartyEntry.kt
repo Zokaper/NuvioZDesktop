@@ -8,18 +8,38 @@ package com.nuvio.app.features.watchparty
  * before it attempts creation.
  */
 internal suspend fun resolveWatchPartyEntry(
+    targetContent: PartyContent,
     heldParty: WatchPartyState?,
     restoreActive: suspend () -> Result<WatchPartyState?>,
+    departOldParty: suspend (WatchPartyState) -> Result<Unit> = { Result.success(Unit) },
     createParty: suspend () -> Result<WatchPartyState>,
 ): Result<WatchPartyState> {
-    heldParty?.takeUnless { it.status == WatchPartyStatus.ended }?.let { return Result.success(it) }
+    val activeHeld = heldParty?.takeUnless { it.status == WatchPartyStatus.ended }
+    if (activeHeld != null) {
+        if (activeHeld.matchesPlayback(targetContent.contentId, targetContent.videoId)) {
+            return Result.success(activeHeld)
+        }
+        departOldParty(activeHeld).getOrElse { return Result.failure(it) }
+        return createParty()
+    }
 
     return restoreActive().fold(
         onSuccess = { restored ->
-            restored?.takeUnless { it.status == WatchPartyStatus.ended }
-                ?.let { Result.success(it) }
-                ?: createParty()
+            val activeRestored = restored?.takeUnless { it.status == WatchPartyStatus.ended }
+            if (activeRestored != null) {
+                if (activeRestored.matchesPlayback(targetContent.contentId, targetContent.videoId)) {
+                    Result.success(activeRestored)
+                } else {
+                    departOldParty(activeRestored).fold(
+                        onSuccess = { createParty() },
+                        onFailure = { Result.failure(it) },
+                    )
+                }
+            } else {
+                createParty()
+            }
         },
         onFailure = { Result.failure(it) },
     )
 }
+

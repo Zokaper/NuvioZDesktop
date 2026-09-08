@@ -22,10 +22,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.features.watchparty.PartyContent
 import com.nuvio.app.features.watchparty.WatchPartyControlMode
+import com.nuvio.app.features.watchparty.PartyReadyTone
+import com.nuvio.app.features.watchparty.derivedStatus
 import com.nuvio.app.features.watchparty.readyCount
 import com.nuvio.app.features.watchparty.readyLabel
 import com.nuvio.app.features.watchparty.readyTone
-import com.nuvio.app.features.watchparty.wireName
 import com.nuvio.app.features.watchparty.WatchPartyRepository
 import com.nuvio.app.features.watchparty.displayName
 import com.nuvio.app.features.watchparty.matchesPlayback
@@ -591,16 +592,14 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             "${it.readyCount()} of ${it.members.count { member -> member.connected }} ready"
         }.orEmpty(),
         partyMembers = activeParty?.members.orEmpty().map { member ->
+            val derived = member.derivedStatus(party = activeParty)
             PlayerPartyMember(
                 name = member.displayName(watchPartyUiState.activeProfileId),
                 role = member.role,
-                // Was `readyState.name` with the underscores swapped - the codebase's words rather
-                // than the viewer's, and disagreeing with the lobby that had just said the same
-                // thing differently. Both surfaces now read from WatchPartyPresentation.
-                status = member.readyLabel(),
-                statusTone = member.readyTone().wireName,
+                status = derived.label,
+                statusTone = derived.tone.wireName,
                 avatarUrl = member.profile?.avatarUrl,
-                connected = member.connected,
+                connected = member.connected && derived.tone != PartyReadyTone.Offline,
             )
         },
         presenceJoinPolicyVisible = activeParty == null && socialPresenceSession.sessionId != null,
@@ -613,7 +612,11 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         socialNotificationActor = activeSocialNotification?.actor?.displayName.orEmpty(),
         socialNotificationMessage = when (activeSocialNotification?.kind) {
             SocialNotificationKind.FriendRequest -> "sent you a friend request"
-            SocialNotificationKind.PartyInvitation -> "invited you to Watch Together"
+            SocialNotificationKind.PartyInvitation -> {
+                val mediaTitle = activeSocialNotification.contentSummary?.title
+                if (!mediaTitle.isNullOrBlank()) "invited you to Watch Together · $mediaTitle"
+                else "invited you to Watch Together"
+            }
             SocialNotificationKind.WatchingNowJoinRequest -> "asked to join your playback"
             null -> ""
         },

@@ -23,7 +23,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -71,6 +72,9 @@ fun NuvioFloatingPrompt(
     onAction: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    header: String? = null,
+    actionIcon: ImageVector = Icons.Filled.PlayArrow,
+    showProgress: Boolean = true,
     autoDismissMs: Long = AutoDismissDelayMs,
 ) {
     val tokens = MaterialTheme.nuvio
@@ -213,7 +217,7 @@ fun NuvioFloatingPrompt(
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             Text(
-                                text = stringResource(Res.string.floating_prompt_continue_where_left_off),
+                                text = header ?: stringResource(Res.string.floating_prompt_continue_where_left_off),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = tokens.colors.textMuted,
                             )
@@ -243,7 +247,7 @@ fun NuvioFloatingPrompt(
                                 shape = tokens.shapes.avatar,
                             ) {
                                 Icon(
-                                    imageVector = Icons.Rounded.PlayArrow,
+                                    imageVector = actionIcon,
                                     contentDescription = actionLabel,
                                     modifier = Modifier.size(tokens.icons.md),
                                 )
@@ -251,25 +255,27 @@ fun NuvioFloatingPrompt(
                         }
                     }
 
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(tokens.shapes.chip)
-                            .background(tokens.colors.playerTimelineTrack)
-                            .height(NuvioTokens.Space.s8)
-                            .padding(tokens.borders.thin),
-                    ) {
+                    if (showProgress && progressFraction > 0f) {
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth(progressFraction.coerceIn(0f, 1f))
-                                .height(NuvioTokens.Space.s6)
-                                .clip(tokens.shapes.chip),
+                                .fillMaxWidth()
+                                .clip(tokens.shapes.chip)
+                                .background(tokens.colors.playerTimelineTrack)
+                                .height(NuvioTokens.Space.s8)
+                                .padding(tokens.borders.thin),
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .matchParentSize()
-                                    .background(tokens.colors.playerTimelineFill),
-                            )
+                                    .fillMaxWidth(progressFraction.coerceIn(0f, 1f))
+                                    .height(NuvioTokens.Space.s6)
+                                    .clip(tokens.shapes.chip),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .matchParentSize()
+                                        .background(tokens.colors.playerTimelineFill),
+                                )
+                            }
                         }
                     }
                 }

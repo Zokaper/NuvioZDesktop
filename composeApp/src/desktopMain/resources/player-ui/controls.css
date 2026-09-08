@@ -705,6 +705,12 @@ button:disabled {
 }
 
 .party-member-status.ready { color: #6fd08c; background: rgba(111, 208, 140, .16); }
+.party-member-status.playing { color: #6fd08c; background: rgba(111, 208, 140, .16); }
+.party-member-status.paused { color: #8bb2f0; background: rgba(139, 178, 240, .16); }
+.party-member-status.buffering { color: #e0a458; background: rgba(224, 164, 88, .16); }
+.party-member-status.buffering::before { animation: party-banner-pulse 1.6s ease-in-out infinite; }
+.party-member-status.reconnecting { color: #e0a458; background: rgba(224, 164, 88, .16); }
+.party-member-status.reconnecting::before { animation: party-banner-pulse 1.6s ease-in-out infinite; }
 .party-member-status.working { color: #e0a458; background: rgba(224, 164, 88, .16); }
 .party-member-status.working::before { animation: party-banner-pulse 1.6s ease-in-out infinite; }
 .party-member-status.failed { color: #ef7a90; background: rgba(239, 122, 144, .16); }

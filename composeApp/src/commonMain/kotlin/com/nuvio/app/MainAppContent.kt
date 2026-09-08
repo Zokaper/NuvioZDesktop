@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CheckCircleOutline
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material3.MaterialTheme
@@ -1643,8 +1644,17 @@ internal fun MainAppContent(
                         onWatchTogether = { content ->
                             coroutineScope.launch {
                                 resolveWatchPartyEntry(
+                                    targetContent = content,
                                     heldParty = WatchPartyRepository.uiState.value.party,
                                     restoreActive = WatchPartyRepository::restoreActive,
+                                    departOldParty = { partyToDepart ->
+                                        val myProfileId = WatchPartyRepository.uiState.value.activeProfileId
+                                        if (partyToDepart.hostProfileId == myProfileId) {
+                                            WatchPartyRepository.end()
+                                        } else {
+                                            WatchPartyRepository.leave()
+                                        }
+                                    },
                                     createParty = {
                                         WatchPartyRepository.create(
                                             content = content,
@@ -2266,15 +2276,34 @@ internal fun MainAppContent(
                 visible = socialNotification != null &&
                     socialNotificationPrimaryAction != null &&
                     currentRoute !is PlayerRoute,
-                imageUrl = socialNotification?.actor?.avatarUrl,
-                title = socialNotification?.actor?.displayName.orEmpty(),
+                header = when (socialNotification?.kind) {
+                    SocialNotificationKind.PartyInvitation -> "Watch Together"
+                    SocialNotificationKind.WatchingNowJoinRequest -> "Watch Together"
+                    SocialNotificationKind.FriendRequest -> "Friend Request"
+                    null -> null
+                },
+                imageUrl = socialNotification?.contentSummary?.poster ?: socialNotification?.actor?.avatarUrl,
+                title = when (socialNotification?.kind) {
+                    SocialNotificationKind.PartyInvitation,
+                    SocialNotificationKind.WatchingNowJoinRequest ->
+                        socialNotification.contentSummary?.title ?: socialNotification.actor.displayName
+                    SocialNotificationKind.FriendRequest -> socialNotification.actor.displayName
+                    null -> ""
+                },
                 subtitle = when (socialNotification?.kind) {
                     SocialNotificationKind.FriendRequest -> "sent you a friend request"
-                    SocialNotificationKind.PartyInvitation -> "invited you to Watch Together"
-                    SocialNotificationKind.WatchingNowJoinRequest -> "asked to join your playback"
+                    SocialNotificationKind.PartyInvitation -> "${socialNotification.actor.displayName} invited you to Watch Together"
+                    SocialNotificationKind.WatchingNowJoinRequest -> "${socialNotification.actor.displayName} asked to join your playback"
                     null -> ""
                 },
                 progressFraction = 0f,
+                showProgress = false,
+                actionIcon = when (socialNotification?.kind) {
+                    SocialNotificationKind.PartyInvitation,
+                    SocialNotificationKind.WatchingNowJoinRequest,
+                    SocialNotificationKind.FriendRequest -> Icons.Filled.People
+                    null -> Icons.Filled.PlayArrow
+                },
                 actionLabel = when (socialNotificationPrimaryAction) {
                     SocialNotificationAction.Accept -> "Accept"
                     SocialNotificationAction.Decline -> "Decline"

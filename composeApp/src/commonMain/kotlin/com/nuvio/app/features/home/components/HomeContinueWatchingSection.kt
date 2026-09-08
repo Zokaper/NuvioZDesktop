@@ -533,7 +533,7 @@ private fun PosterCardPreview() {
     }
 }
 
-private data class ContinueWatchingLandscapeCardMetrics(
+internal data class ContinueWatchingLandscapeCardMetrics(
     val width: Dp,
     val cornerRadius: Dp,
     val contentPadding: Dp,
@@ -549,7 +549,7 @@ private data class ContinueWatchingLandscapeCardMetrics(
     val badgeTextSize: TextUnit,
 )
 
-private fun continueWatchingLandscapeCardMetrics(
+internal fun continueWatchingLandscapeCardMetrics(
     basePosterWidthDp: Int,
     cornerRadiusDp: Int,
 ): ContinueWatchingLandscapeCardMetrics {
@@ -1117,7 +1117,7 @@ private fun ContinueWatchingDetailsButton(
 }
 
 @Composable
-private fun ArtworkPanel(
+internal fun ArtworkPanel(
     imageUrl: String?,
     width: Dp,
     blurred: Boolean = false,

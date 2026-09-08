@@ -2057,7 +2057,7 @@ const renderPartyBanner = suppress => {
   partyBanner.setAttribute("aria-hidden", show ? "false" : "true");
 };
 
-const PARTY_STATUS_TONES = ["ready", "working", "failed", "offline"];
+const PARTY_STATUS_TONES = ["ready", "working", "failed", "offline", "paused", "buffering", "reconnecting"];
 
 const renderPartyPanel = suppress => {
   const show = Boolean(!suppress && state.partyPanelVisible && Array.isArray(state.partyMembers));

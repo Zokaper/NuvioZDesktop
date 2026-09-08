@@ -1,5 +1,6 @@
 package com.nuvio.app.features.social
 
+import com.nuvio.app.features.watchparty.PartyContent
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -28,6 +29,7 @@ data class SocialNotification(
     @SerialName("party_id") val partyId: String? = null,
     @SerialName("presence_session_id") val presenceSessionId: String? = null,
     @SerialName("available_actions") val availableActions: Set<SocialNotificationAction> = emptySet(),
+    @SerialName("content_summary") val contentSummary: PartyContent? = null,
 )
 
 data class SocialNotificationState(

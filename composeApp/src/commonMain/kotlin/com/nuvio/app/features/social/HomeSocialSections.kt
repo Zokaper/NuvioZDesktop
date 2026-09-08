@@ -1,22 +1,30 @@
 package com.nuvio.app.features.social
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.nuvio.app.core.ui.desktopCatalogShelfPosterBaseWidthDp
+import com.nuvio.app.core.ui.rememberPosterCardStyleUiState
+import com.nuvio.app.features.home.components.ContinueWatchingLandscapeCardMetrics
+import com.nuvio.app.features.home.components.ContinueWatchingLayout
 import com.nuvio.app.features.home.components.TitlePresentation
 import com.nuvio.app.features.home.components.TitlePresentationCard
+import com.nuvio.app.features.home.components.continueWatchingLandscapeCardMetrics
+import com.nuvio.app.features.home.components.rememberContinueWatchingLayout
 import com.nuvio.app.features.watchprogress.ContinueWatchingSectionStyle
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.social_recently_watched
@@ -38,7 +46,7 @@ fun LazyListScope.homeSocialSections(
                 sectionPadding = sectionPadding,
                 items = watchingNow.take(SocialHomeItemLimit),
                 key = { "${it.profile.profileId}:${it.videoId}" },
-            ) { item ->
+            ) { item, layout, cardMetrics ->
                 TitlePresentationCard(
                     item = TitlePresentation(
                         title = item.title,
@@ -52,7 +60,8 @@ fun LazyListScope.homeSocialSections(
                     ),
                     style = style,
                     useEpisodeThumbnails = useEpisodeThumbnails,
-                    modifier = Modifier.width(310.dp),
+                    layout = layout,
+                    cardMetrics = cardMetrics,
                     leading = {
                         SocialActivityIdentity(item.profile, if (item.state == SocialPlaybackState.playing) "Playing" else "Paused")
                     },
@@ -69,7 +78,7 @@ fun LazyListScope.homeSocialSections(
                 sectionPadding = sectionPadding,
                 items = activity.take(SocialHomeItemLimit),
                 key = RecentActivityRun::runId,
-            ) { run ->
+            ) { run, layout, cardMetrics ->
                 TitlePresentationCard(
                     item = TitlePresentation(
                         title = run.title,
@@ -82,7 +91,8 @@ fun LazyListScope.homeSocialSections(
                     ),
                     style = style,
                     useEpisodeThumbnails = useEpisodeThumbnails,
-                    modifier = Modifier.width(310.dp),
+                    layout = layout,
+                    cardMetrics = cardMetrics,
                     leading = { SocialActivityIdentity(run.profile, "Recently watched") },
                     trailing = if (run.eventCount > 1) {
                         { Text("${run.eventCount} episodes", style = MaterialTheme.typography.labelMedium) }
@@ -102,22 +112,33 @@ private fun <T> SocialHomeRow(
     sectionPadding: Dp,
     items: List<T>,
     key: (T) -> Any,
-    card: @Composable (T) -> Unit,
+    card: @Composable (T, ContinueWatchingLayout, ContinueWatchingLandscapeCardMetrics) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(
-            text = title,
-            modifier = Modifier.padding(horizontal = sectionPadding),
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            // Outside any Surface, so LocalContentColor would fall back to black. The cards below
-            // are Surfaces and set their own, which is why only this heading was invisible.
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = sectionPadding),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) { items(items, key = key) { card(it) } }
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val layout = rememberContinueWatchingLayout(maxWidth.value)
+        val posterCardStyle = rememberPosterCardStyleUiState()
+        val cardMetrics = remember(posterCardStyle.widthDp, posterCardStyle.cornerRadiusDp) {
+            val basePosterWidthDp = desktopCatalogShelfPosterBaseWidthDp(posterCardStyle.widthDp)
+            continueWatchingLandscapeCardMetrics(
+                basePosterWidthDp = basePosterWidthDp,
+                cornerRadiusDp = posterCardStyle.cornerRadiusDp,
+            )
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                text = title,
+                modifier = Modifier.padding(horizontal = sectionPadding),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                // Outside any Surface, so LocalContentColor would fall back to black. The cards below
+                // are Surfaces and set their own, which is why only this heading was invisible.
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = sectionPadding),
+                horizontalArrangement = Arrangement.spacedBy(layout.itemGap),
+            ) { items(items, key = key) { card(it, layout, cardMetrics) } }
+        }
     }
 }
 

@@ -1103,7 +1103,8 @@ private fun PartyParticipantTile(
     isHost: Boolean,
     viewerProfileId: String?,
 ) {
-    val tone = member.readyTone()
+    val status = member.derivedStatus()
+    val tone = status.tone
     val offline = tone == PartyReadyTone.Offline
     Surface(
         modifier = Modifier.width(PartyTileWidth).alpha(if (offline) 0.55f else 1f),
@@ -1118,7 +1119,7 @@ private fun PartyParticipantTile(
             Box(contentAlignment = Alignment.Center) {
                 // The ring is the ambient signal: a tile still working turns and the finished ones
                 // sit still, so "who are we waiting for" is answerable without reading a word.
-                if (tone == PartyReadyTone.Working) {
+                if (tone == PartyReadyTone.Working || tone == PartyReadyTone.Buffering || tone == PartyReadyTone.Reconnecting) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(56.dp),
                         color = PartyWorkingColor,
@@ -1157,7 +1158,7 @@ private fun PartyParticipantTile(
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
             )
-            PartyStatusPill(tone, member.readyLabel())
+            PartyStatusPill(tone, status.label)
             if (!offline && member.sourceMatch == PartySourceMatch.alternate) {
                 Text(
                     "different source",
@@ -1218,7 +1219,8 @@ private fun PartyInviteTile(expanded: Boolean, onClick: () -> Unit) {
 private fun PartyStatusPill(tone: PartyReadyTone, label: String) {
     val color = when (tone) {
         PartyReadyTone.Ready -> PartyReadyColor
-        PartyReadyTone.Working -> PartyWorkingColor
+        PartyReadyTone.Working, PartyReadyTone.Buffering, PartyReadyTone.Reconnecting -> PartyWorkingColor
+        PartyReadyTone.Paused -> MaterialTheme.colorScheme.primary
         PartyReadyTone.Failed -> MaterialTheme.colorScheme.error
         PartyReadyTone.Offline -> MaterialTheme.colorScheme.onSurfaceVariant
     }

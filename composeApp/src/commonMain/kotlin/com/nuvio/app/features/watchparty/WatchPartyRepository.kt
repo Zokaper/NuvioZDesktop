@@ -74,6 +74,7 @@ data class WatchPartyUiState(
     val stagedHostSource: PartySourceDescriptorV2? = null,
     /** How [stagedHostSource] reads in the lobby - the release the host picked, in their words. */
     val stagedHostSourceLabel: String? = null,
+    val connectionBannerMessage: String? = null,
     val isWorking: Boolean = false,
     val errorMessage: String? = null,
 )
@@ -98,6 +99,7 @@ object WatchPartyRepository {
     private var lastLoggedState: String? = null
     private var lastLoggedHeartbeatStatus: String? = null
     private var lastLoggedPollFailure: String? = null
+    private var lastSuccessfulContactEpochMs: Long = 0L
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -137,12 +139,14 @@ object WatchPartyRepository {
         installSnapshot(snapshot)
     }
 
-    suspend fun setClientLocation(location:String):Result<Unit> = memberStateMutex.withLock {
+    suspend fun setClientLocation(location: WatchPartyClientLocation): Result<Unit> = setClientLocation(location.name)
+
+    suspend fun setClientLocation(location: String): Result<Unit> = memberStateMutex.withLock {
         call {
-            val snapshot=ZSupabaseProvider.client.postgrest.rpc("party_set_client_location",buildJsonObject {
-                put("p_party_id",requireParty().id);put("p_profile_id",requireProfile());put("p_location",location)
+            val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_set_client_location", buildJsonObject {
+                put("p_party_id", requireParty().id); put("p_profile_id", requireProfile()); put("p_location", location)
             }).decodeAs<WatchPartyState>()
-            installSnapshot(snapshot,reopenChannel=false)
+            installSnapshot(snapshot, reopenChannel = false)
         }
     }
 
@@ -480,6 +484,7 @@ object WatchPartyRepository {
         }
         stopPolling(); stopChannel(); clockOffsetPartyId = null
         launchedSourceGeneration = null
+        lastSuccessfulContactEpochMs = 0L
         _uiState.value = WatchPartyUiState(activeProfileId = profile)
         Unit
     }
@@ -489,6 +494,7 @@ object WatchPartyRepository {
     suspend fun leave(): Result<Unit> = depart(PartyDepartureMode.LEAVE_AND_TRANSFER)
 
     private fun installSnapshot(snapshot: WatchPartyState, reopenChannel: Boolean = true) {
+        lastSuccessfulContactEpochMs = currentEpochMs()
         val held = _uiState.value.party
         if (held != null && isStalePartySnapshot(held, snapshot)) {
             log.i {
@@ -580,11 +586,29 @@ object WatchPartyRepository {
                         put("p_party_id", partyId); put("p_profile_id", profileId)
                     }).decodeAs<WatchPartyState>()
                     installSnapshot(snapshot, reopenChannel = false)
-                }.onSuccess { lastLoggedPollFailure = null }.onFailure { cause ->
-                    // Not routed through call(), and so not logged by it either: a poll failing
-                    // every five seconds is the one thing that can strand a member on state that
-                    // never moves again, and it used to leave no trace at all. Logged when the
-                    // reason changes, not on every tick.
+                }.onSuccess {
+                    lastSuccessfulContactEpochMs = currentEpochMs()
+                    lastLoggedPollFailure = null
+                    if (_uiState.value.connection != PartyConnectionState.connected || _uiState.value.connectionBannerMessage != null) {
+                        _uiState.value = _uiState.value.copy(
+                            connection = PartyConnectionState.connected,
+                            connectionBannerMessage = null,
+                        )
+                    }
+                }.onFailure { cause ->
+                    val now = currentEpochMs()
+                    val elapsedSinceContact = if (lastSuccessfulContactEpochMs > 0L) now - lastSuccessfulContactEpochMs else 0L
+                    if (elapsedSinceContact > 15_000L) {
+                        _uiState.value = _uiState.value.copy(
+                            connection = PartyConnectionState.reconnecting,
+                            connectionBannerMessage = "Connection lost — playback continuing locally",
+                        )
+                    } else if (elapsedSinceContact > 5_000L) {
+                        _uiState.value = _uiState.value.copy(
+                            connection = PartyConnectionState.reconnecting,
+                            connectionBannerMessage = "Reconnecting…",
+                        )
+                    }
                     val reason = cause.message ?: cause::class.simpleName
                     if (reason != lastLoggedPollFailure) {
                         lastLoggedPollFailure = reason
