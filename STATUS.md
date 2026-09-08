@@ -19,6 +19,14 @@ outcomes before the focused rerun. The physical two-client 10 pause/resume + 10 
 controlled Realtime interruption remain **NOT RUN**, so Stage 0 remains `IN_PROGRESS` and no
 behavioral Stage 1 work may begin.
 
+Instrumentation is committed as `dd3e2b4f2755bc5149911dcfa6aa38f68e3f559f`. Its background
+release-style packaging completed with the Gradle-managed JetBrains JDK; Gradle's generated jpackage
+arguments confirm `-Dnuvio.debugTools=true`. The install artifact is
+`composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` (258,631,455 bytes;
+SHA-256 `133AEEA118C756CC326DD4EC33CA85B7F84A1C7513DED44476176DBC92E63F25`). The
+published artifact and both `main-release/msi` copies are byte-identical. This is the required
+physical Stage 0 test build; packaging does not advance the stage.
+
 ## Phase 4 follow-up hardening: lifecycle resilience, truthful presence & UI fidelity (2026-09-08)
 
 Completed an ironclad hardening pass for Watch Together covering disconnects, app exits, stale parties, reconnects, lobby/player transitions, truthful presence, and remaining Phase 4 UI issues:
