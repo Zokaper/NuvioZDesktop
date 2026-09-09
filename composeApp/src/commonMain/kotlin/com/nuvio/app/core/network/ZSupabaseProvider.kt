@@ -47,6 +47,10 @@ object ZSupabaseProvider {
                 autoLoadFromStorage = false
                 autoSaveToStorage = false
                 alwaysAutoRefresh = false
+                // This client has no browser/deep-link auth lifecycle. Its session is imported by
+                // ZSessionBridge; an asynchronous platform init is only another writer to the
+                // in-memory session state and can race that import back to NotAuthenticated.
+                autoSetupPlatform = false
             }
             install(Postgrest)
             install(Realtime)

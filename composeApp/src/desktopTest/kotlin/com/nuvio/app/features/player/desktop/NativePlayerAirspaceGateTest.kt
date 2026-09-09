@@ -21,6 +21,26 @@ class NativePlayerAirspaceGateTest {
     }
 
     @Test
+    fun removeNotifyDoesNotInvalidateDisposedInteropParent() {
+        val parent = object : JPanel() {
+            var composeLayerDisposed = false
+
+            override fun invalidate() {
+                check(!composeLayerDisposed) { "SkiaLayer is disposed" }
+                super.invalidate()
+            }
+        }
+        val host = NativePlayerHost()
+        parent.add(host)
+        host.isVisible = true
+        parent.composeLayerDisposed = true
+
+        host.removeNotify()
+
+        assertTrue(host.isVisible, "removeNotify must not mutate Swing visibility during parent disposal")
+    }
+
+    @Test
     fun promoteNativeSurfaceExposesHostOnEdt() {
         val host = NativePlayerHost()
         var promotedHandle: Long? = null

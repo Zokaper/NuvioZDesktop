@@ -584,6 +584,25 @@ class WatchPartyPendingSeekTest {
 }
 
 class WatchPartySyncProtocolTest {
+
+    @Test
+    fun intentionalChannelCloseIsConsumedOnlyOnce() {
+        val first = partyChannelClosePlan(
+            hasChannel = true,
+            boundPartyId = "party",
+            channelInstance = 7,
+            detached = true,
+        )
+        val duplicate = partyChannelClosePlan(
+            hasChannel = false,
+            boundPartyId = null,
+            channelInstance = 7,
+            detached = true,
+        )
+
+        assertEquals(PartyChannelClosePlan("party", 7, detached = true), first)
+        assertNull(duplicate, "the null authority emission after cancellation must not close twice")
+    }
     @Test fun acceptedLocalDirectiveIsDispatchedBeforeRealtimeSendIsEnqueued() {
         val events = mutableListOf<String>()
         dispatchPartyCommandLocallyFirst(

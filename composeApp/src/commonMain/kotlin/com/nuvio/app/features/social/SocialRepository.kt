@@ -2,6 +2,7 @@ package com.nuvio.app.features.social
 
 import com.nuvio.app.core.network.ZSessionBridge
 import com.nuvio.app.core.network.ZSupabaseProvider
+import com.nuvio.app.core.network.shouldReexchangeZSession
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.rpc
 import io.github.jan.supabase.realtime.RealtimeChannel
@@ -307,12 +308,11 @@ object SocialRepository {
             )
         }
         val first = runCatching { block() }
-        if (first.isSuccess) return first
+        if (first.isSuccess || first.exceptionOrNull()?.let(::shouldReexchangeZSession) != true) return first
         // A rejected Z token is the expected failure once one expires. The official session is the
         // source of truth and is still live, so re-exchanging is the recovery; retried once so a
         // genuine server error is still reported rather than looped on.
-        ZSessionBridge.invalidate()
-        if (!ZSessionBridge.ensureSession(profileId)) return first
+        if (!ZSessionBridge.reexchange(profileId)) return first
         return runCatching { block() }
     }
 }

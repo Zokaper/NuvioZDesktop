@@ -2,6 +2,7 @@ package com.nuvio.app.core.network
 
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.user.UserSession
+import io.github.jan.supabase.exceptions.RestException
 import io.ktor.client.HttpClient
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -89,6 +90,20 @@ object ZSessionBridge {
             boundProfileId = null
             runCatching { ZSupabaseProvider.client.auth.clearSession() }
         }
+    }
+
+    /**
+     * Replaces a rejected session without first publishing a NotAuthenticated state.
+     *
+     * Realtime observes the Auth state and tears down every private channel on session loss. The
+     * exchange itself uses the independent official token, so clearing the old Z token first is
+     * unnecessary and creates a race in which concurrent PostgREST calls fall back to the public
+     * key. Importing the replacement directly also lets Realtime update the live channel's JWT.
+     */
+    suspend fun reexchange(profileId: String): Boolean = mutex.withLock {
+        val exchanged = exchange(profileId)
+        if (!exchanged) boundProfileId = null
+        exchanged
     }
 
     private suspend fun exchange(profileId: String): Boolean {
@@ -181,3 +196,22 @@ object ZSessionBridge {
 
     private const val DEFAULT_EXPIRY_SECONDS = 3600L
 }
+
+/**
+ * Only an HTTP authentication rejection proves that the derived Z session is unusable.
+ *
+ * In particular, Postgres authorization errors (normally HTTP 400 with SQLSTATE 42501), network
+ * failures, and server failures must not clear the shared Auth session. Realtime observes that Auth
+ * state and intentionally disconnects every private channel when it becomes unauthenticated.
+ */
+internal fun shouldReexchangeZSession(error: Throwable): Boolean {
+    val statusCode = generateSequence(error as Throwable?) { it.cause }
+        .filterIsInstance<RestException>()
+        .firstOrNull()
+        ?.statusCode
+    return shouldReexchangeZSession(statusCode)
+}
+
+internal fun shouldReexchangeZSession(statusCode: Int?): Boolean = statusCode == HTTP_UNAUTHORIZED
+
+private const val HTTP_UNAUTHORIZED = 401

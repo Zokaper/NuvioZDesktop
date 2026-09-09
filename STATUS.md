@@ -4,6 +4,17 @@ Last updated: 2026-09-09
 
 ## Watch Together deterministic architecture — Stage 2 automated gate green (2026-09-09)
 
+Post-checkpoint physical testing exposed two lifecycle races, now fixed in the pending Stage 2
+stabilization checkpoint. A rejected Z token is replaced under the session mutex without first
+publishing `NotAuthenticated`; only an actual HTTP 401 triggers that exchange, and the Z client no
+longer runs an independent platform-auth setup. This prevents Realtime from tearing down private
+channels while concurrent durable calls fall back to the publishable key. Realtime close is now
+idempotent and distinguishes reconnect cleanup from intentional detach, while cancellation of an
+in-flight broadcast is no longer reported as a failed send. Leaving a party also no longer changes
+Swing visibility from `NativePlayerHost.removeNotify`, avoiding an invalidation of an already
+disposed Compose `SkiaLayer`. Focused auth/transport/airspace tests and
+`:composeApp:compileKotlinDesktop` pass. The physical two-client sync/leave gate remains outstanding.
+
 Stage 2 remains `IN_PROGRESS` on `codex/watch-together-architecture`; implementation commit
 `7365d45` completes the automated Realtime-transport and unified-presentation checkpoint. The
 private channel now belongs to `WatchPartySync`: it creates the authenticated channel with

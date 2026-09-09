@@ -33,6 +33,24 @@ import kotlinx.serialization.json.JsonObject
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
+internal data class PartyChannelClosePlan(
+    val partyId: String?,
+    val channelInstance: Long,
+    val detached: Boolean,
+)
+
+/** Returns null after the binding has already been consumed, making teardown idempotent. */
+internal fun partyChannelClosePlan(
+    hasChannel: Boolean,
+    boundPartyId: String?,
+    channelInstance: Long,
+    detached: Boolean,
+): PartyChannelClosePlan? = if (!hasChannel && boundPartyId == null) {
+    null
+} else {
+    PartyChannelClosePlan(boundPartyId, channelInstance, detached)
+}
+
 /**
  * The party's timing plane, carried between clients over the channel that is already open.
  *
@@ -324,7 +342,10 @@ internal object WatchPartySync : PartyRealtimeTransport {
                 log.w { "realtime party=${partyId.shortId()} state=disconnected cause=${failure.message ?: failure::class.simpleName}" }
                 failureSink("Live sync unavailable: ${failure.message ?: failure::class.simpleName}")
             } finally {
-                closeChannel(clearProtocol = true, detached = false)
+                val stillDesired = desiredAuthority.value?.let {
+                    it.partyId == partyId && it.selfProfileId == profileId
+                } == true
+                closeChannel(clearProtocol = true, detached = !stillDesired)
             }
             healthSink(PartyHealthEvent.RealtimeDegraded(channelInstance))
             delay(retryMs)
@@ -381,6 +402,12 @@ internal object WatchPartySync : PartyRealtimeTransport {
         val closing = channel
         val closingPartyId = boundPartyId
         val closingInstance = channelInstance
+        val closePlan = partyChannelClosePlan(
+            hasChannel = closing != null,
+            boundPartyId = closingPartyId,
+            channelInstance = closingInstance,
+            detached = detached,
+        ) ?: return
         channel = null
         if (clearProtocol) resetProtocolState()
         if (closing != null) {
@@ -390,8 +417,8 @@ internal object WatchPartySync : PartyRealtimeTransport {
                 }
             }
         }
-        if (detached) healthSink(PartyHealthEvent.RealtimeDetached(closingInstance))
-        WatchPartyDiagnostics.transport("channel-closed", closingPartyId, realtime = "disconnected")
+        if (closePlan.detached) healthSink(PartyHealthEvent.RealtimeDetached(closePlan.channelInstance))
+        WatchPartyDiagnostics.transport("channel-closed", closePlan.partyId, realtime = "disconnected")
     }
 
     /**
@@ -529,28 +556,31 @@ internal object WatchPartySync : PartyRealtimeTransport {
         }
         // A send that throws is a socket that has gone away, and the poll underneath this is what
         // covers that. Failing loudly here would put a banner on every transient reconnect.
-        runCatching { live.broadcast(WatchPartySyncEvent, encodePartySyncMessage(message)) }
-            .onSuccess {
-                healthSink(
-                    PartyHealthEvent.RealtimeSendCompleted(
-                        sendInstance,
-                        currentEpochMs(),
-                        PartyRealtimeSendOutcome.Success,
-                    ),
-                )
-                commandMessage?.let { WatchPartyDiagnostics.send(it.command, it.partyId, startedAt, outcome = "success") }
-            }
-            .onFailure { cause ->
-                healthSink(
-                    PartyHealthEvent.RealtimeSendCompleted(
-                        sendInstance,
-                        currentEpochMs(),
-                        PartyRealtimeSendOutcome.Failed,
-                    ),
-                )
-                commandMessage?.let { WatchPartyDiagnostics.send(it.command, it.partyId, startedAt, outcome = "failed") }
-                log.d { "send failed kind=${message::class.simpleName} cause=${cause.message}" }
-            }
+        try {
+            live.broadcast(WatchPartySyncEvent, encodePartySyncMessage(message))
+            healthSink(
+                PartyHealthEvent.RealtimeSendCompleted(
+                    sendInstance,
+                    currentEpochMs(),
+                    PartyRealtimeSendOutcome.Success,
+                ),
+            )
+            commandMessage?.let { WatchPartyDiagnostics.send(it.command, it.partyId, startedAt, outcome = "success") }
+        } catch (cancelled: CancellationException) {
+            // Channel teardown cancels its in-flight broadcasts. That is normal lifecycle cleanup,
+            // not a failed transport send and must not poison live-health telemetry.
+            throw cancelled
+        } catch (cause: Throwable) {
+            healthSink(
+                PartyHealthEvent.RealtimeSendCompleted(
+                    sendInstance,
+                    currentEpochMs(),
+                    PartyRealtimeSendOutcome.Failed,
+                ),
+            )
+            commandMessage?.let { WatchPartyDiagnostics.send(it.command, it.partyId, startedAt, outcome = "failed") }
+            log.d { "send failed kind=${message::class.simpleName} cause=${cause.message}" }
+        }
     }
 
     private fun receive(payload: JsonObject) {

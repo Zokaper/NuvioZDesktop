@@ -3,6 +3,7 @@ package com.nuvio.app.features.watchparty
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.network.ZSessionBridge
 import com.nuvio.app.core.network.ZSupabaseProvider
+import com.nuvio.app.core.network.shouldReexchangeZSession
 import com.nuvio.app.features.player.PartyPlayerLaunchKey
 import com.nuvio.app.features.player.PlayerLaunchStore
 import io.github.jan.supabase.postgrest.postgrest
@@ -776,13 +777,12 @@ object WatchPartyRepository {
             return Result.failure(IllegalStateException("Nuvio Z session unavailable"))
         }
         var result = runCatching { block() }
-        if (result.isFailure && profileId != null) {
+        if (profileId != null && result.exceptionOrNull()?.let(::shouldReexchangeZSession) == true) {
             // A rejected Z token is the expected failure once one expires; the official session is
             // still live, so re-exchanging is the recovery. Retried once, so a real server error is
             // reported rather than looped on. Party control actions are latency-sensitive, which is
             // why this recovers in place instead of surfacing a reconnect to the user.
-            ZSessionBridge.invalidate()
-            if (ZSessionBridge.ensureSession(profileId)) result = runCatching { block() }
+            if (ZSessionBridge.reexchange(profileId)) result = runCatching { block() }
         }
         return result.onSuccess {
             updateHealth(PartyHealthEvent.DurableSucceeded(currentEpochMs()))
