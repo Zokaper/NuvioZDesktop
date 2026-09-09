@@ -6,6 +6,12 @@ import kotlin.math.abs
 import kotlin.math.max
 
 const val WatchPartyMaxParticipants = 8
+/**
+ * The backend's host-transfer grace, mirrored here only so the client can describe it.
+ *
+ * It is not a rule this client applies. Host transfer is decided by `party_transfer_stale_host`
+ * alone; a second local grace-and-claim race against it is what Stage 5 removed.
+ */
 const val WatchPartyHostGraceMs = 15_000L
 const val WatchPartySnapshotIntervalMs = 5_000L
 

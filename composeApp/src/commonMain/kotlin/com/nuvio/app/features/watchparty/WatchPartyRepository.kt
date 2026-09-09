@@ -30,8 +30,6 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.floatOrNull
-import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlin.time.TimeSource
@@ -473,13 +471,6 @@ object WatchPartyRepository {
         bestOffset
     }
 
-    suspend fun claimHostAfterGrace(): Result<Unit> = call {
-        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_claim_or_transfer_host", buildJsonObject {
-            put("p_party_id", requireParty().id); put("p_requester_profile_id", requireProfile())
-        }).decodeAs<WatchPartyState>()
-        installSnapshot(snapshot, reopenChannel = false)
-    }
-
     suspend fun depart(mode: PartyDepartureMode): Result<Unit> = runCatching {
         val party = _uiState.value.party
             ?: throw IllegalStateException("No active party")
@@ -665,60 +656,35 @@ object WatchPartyRepository {
      * whole payload to the fallback.
      */
     private fun applyBroadcastState(payload: JsonObject): Boolean {
-        fun str(key: String) = payload[key]?.jsonPrimitive?.contentOrNull
-
-        val held = _uiState.value.party ?: return false
-        if (str("party_id") != held.id) return false
-        val sequence = payload["sequence"]?.jsonPrimitive?.longOrNull ?: return false
-        val updatedAt = str("state_updated_at") ?: return false
-        val updatedAtMs = parseIsoEpochMs(updatedAt) ?: return false
-        val generation = payload["content_generation"]?.jsonPrimitive?.intOrNull ?: return false
-        if (generation != held.contentGeneration) return false
-        // The selected fingerprint is intentionally excluded from realtime. A generation move is
-        // therefore an invalidation: refresh once to obtain the new sanitized fingerprint instead
-        // of applying a payload that can only describe half of the preflight transition.
-        val sourceGeneration = payload["source_generation"]?.jsonPrimitive?.intOrNull
-            ?: held.sourceGeneration
-        if (sourceGeneration != held.sourceGeneration) return false
-        val status = str("status")?.let { name -> runCatching { WatchPartyStatus.valueOf(name) }.getOrNull() }
-            ?: return false
-        val positionMs = payload["position_ms"]?.jsonPrimitive?.longOrNull ?: return false
-
-        // `party_heartbeat` moves the host's position and `state_updated_at` *without* bumping
-        // `sequence`, so a strict `sequence >` guard would drop every running-position update and
-        // leave a guest correcting against a clock that never moved. The order is lexicographic
-        // over the pair, and the timestamps are compared as epoch millis because Postgres trims
-        // trailing zeros from fractional seconds - the ISO strings do not sort correctly as text.
-        val heldUpdatedAtMs = parseIsoEpochMs(held.stateUpdatedAt) ?: Long.MIN_VALUE
-        val newer = sequence > held.sequence || (sequence == held.sequence && updatedAtMs > heldUpdatedAtMs)
-
-        val serverTimeMs = str("server_time")?.let { parseIsoEpochMs(it) }
-        log.i {
-            val age = serverTimeMs?.let { currentEpochMs() + _uiState.value.serverClockOffsetMs - it }
-            "broadcast party=${held.id.shortId()} seq=$sequence status=$status ageMs=${age ?: -1} applied=$newer"
+        val held = _uiState.value.party
+        val outcome = applyPartyStateBroadcast(held, payload, ::parseIsoEpochMs)
+        val serverTimeMs = payload["server_time"]?.jsonPrimitive?.contentOrNull?.let { parseIsoEpochMs(it) }
+        if (held != null) {
+            log.i {
+                val age = serverTimeMs?.let { currentEpochMs() + _uiState.value.serverClockOffsetMs - it }
+                val applied = outcome is PartyBroadcastOutcome.Applied
+                "broadcast party=${held.id.shortId()} " +
+                    "seq=${payload["sequence"]?.jsonPrimitive?.longOrNull} " +
+                    "outcome=${outcome::class.simpleName} ageMs=${age ?: -1} applied=$applied"
+            }
         }
-        WatchPartyDiagnostics.durableState(held.id, sequence, status, applied = newer)
-        if (!newer) return true
-
-        _uiState.value = _uiState.value.copy(
-            party = held.copy(
-                sequence = sequence,
-                status = status,
-                positionMs = positionMs,
-                stateUpdatedAt = updatedAt,
-                durationMs = payload["duration_ms"]?.jsonPrimitive?.longOrNull ?: held.durationMs,
-                playbackSpeed = payload["playback_speed"]?.jsonPrimitive?.floatOrNull ?: held.playbackSpeed,
-                hostProfileId = str("host_profile_id") ?: held.hostProfileId,
-                controlMode = str("control_mode")
-                    ?.let { name -> runCatching { WatchPartyControlMode.valueOf(name) }.getOrNull() }
-                    ?: held.controlMode,
-                sourceGeneration = sourceGeneration,
-                stage = str("stage")
-                    ?.let { name -> runCatching { WatchPartyStage.valueOf(name) }.getOrNull() }
-                    ?: held.stage,
-            ),
-        )
-        return true
+        return when (outcome) {
+            PartyBroadcastOutcome.RefreshRequired -> false
+            PartyBroadcastOutcome.Ignored -> {
+                held?.let { WatchPartyDiagnostics.durableState(it.id, it.sequence, it.status, applied = false) }
+                true
+            }
+            is PartyBroadcastOutcome.Applied -> {
+                WatchPartyDiagnostics.durableState(
+                    outcome.party.id,
+                    outcome.party.sequence,
+                    outcome.party.status,
+                    applied = true,
+                )
+                _uiState.value = _uiState.value.copy(party = outcome.party)
+                true
+            }
+        }
     }
 
     /**

@@ -2,6 +2,32 @@
 
 Last updated: 2026-09-09
 
+## Watch Together deterministic architecture — Stage 5 automated checkpoint (2026-09-09)
+
+Backend commit `b681c45` in `nuvio-z-backend` carries the minimum change the Stage 1-4 client
+evidence proved necessary, and nothing else. The party state broadcast now carries
+`authority_epoch` alongside the `source_generation` and `stage` that were already deployed; the
+member broadcast now fires on `client_location`, which was the one member field the presentation
+reads that nothing announced. Liveness has one owner per question: 15 seconds is host-transfer grace
+only, `party_heartbeat` marks a member offline at 20 to match `party_reap_stale`, and transfer picks
+a replacement from members live within that same 20-second window rather than any member seen in the
+last minute. `party_claim_or_transfer_host` stays as an RPC because mobile still calls it, but it now
+delegates to `party_transfer_stale_host` instead of deciding again with its own window.
+
+On the desktop client, `applyBroadcastState` is now the pure `applyPartyStateBroadcast`, which
+returns a typed outcome and treats an authority advance the way it already treated a generation
+move: as an invalidation to refresh through, never as a payload to apply. The local grace-and-claim
+host race is deleted - the client learns its new host from the broadcast like any other authority
+change - and `WatchPartyHostGraceMs` is documented as the backend's number, mirrored for description
+rather than applied.
+
+pgTAP passes 165/165 against a fresh local database including ten new Stage 5 assertions; focused
+party/player tests pass 280/280; `:composeApp:compileKotlinDesktop` passes. **The migration is not
+deployed.** `supabase db push` is the maintainer's to run against project `pzbpghmmordvzcfbayoh`;
+both directions are compatible, so client and backend may land in either order. Stage 5's
+two-client physical verification of transfer and location propagation is outstanding, as are the
+Stage 2 and Stage 3 physical gates.
+
 ## Watch Together deterministic architecture — Stage 4 automated checkpoint (2026-09-09)
 
 Party source realization is now owned by a process-scoped `PartySourceRealizer` keyed on the exact

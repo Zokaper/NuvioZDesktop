@@ -21,7 +21,6 @@ import com.nuvio.app.features.watchparty.PartySourceMatch
 import com.nuvio.app.features.watchparty.StallHoldBudget
 import com.nuvio.app.features.watchparty.WatchPartyControlMode
 import com.nuvio.app.features.watchparty.WatchPartyDiagnostics
-import com.nuvio.app.features.watchparty.WatchPartyHostGraceMs
 import com.nuvio.app.features.watchparty.WatchPartyIdleTickIntervalMs
 import com.nuvio.app.features.watchparty.WatchPartyPausedAlignToleranceMs
 import com.nuvio.app.features.watchparty.WatchPartyRepository
@@ -637,21 +636,11 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
         }
     }
 
-    LaunchedEffect(matchingParty?.hostProfileId, matchingParty?.members) {
-        val state = matchingParty ?: return@LaunchedEffect
-        val hostConnected = state.members.firstOrNull { it.profileId == state.hostProfileId }?.connected != false
-        if (hostConnected || state.hostProfileId == partyUi.activeProfileId) return@LaunchedEffect
-        // The server refuses the claim until its own fifteen-second grace has run, and every refusal
-        // lands in the party error banner. Waiting the grace out locally first means the claim is
-        // attempted once, when it can actually succeed, instead of being rejected on every snapshot.
-        delay(WatchPartyHostGraceMs)
-        val current = WatchPartyRepository.uiState.value.party ?: return@LaunchedEffect
-        val stillGone = current.members.firstOrNull { it.profileId == current.hostProfileId }?.connected == false
-        if (stillGone && current.hostProfileId != partyUi.activeProfileId) {
-            partyLog.w { "host ${current.hostProfileId.shortId()} gone past grace, claiming" }
-            WatchPartyRepository.claimHostAfterGrace()
-        }
-    }
+    // Host transfer used to be decided twice: once by `party_transfer_stale_host`, which the
+    // backend already runs from the heartbeat trigger, and once here by a local grace-and-claim
+    // race against it - with a different candidate window, so the two could disagree about who the
+    // host now is. Stage 5 left the server rule as the only one. This client learns the new host
+    // from the state broadcast like every other authority change.
 }
 
 /**
