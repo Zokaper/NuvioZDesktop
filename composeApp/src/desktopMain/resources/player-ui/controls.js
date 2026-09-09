@@ -67,7 +67,17 @@ const partyPanel = document.getElementById("partyPanel");
 const partyControlMode = document.getElementById("partyControlMode");
 const partyMemberList = document.getElementById("partyMemberList");
 const partyControlModeButton = document.getElementById("partyControlModeButton");
+const partyWaitButton = document.getElementById("partyWaitButton");
 const partyEndButton = document.getElementById("partyEndButton");
+const partyContentTitle = document.getElementById("partyContentTitle");
+const partyContentDetail = document.getElementById("partyContentDetail");
+const partySourceLabel = document.getElementById("partySourceLabel");
+const partyHealthLabel = document.getElementById("partyHealthLabel");
+const partySyncLabel = document.getElementById("partySyncLabel");
+const partyErrorMessage = document.getElementById("partyErrorMessage");
+const partyInviteSection = document.getElementById("partyInviteSection");
+const partyInviteTargets = document.getElementById("partyInviteTargets");
+const partyInviteCode = document.getElementById("partyInviteCode");
 const socialNotification = document.getElementById("socialNotification");
 const socialNotificationActor = document.getElementById("socialNotificationActor");
 const socialNotificationMessage = document.getElementById("socialNotificationMessage");
@@ -310,12 +320,12 @@ let state = {
   openingReleaseName: "",
   partyBannerVisible: false,
   partyBannerText: "",
-  partyPanelVisible: false,
-  partyControlModeLabel: "",
-  partyReadySummary: "",
-  partyTransportEnabled: true,
-  partyIsHost: false,
-  partyMembers: [],
+  partyRoom: {
+    available: false, open: false, contentTitle: "", contentDetail: "", sourceLabel: "",
+    healthLabel: "", syncLabel: "", controlModeLabel: "", readySummary: "",
+    transportEnabled: true, isHost: false, waitForEveryone: true, inviteCode: "",
+    errorMessage: "", members: [], inviteTargets: [],
+  },
   socialNotificationVisible: false,
   socialNotificationActor: "",
   socialNotificationMessage: "",
@@ -2060,18 +2070,27 @@ const renderPartyBanner = suppress => {
 const PARTY_STATUS_TONES = ["ready", "working", "failed", "offline", "paused", "buffering", "reconnecting"];
 
 const renderPartyPanel = suppress => {
-  const show = Boolean(!suppress && state.partyPanelVisible && Array.isArray(state.partyMembers));
+  const room = state.partyRoom || {};
+  const show = Boolean(!suppress && room.available && room.open && Array.isArray(room.members));
   partyPanel.classList.toggle("visible", show);
   partyPanel.setAttribute("aria-hidden", show ? "false" : "true");
   // The header used to carry only the control mode. Mid-film the number that matters is how many
   // people actually have a stream open, so that leads and the mode follows it.
-  const summary = String(state.partyReadySummary || "").trim();
-  const mode = String(state.partyControlModeLabel || "").trim();
+  const summary = String(room.readySummary || "").trim();
+  const mode = String(room.controlModeLabel || "").trim();
   partyControlMode.textContent = summary && mode ? `${summary} · ${mode}` : (summary || mode);
+  setText(partyContentTitle, room.contentTitle);
+  setText(partyContentDetail, room.contentDetail);
+  setText(partySourceLabel, room.sourceLabel);
+  setText(partyHealthLabel, room.healthLabel);
+  setText(partySyncLabel, room.syncLabel);
+  setText(partyErrorMessage, room.errorMessage);
   partyMemberList.replaceChildren();
-  partyControlModeButton.hidden = !state.partyIsHost;
-  partyEndButton.hidden = !state.partyIsHost;
-  (state.partyMembers || []).forEach(member => {
+  partyControlModeButton.hidden = !room.isHost;
+  partyWaitButton.hidden = !room.isHost;
+  partyWaitButton.textContent = room.waitForEveryone ? "Wait for everyone: On" : "Wait for everyone: Off";
+  partyEndButton.hidden = !room.isHost;
+  (room.members || []).forEach(member => {
     const row = document.createElement("div");
     row.className = `party-member${member.connected ? "" : " offline"}`;
     const avatar = document.createElement("span");
@@ -2106,6 +2125,20 @@ const renderPartyPanel = suppress => {
     row.append(avatar, copy);
     partyMemberList.append(row);
   });
+  partyInviteTargets.replaceChildren();
+  (room.inviteTargets || []).forEach(target => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = `Invite ${target.name || "friend"}`;
+    button.addEventListener("click", event => {
+      event.stopPropagation();
+      send("partyInvite", Number(target.index));
+    });
+    partyInviteTargets.append(button);
+  });
+  const inviteCode = String(room.inviteCode || "").trim();
+  partyInviteCode.textContent = inviteCode ? `Invite code: ${inviteCode}` : "";
+  partyInviteSection.hidden = !(room.isHost && ((room.inviteTargets || []).length || inviteCode));
 };
 
 const renderSocialNotification = suppress => {
@@ -2408,7 +2441,7 @@ const renderChrome = () => {
   renderPartyPanel(showOpening || showError || Boolean(activeModal));
   renderSocialNotification(showOpening || showError || Boolean(activeModal));
   renderPartyEndedChoice(showOpening || showError || Boolean(activeModal));
-  const partyTransportLocked = state.partyPanelVisible && !state.partyTransportEnabled;
+  const partyTransportLocked = Boolean(state.partyRoom?.available && !state.partyRoom?.transportEnabled);
   root.classList.toggle("party-transport-locked", partyTransportLocked);
   [toggle, seek, ...document.querySelectorAll('[data-command="seekBack"], [data-command="seekForward"], [data-command="speed"], [data-command="nextEpisode"]')]
     .filter(Boolean)

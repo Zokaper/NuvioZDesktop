@@ -2,6 +2,27 @@
 
 Last updated: 2026-09-09
 
+## Watch Together deterministic architecture — Stage 3 automated checkpoint (2026-09-09)
+
+Stage 3 active-player architecture is implemented and focused-green. `PlayerScreenRuntime` now
+owns `partyRoomOpen`; the Watch Together control toggles the native Party Room for an active party,
+and Back/Escape closes the room before any player exit. Opening/closing it performs no navigation,
+RPC, source/generation mutation, controller release, or HWND mutation. The former active-player
+`partyLobby -> requestBack()` command is removed.
+
+Kotlin sends one typed `PartyRoomViewState` containing projected participant status, live health
+and sync text, content/source details, invitations, control mode, wait setting, lifecycle actions,
+and recovery errors. JavaScript only renders it and emits typed actions. Existing-party invitation
+acceptance now resolves through the explicit `OpenPrePlaybackLobby` outcome, so same-content joins
+still release the current player and begin a fresh party-owned preparation/attachment; only the
+existing explicit create-around-current-playback action promotes in place.
+
+Focused Party Room wire/page, entry-guard, lifecycle, retained-launch, player-surface, and session
+tests pass; `node --check` passes; explicit `:composeApp:compileKotlinDesktop` passes. Stage 3 remains
+formally `IN_PROGRESS` until repeated open/close, Back/Escape, same/different-content invitation,
+and controller/HWND preservation are physically verified. Per the maintainer's architecture-first
+strategy, Stage 4 may proceed while that physical gate remains recorded.
+
 ## Watch Together deterministic architecture — Stage 2 automated gate green (2026-09-09)
 
 Post-checkpoint physical testing exposed two lifecycle races, now fixed in the pending Stage 2

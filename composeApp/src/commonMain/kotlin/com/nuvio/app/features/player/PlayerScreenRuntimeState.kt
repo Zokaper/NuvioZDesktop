@@ -143,6 +143,8 @@ internal class PlayerScreenRuntime(
     var controlsVisible by mutableStateOf(false)
     var controlsActivityTick by mutableStateOf(0)
     var playerControlsLocked by mutableStateOf(false)
+    /** Player-owned presentation state; opening the room never changes route or party identity. */
+    var partyRoomOpen by mutableStateOf(false)
     var activeSourceUrl by mutableStateOf(sourceUrl)
     var activeSourceAudioUrl by mutableStateOf(sourceAudioUrl)
     var activeSourceHeaders by mutableStateOf(sanitizePlaybackHeaders(sourceHeaders))

@@ -115,6 +115,32 @@ data class PlayerPartyMember(
     val connected: Boolean = true,
 )
 
+data class PlayerPartyInviteTarget(
+    val index: Int,
+    val name: String,
+    val avatarUrl: String? = null,
+)
+
+/** Complete, render-only state for the native active-player Party Room. */
+data class PartyRoomViewState(
+    val available: Boolean = false,
+    val open: Boolean = false,
+    val contentTitle: String = "",
+    val contentDetail: String = "",
+    val sourceLabel: String = "",
+    val healthLabel: String = "",
+    val syncLabel: String = "",
+    val controlModeLabel: String = "",
+    val readySummary: String = "",
+    val transportEnabled: Boolean = true,
+    val isHost: Boolean = false,
+    val waitForEveryone: Boolean = true,
+    val inviteCode: String = "",
+    val errorMessage: String = "",
+    val members: List<PlayerPartyMember> = emptyList(),
+    val inviteTargets: List<PlayerPartyInviteTarget> = emptyList(),
+)
+
 data class PlayerOpeningFact(val label: String, val value: String)
 
 data class PlayerControlsState(
@@ -264,13 +290,7 @@ data class PlayerControlsState(
      */
     val partyBannerVisible: Boolean = false,
     val partyBannerText: String = "",
-    val partyPanelVisible: Boolean = false,
-    val partyControlModeLabel: String = "",
-    /** "3 of 4 ready" - the one number a viewer wants from the panel mid-film. */
-    val partyReadySummary: String = "",
-    val partyTransportEnabled: Boolean = true,
-    val partyIsHost: Boolean = false,
-    val partyMembers: List<PlayerPartyMember> = emptyList(),
+    val partyRoom: PartyRoomViewState = PartyRoomViewState(),
     val presenceJoinPolicyVisible: Boolean = false,
     val presenceJoinPolicyLabel: String = "",
     val socialNotificationVisible: Boolean = false,

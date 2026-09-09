@@ -8,6 +8,15 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class WatchPartyEntryTest {
+    @Test
+    fun existingPartyJoinAlwaysOpensPrePlaybackLobby() {
+        val party = party("joined", contentId = "same-title")
+
+        assertEquals(
+            ExistingPartyJoinOutcome.OpenPrePlaybackLobby(party.id),
+            existingPartyJoinOutcome(party),
+        )
+    }
     private val target = PartyContent(contentId = "tt14", contentType = "movie", videoId = "tt14", title = "Stage 14")
     private val otherTarget = PartyContent(contentId = "tt99", contentType = "movie", videoId = "tt99", title = "Other Movie")
 

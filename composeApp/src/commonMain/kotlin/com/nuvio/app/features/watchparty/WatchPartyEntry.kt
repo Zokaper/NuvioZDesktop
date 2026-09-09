@@ -1,5 +1,14 @@
 package com.nuvio.app.features.watchparty
 
+sealed interface ExistingPartyJoinOutcome {
+    /** The current player must be released; party realization starts from the pre-playback lobby. */
+    data class OpenPrePlaybackLobby(val partyId: String) : ExistingPartyJoinOutcome
+}
+
+/** Joining never promotes an existing player, even when it happens to show the same content. */
+internal fun existingPartyJoinOutcome(party: WatchPartyState): ExistingPartyJoinOutcome =
+    ExistingPartyJoinOutcome.OpenPrePlaybackLobby(party.id)
+
 /**
  * Resolves the Details-screen Watch Together action against the one-active-party contract.
  *
@@ -42,4 +51,3 @@ internal suspend fun resolveWatchPartyEntry(
         onFailure = { Result.failure(it) },
     )
 }
-

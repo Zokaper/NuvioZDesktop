@@ -635,11 +635,33 @@ button:disabled {
 
 .party-panel-header strong { font-size: 14px; }
 
-.party-panel-header span {
+.party-panel-header > div { display: grid; gap: 3px; }
+
+.party-panel-header span,
+.party-room-content span,
+.party-room-health span,
+.party-room-invites {
   color: var(--theme-text-muted);
   font-size: 12px;
-  white-space: nowrap;
 }
+
+.party-room-close {
+  border: 0;
+  background: transparent;
+  color: var(--theme-text-muted);
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.party-room-content,
+.party-room-health { display: grid; gap: 4px; margin-bottom: 12px; }
+.party-room-content strong { font-size: 15px; }
+.party-room-error { color: #ef7a90 !important; }
+.party-room-invites { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--theme-border-default); }
+.party-room-section-title { margin-bottom: 7px; color: var(--theme-text-primary); font-weight: 700; }
+#partyInviteTargets { display: flex; flex-wrap: wrap; gap: 7px; }
+#partyInviteTargets button { padding: 5px 9px; border: 1px solid var(--theme-border-default); border-radius: 9px; background: var(--theme-surface-card); color: var(--theme-text-primary); cursor: pointer; }
+#partyInviteCode { margin-top: 7px; user-select: text; }
 
 .party-member {
   gap: 12px;
