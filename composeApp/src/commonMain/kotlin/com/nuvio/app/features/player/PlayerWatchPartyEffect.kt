@@ -6,6 +6,16 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
+import com.nuvio.app.features.playback.PlaybackSelectionContext
+import com.nuvio.app.features.playback.PlaybackSourceCandidate
+import com.nuvio.app.features.watchparty.PartyRealizationDecision
+import com.nuvio.app.features.watchparty.PartySourceHandoff
+import com.nuvio.app.features.watchparty.decidePartyRealization
+import com.nuvio.app.features.watchparty.decidePartySourceHandoff
+import com.nuvio.app.features.watchparty.tierPartyPlaybackSources
+import com.nuvio.app.features.watchparty.PartyExactMatchTiers
+import com.nuvio.app.features.watchparty.PartySourceRealizer
+import com.nuvio.app.features.watchparty.partySourceKey
 import com.nuvio.app.features.watchparty.DriftCorrectionKind
 import com.nuvio.app.features.watchparty.DriftTracker
 import com.nuvio.app.features.watchparty.PartyCommand
@@ -97,11 +107,16 @@ private val partyLog = Logger.withTag("WatchPartyPlayer")
 /**
  * Identifies one stretch of shared playback.
  *
- * Content generation is part of it because advancing an episode returns the party to a lobby: the
- * start gate has to close again for the new content rather than stay open because the previous one
- * played.
+ * The whole authority tuple, because every part of it ends a stretch. Advancing an episode returns
+ * the party to a lobby, so the start gate has to close again for the new content rather than stay
+ * open because the previous one played. A source change is the same event for a different reason:
+ * everybody is realizing something new and resumes together once they have it. And a host transfer
+ * advances the epoch, after which commands, ticks and telemetry from the old authority are no
+ * longer this stretch's. Omitting the last two is what let a source switch leave every party
+ * effect running against the source it replaced.
  */
-private fun WatchPartyState.generationKey(): String = "$id:$contentGeneration"
+private fun WatchPartyState.generationKey(): String =
+    "$id:$contentGeneration:$sourceGeneration:$authorityEpoch"
 
 /**
  * A position and the instant it was actually read.
@@ -633,6 +648,112 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
                 }
                 controller.pause()
             }
+        }
+    }
+
+    // The party's source moved, and this player adopts it without going anywhere.
+    //
+    // Everything about this is in-route by construction: the catalogue is the player's own sources
+    // panel repository, the swap is the same `switchToSource` an in-player pick uses, and the old
+    // source keeps playing the whole time. No navigation, no route replacement, no controller or
+    // HWND teardown - which is the difference between an active source switch and the destructive
+    // lobby round trip it replaces.
+    val partyHandoff = decidePartySourceHandoff(
+        party = matchingParty,
+        localDescriptor = activePartySourceDescriptor,
+        handledSourceGeneration = partyHandledSourceGeneration,
+    )
+    val partySourceCatalogue by PlayerStreamsRepository.sourceState.collectAsStateWithLifecycle()
+    LaunchedEffect(partyHandoff) {
+        val adopt = partyHandoff as? PartySourceHandoff.Adopt ?: run {
+            // Nothing to adopt: either the party has no authoritative source yet, or this player is
+            // already playing it. Recording the generation settles the decision without reporting
+            // preparation nobody is doing. It also means a guest who deliberately picked an
+            // alternate under host-only control is left on it rather than pulled back.
+            matchingParty?.let { partyHandledSourceGeneration = it.sourceGeneration }
+            return@LaunchedEffect
+        }
+        partySourceHandoffInFlight = true
+        partyLog.i { "source handoff begin generation=${adopt.sourceGeneration}" }
+        WatchPartySessionCoordinator.reportReadiness(
+            SourceResolutionState.fetching,
+            sourceGeneration = adopt.sourceGeneration,
+        )
+        PlayerStreamsRepository.loadSources(
+            type = contentType ?: parentMetaType,
+            videoId = activeVideoId ?: playbackSession.videoId,
+            season = activeSeasonNumber,
+            episode = activeEpisodeNumber,
+        )
+    }
+
+    LaunchedEffect(partyHandoff, partySourceCatalogue) {
+        val adopt = partyHandoff as? PartySourceHandoff.Adopt ?: return@LaunchedEffect
+        if (!partySourceHandoffInFlight) return@LaunchedEffect
+        val candidates = partySourceCatalogue.groups.flatMapIndexed { addonOrder, group ->
+            group.streams.map { stream ->
+                PlaybackSourceCandidate(stream = stream, addonOrder = addonOrder)
+            }
+        }
+        val decision = decidePartyRealization(
+            catalogueSettled = !partySourceCatalogue.isAnyLoading &&
+                (candidates.isNotEmpty() || partySourceCatalogue.emptyStateReason != null),
+            tiered = tierPartyPlaybackSources(
+                host = adopt.target,
+                candidates = candidates,
+                normalOrder = emptyList(),
+                selection = PlaybackSelectionContext(
+                    isEpisode = activeSeasonNumber != null && activeEpisodeNumber != null,
+                    allowTorrentSources = true,
+                ),
+            ),
+        )
+        when (decision) {
+            PartyRealizationDecision.Wait -> return@LaunchedEffect
+            PartyRealizationDecision.FallbackRequired -> {
+                // The old source keeps playing. A member who cannot realize the party's new pick is
+                // out of sync, not stranded, and the generation is never silently rolled back to
+                // the one they can play - the party moved, and only the party can move it again.
+                partySourceHandoffInFlight = false
+                partyHandledSourceGeneration = adopt.sourceGeneration
+                partyLog.w { "source handoff unavailable generation=${adopt.sourceGeneration}" }
+                WatchPartySessionCoordinator.reportReadiness(
+                    SourceResolutionState.choosing_fallback,
+                    sourceGeneration = adopt.sourceGeneration,
+                )
+            }
+            is PartyRealizationDecision.Resolve -> {
+                val winner = decision.candidates.firstOrNull() ?: return@LaunchedEffect
+                partySourceHandoffInFlight = false
+                partyHandledSourceGeneration = adopt.sourceGeneration
+                // Published before the swap, not after: this is the generation the member is now
+                // preparing, and the host's wait gate reads it while the new source opens.
+                WatchPartySessionCoordinator.reportReadiness(
+                    SourceResolutionState.resolving,
+                    sourceGeneration = adopt.sourceGeneration,
+                )
+                partyLog.i { "source handoff adopt generation=${adopt.sourceGeneration}" }
+                // Not `switchToUserSelectedSource`: nobody here picked anything, and refunding the
+                // credential budget for a source the party chose would hand an automatic retry a
+                // fresh budget on every generation.
+                switchToSource(winner.stream)
+            }
+        }
+    }
+
+    // An active player *is* this authority's automatic launch, so it spends that claim.
+    //
+    // Without this a member who adopted a source change in place, and then deliberately backed out
+    // to the lobby, would be thrown straight back into the player by the lobby's start effect: the
+    // claim for the new generation was never spent by anybody, because nobody navigated to make it.
+    // Spending it here is the same statement the lobby's own hand-off makes, from the one place
+    // that knows the player is already playing the party's release.
+    LaunchedEffect(matchingParty?.partySourceKey(), activePartySourceDescriptor) {
+        val key = matchingParty?.partySourceKey() ?: return@LaunchedEffect
+        val local = activePartySourceDescriptor ?: return@LaunchedEffect
+        if (partySourceMatchTier(key.descriptor, local) !in PartyExactMatchTiers) return@LaunchedEffect
+        if (PartySourceRealizer.claimAutomaticLaunch(key)) {
+            partyLog.i { "automatic launch claim spent by active player generation=${key.sourceGeneration}" }
         }
     }
 

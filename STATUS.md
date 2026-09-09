@@ -2,6 +2,36 @@
 
 Last updated: 2026-09-09
 
+## Watch Together deterministic architecture — Stage 6 automated checkpoint (2026-09-09)
+
+Active source switching is implemented in-route. A member picking a source from the player's own
+sources panel now moves the whole party: `shouldPublishPartySourceChange` gates it on the party
+playing this exact content, the member being permitted (host always, guest only while
+collaborative), and the pick not being the source the party is already on. The advance names the
+generation it expects, so two simultaneous picks produce one advance and one rejection, and a local
+latch stops a retry or a debrid re-resolution of the same pick from advancing it twice. A refused
+advance releases both latches and leaves the local swap standing as an alternate.
+
+Every other member adopts the new source without going anywhere. `decidePartySourceHandoff` returns
+`Adopt` only for a generation this player has not acted on and is not already playing; the player
+loads the catalogue through its own `PlayerStreamsRepository`, runs the Stage 4 strict matcher and
+settle decision over it, and hands off with the same `switchToSource` an in-player pick uses. The
+old source plays throughout, and the route, controller and HWND are untouched by construction. A
+member who cannot realize the party's new pick reports `choosing_fallback` and keeps playing what
+they have: the generation is never silently rolled back, and a failed adoption is remembered so it
+is not retried against a catalogue that has already answered.
+
+The player's party identity key was `"$id:$contentGeneration"` and is now the whole authority tuple.
+Omitting source generation and authority epoch is what would have left every party effect - gate,
+readiness, ticks, drift, telemetry - running against the source or the host it had just replaced. An
+active player also spends the automatic-launch claim for the authority it is playing, so a member who
+adopted a switch in place and then backed out to the lobby is not thrown straight back into it.
+
+Focused party/player tests pass 289/289 - the full blast radius of the change - and
+`:composeApp:compileKotlinDesktop` passes. Stage 6's exit gate is physical and outstanding: a
+two-client switch, exactly one generation advance, and failure/fallback/cancel/retry/stale behaviour
+on real clients.
+
 ## Watch Together deterministic architecture — Stage 5 automated checkpoint (2026-09-09)
 
 Backend commit `b681c45` in `nuvio-z-backend` carries the minimum change the Stage 1-4 client

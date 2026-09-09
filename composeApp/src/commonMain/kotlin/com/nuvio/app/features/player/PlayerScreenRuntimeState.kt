@@ -349,6 +349,28 @@ internal class PlayerScreenRuntime(
      */
     var partyStartReleasedKey by mutableStateOf<String?>(null)
 
+    /**
+     * The party source generation this player has already acted on, adopted or already playing.
+     *
+     * Deliberately not cleared by a failed adoption. A source the party moved to and this client
+     * cannot realize stays failed for that generation: retrying it against a catalogue that has
+     * already answered is a loop, and the party is told `choosing_fallback` instead. The next real
+     * source change advances the generation and arms this again.
+     */
+    var partyHandledSourceGeneration by mutableStateOf<Int?>(null)
+
+    /** True while this player is realizing the party's new source with the old one still playing. */
+    var partySourceHandoffInFlight by mutableStateOf(false)
+
+    /**
+     * The party source generation this player has already published a source change for.
+     *
+     * A pick is one deliberate transition. Without this latch a recomposition, a retry, or a debrid
+     * re-resolution of the same pick would advance the generation again, and every other member
+     * would tear down a realization they had just finished building.
+     */
+    var partyPublishedSourceGeneration by mutableStateOf<Int?>(null)
+
     /** The party generation whose shared position has already replaced this profile's resume point. */
     var partyStartPositionAppliedKey by mutableStateOf<String?>(null)
 

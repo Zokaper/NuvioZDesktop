@@ -14,6 +14,9 @@ import com.nuvio.app.features.p2p.P2pStreamingEngine
 import com.nuvio.app.core.network.NetworkQualityRepository
 import com.nuvio.app.core.network.NetworkThroughputMeter
 import com.nuvio.app.features.streams.StreamItem
+import com.nuvio.app.features.watchparty.shouldPublishPartySourceChange
+import com.nuvio.app.features.watchparty.matchesPlayback
+import com.nuvio.app.features.watchparty.WatchPartyRepository
 import com.nuvio.app.features.streams.p2pSentinelUrl
 import com.nuvio.app.features.watchparty.toPartySourceDescriptor
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
@@ -310,7 +313,54 @@ internal fun PlayerScreenRuntime.switchToUserSelectedSource(stream: StreamItem) 
     // still fires against the chosen source, and a large remux that is merely slow to prepare
     // gets swapped out for a source the user did not ask for.
     nextEpisodeFallbacks = emptyList()
+    publishPartySourceChange(stream)
     switchToSource(stream)
+}
+
+/**
+ * Moves the whole party to the source this member just picked, exactly once.
+ *
+ * Only an explicit pick reaches here, and only while the party is playing this content and this
+ * member is permitted to change it. Everything else - an automatic chain step, a debrid
+ * re-resolution, a credential re-mint, a guest's alternate under host-only control - changes local
+ * playback and says nothing to the party, because none of those is somebody choosing what everyone
+ * watches.
+ *
+ * The generation is advanced with the one the party is currently on as the expected value, so two
+ * members picking at the same instant produce one advance and one rejection rather than two
+ * advances. `partyPublishedSourceGeneration` is the local half of the same guarantee: a retry or a
+ * recomposition of the same pick cannot advance it twice.
+ */
+private fun PlayerScreenRuntime.publishPartySourceChange(stream: StreamItem) {
+    val party = WatchPartyRepository.uiState.value.party
+        ?.takeIf { it.matchesPlayback(parentMetaId, playbackSession.videoId) }
+        ?: return
+    val picked = stream.toPartySourceDescriptor() ?: return
+    if (
+        !shouldPublishPartySourceChange(
+            party = party,
+            profileId = WatchPartyRepository.uiState.value.activeProfileId,
+            picked = picked,
+            publishedSourceGeneration = partyPublishedSourceGeneration,
+        )
+    ) return
+    partyPublishedSourceGeneration = party.sourceGeneration
+    // This player is already on the new source the moment `switchToSource` runs, so it owes the
+    // party no adoption for the generation it is about to create.
+    partyHandledSourceGeneration = party.sourceGeneration + 1
+    scope.launch {
+        WatchPartyRepository.selectSource(
+            fingerprint = picked,
+            expectedSourceGeneration = party.sourceGeneration,
+        ).onFailure {
+            // The advance was refused - somebody else moved the party first. The local swap still
+            // stands as an alternate, and the authoritative source is whatever the party says it
+            // is: releasing both latches lets the next snapshot decide, including by handing this
+            // player back to a source it has just left.
+            partyPublishedSourceGeneration = null
+            partyHandledSourceGeneration = null
+        }
+    }
 }
 
 internal fun PlayerScreenRuntime.switchToSource(stream: StreamItem) {
