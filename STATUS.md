@@ -1,6 +1,45 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-08
+Last updated: 2026-09-09
+
+## Watch Together deterministic architecture — Stage 1 PartySession ownership and health split (2026-09-09)
+
+Stage 1 is `DONE` on `codex/watch-together-architecture`. New domain seams separate the durable
+gateway and live transport from the serialized, process-scoped `WatchPartySessionCoordinator`.
+The coordinator now reduces typed intents in one queue, models attachment loss independently from
+party membership/lobby entry, routes readiness/lifecycle actions, and shadow-compares its identity
+and generation state with the legacy repository snapshot while that snapshot remains the Stage 1
+UI authority. The durable gateway exposes party-domain snapshots rather than `WatchPartyUiState`,
+and the live transport consumes an immutable authority context plus typed health/refresh sinks
+instead of reading repository or UI state.
+
+Health now records durable API reachability, poll activity, heartbeat success, Realtime channel
+instance/lifecycle, receive time, peer and clock freshness, and send outcome independently. A
+successful subscription or send remains `SubscribedUnverified`; only peer channel traffic proves
+the live plane. Replacement channels clear prior live-plane telemetry, clock traffic does not
+refresh peer freshness, and successful HTTP work never claims Realtime health. The existing RPCs,
+broadcast payloads, generation checks, durable polling fallback, and wait-for-everyone timing
+behavior remain compatible; no backend code or schema changed.
+
+Durable heartbeat ownership is process-scoped: the repository poll keeps member liveness alive in
+lobby/source/player states and publishes only fresh exact-generation telemetry supplied by the
+player binding. Player disposal now reports attachment loss and clears process-local telemetry
+without inferring lobby membership; explicit lobby entry publishes lobby location. Authorized
+notification snapshots still install synchronously before navigation, while their semantic reducer
+event remains serialized, avoiding a redundant-join race introduced by a fully queued install.
+
+Stage 1 verification on the final source is green: 64/64 focused desktop tests pass across session
+health, protocol, playback lifecycle, retained party launches, player surface lifetime, exit
+navigation, and party route behavior; explicit `:composeApp:compileKotlinDesktop` passes. The prior
+full `:composeApp:desktopTest` attempt ran 1,679 tests and failed only the untouched
+`DesktopDownloadQueueE2ETest.a stalled download restarts from zero once before giving up`: after
+240 seconds its 6 MiB fixture had completed instead of failing. The isolated unchanged test then
+passed 1/1 in 135.83 seconds, evidence of an unrelated timing-sensitive harness failure rather than
+a Stage 1 regression. Under the persistent verification policy, full desktop suites run after
+Stages 2, 4, and 7/final (or earlier for unusually broad changes), not merely because a stage ends.
+The next full-suite gate is Stage 2. Missing private-channel delivery remains unresolved and is the
+Stage 2 transport problem; faster durable polling is still not an accepted correction. Stage 2 has
+not begun.
 
 ## Watch Together deterministic architecture — Stage 0 instrumentation (2026-09-08)
 

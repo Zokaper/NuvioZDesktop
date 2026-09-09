@@ -13,6 +13,7 @@ import com.nuvio.app.features.watchparty.PartyCommandKind
 import com.nuvio.app.features.watchparty.PartyConnectionState
 import com.nuvio.app.features.watchparty.PartyHoldReason
 import com.nuvio.app.features.watchparty.PartyPlaybackGate
+import com.nuvio.app.features.watchparty.PartyPlaybackTelemetry
 import com.nuvio.app.features.watchparty.PartyTick
 import com.nuvio.app.features.watchparty.SourceResolutionState
 import com.nuvio.app.features.watchparty.PartySourceMatch
@@ -23,6 +24,7 @@ import com.nuvio.app.features.watchparty.WatchPartyHostGraceMs
 import com.nuvio.app.features.watchparty.WatchPartyIdleTickIntervalMs
 import com.nuvio.app.features.watchparty.WatchPartyPausedAlignToleranceMs
 import com.nuvio.app.features.watchparty.WatchPartyRepository
+import com.nuvio.app.features.watchparty.WatchPartySessionCoordinator
 import com.nuvio.app.features.watchparty.WatchPartySeekLandingPollMs
 import com.nuvio.app.features.watchparty.WatchPartySnapshotIntervalMs
 import com.nuvio.app.features.watchparty.WatchPartyStatusSettleMs
@@ -40,6 +42,7 @@ import com.nuvio.app.features.watchparty.partyBarrierPlan
 import com.nuvio.app.features.watchparty.partyFallbackDriftCorrection
 import com.nuvio.app.features.watchparty.partyMembersAwaitingSource
 import com.nuvio.app.features.watchparty.partyPlaybackGate
+import com.nuvio.app.features.watchparty.partyGenerationKey
 import com.nuvio.app.features.watchparty.partySeekPlan
 import com.nuvio.app.features.watchparty.pendingPartySeek
 import com.nuvio.app.features.watchparty.shortId
@@ -313,14 +316,14 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
                     PartySourceMatch.alternate
                 }
             }
-            WatchPartyRepository.updateReady(
+            WatchPartySessionCoordinator.reportReadiness(
                 SourceResolutionState.ready,
                 playbackSnapshot.durationMs,
                 sourceGeneration = matchingParty?.sourceGeneration,
                 sourceMatch = match,
             )
         } else {
-            WatchPartyRepository.updateReady(
+            WatchPartySessionCoordinator.reportReadiness(
                 SourceResolutionState.resolving,
                 sourceGeneration = matchingParty?.sourceGeneration,
             )
@@ -398,28 +401,31 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
         }
     }
 
-    // The durable heartbeat: the liveness stamp and the anchor a client falls back to when the
-    // socket is down. Five seconds is right for that job and always was; what was wrong was it
-    // being the *only* thing carrying position.
-    LaunchedEffect(generationKey) {
-        if (generationKey == null) return@LaunchedEffect
-        while (true) {
-            val live = WatchPartyRepository.uiState.value.party
-            if (live == null || live.status == WatchPartyStatus.ended) break
-            val snapshot = playbackSnapshot
-            val sample = samplePlaybackPosition()
-            WatchPartyRepository.heartbeat(
+    // Composition supplies fresh telemetry; the process-scoped repository poll owns liveness and
+    // durable publication. Disposing this effect can no longer silently stop the heartbeat.
+    LaunchedEffect(
+        generationKey,
+        playbackSnapshot.positionMs,
+        playbackSnapshot.durationMs,
+        playbackSnapshot.playbackSpeed,
+        playbackSnapshot.isPlaying,
+        playbackSnapshot.isLoading,
+        shouldPlay,
+        partyHoldingForBarrier,
+    ) {
+        val generation = matchingParty?.partyGenerationKey() ?: return@LaunchedEffect
+        val snapshot = playbackSnapshot
+        val sample = samplePlaybackPosition()
+        WatchPartySessionCoordinator.reportPlaybackTelemetry(
+            PartyPlaybackTelemetry(
+                generation = generation,
                 positionMs = sample.positionMs,
+                capturedAtMs = sample.atEpochMs,
                 durationMs = snapshot.durationMs,
-                speed = snapshot.playbackSpeed,
-                // Derived here, from the snapshot this pass just read, and deliberately not from
-                // the composable-level value: this loop is keyed only on the generation, so a value
-                // computed in the composition that launched it is captured once and never updated.
+                playbackSpeed = snapshot.playbackSpeed,
                 status = partyStatusFor(snapshot, shouldPlay, partyHoldingForBarrier),
-                positionCapturedAtMs = sample.atEpochMs,
-            )
-            delay(WatchPartySnapshotIntervalMs)
-        }
+            ),
+        )
     }
 
     /**

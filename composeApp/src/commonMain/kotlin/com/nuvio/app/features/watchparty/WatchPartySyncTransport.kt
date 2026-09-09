@@ -40,13 +40,13 @@ import kotlin.uuid.Uuid
  * recomposing the lobby at that rate would be the cost of the feature. [state] carries the summary
  * the UI actually wants, and it is written only when something in it changes.
  */
-internal object WatchPartySync {
+internal object WatchPartySync : PartyRealtimeTransport {
 
     private val log = Logger.withTag("WatchPartySync")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val _state = MutableStateFlow(WatchPartySyncState())
-    val state: StateFlow<WatchPartySyncState> = _state.asStateFlow()
+    override val state: StateFlow<WatchPartySyncState> = _state.asStateFlow()
 
     /**
      * Barriers this client has to execute, host included.
@@ -96,13 +96,17 @@ internal object WatchPartySync {
     private val outstandingPings = mutableMapOf<String, Long>()
     private var commandCounter = 0L
     private var peerStatus: WatchPartyStatus? = null
+    private var authority: PartyAuthorityContext? = null
+    private var channelInstance: Long = 0L
+    private var healthSink: (PartyHealthEvent) -> Unit = {}
+    private var refreshRequest: () -> Unit = {}
+
+    override fun updateAuthority(context: PartyAuthorityContext?) {
+        authority = context
+    }
 
     /** The one place that decides whose clock this is: a host is the clock, so its offset is zero. */
-    private fun isHost(): Boolean {
-        val ui = WatchPartyRepository.uiState.value
-        val party = ui.party ?: return false
-        return party.hostProfileId == ui.activeProfileId
-    }
+    private fun isHost(): Boolean = authority?.let { it.hostProfileId == it.selfProfileId } == true
 
     fun partyNowMs(): Long {
         val now = currentEpochMs()
@@ -191,11 +195,22 @@ internal object WatchPartySync {
         publishState()
     }
 
-    fun attach(channel: RealtimeChannel, partyId: String) {
+    fun attach(
+        channel: RealtimeChannel,
+        partyId: String,
+        authority: PartyAuthorityContext?,
+        channelInstance: Long,
+        healthSink: (PartyHealthEvent) -> Unit,
+        refresh: () -> Unit,
+    ) {
         if (boundPartyId == partyId && collector?.isActive == true) return
         detach()
         this.channel = channel
         boundPartyId = partyId
+        this.authority = authority
+        this.channelInstance = channelInstance
+        this.healthSink = healthSink
+        refreshRequest = refresh
         WatchPartyDiagnostics.channelAttached(partyId)
         log.i { "attach party=${partyId.shortId()} role=${if (isHost()) "host" else "guest"}" }
         collector = channel.broadcastFlow<JsonObject>(WatchPartySyncEvent)
@@ -221,6 +236,7 @@ internal object WatchPartySync {
         outstandingPings.clear()
         commandCounter = 0
         peerStatus = null
+        authority = null
         _state.value = WatchPartySyncState()
     }
 
@@ -238,24 +254,24 @@ internal object WatchPartySync {
         playbackSpeed: Float,
         durationMs: Long,
     ) {
-        val party = WatchPartyRepository.uiState.value.party ?: return
-        val profileId = WatchPartyRepository.uiState.value.activeProfileId ?: return
+        val context = authority ?: return
+        val generation = context.generation
         val next = PartyTick(
-            partyId = party.id,
-            contentGeneration = party.contentGeneration,
-            sequence = party.sequence,
+            partyId = context.partyId,
+            contentGeneration = generation.contentGeneration,
+            sequence = context.durableSequence,
             status = status,
             positionMs = positionMs,
             capturedAtPartyMs = capturedAtPartyMs,
             playbackSpeed = playbackSpeed,
             durationMs = durationMs,
-            sourceGeneration = party.sourceGeneration,
-            authorityEpoch = party.authorityEpoch,
+            sourceGeneration = generation.sourceGeneration,
+            authorityEpoch = generation.authorityEpoch,
         )
         tick = next
         _ticks.tryEmit(next)
         publishState()
-        send(PartyTickMessage(fromProfileId = profileId, tick = next))
+        send(PartyTickMessage(fromProfileId = context.selfProfileId, tick = next))
     }
 
     /**
@@ -272,67 +288,64 @@ internal object WatchPartySync {
         playAfter: Boolean = true,
         diagnosticInputId: String? = null,
     ): PartyCommand? {
-        val ui = WatchPartyRepository.uiState.value
-        val party = ui.party ?: run {
-            diagnosticInputId?.let { WatchPartyDiagnostics.rejected(it, kind, null, ui.activeProfileId, "party-missing") }
+        val context = authority ?: run {
+            diagnosticInputId?.let { WatchPartyDiagnostics.rejected(it, kind, null, null, "authority-missing") }
             return null
         }
-        val profileId = ui.activeProfileId ?: run {
-            diagnosticInputId?.let { WatchPartyDiagnostics.rejected(it, kind, party, null, "profile-missing") }
+        val profileId = context.selfProfileId
+        if (!mayControl(profileId, context)) {
+            diagnosticInputId?.let { WatchPartyDiagnostics.rejected(it, kind, null, profileId, "permission") }
             return null
         }
-        if (!mayControl(profileId, party)) {
-            diagnosticInputId?.let { WatchPartyDiagnostics.rejected(it, kind, party, profileId, "permission") }
-            return null
-        }
+        val generation = context.generation
         commandCounter += 1
         val command = PartyCommand(
             commandId = Uuid.random().toString(),
             kind = kind,
             issuedByProfileId = profileId,
             counter = commandCounter,
-            contentGeneration = party.contentGeneration,
+            contentGeneration = generation.contentGeneration,
             startPositionMs = startPositionMs,
             startAtPartyMs = startAtPartyMs,
             playbackSpeed = playbackSpeed,
             playAfter = playAfter,
-            sourceGeneration = party.sourceGeneration,
-            authorityEpoch = party.authorityEpoch,
+            sourceGeneration = generation.sourceGeneration,
+            authorityEpoch = generation.authorityEpoch,
         )
         log.i {
-            "issue party=${party.id.shortId()} kind=$kind posMs=$startPositionMs " +
+            "issue party=${context.partyId.shortId()} kind=$kind posMs=$startPositionMs " +
                 "startAtMs=$startAtPartyMs leadMs=${startAtPartyMs - partyNowMs()} n=$commandCounter " +
                 "playAfter=$playAfter"
         }
         commandLog = commandLog.record(command)
-        WatchPartyDiagnostics.accepted(diagnosticInputId, command, party)
-        send(PartyCommandMessage(partyId = party.id, command = command))
+        WatchPartyDiagnostics.accepted(diagnosticInputId, command, context.partyId)
+        send(PartyCommandMessage(partyId = context.partyId, command = command))
         _commands.tryEmit(command)
         return command
     }
 
     /** What this client is doing, for a host deciding whether to wait for it. */
     suspend fun publishPeerStatus(status: WatchPartyStatus) {
-        val ui = WatchPartyRepository.uiState.value
-        val party = ui.party ?: return
-        val profileId = ui.activeProfileId ?: return
-        if (profileId == party.hostProfileId) return
+        val context = authority ?: return
+        val generation = context.generation
+        val profileId = context.selfProfileId
+        if (profileId == context.hostProfileId) return
         // Only when it changes: the clock exchange re-sends the held one for liveness, and logging
         // every one of those would bury the transitions that decide whether the host holds.
         if (peerStatus != status) {
-            log.i { "peer publish party=${party.id.shortId()} status=$status" }
+            log.i { "peer publish party=${context.partyId.shortId()} status=$status" }
         }
         peerStatus = status
         send(
             PartyPeerStatusMessage(
-                partyId = party.id,
+                partyId = context.partyId,
                 fromProfileId = profileId,
                 status = status,
                 atPartyMs = partyNowMs(),
                 rttMs = clock.bestRttMs,
-                contentGeneration = party.contentGeneration,
-                sourceGeneration = party.sourceGeneration,
-                authorityEpoch = party.authorityEpoch,
+                contentGeneration = generation.contentGeneration,
+                sourceGeneration = generation.sourceGeneration,
+                authorityEpoch = generation.authorityEpoch,
             ),
         )
     }
@@ -342,6 +355,13 @@ internal object WatchPartySync {
         val startedAt = currentEpochMs()
         val live = channel
         if (live == null) {
+            healthSink(
+                PartyHealthEvent.RealtimeSendCompleted(
+                    channelInstance,
+                    startedAt,
+                    PartyRealtimeSendOutcome.Unavailable,
+                ),
+            )
             commandMessage?.let {
                 WatchPartyDiagnostics.send(it.command, it.partyId, startedAt, outcome = "unavailable")
             }
@@ -351,9 +371,23 @@ internal object WatchPartySync {
         // covers that. Failing loudly here would put a banner on every transient reconnect.
         runCatching { live.broadcast(WatchPartySyncEvent, encodePartySyncMessage(message)) }
             .onSuccess {
+                healthSink(
+                    PartyHealthEvent.RealtimeSendCompleted(
+                        channelInstance,
+                        currentEpochMs(),
+                        PartyRealtimeSendOutcome.Success,
+                    ),
+                )
                 commandMessage?.let { WatchPartyDiagnostics.send(it.command, it.partyId, startedAt, outcome = "success") }
             }
             .onFailure { cause ->
+                healthSink(
+                    PartyHealthEvent.RealtimeSendCompleted(
+                        channelInstance,
+                        currentEpochMs(),
+                        PartyRealtimeSendOutcome.Failed,
+                    ),
+                )
                 commandMessage?.let { WatchPartyDiagnostics.send(it.command, it.partyId, startedAt, outcome = "failed") }
                 log.d { "send failed kind=${message::class.simpleName} cause=${cause.message}" }
             }
@@ -363,41 +397,50 @@ internal object WatchPartySync {
         // Null is every kind of "this build cannot act on it": a newer protocol, an unknown type, a
         // field an older sender did not write. All of them mean fall back, none of them mean guess.
         val message = decodePartySyncMessage(payload) ?: return
-        val ui = WatchPartyRepository.uiState.value
-        val party = ui.party ?: return
-        val self = ui.activeProfileId ?: return
-        if (message.partyId != party.id) return
+        val context = authority ?: return
+        val generation = context.generation
+        val self = context.selfProfileId
+        if (message.partyId != context.partyId) return
         if (message.fromProfileId == self) return
+        // Subscription and successful sends proved nothing in Stage 0. Only an authenticated,
+        // party-matching message from another member establishes live peer delivery.
+        val trafficKind = if (message is PartyClockPingMessage || message is PartyClockPongMessage) {
+            PartyRealtimeTrafficKind.Clock
+        } else {
+            PartyRealtimeTrafficKind.Peer
+        }
+        healthSink(PartyHealthEvent.RealtimeReceived(channelInstance, currentEpochMs(), trafficKind))
         if (
-            message.contentGeneration != party.contentGeneration ||
-            message.sourceGeneration != party.sourceGeneration ||
-            message.authorityEpoch != party.authorityEpoch
+            message.contentGeneration != generation.contentGeneration ||
+            message.sourceGeneration != generation.sourceGeneration ||
+            message.authorityEpoch != generation.authorityEpoch
         ) {
-            WatchPartyRepository.requestRefresh()
+            refreshRequest()
             return
         }
         when (message) {
-            is PartyClockPingMessage -> if (isHost()) scope.launch { answerPing(message, party, self) }
-            is PartyClockPongMessage -> acceptPong(message, party.hostProfileId, self)
-            is PartyTickMessage -> acceptTick(message, party)
-            is PartyCommandMessage -> acceptCommand(message, party)
+            is PartyClockPingMessage -> if (isHost()) scope.launch { answerPing(message, context) }
+            is PartyClockPongMessage -> acceptPong(message, context.hostProfileId, self)
+            is PartyTickMessage -> acceptTick(message, context)
+            is PartyCommandMessage -> acceptCommand(message, context)
             is PartyPeerStatusMessage -> acceptPeerStatus(message)
         }
     }
 
-    private suspend fun answerPing(ping: PartyClockPingMessage, party: WatchPartyState, self: String) {
+    private suspend fun answerPing(ping: PartyClockPingMessage, context: PartyAuthorityContext) {
+        val generation = context.generation
         send(
             PartyClockPongMessage(
-                partyId = party.id,
-                fromProfileId = self,
+                partyId = context.partyId,
+                fromProfileId = context.selfProfileId,
                 toProfileId = ping.fromProfileId,
                 exchangeId = ping.exchangeId,
                 sentAtMs = ping.sentAtMs,
                 // The host is the clock, so this is the whole of what the exchange is for.
                 hostAtMs = currentEpochMs(),
-                contentGeneration = party.contentGeneration,
-                sourceGeneration = party.sourceGeneration,
-                authorityEpoch = party.authorityEpoch,
+                contentGeneration = generation.contentGeneration,
+                sourceGeneration = generation.sourceGeneration,
+                authorityEpoch = generation.authorityEpoch,
             ),
         )
     }
@@ -424,23 +467,24 @@ internal object WatchPartySync {
         publishState()
     }
 
-    private fun acceptTick(message: PartyTickMessage, party: WatchPartyState) {
+    private fun acceptTick(message: PartyTickMessage, context: PartyAuthorityContext) {
         // Only the host publishes a timeline. A payload cannot promote itself: the durable snapshot
         // is the only thing that says who the host is.
-        if (message.fromProfileId != party.hostProfileId) return
+        if (message.fromProfileId != context.hostProfileId) return
+        val generation = context.generation
         val next = message.tick
         if (
-            next.contentGeneration != party.contentGeneration ||
-            next.sourceGeneration != party.sourceGeneration ||
-            next.authorityEpoch != party.authorityEpoch
+            next.contentGeneration != generation.contentGeneration ||
+            next.sourceGeneration != generation.sourceGeneration ||
+            next.authorityEpoch != generation.authorityEpoch
         ) {
-            WatchPartyRepository.requestRefresh()
+            refreshRequest()
             return
         }
         val held = tick
         if (held != null && next.contentGeneration != held.contentGeneration) {
             // Content moved under us. The tick cannot say what to, so ask the thing that can.
-            WatchPartyRepository.requestRefresh()
+            refreshRequest()
         }
         if (!next.supersedes(held)) return
         tick = next
@@ -448,29 +492,29 @@ internal object WatchPartySync {
         publishState()
     }
 
-    private fun acceptCommand(message: PartyCommandMessage, party: WatchPartyState) {
+    private fun acceptCommand(message: PartyCommandMessage, context: PartyAuthorityContext) {
         val command = message.command
-        if (!mayControl(command.issuedByProfileId, party)) {
-            WatchPartyDiagnostics.received(command, party.id, outcome = "rejected-permission")
+        if (!mayControl(command.issuedByProfileId, context)) {
+            WatchPartyDiagnostics.received(command, context.partyId, outcome = "rejected-permission")
             return
         }
         if (
-            command.contentGeneration != party.contentGeneration ||
-            command.sourceGeneration != party.sourceGeneration ||
-            command.authorityEpoch != party.authorityEpoch
+            command.contentGeneration != context.generation.contentGeneration ||
+            command.sourceGeneration != context.generation.sourceGeneration ||
+            command.authorityEpoch != context.generation.authorityEpoch
         ) {
-            WatchPartyDiagnostics.received(command, party.id, outcome = "rejected-generation")
-            WatchPartyRepository.requestRefresh()
+            WatchPartyDiagnostics.received(command, context.partyId, outcome = "rejected-generation")
+            refreshRequest()
             return
         }
         if (!commandLog.accepts(command)) {
-            WatchPartyDiagnostics.received(command, party.id, outcome = "rejected-duplicate")
+            WatchPartyDiagnostics.received(command, context.partyId, outcome = "rejected-duplicate")
             return
         }
         commandLog = commandLog.record(command)
-        WatchPartyDiagnostics.received(command, party.id, outcome = "accepted")
+        WatchPartyDiagnostics.received(command, context.partyId, outcome = "accepted")
         log.i {
-            "command party=${party.id.shortId()} kind=${command.kind} posMs=${command.startPositionMs} " +
+            "command party=${context.partyId.shortId()} kind=${command.kind} posMs=${command.startPositionMs} " +
                 "inMs=${command.startAtPartyMs - partyNowMs()} from=${command.issuedByProfileId.shortId()}"
         }
         _commands.tryEmit(command)
@@ -516,25 +560,24 @@ internal object WatchPartySync {
                 delay(WatchPartyClockPingIntervalMs)
                 continue
             }
-            val ui = WatchPartyRepository.uiState.value
-            val profileId = ui.activeProfileId
-            if (ui.party?.id != partyId || profileId == null) return
+            val context = authority ?: return
+            if (context.partyId != partyId) return
             val exchangeId = Uuid.random().toString()
             val sentAt = currentEpochMs()
             outstandingPings[exchangeId] = sentAt
             // An exchange that is never answered would otherwise accumulate forever on a host that
             // is on an older build, which is exactly the case this has to survive.
             outstandingPings.entries.removeAll { (_, at) -> sentAt - at > WatchPartyClockStaleMs }
-            val party = WatchPartyRepository.uiState.value.party ?: break
+            val generation = context.generation
             send(
                 PartyClockPingMessage(
                     partyId = partyId,
-                    fromProfileId = profileId,
+                    fromProfileId = context.selfProfileId,
                     exchangeId = exchangeId,
                     sentAtMs = sentAt,
-                    contentGeneration = party.contentGeneration,
-                    sourceGeneration = party.sourceGeneration,
-                    authorityEpoch = party.authorityEpoch,
+                    contentGeneration = generation.contentGeneration,
+                    sourceGeneration = generation.sourceGeneration,
+                    authorityEpoch = generation.authorityEpoch,
                 ),
             )
             peerStatus?.let { publishPeerStatus(it) }
@@ -553,8 +596,8 @@ internal object WatchPartySync {
         )
     }
 
-    private fun mayControl(profileId: String, party: WatchPartyState): Boolean =
-        profileId == party.hostProfileId || party.controlMode == WatchPartyControlMode.collaborative
+    private fun mayControl(profileId: String, context: PartyAuthorityContext): Boolean =
+        profileId == context.hostProfileId || context.controlMode == WatchPartyControlMode.collaborative
 
     private fun absDelta(a: Long, b: Long): Long = if (a > b) a - b else b - a
 }

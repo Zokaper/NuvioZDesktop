@@ -6,6 +6,7 @@ import com.nuvio.app.core.network.ZSupabaseProvider
 import com.nuvio.app.features.player.PartyPlayerLaunchKey
 import com.nuvio.app.features.player.PlayerLaunchStore
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.rpc
 import io.github.jan.supabase.realtime.RealtimeChannel
 import io.github.jan.supabase.realtime.broadcastFlow
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -51,6 +53,7 @@ data class WatchPartyUiState(
     // moment the host navigated away.
     val inviteCode: String? = null,
     val connection: PartyConnectionState = PartyConnectionState.disconnected,
+    val health: PartyHealthState = PartyHealthState(),
     val serverClockOffsetMs: Long = 0,
     /**
      * Whether the host holds the party for a guest whose stream has stalled.
@@ -110,6 +113,8 @@ object WatchPartyRepository {
     private var pollJob: Job? = null
     private var channelJob: Job? = null
     private var channelPartyId: String? = null
+    private var channelInstance = 0L
+    private var playbackTelemetry: PartyPlaybackTelemetry? = null
     // Holding a channel is not the same as being subscribed to one: the attempt is held from the
     // moment it exists so a teardown can remove it, so only this says whether it is carrying state.
     private var channelSubscribed = false
@@ -121,6 +126,32 @@ object WatchPartyRepository {
     // whole snapshot. Serializing them prevents an earlier response from arriving last and
     // restoring the pre-ready member row over the newer local state.
     private val memberStateMutex = Mutex()
+
+    fun updatePlaybackTelemetry(telemetry: PartyPlaybackTelemetry?) {
+        playbackTelemetry = telemetry
+    }
+
+    private fun updateHealth(event: PartyHealthEvent) {
+        _uiState.update { current ->
+            val next = reducePartyHealth(current.health, event)
+            val connection = when (next.realtime) {
+                PartyRealtimeHealth.Live -> PartyConnectionState.connected
+                PartyRealtimeHealth.Connecting,
+                PartyRealtimeHealth.SubscribedUnverified,
+                PartyRealtimeHealth.Degraded,
+                -> PartyConnectionState.reconnecting
+                PartyRealtimeHealth.Detached -> PartyConnectionState.disconnected
+            }
+            val banner = when (next.capability()) {
+                PartySyncCapability.FullSync -> null
+                PartySyncCapability.DurableFallback -> "Live sync unavailable — following the party every few seconds"
+                PartySyncCapability.RealtimeOnly -> "Party service unavailable — live playback continuing"
+                PartySyncCapability.OfflineLocalPlayback -> if (current.party == null) null else
+                    "Connection lost — playback continuing locally"
+            }
+            current.copy(health = next, connection = connection, connectionBannerMessage = banner)
+        }
+    }
 
     fun installAuthorizedSnapshot(snapshot:WatchPartyState) = installSnapshot(snapshot)
 
@@ -186,6 +217,7 @@ object WatchPartyRepository {
         lastLoggedState = null
         lastLoggedHeartbeatStatus = null
         lastLoggedPollFailure = null
+        playbackTelemetry = null
         scope.launch { if (_uiState.value.party != null) leave() else stopChannel() }
         launchedSourceGeneration = null
         _uiState.value = WatchPartyUiState(activeProfileId = profileId)
@@ -546,6 +578,7 @@ object WatchPartyRepository {
             isWorking = false,
             errorMessage = null,
         )
+        WatchPartySync.updateAuthority(snapshot.authorityContext(_uiState.value.activeProfileId))
         // The poll is the floor under this whole feature, so nothing may come before it. Opening the
         // channel used to, and `subscribe(blockUntilSubscribed = true)` never returns for a topic
         // the server refuses - so a channel that could not be authorized left this line unreached
@@ -568,6 +601,7 @@ object WatchPartyRepository {
      */
     private fun startPolling() {
         if (pollJob?.isActive == true) return
+        updateHealth(PartyHealthEvent.PollingChanged(running = true))
         WatchPartyDiagnostics.poll(_uiState.value.party?.id, running = true, api = "idle")
         pollJob = scope.launch {
             while (true) {
@@ -595,13 +629,34 @@ object WatchPartyRepository {
                     // reporting. Only the player used to heartbeat, so a member sitting in the lobby
                     // or on the source list looked disconnected after fifteen seconds - and a host
                     // waiting on them to be ready would give up on them for no reason.
+                    val liveGeneration = _uiState.value.party?.partyGenerationKey()
+                    val telemetry = playbackTelemetry?.takeIf {
+                        liveGeneration != null && liveGeneration.accepts(it.generation) &&
+                            currentEpochMs() - it.capturedAtMs <= WatchPartySnapshotIntervalMs * 2
+                    }
                     val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_heartbeat", buildJsonObject {
-                        put("p_party_id", partyId); put("p_profile_id", profileId)
+                        put("p_party_id", partyId)
+                        put("p_profile_id", profileId)
+                        telemetry?.let { sample ->
+                            val agedPosition = if (sample.status == WatchPartyStatus.playing) {
+                                val age = (currentEpochMs() - sample.capturedAtMs)
+                                    .coerceIn(0L, WatchPartySnapshotIntervalMs)
+                                sample.positionMs + (age.toDouble() * sample.playbackSpeed.toDouble()).toLong()
+                            } else {
+                                sample.positionMs
+                            }
+                            put("p_position_ms", agedPosition)
+                            put("p_duration_ms", sample.durationMs)
+                            put("p_playback_speed", sample.playbackSpeed)
+                            put("p_status", sample.status.name)
+                        }
                     }).decodeAs<WatchPartyState>()
                     installSnapshot(snapshot, reopenChannel = false)
                 }.onSuccess {
-                    lastSuccessfulContactEpochMs = currentEpochMs()
+                    val now = currentEpochMs()
+                    lastSuccessfulContactEpochMs = now
                     lastLoggedPollFailure = null
+                    updateHealth(PartyHealthEvent.DurableSucceeded(now, heartbeat = true))
                     WatchPartyDiagnostics.poll(
                         partyId,
                         running = true,
@@ -609,12 +664,6 @@ object WatchPartyRepository {
                         sequence = _uiState.value.party?.sequence,
                         durationMs = (currentEpochMs() - pollStartedAt).coerceAtLeast(0L),
                     )
-                    if (_uiState.value.connection != PartyConnectionState.connected || _uiState.value.connectionBannerMessage != null) {
-                        _uiState.value = _uiState.value.copy(
-                            connection = PartyConnectionState.connected,
-                            connectionBannerMessage = null,
-                        )
-                    }
                 }.onFailure { cause ->
                     WatchPartyDiagnostics.poll(
                         partyId,
@@ -623,18 +672,10 @@ object WatchPartyRepository {
                         durationMs = (currentEpochMs() - pollStartedAt).coerceAtLeast(0L),
                     )
                     val now = currentEpochMs()
-                    val elapsedSinceContact = if (lastSuccessfulContactEpochMs > 0L) now - lastSuccessfulContactEpochMs else 0L
-                    if (elapsedSinceContact > 15_000L) {
-                        _uiState.value = _uiState.value.copy(
-                            connection = PartyConnectionState.reconnecting,
-                            connectionBannerMessage = "Connection lost — playback continuing locally",
-                        )
-                    } else if (elapsedSinceContact > 5_000L) {
-                        _uiState.value = _uiState.value.copy(
-                            connection = PartyConnectionState.reconnecting,
-                            connectionBannerMessage = "Reconnecting…",
-                        )
-                    }
+                    updateHealth(
+                        if (cause is PostgrestRestException) PartyHealthEvent.DurableRejected(now)
+                        else PartyHealthEvent.DurableFailed(now),
+                    )
                     val reason = cause.message ?: cause::class.simpleName
                     if (reason != lastLoggedPollFailure) {
                         lastLoggedPollFailure = reason
@@ -643,6 +684,7 @@ object WatchPartyRepository {
                 }
             }
             pollJob = null
+            updateHealth(PartyHealthEvent.PollingChanged(running = false))
             WatchPartyDiagnostics.poll(_uiState.value.party?.id, running = false, api = "idle")
         }
     }
@@ -730,6 +772,7 @@ object WatchPartyRepository {
 
     private fun stopPolling() {
         pollJob?.cancel(); pollJob = null
+        updateHealth(PartyHealthEvent.PollingChanged(running = false))
         WatchPartyDiagnostics.poll(_uiState.value.party?.id, running = false, api = "idle")
     }
 
@@ -760,14 +803,14 @@ object WatchPartyRepository {
         // carry the Z token rather than the publishable key.
         val profileId = _uiState.value.activeProfileId
         if (profileId != null && !ZSessionBridge.ensureSession(profileId)) {
-            _uiState.value = _uiState.value.copy(
-                connection = PartyConnectionState.disconnected,
-                errorMessage = ZSessionBridge.lastFailure,
-            )
+            updateHealth(PartyHealthEvent.RealtimeDetached(channelInstance))
+            _uiState.value = _uiState.value.copy(errorMessage = ZSessionBridge.lastFailure)
             return
         }
         closeChannel()
-        _uiState.value = _uiState.value.copy(connection = PartyConnectionState.reconnecting)
+        channelInstance += 1
+        val openingInstance = channelInstance
+        updateHealth(PartyHealthEvent.RealtimeConnecting(openingInstance))
 
         // `reconnecting` was set before the attempt and cleared only on success, so anything thrown
         // below left the lobby reporting "Reconnecting" forever with no way to tell why.
@@ -800,7 +843,14 @@ object WatchPartyRepository {
             // `closeChannel`. It is an accelerator over the poll in exactly the way the channel
             // itself is: a party whose socket will not open still follows along, five seconds at a
             // time, on the anchor the database carries.
-            WatchPartySync.attach(next, partyId)
+            WatchPartySync.attach(
+                channel = next,
+                partyId = partyId,
+                authority = _uiState.value.party?.authorityContext(_uiState.value.activeProfileId),
+                channelInstance = openingInstance,
+                healthSink = ::updateHealth,
+                refresh = ::requestRefresh,
+            )
         }
 
         opened.onFailure { cause ->
@@ -816,21 +866,20 @@ object WatchPartyRepository {
                 )
                 log.w { "realtime party=${partyId.shortId()} state=disconnected cause=${cause.message ?: cause::class.simpleName}" }
                 closeChannel()
-                _uiState.value = _uiState.value.copy(
-                    connection = PartyConnectionState.disconnected,
-                    errorMessage = "Live sync unavailable: ${cause.message ?: cause::class.simpleName}",
-                )
+                _uiState.value = _uiState.value.copy(errorMessage = "Live sync unavailable: ${cause.message ?: cause::class.simpleName}")
             }
         }.onSuccess {
             WatchPartyDiagnostics.transport("subscribe-complete", partyId, realtime = "subscribed")
-            log.i { "realtime party=${partyId.shortId()} state=connected" }
-            _uiState.value = _uiState.value.copy(connection = PartyConnectionState.connected, errorMessage = null)
+            log.i { "realtime party=${partyId.shortId()} state=subscribed-unverified" }
+            updateHealth(PartyHealthEvent.RealtimeSubscribed(openingInstance))
+            _uiState.value = _uiState.value.copy(errorMessage = null)
             refresh()
         }
     }
 
     private suspend fun closeChannel() {
         val closingPartyId = channelPartyId ?: _uiState.value.party?.id
+        val closingInstance = channelInstance
         channelSubscribed = false
         WatchPartySync.detach()
         collector?.cancel(); collector = null
@@ -842,6 +891,7 @@ object WatchPartyRepository {
             runCatching { withTimeout(WatchPartyChannelCloseTimeoutMs) { ZSupabaseProvider.client.realtime.removeChannel(it) } }
         }
         channel = null
+        updateHealth(PartyHealthEvent.RealtimeDetached(closingInstance))
         WatchPartyDiagnostics.transport("channel-closed", closingPartyId, realtime = "disconnected")
     }
 
@@ -864,8 +914,16 @@ object WatchPartyRepository {
             ZSessionBridge.invalidate()
             if (ZSessionBridge.ensureSession(profileId)) result = runCatching { block() }
         }
-        return result.onSuccess { _uiState.value = _uiState.value.copy(isWorking = false) }
+        return result.onSuccess {
+            updateHealth(PartyHealthEvent.DurableSucceeded(currentEpochMs()))
+            _uiState.value = _uiState.value.copy(isWorking = false)
+        }
             .onFailure {
+                val now = currentEpochMs()
+                updateHealth(
+                    if (it is PostgrestRestException) PartyHealthEvent.DurableRejected(now)
+                    else PartyHealthEvent.DurableFailed(now),
+                )
                 // Until now a rejected RPC only ever reached the lobby's error line, which the
                 // player never shows - so a party that quietly stopped working looked like a party
                 // that was working.

@@ -15,6 +15,7 @@ import com.nuvio.app.features.player.PartyPlayerLaunchKey
 import com.nuvio.app.features.player.PlayerLaunchStore
 import com.nuvio.app.features.watchparty.WatchPartyLobbyScreen
 import com.nuvio.app.features.watchparty.WatchPartyRepository
+import com.nuvio.app.features.watchparty.WatchPartySessionCoordinator
 import com.nuvio.app.features.watchparty.WatchPartyState
 import com.nuvio.app.features.watchparty.WatchPartyStatus
 import com.nuvio.app.navigation.DetailRoute
@@ -58,7 +59,7 @@ internal fun WatchPartyLobbyDestination(
     }
 
     LaunchedEffect(state.party?.id) {
-        if (state.party != null) WatchPartyRepository.setClientLocation("lobby")
+        state.party?.id?.let(WatchPartySessionCoordinator::enterLobby)
     }
 
     fun prepareSource(party: WatchPartyState, purpose: PartyStreamLaunchPurpose) {

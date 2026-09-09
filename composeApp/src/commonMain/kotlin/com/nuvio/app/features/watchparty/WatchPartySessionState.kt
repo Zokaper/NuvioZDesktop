@@ -8,6 +8,7 @@ enum class PartyClientPhase {
     AwaitingFallbackChoice,
     LoadingPlayer,
     ActivePlayer,
+    Detached,
     Reconnecting,
     Ended,
 }
@@ -44,7 +45,8 @@ sealed interface PartySessionEvent {
     data class Restored(val generation: PartyGenerationKey) : PartySessionEvent
     data object NoActiveParty : PartySessionEvent
     data class PlayerAttached(val playback: ActivePlaybackContext, val generation: PartyGenerationKey?) : PartySessionEvent
-    data class PlayerExited(val partyId: String) : PartySessionEvent
+    data class PlayerAttachmentLost(val attachmentId: String) : PartySessionEvent
+    data class LobbyEntered(val partyId: String) : PartySessionEvent
     data class MatchStarted(val generation: PartyGenerationKey) : PartySessionEvent
     data object FallbackRequired : PartySessionEvent
     data object SourceResolved : PartySessionEvent
@@ -66,8 +68,12 @@ fun reducePartySession(state: PartySessionState, event: PartySessionEvent): Part
         generation=event.generation ?: state.generation,playback=event.playback,
         membershipRetained=event.generation != null || state.membershipRetained,pendingLobbyPartyId=null,
     )
-    is PartySessionEvent.PlayerExited -> state.copy(
-        phase=PartyClientPhase.Lobby,playback=null,membershipRetained=true,pendingLobbyPartyId=event.partyId,
+    is PartySessionEvent.PlayerAttachmentLost -> if (state.playback?.attachmentId != event.attachmentId) state else state.copy(
+        phase=if (state.membershipRetained) PartyClientPhase.Detached else PartyClientPhase.None,
+        playback=null,
+    )
+    is PartySessionEvent.LobbyEntered -> state.copy(
+        phase=PartyClientPhase.Lobby,membershipRetained=true,pendingLobbyPartyId=event.partyId,
     )
     is PartySessionEvent.MatchStarted -> state.copy(
         phase=PartyClientPhase.MatchingHostSource,generation=event.generation,membershipRetained=true,
@@ -98,3 +104,22 @@ fun reducePartySession(state: PartySessionState, event: PartySessionEvent): Part
 fun PartyGenerationKey.accepts(other: PartyGenerationKey): Boolean =
     partyId==other.partyId && contentGeneration==other.contentGeneration &&
         sourceGeneration==other.sourceGeneration && authorityEpoch==other.authorityEpoch
+
+fun WatchPartyState.partyGenerationKey() = PartyGenerationKey(
+    partyId = id,
+    contentGeneration = contentGeneration,
+    sourceGeneration = sourceGeneration,
+    authorityEpoch = authorityEpoch,
+)
+
+fun WatchPartyState.authorityContext(selfProfileId: String?): PartyAuthorityContext? =
+    selfProfileId?.let {
+        PartyAuthorityContext(
+            partyId = id,
+            selfProfileId = it,
+            hostProfileId = hostProfileId,
+            controlMode = controlMode,
+            durableSequence = sequence,
+            generation = partyGenerationKey(),
+        )
+    }

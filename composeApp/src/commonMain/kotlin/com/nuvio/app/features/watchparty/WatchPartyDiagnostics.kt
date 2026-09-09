@@ -38,10 +38,14 @@ internal object WatchPartyDiagnostics {
     }
 
     fun accepted(inputId: String?, command: PartyCommand, party: WatchPartyState) {
+        accepted(inputId, command, party.id)
+    }
+
+    fun accepted(inputId: String?, command: PartyCommand, partyId: String) {
         if (!isDebugBuild) return
         log.i {
             "T1 input=${inputId ?: "none"} atEpochMs=${currentEpochMs()} result=accepted " +
-                "${commandFacts(command, party.id)} ${transportFacts()}"
+                "${commandFacts(command, partyId)} ${transportFacts()}"
         }
     }
 
