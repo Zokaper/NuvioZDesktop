@@ -2,6 +2,43 @@
 
 Last updated: 2026-09-09
 
+## Watch Together deterministic architecture — Stage 2 automated gate green (2026-09-09)
+
+Stage 2 remains `IN_PROGRESS` on `codex/watch-together-architecture`; implementation commit
+`7365d45` completes the automated Realtime-transport and unified-presentation checkpoint. The
+private channel now belongs to `WatchPartySync`: it creates the authenticated channel with
+broadcast acknowledgements enabled, owns subscription/reconnect/close and protocol collectors,
+reports actual lifecycle/send/receive health by channel instance, and clears generation-scoped
+ticks, telemetry, dedupe, and hold state without replacing a healthy channel. Backend/API success
+no longer claims live Realtime health; only validated traffic from another party member does.
+
+Accepted play, pause, seek, and speed commands now emit their local directive synchronously before
+either network path begins. Realtime send and durable persistence run independently in the
+background, and a delayed send completion cannot update a replacement channel's health. Host-only
+guest controls are rejected before any directive. Guest telemetry is visible to every client for
+fresh per-member presentation while the existing host-only buffering watch retains all prior
+grace, settle, cooldown, budget, late-join, and drift behavior.
+
+`PartyPresentationProjector` is now the shared pure authority for connection banners, fresh host
+status, and participant labels in the lobby and native player payload. Actual local playback owns
+the self label; remote labels use only fresh live tick/peer evidence and never the global durable
+party status. Stale evidence falls back to readiness/location rather than claiming playback.
+
+The backend authorization correction is already committed as `67d4ced` in `nuvio-z-backend` and
+was already deployed with migration history repaired; it was not repeated here. Verification on
+the final source is green: explicit `:composeApp:compileKotlinDesktop`; 32/32 focused protocol,
+health/permission, projector, playback-lifecycle, and retained-launch tests; and the mandatory
+Stage 2 full `:composeApp:desktopTest` gate, **1,687/1,687**, zero failures/errors/skips. The
+previously flaky stalled-download harness test passed in that full run.
+
+Fresh release-style debug-tools MSI:
+`composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi`
+(258,725,663 bytes; SHA-256
+`AF4445327C5AAAF39BA4F802F24AF0371F3FBCC2D1D6DD5D5A7E5F35CF0C243E`). The physical two-client
+Stage 2 exit gate is still **NOT RUN**: prove p95 command delivery below 500 ms with no sample above
+1 s, local directive below 50 ms, truthful degradation/recovery, and per-member labels. Do not
+start Stage 3 until that evidence passes or the maintainer explicitly decides otherwise.
+
 ## Watch Together deterministic architecture — Stage 1 PartySession ownership and health split (2026-09-09)
 
 Stage 1 is `DONE` on `codex/watch-together-architecture`. New domain seams separate the durable
