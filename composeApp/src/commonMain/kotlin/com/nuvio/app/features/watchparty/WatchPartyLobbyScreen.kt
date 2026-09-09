@@ -192,6 +192,13 @@ fun WatchPartyLobbyScreen(
 
     val party = state.party
     val isHost = party != null && party.hostProfileId == state.activeProfileId
+    val presentation = PartyPresentationProjector.project(
+        party = party,
+        selfProfileId = state.activeProfileId,
+        health = state.health,
+        realtime = syncState,
+        partyNowMs = WatchPartySync.partyNowMs(),
+    )
     val requestDeparture = { showDepartureDialog = true }
 
     // Hosted outside a Surface, so LocalContentColor falls back to black. Without this the whole
@@ -324,6 +331,7 @@ fun WatchPartyLobbyScreen(
                                 PartyParticipants(
                                     party = party,
                                     viewerProfileId = state.activeProfileId,
+                                    presentation = presentation,
                                     invitableFriends = invitableFriends,
                                     onInvite = onInvite,
                                 )
@@ -389,6 +397,7 @@ fun WatchPartyLobbyScreen(
                         PartyParticipants(
                             party = party,
                             viewerProfileId = state.activeProfileId,
+                            presentation = presentation,
                             invitableFriends = invitableFriends,
                             onInvite = onInvite,
                         )
@@ -1025,6 +1034,7 @@ private fun PartyStageRail(stage: WatchPartyStage) {
 private fun PartyParticipants(
     party: WatchPartyState,
     viewerProfileId: String?,
+    presentation: PartyPresentationState,
     invitableFriends: List<SocialProfileSummary>,
     onInvite: (String) -> Unit,
 ) {
@@ -1052,6 +1062,7 @@ private fun PartyParticipants(
                     member = member,
                     isHost = member.profileId == party.hostProfileId,
                     viewerProfileId = viewerProfileId,
+                    status = presentation.members.getValue(member.profileId),
                 )
             }
             if (invitableFriends.isNotEmpty() && party.members.size < WatchPartyMaxParticipants) {
@@ -1102,8 +1113,8 @@ private fun PartyParticipantTile(
     member: WatchPartyParticipant,
     isHost: Boolean,
     viewerProfileId: String?,
+    status: PartyMemberPresentation,
 ) {
-    val status = member.derivedStatus()
     val tone = status.tone
     val offline = tone == PartyReadyTone.Offline
     Surface(

@@ -149,6 +149,9 @@ data class PartyAuthorityContext(
     val generation: PartyGenerationKey,
 )
 
+fun PartyAuthorityContext.mayControl(profileId: String): Boolean =
+    profileId == hostProfileId || controlMode == WatchPartyControlMode.collaborative
+
 interface PartyRealtimeTransport {
     val state: StateFlow<WatchPartySyncState>
     fun updateAuthority(context: PartyAuthorityContext?)

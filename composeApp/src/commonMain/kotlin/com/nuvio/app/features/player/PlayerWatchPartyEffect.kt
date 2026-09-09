@@ -14,6 +14,7 @@ import com.nuvio.app.features.watchparty.PartyConnectionState
 import com.nuvio.app.features.watchparty.PartyHoldReason
 import com.nuvio.app.features.watchparty.PartyPlaybackGate
 import com.nuvio.app.features.watchparty.PartyPlaybackTelemetry
+import com.nuvio.app.features.watchparty.PartyPresentationProjector
 import com.nuvio.app.features.watchparty.PartyTick
 import com.nuvio.app.features.watchparty.SourceResolutionState
 import com.nuvio.app.features.watchparty.PartySourceMatch
@@ -211,6 +212,13 @@ internal fun PlayerScreenRuntime.rememberWatchPartyStatus(): WatchPartyPlayerSta
     val partyUi by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
     val syncState by WatchPartySync.state.collectAsStateWithLifecycle()
     val party = partyUi.party?.takeIf { it.matchesPlayback(parentMetaId, playbackSession.videoId) }
+    val presentation = PartyPresentationProjector.project(
+        party = party,
+        selfProfileId = partyUi.activeProfileId,
+        health = partyUi.health,
+        realtime = syncState,
+        partyNowMs = WatchPartySync.partyNowMs(),
+    )
     return WatchPartyPlayerStatus(
         gate = partyPlaybackGate(
             party = party,
@@ -219,16 +227,16 @@ internal fun PlayerScreenRuntime.rememberWatchPartyStatus(): WatchPartyPlayerSta
             hostBufferingReleased = false,
         ),
         isHost = party != null && party.hostProfileId == partyUi.activeProfileId,
-        syncDegraded = party != null && partyUi.connection != PartyConnectionState.connected,
+        syncDegraded = party != null && presentation.connection != PartyConnectionState.connected,
         // The timeline says this seconds before the database row does, and "Host is buffering" is
         // the banner a guest is staring at while it waits.
         hostBuffering = party != null &&
             party.hostProfileId != partyUi.activeProfileId &&
-            syncState.tickStatus == WatchPartyStatus.buffering,
+            presentation.freshHostStatus == WatchPartyStatus.buffering,
         // The gate reads the database row, which is up to five seconds behind. Without this a guest
         // that the timeline has already started plays on under a banner still telling them to wait
         // for the host - which is the feature reporting itself broken while it works.
-        timelinePlaying = syncState.tickStatus == WatchPartyStatus.playing,
+        timelinePlaying = presentation.freshHostStatus == WatchPartyStatus.playing,
         // A player standing still while the party watches on has to say why, or it reads as broken.
         //
         // Deliberately the refusal and not the duration comparison. Two releases of the same film
@@ -983,27 +991,25 @@ private fun PlayerScreenRuntime.startPartyPlayback(
         actorProfileId = uiAtInput.activeProfileId,
         source = source,
     )
-    scope.launch {
-        // Named for the same reason a pause is: a party that starts and stops has to say who kept
-        // asking it to, and "who" is the difference between a user, a readiness gate and a stall
-        // guard that has decided a guest has recovered.
-        partyLog.i { "play src=$source positionMs=$positionMs" }
-        // A stall recorded before the party was playing is not evidence about the party playing. The
-        // ten seconds a guest spends resolving its own source is reported as `buffering`, and left in
-        // the window it made the party's first act a play followed instantly by a hold.
-        WatchPartySync.resetStallWatch()
-        val startAt = WatchPartySync.partyNowMs() + WatchPartySync.barrierLeadMs()
-        val command = WatchPartySync.issueCommand(
-            kind = PartyCommandKind.play,
-            startPositionMs = positionMs,
-            startAtPartyMs = startAt,
-            playbackSpeed = playbackSnapshot.playbackSpeed,
-            diagnosticInputId = inputId,
-        )
-        // The durable record follows the barrier rather than carrying it. A late joiner reads this;
-        // nobody waits on it.
-        if (command != null) WatchPartyRepository.play(positionMs, command.commandId)
-    }
+    // Named for the same reason a pause is: a party that starts and stops has to say who kept
+    // asking it to, and "who" is the difference between a user, a readiness gate and a stall
+    // guard that has decided a guest has recovered.
+    partyLog.i { "play src=$source positionMs=$positionMs" }
+    // A stall recorded before the party was playing is not evidence about the party playing. The
+    // ten seconds a guest spends resolving its own source is reported as `buffering`, and left in
+    // the window it made the party's first act a play followed instantly by a hold.
+    WatchPartySync.resetStallWatch()
+    val startAt = WatchPartySync.partyNowMs() + WatchPartySync.barrierLeadMs()
+    val command = WatchPartySync.issueCommand(
+        kind = PartyCommandKind.play,
+        startPositionMs = positionMs,
+        startAtPartyMs = startAt,
+        playbackSpeed = playbackSnapshot.playbackSpeed,
+        diagnosticInputId = inputId,
+    )
+    // The durable record follows the barrier rather than carrying it. A late joiner reads this;
+    // nobody waits on it.
+    if (command != null) scope.launch { WatchPartyRepository.play(positionMs, command.commandId) }
 }
 
 private fun PlayerScreenRuntime.pausePartyPlayback(
@@ -1019,24 +1025,22 @@ private fun PlayerScreenRuntime.pausePartyPlayback(
         actorProfileId = uiAtInput.activeProfileId,
         source = source,
     )
-    scope.launch {
-        // Every pause names where it came from. A pause with no origin is exactly what the
-        // 2026-09-02 run could not explain: the host's player stopped, no command was issued, and
-        // the guests learned about it only from the timeline's status.
-        partyLog.i { "pause src=$source positionMs=$positionMs" }
-        val command = WatchPartySync.issueCommand(
-            kind = PartyCommandKind.pause,
-            startPositionMs = positionMs,
-            // Pause carries no lead. Pausing 60ms apart is worth far more than pausing together and
-            // late, and the alignment that follows is paid while paused. Stamped with now rather
-            // than zero so the `leadMs` beside it is a number a person can read - the plan is what
-            // ignores the instant for a pause, not the sender.
-            startAtPartyMs = WatchPartySync.partyNowMs(),
-            playbackSpeed = playbackSnapshot.playbackSpeed,
-            diagnosticInputId = inputId,
-        )
-        if (command != null) WatchPartyRepository.pause(positionMs, command.commandId)
-    }
+    // Every pause names where it came from. A pause with no origin is exactly what the
+    // 2026-09-02 run could not explain: the host's player stopped, no command was issued, and
+    // the guests learned about it only from the timeline's status.
+    partyLog.i { "pause src=$source positionMs=$positionMs" }
+    val command = WatchPartySync.issueCommand(
+        kind = PartyCommandKind.pause,
+        startPositionMs = positionMs,
+        // Pause carries no lead. Pausing 60ms apart is worth far more than pausing together and
+        // late, and the alignment that follows is paid while paused. Stamped with now rather
+        // than zero so the `leadMs` beside it is a number a person can read - the plan is what
+        // ignores the instant for a pause, not the sender.
+        startAtPartyMs = WatchPartySync.partyNowMs(),
+        playbackSpeed = playbackSnapshot.playbackSpeed,
+        diagnosticInputId = inputId,
+    )
+    if (command != null) scope.launch { WatchPartyRepository.pause(positionMs, command.commandId) }
 }
 
 /**
@@ -1105,18 +1109,16 @@ internal fun PlayerScreenRuntime.submitPartySeek(positionMs: Long): Boolean {
         )
         return refusePartyControl()
     }
-    scope.launch {
-        val startAt = WatchPartySync.partyNowMs() + WatchPartySync.barrierLeadMs()
-        val command = WatchPartySync.issueCommand(
-            kind = PartyCommandKind.seek,
-            startPositionMs = targetMs,
-            startAtPartyMs = startAt,
-            playbackSpeed = playbackSnapshot.playbackSpeed,
-            playAfter = resumeAfter,
-            diagnosticInputId = inputId,
-        )
-        if (command != null) WatchPartyRepository.seek(targetMs, command.commandId)
-    }
+    val startAt = WatchPartySync.partyNowMs() + WatchPartySync.barrierLeadMs()
+    val command = WatchPartySync.issueCommand(
+        kind = PartyCommandKind.seek,
+        startPositionMs = targetMs,
+        startAtPartyMs = startAt,
+        playbackSpeed = playbackSnapshot.playbackSpeed,
+        playAfter = resumeAfter,
+        diagnosticInputId = inputId,
+    )
+    if (command != null) scope.launch { WatchPartyRepository.seek(targetMs, command.commandId) }
     return true
 }
 
@@ -1140,18 +1142,16 @@ internal fun PlayerScreenRuntime.submitPartySpeed(speed: Float): Boolean {
         )
         return refusePartyControl()
     }
-    scope.launch {
-        val startAt = WatchPartySync.partyNowMs() + WatchPartySync.barrierLeadMs()
-        val positionMs = samplePlaybackPosition().positionMs
-        val command = WatchPartySync.issueCommand(
-            kind = PartyCommandKind.speed,
-            startPositionMs = positionMs,
-            startAtPartyMs = startAt,
-            playbackSpeed = speed,
-            diagnosticInputId = inputId,
-        )
-        if (command != null) WatchPartyRepository.setSpeed(speed, command.commandId)
-    }
+    val startAt = WatchPartySync.partyNowMs() + WatchPartySync.barrierLeadMs()
+    val positionMs = samplePlaybackPosition().positionMs
+    val command = WatchPartySync.issueCommand(
+        kind = PartyCommandKind.speed,
+        startPositionMs = positionMs,
+        startAtPartyMs = startAt,
+        playbackSpeed = speed,
+        diagnosticInputId = inputId,
+    )
+    if (command != null) scope.launch { WatchPartyRepository.setSpeed(speed, command.commandId) }
     return true
 }
 

@@ -23,11 +23,13 @@ import androidx.compose.ui.unit.dp
 import com.nuvio.app.features.watchparty.PartyContent
 import com.nuvio.app.features.watchparty.WatchPartyControlMode
 import com.nuvio.app.features.watchparty.PartyReadyTone
-import com.nuvio.app.features.watchparty.derivedStatus
+import com.nuvio.app.features.watchparty.PartyPresentationProjector
 import com.nuvio.app.features.watchparty.readyCount
 import com.nuvio.app.features.watchparty.readyLabel
 import com.nuvio.app.features.watchparty.readyTone
 import com.nuvio.app.features.watchparty.WatchPartyRepository
+import com.nuvio.app.features.watchparty.WatchPartyStatus
+import com.nuvio.app.features.watchparty.WatchPartySync
 import com.nuvio.app.features.watchparty.displayName
 import com.nuvio.app.features.watchparty.matchesPlayback
 import androidx.compose.ui.layout.onSizeChanged
@@ -95,6 +97,7 @@ private val playerControlsLog = Logger.withTag("PlayerControls")
 internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     val runtime = this
     val watchPartyUiState by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
+    val watchPartySyncState by WatchPartySync.state.collectAsStateWithLifecycle()
     val socialUiState by SocialRepository.uiState.collectAsStateWithLifecycle()
     val socialPresenceSession by SocialPresenceSession.state.collectAsStateWithLifecycle()
     val partySessionState by WatchPartySessionCoordinator.state.collectAsStateWithLifecycle()
@@ -132,6 +135,18 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     val activeParty = watchPartyUiState.party?.takeIf {
         it.matchesPlayback(parentMetaId, playbackSession.videoId)
     }
+    val partyPresentation = PartyPresentationProjector.project(
+        party = activeParty,
+        selfProfileId = watchPartyUiState.activeProfileId,
+        health = watchPartyUiState.health,
+        realtime = watchPartySyncState,
+        partyNowMs = WatchPartySync.partyNowMs(),
+        localPlaybackStatus = when {
+            playbackSnapshot.isLoading -> WatchPartyStatus.buffering
+            playbackSnapshot.isPlaying -> WatchPartyStatus.playing
+            else -> WatchPartyStatus.paused
+        },
+    )
     val activeSocialNotification = socialUiState.notifications.firstOrNull {
         it.readAt == null && it.availableActions.isNotEmpty()
     }
@@ -592,14 +607,14 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             "${it.readyCount()} of ${it.members.count { member -> member.connected }} ready"
         }.orEmpty(),
         partyMembers = activeParty?.members.orEmpty().map { member ->
-            val derived = member.derivedStatus(party = activeParty)
+            val projected = partyPresentation.members.getValue(member.profileId)
             PlayerPartyMember(
                 name = member.displayName(watchPartyUiState.activeProfileId),
                 role = member.role,
-                status = derived.label,
-                statusTone = derived.tone.wireName,
+                status = projected.label,
+                statusTone = projected.tone.wireName,
                 avatarUrl = member.profile?.avatarUrl,
-                connected = member.connected && derived.tone != PartyReadyTone.Offline,
+                connected = projected.connected,
             )
         },
         presenceJoinPolicyVisible = activeParty == null && socialPresenceSession.sessionId != null,

@@ -584,6 +584,16 @@ class WatchPartyPendingSeekTest {
 }
 
 class WatchPartySyncProtocolTest {
+    @Test fun acceptedLocalDirectiveIsDispatchedBeforeRealtimeSendIsEnqueued() {
+        val events = mutableListOf<String>()
+        dispatchPartyCommandLocallyFirst(
+            command = command(PartyCommandKind.pause, startPositionMs = 1_000, startAtPartyMs = 2_000),
+            emitDirective = { events += "directive" },
+            enqueueSend = { events += "send" },
+        )
+        assertEquals(listOf("directive", "send"), events)
+    }
+
     @Test fun everyMessageSurvivesARoundTrip() {
         val messages = listOf(
             PartyTickMessage("host", tick(positionMs = 1_234, capturedAtPartyMs = 99_000, speed = 1.5f)),

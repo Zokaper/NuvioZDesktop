@@ -145,4 +145,15 @@ class WatchPartySessionStateTest {
         assertEquals(PartyApiHealth.Reachable,health.api)
         assertEquals(PartySyncCapability.DurableFallback,health.capability())
     }
+
+    @Test fun immutableAuthorityRejectsHostOnlyGuestsBeforeAnyDirective() {
+        val hostOnly = PartyAuthorityContext(
+            partyId = "party", selfProfileId = "guest", hostProfileId = "host",
+            controlMode = WatchPartyControlMode.host_only, durableSequence = 1,
+            generation = generation,
+        )
+        assertFalse(hostOnly.mayControl("guest"))
+        assertTrue(hostOnly.mayControl("host"))
+        assertTrue(hostOnly.copy(controlMode = WatchPartyControlMode.collaborative).mayControl("guest"))
+    }
 }

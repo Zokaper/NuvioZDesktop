@@ -40,7 +40,7 @@ data class DerivedMemberStatus(
  * Derives truthful, fine-grained member status considering connection, location, resolution, and party state.
  */
 fun WatchPartyParticipant.derivedStatus(
-    party: WatchPartyState? = null,
+    livePlaybackStatus: WatchPartyStatus? = null,
     isSelfResyncing: Boolean = false,
 ): DerivedMemberStatus {
     if (!connected || readyState == SourceResolutionState.disconnected) {
@@ -78,7 +78,7 @@ fun WatchPartyParticipant.derivedStatus(
         return DerivedMemberStatus("Buffering", PartyReadyTone.Buffering)
     }
     if (clientLocation == WatchPartyClientLocation.player) {
-        return when (party?.status) {
+        return when (livePlaybackStatus) {
             WatchPartyStatus.buffering -> DerivedMemberStatus("Buffering", PartyReadyTone.Buffering)
             WatchPartyStatus.playing -> DerivedMemberStatus("Playing", PartyReadyTone.Ready)
             WatchPartyStatus.paused -> DerivedMemberStatus("Paused", PartyReadyTone.Paused)
@@ -104,8 +104,7 @@ fun SourceResolutionState.tone(connected: Boolean = true): PartyReadyTone = when
     else -> PartyReadyTone.Working
 }
 
-fun WatchPartyParticipant.readyTone(party: WatchPartyState? = null): PartyReadyTone =
-    derivedStatus(party).tone
+fun WatchPartyParticipant.readyTone(): PartyReadyTone = derivedStatus().tone
 
 /**
  * The short, human label for a readiness state.
@@ -127,8 +126,88 @@ fun SourceResolutionState.readyLabel(): String = when (this) {
 /**
  * What a member's pill says, given that a lost connection hides whatever they last reported.
  */
-fun WatchPartyParticipant.readyLabel(party: WatchPartyState? = null): String =
-    derivedStatus(party).label
+fun WatchPartyParticipant.readyLabel(): String = derivedStatus().label
+
+data class PartyMemberPresentation(
+    val profileId: String,
+    val label: String,
+    val tone: PartyReadyTone,
+    val connected: Boolean,
+)
+
+data class PartyPresentationState(
+    val capability: PartySyncCapability,
+    val connection: PartyConnectionState,
+    val connectionBanner: String?,
+    val members: Map<String, PartyMemberPresentation>,
+    val freshHostStatus: WatchPartyStatus?,
+)
+
+/**
+ * The one presentation authority shared by the Compose lobby and native player surface.
+ *
+ * Durable party state owns membership/readiness/location. Playback labels require fresh,
+ * exact-generation live evidence: the host's tick or a guest's peer telemetry. In particular,
+ * the party-wide durable status is never reused as a participant's engine status.
+ */
+object PartyPresentationProjector {
+    fun project(
+        party: WatchPartyState?,
+        selfProfileId: String?,
+        health: PartyHealthState,
+        realtime: WatchPartySyncState,
+        partyNowMs: Long,
+        localPlaybackStatus: WatchPartyStatus? = null,
+        selfResyncing: Boolean = false,
+    ): PartyPresentationState {
+        val capability = health.capability()
+        val connection = when (health.realtime) {
+            PartyRealtimeHealth.Live -> PartyConnectionState.connected
+            PartyRealtimeHealth.Connecting,
+            PartyRealtimeHealth.SubscribedUnverified,
+            PartyRealtimeHealth.Degraded,
+            -> PartyConnectionState.reconnecting
+            PartyRealtimeHealth.Detached -> PartyConnectionState.disconnected
+        }
+        val hostStatus = realtime.tickStatus.takeIf {
+            realtime.tickCapturedAtPartyMs?.let { captured ->
+                partyNowMs - captured <= WatchPartyTickStaleMs
+            } == true
+        }
+        val projectedMembers = party?.members.orEmpty().associate { member ->
+            val liveStatus = when {
+                member.profileId == selfProfileId -> localPlaybackStatus
+                member.profileId == party?.hostProfileId -> hostStatus
+                else -> realtime.peerTelemetry[member.profileId]?.takeIf {
+                    partyNowMs - it.receivedAtPartyMs <= WatchPartyClockStaleMs
+                }?.status
+            }
+            val derived = member.derivedStatus(
+                livePlaybackStatus = liveStatus,
+                isSelfResyncing = member.profileId == selfProfileId && selfResyncing,
+            )
+            member.profileId to PartyMemberPresentation(
+                profileId = member.profileId,
+                label = derived.label,
+                tone = derived.tone,
+                connected = member.connected && derived.tone != PartyReadyTone.Offline,
+            )
+        }
+        return PartyPresentationState(
+            capability = capability,
+            connection = connection,
+            connectionBanner = when (capability) {
+                PartySyncCapability.FullSync -> null
+                PartySyncCapability.DurableFallback -> "Live sync unavailable — following the party every few seconds"
+                PartySyncCapability.RealtimeOnly -> "Party service unavailable — live playback continuing"
+                PartySyncCapability.OfflineLocalPlayback -> if (party == null) null else
+                    "Connection lost — playback continuing locally"
+            },
+            members = projectedMembers,
+            freshHostStatus = hostStatus,
+        )
+    }
+}
 
 
 /** How many connected members have a source open, over how many are present. */
