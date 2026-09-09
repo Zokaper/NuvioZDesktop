@@ -1,6 +1,32 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-09
+Last updated: 2026-09-10
+
+## Watch Together deterministic architecture - desktop UltraReview fixes (2026-09-10)
+
+Two findings from the desktop UltraReview of PR #7, both closed.
+
+The reconnect loop could stop reconnecting for the life of the process. `openChannel` wraps the
+subscribe in `withTimeout`, and the `TimeoutCancellationException` that throws *is* a
+`CancellationException`, so `maintainChannel`'s `catch (c: CancellationException) { throw c }` sent
+it out through the `collectLatest` on `desiredAuthority` that drives `WatchPartySync` for the whole
+app. One subscribe that ran long took the authority collector with it, and every party after that
+one sat on the durable poll with nothing left to reopen a channel. The classification now lives in
+`partyChannelFailureIsScopeCancellation`, which reads a cancellation the loop caused itself as a
+failed attempt and only a cancellation it did not cause as the scope going away: a subscribe timeout
+takes the ordinary degraded/report/backoff/retry path, and genuine cancellation still propagates
+untouched. The shared reporting is one `reportOpenFailure`.
+
+`WatchPartyRepository.installSnapshot` no longer takes `reopenChannel`. Every caller that named it
+passed `false`, and the ones that took the default made a second `WatchPartySync.updateAuthority`
+call with the argument the method had already passed a few lines earlier - a no-op by that method's
+own equality checks, and a second place to have to keep right.
+
+`WatchPartyChannelReconnectTest` covers the regression with real casualties rather than hand-built
+stand-ins: a genuine `withTimeout` expiry, and a genuine cancellation observed by a child whose
+scope went away. Focused Watch Party desktop tests 150/150 and `:composeApp:compileKotlinDesktop`
+pass. No desktop UltraReview finding remains open. The physical matrix is untouched and still
+outstanding.
 
 ## Watch Together deterministic architecture — Stage 7 partial (2026-09-09)
 

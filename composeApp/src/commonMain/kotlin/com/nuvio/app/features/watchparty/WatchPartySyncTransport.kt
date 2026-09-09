@@ -12,6 +12,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -50,6 +51,20 @@ internal fun partyChannelClosePlan(
 } else {
     PartyChannelClosePlan(boundPartyId, channelInstance, detached)
 }
+
+/**
+ * Whether a throwable out of a channel open is the scope going away, rather than a failure the
+ * reconnect loop is supposed to absorb.
+ *
+ * The subscribe is wrapped in `withTimeout`, and the [TimeoutCancellationException] it throws *is*
+ * a [CancellationException] - so a bare `catch (c: CancellationException) { throw c }` sent it out
+ * through the `collectLatest` on [desiredAuthority] that drives this object for the whole process.
+ * One subscribe that ran long took the authority collector with it: every party after that one was
+ * left on the poll floor, with nothing left in the process to reopen a channel. A cancellation the
+ * loop caused itself is a failed attempt; only one it did not cause belongs to the scope.
+ */
+internal fun partyChannelFailureIsScopeCancellation(failure: Throwable): Boolean =
+    failure is CancellationException && failure !is TimeoutCancellationException
 
 /**
  * The party's timing plane, carried between clients over the channel that is already open.
@@ -331,16 +346,9 @@ internal object WatchPartySync : PartyRealtimeTransport {
                 val live = channel ?: continue
                 live.status.drop(1).first { it == RealtimeChannel.Status.UNSUBSCRIBED }
                 healthSink(PartyHealthEvent.RealtimeDegraded(channelInstance))
-            } catch (cancelled: CancellationException) {
-                throw cancelled
             } catch (failure: Throwable) {
-                healthSink(PartyHealthEvent.RealtimeDegraded(channelInstance))
-                WatchPartyDiagnostics.transport(
-                    "subscribe-failed", partyId, realtime = "disconnected",
-                    detail = failure::class.simpleName,
-                )
-                log.w { "realtime party=${partyId.shortId()} state=disconnected cause=${failure.message ?: failure::class.simpleName}" }
-                failureSink("Live sync unavailable: ${failure.message ?: failure::class.simpleName}")
+                if (partyChannelFailureIsScopeCancellation(failure)) throw failure
+                reportOpenFailure(partyId, failure)
             } finally {
                 val stillDesired = desiredAuthority.value?.let {
                     it.partyId == partyId && it.selfProfileId == profileId
@@ -351,6 +359,16 @@ internal object WatchPartySync : PartyRealtimeTransport {
             delay(retryMs)
             retryMs = (retryMs * 2).coerceAtMost(5_000L)
         }
+    }
+
+    private fun reportOpenFailure(partyId: String, failure: Throwable) {
+        healthSink(PartyHealthEvent.RealtimeDegraded(channelInstance))
+        WatchPartyDiagnostics.transport(
+            "subscribe-failed", partyId, realtime = "disconnected",
+            detail = failure::class.simpleName,
+        )
+        log.w { "realtime party=${partyId.shortId()} state=disconnected cause=${failure.message ?: failure::class.simpleName}" }
+        failureSink("Live sync unavailable: ${failure.message ?: failure::class.simpleName}")
     }
 
     private suspend fun openChannel(partyId: String, profileId: String) {

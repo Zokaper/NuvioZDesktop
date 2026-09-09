@@ -145,7 +145,7 @@ object WatchPartyRepository {
             val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_set_client_location", buildJsonObject {
                 put("p_party_id", requireParty().id); put("p_profile_id", requireProfile()); put("p_location", location)
             }).decodeAs<WatchPartyState>()
-            installSnapshot(snapshot, reopenChannel = false)
+            installSnapshot(snapshot)
         }
     }
 
@@ -287,7 +287,7 @@ object WatchPartyRepository {
                 sourceGeneration?.let { put("p_source_generation", it) }
                 sourceMatch?.let { put("p_source_match", it.name) }
             }).decodeAs<WatchPartyState>()
-            installSnapshot(snapshot, reopenChannel = false)
+            installSnapshot(snapshot)
         }
     }
 
@@ -307,7 +307,7 @@ object WatchPartyRepository {
             put("p_host_profile_id", requireProfile())
             put("p_addon_signature", json.encodeToJsonElement(addons))
         }).decodeAs<WatchPartyState>()
-        installSnapshot(snapshot, reopenChannel = false)
+        installSnapshot(snapshot)
     }
 
     /** Backward source-compatible name for callers that have not adopted the preflight flow yet. */
@@ -319,7 +319,7 @@ object WatchPartyRepository {
             put("p_profile_id", requireProfile())
             put("p_addon_signature", json.encodeToJsonElement(addons))
         }).decodeAs<WatchPartyState>()
-        installSnapshot(snapshot, reopenChannel = false)
+        installSnapshot(snapshot)
     }
 
     suspend fun selectSource(
@@ -335,7 +335,7 @@ object WatchPartyRepository {
             put("p_source_descriptor", json.encodeToJsonElement(fingerprint))
             put("p_contract_version",PartySourceContractVersion)
         }).decodeAs<WatchPartyState>()
-        installSnapshot(snapshot, reopenChannel = false)
+        installSnapshot(snapshot)
     }
 
     suspend fun submit(command: WatchPartyCommand): Result<Unit> {
@@ -355,7 +355,7 @@ object WatchPartyRepository {
                 put("p_content_generation",party.contentGeneration);put("p_source_generation",party.sourceGeneration)
                 put("p_authority_epoch",party.authorityEpoch)
             }).decodeAs<WatchPartyState>()
-            installSnapshot(snapshot, reopenChannel = false)
+            installSnapshot(snapshot)
         }
         WatchPartyDiagnostics.durableCommand(
             command = command,
@@ -416,7 +416,7 @@ object WatchPartyRepository {
                 put("p_party_id", requireParty().id); put("p_profile_id", requireProfile()); put("p_position_ms", aged)
                 put("p_duration_ms", durationMs); put("p_playback_speed", speed); put("p_status", status.name)
             }).decodeAs<WatchPartyState>()
-            installSnapshot(snapshot, reopenChannel = false)
+            installSnapshot(snapshot)
         }
     }
 
@@ -428,21 +428,21 @@ object WatchPartyRepository {
             fingerprint?.let { put("p_source_descriptor", json.encodeToJsonElement(it)) }; qualityIntent?.let { put("p_track_intent", it) }
             put("p_contract_version",PartySourceContractVersion)
         }).decodeAs<WatchPartyState>()
-        installSnapshot(snapshot, reopenChannel = false)
+        installSnapshot(snapshot)
     }
 
     suspend fun setControlMode(mode: WatchPartyControlMode): Result<Unit> = call {
         val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_set_control_mode", buildJsonObject {
             put("p_party_id", requireParty().id); put("p_host_profile_id", requireProfile()); put("p_mode", mode.name)
         }).decodeAs<WatchPartyState>()
-        installSnapshot(snapshot, reopenChannel = false)
+        installSnapshot(snapshot)
     }
 
     suspend fun refresh(): Result<Unit> = call {
         val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_snapshot", buildJsonObject {
             put("p_party_id", requireParty().id); put("p_profile_id", requireProfile())
         }).decodeAs<WatchPartyState>()
-        installSnapshot(snapshot, reopenChannel = false)
+        installSnapshot(snapshot)
     }
 
     suspend fun measureClockOffset(): Result<Long> = call {
@@ -489,7 +489,7 @@ object WatchPartyRepository {
 
     suspend fun leave(): Result<Unit> = depart(PartyDepartureMode.LEAVE_AND_TRANSFER)
 
-    private fun installSnapshot(snapshot: WatchPartyState, reopenChannel: Boolean = true) {
+    private fun installSnapshot(snapshot: WatchPartyState) {
         lastSuccessfulContactEpochMs = currentEpochMs()
         val held = _uiState.value.party
         if (held != null && isStalePartySnapshot(held, snapshot)) {
@@ -533,7 +533,6 @@ object WatchPartyRepository {
         // for the life of the app. The member kept whatever state they joined with, forever: a
         // lobby that never noticed the party had started.
         startPolling()
-        if (reopenChannel) WatchPartySync.updateAuthority(snapshot.authorityContext(_uiState.value.activeProfileId))
     }
 
     /**
@@ -595,7 +594,7 @@ object WatchPartyRepository {
                             put("p_status", sample.status.name)
                         }
                     }).decodeAs<WatchPartyState>()
-                    installSnapshot(snapshot, reopenChannel = false)
+                    installSnapshot(snapshot)
                 }.onSuccess {
                     val now = currentEpochMs()
                     lastSuccessfulContactEpochMs = now

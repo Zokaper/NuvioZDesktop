@@ -4,7 +4,17 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 
 private fun tick(
     positionMs: Long,
@@ -654,5 +664,104 @@ class WatchPartySyncProtocolTest {
             tickPayload.forEach { (key, value) -> if (key != "at") put(key, value) }
         }
         assertNull(decodePartySyncMessage(missingField))
+    }
+}
+
+/**
+ * The reconnect loop's exception classification. `maintainChannel` retries forever while the party
+ * is still wanted, so what it decides to rethrow is the one thing that can retire it permanently.
+ */
+class WatchPartyChannelReconnectTest {
+
+    /** A real `withTimeout` casualty, not a hand-built stand-in: the bug was about its type. */
+    private suspend fun subscribeTimeout(): TimeoutCancellationException {
+        try {
+            withTimeout(1) { delay(60_000) }
+        } catch (timedOut: TimeoutCancellationException) {
+            return timedOut
+        }
+        error("withTimeout was expected to expire")
+    }
+
+    /** A real cancellation raised by the scope going away underneath a suspended child. */
+    private suspend fun scopeCancellation(): CancellationException = coroutineScope {
+        var captured: CancellationException? = null
+        val child = launch {
+            try {
+                delay(60_000)
+            } catch (cancelled: CancellationException) {
+                captured = cancelled
+                throw cancelled
+            }
+        }
+        yield()
+        child.cancelAndJoin()
+        captured ?: error("the cancelled child was expected to observe its cancellation")
+    }
+
+    /**
+     * Runs the same decision `maintainChannel` runs, with a scripted `openChannel`, and reports how
+     * many attempts it made, how many it reported as degraded, and what escaped the loop.
+     */
+    private fun driveReconnectLoop(attempts: List<Throwable?>): Triple<Int, Int, Throwable?> {
+        var opened = 0
+        var reported = 0
+        var escaped: Throwable? = null
+        try {
+            for (outcome in attempts) {
+                try {
+                    opened += 1
+                    if (outcome != null) throw outcome
+                } catch (failure: Throwable) {
+                    if (partyChannelFailureIsScopeCancellation(failure)) throw failure
+                    reported += 1
+                }
+            }
+        } catch (failure: Throwable) {
+            escaped = failure
+        }
+        return Triple(opened, reported, escaped)
+    }
+
+    @Test
+    fun aSubscribeTimeoutIsAFailedAttemptRatherThanACancelledScope() = runBlocking {
+        val timedOut = subscribeTimeout()
+        assertFalse(
+            partyChannelFailureIsScopeCancellation(timedOut),
+            "the loop's own subscribe timeout must not read as the scope being cancelled",
+        )
+    }
+
+    @Test
+    fun aCancelledScopeIsStillACancelledScope() = runBlocking {
+        assertTrue(partyChannelFailureIsScopeCancellation(scopeCancellation()))
+    }
+
+    @Test
+    fun anOrdinaryTransportFailureIsRetried() {
+        assertFalse(partyChannelFailureIsScopeCancellation(IllegalStateException("no session")))
+    }
+
+    /**
+     * The regression itself: a subscribe that ran long used to escape the reconnect loop and take
+     * the process-wide authority collector with it. It has to reconnect instead.
+     */
+    @Test
+    fun aSubscribeTimeoutReconnectsInsteadOfRetiringTheLoop() = runBlocking {
+        val (opened, reported, escaped) = driveReconnectLoop(
+            listOf(subscribeTimeout(), subscribeTimeout(), null),
+        )
+        assertEquals(3, opened, "the loop must keep reopening after a subscribe timeout")
+        assertEquals(2, reported, "each timed-out attempt is reported as degraded")
+        assertNull(escaped, "a subscribe timeout must not escape the reconnect loop")
+    }
+
+    @Test
+    fun aCancelledScopeStillEndsTheLoop() = runBlocking {
+        val cancelled = scopeCancellation()
+        val (opened, reported, escaped) = driveReconnectLoop(listOf(cancelled, null))
+        assertEquals(1, opened, "cancellation stops the loop at the attempt that saw it")
+        assertEquals(0, reported, "a cancelled scope is not a transport failure to report")
+        assertSame(cancelled, escaped, "genuine cancellation must propagate unchanged")
     }
 }
