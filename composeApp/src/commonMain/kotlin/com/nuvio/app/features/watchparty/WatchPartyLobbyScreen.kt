@@ -171,13 +171,13 @@ fun WatchPartyLobbyScreen(
      * right: the host publishes on Start, the snapshot reaches everyone, and everyone leaves for
      * the player off the same signal.
      *
-     * `claimSourceLaunch` is the latch, and it lives in the repository rather than here: this
+     * `PartySourceRealizer.claimAutomaticLaunch` is process-owned rather than held here: this
      * composition is destroyed when the player goes on top of it, so a latch held locally would be
      * gone by the time somebody backed out - and this effect would throw them straight back in.
      */
-    LaunchedEffect(state.party?.sourceGeneration, state.party?.sourceFingerprint) {
+    LaunchedEffect(state.party?.partySourceKey()) {
         val party = state.party ?: return@LaunchedEffect
-        if (party.sourceFingerprint == null) return@LaunchedEffect
+        val key = party.partySourceKey() ?: return@LaunchedEffect
         if (
             party.effectiveStage() !in setOf(
                 WatchPartyStage.resolving_sources,
@@ -185,7 +185,7 @@ fun WatchPartyLobbyScreen(
                 WatchPartyStage.playing,
             )
         ) return@LaunchedEffect
-        if (!WatchPartyRepository.claimSourceLaunch(party.sourceGeneration)) return@LaunchedEffect
+        if (!PartySourceRealizer.claimAutomaticLaunch(key)) return@LaunchedEffect
         lobbyLog.i { "launching party=${party.id.shortId()} generation=${party.sourceGeneration}" }
         onChooseSource(party, PartyStreamLaunchPurpose.RESOLVE_PLAYBACK)
     }

@@ -67,6 +67,27 @@ object WatchPartySessionCoordinator {
     init {
         scope.launch { for (intent in intents) reduce(intent) }
         scope.launch { gateway.snapshots.collect { intents.send(PartySessionIntent.Snapshot(it)) } }
+        // Readiness from the work itself, not from whichever screen happened to be composed.
+        // Matching and resolving are the window the host's wait gate is looking at, and until this
+        // ran nobody reported them: a member spent the whole preparation showing the party the
+        // state they joined with.
+        scope.launch {
+            PartySourceRealizer.state
+                .map(::partyReadinessReport)
+                .distinctUntilChanged()
+                .collect { report ->
+                    report?.let { (state, sourceGeneration) ->
+                        intents.send(
+                            PartySessionIntent.Readiness(
+                                state = state,
+                                durationMs = null,
+                                sourceGeneration = sourceGeneration,
+                                sourceMatch = null,
+                            ),
+                        )
+                    }
+                }
+        }
     }
 
     fun registerPlayback(context: ActivePlaybackContext, sessionId: String, deviceId: String) =

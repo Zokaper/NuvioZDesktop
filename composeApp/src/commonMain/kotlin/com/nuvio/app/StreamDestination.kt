@@ -83,6 +83,7 @@ import com.nuvio.app.features.playback.streamRouteSurface
 import com.nuvio.app.features.player.ExternalPlaybackOutcome
 import com.nuvio.app.features.player.PlayerLaunch
 import com.nuvio.app.features.player.PlayerLaunchStore
+import com.nuvio.app.features.player.PartyPlayerLaunchKey
 import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.player.sanitizePlaybackHeaders
 import com.nuvio.app.features.player.sanitizePlaybackResponseHeaders
@@ -94,12 +95,13 @@ import com.nuvio.app.features.streams.StreamLaunchStore
 import com.nuvio.app.features.streams.PartyStreamLaunchPurpose
 import com.nuvio.app.features.streams.StreamsRepository
 import com.nuvio.app.features.streams.StreamsScreen
-import com.nuvio.app.features.watchparty.PartySourceCandidate
 import com.nuvio.app.features.watchparty.PartySourceDescriptorV2
-import com.nuvio.app.features.watchparty.PartySourceMatchTier
-import com.nuvio.app.features.watchparty.WatchPartyRepository
-import com.nuvio.app.features.watchparty.tierPartySourceCandidates
 import com.nuvio.app.features.watchparty.toPartySourceDescriptor
+import com.nuvio.app.features.watchparty.PartyRealizationDecision
+import com.nuvio.app.features.watchparty.decidePartyRealization
+import com.nuvio.app.features.watchparty.PartySourceRealizer
+import com.nuvio.app.features.watchparty.WatchPartyRepository
+import com.nuvio.app.features.watchparty.tierPartyPlaybackSources
 import com.nuvio.app.features.updater.formatFileSize
 import com.nuvio.app.navigation.*
 import kotlinx.coroutines.delay
@@ -194,6 +196,24 @@ internal fun StreamDestination(
         return
     }
     val pauseDescription = launch.pauseDescription
+    val partyResolutionContext = launch.partyContext?.takeIf {
+        it.purpose == PartyStreamLaunchPurpose.RESOLVE_PLAYBACK && it.targetFingerprint != null
+    }
+    val isPartyResolution = partyResolutionContext != null
+    /**
+     * The exact authority this route is realizing for, or null when it is ordinary browsing.
+     *
+     * Derived up here with the launch it comes from, because every reporting call site - including
+     * the give-up path, which is declared before the rest of the party plumbing - names it.
+     */
+    val partyRealizationKey = partyResolutionContext?.targetFingerprint?.let { descriptor ->
+        PartyPlayerLaunchKey(
+            partyId = partyResolutionContext.partyId,
+            contentGeneration = partyResolutionContext.contentGeneration,
+            sourceGeneration = partyResolutionContext.sourceGeneration,
+            descriptor = descriptor,
+        )
+    }
     val streamRouteScope = rememberCoroutineScope()
     // In-flight coroutine state cannot survive process restoration. Restoring `true` would leave
     // the route permanently refusing every future resolve after Android killed it mid-request.
@@ -265,6 +285,11 @@ internal fun StreamDestination(
         // days of ordinary use turns "for whatever reason" into a ranked list of real causes -
         // which is something no amount of reading the code produces.
         uncoverPath = path
+        // Every automatic dead end passes through here, so this is the one place that can tell the
+        // process owner that party realization ended without playing. It is inert unless work for
+        // this exact key is still in flight, so a member who merely walked back out of the player
+        // keeps the realization they are already watching.
+        partyRealizationKey?.let { PartySourceRealizer.abandoned(it, path) }
         // Arriving here means the app could not choose, so the user is about to
         // do it by hand - and `StreamsScreen` auto-filters to whichever addon
         // last served this show. That filter is a convenience when the list is
@@ -453,10 +478,6 @@ internal fun StreamDestination(
         PlayerSettingsRepository.ensureLoaded()
         PlayerSettingsRepository.uiState
     }.collectAsStateWithLifecycle()
-    val partyResolutionContext = launch.partyContext?.takeIf {
-        it.purpose == PartyStreamLaunchPurpose.RESOLVE_PLAYBACK && it.targetFingerprint != null
-    }
-    val isPartyResolution = partyResolutionContext != null
     // Streamlined and Instant own source selection. Passing them through the
     // legacy auto-play policy would run two pickers over the same candidates.
     val streamManualSelection = launch.manualSelection ||
@@ -686,40 +707,11 @@ internal fun StreamDestination(
         playbackSelectionContext,
     ) {
         val host = partyResolutionContext?.targetFingerprint ?: return@remember null
-        val normalOrder = playbackQualityOptions.firstOrNull()?.candidates.orEmpty()
-        tierPartySourceCandidates(
+        tierPartyPlaybackSources(
             host = host,
-            candidates = playbackCandidates.mapNotNull { candidate ->
-                val descriptor = candidate.stream.toPartySourceDescriptor(candidate.facts)
-                    ?: return@mapNotNull null
-                val identity = playbackSelectionContext.identity
-                val contentMatches = identity == null || ContentIdentityGuard.evaluate(
-                    releaseName = candidate.facts.filename ?: candidate.stream.name,
-                    requestedSeason = identity.season,
-                    requestedEpisode = identity.episode,
-                    requestedYear = identity.year,
-                ) == null
-                val normalIndex = normalOrder.indexOfFirst { it.stream === candidate.stream }
-                PartySourceCandidate(
-                    value = candidate,
-                    descriptor = descriptor,
-                    normalRank = if (normalIndex >= 0) normalOrder.size - normalIndex else 0,
-                    contentMatches = contentMatches,
-                    protocolSafe = PlaybackSourceSelector.isPlaybackProtocolEligible(
-                        candidate,
-                        playbackSelectionContext.allowTorrentSources,
-                    ),
-                    // Stream groups are built only from the currently enabled addon/plugin set.
-                    addonAllowed = true,
-                    languageWatchable = playbackSelectionContext.languageStrictness !=
-                        com.nuvio.app.features.playback.LanguageStrictness.REQUIRE ||
-                        playbackSelectionContext.preferredAudioLanguage.isNullOrBlank() ||
-                        SourceRanking.isLanguageWatchable(
-                            candidate.facts,
-                            playbackSelectionContext.rankingPreferences,
-                        ),
-                )
-            },
+            candidates = playbackCandidates,
+            normalOrder = playbackQualityOptions.firstOrNull()?.candidates.orEmpty(),
+            selection = playbackSelectionContext,
         )
     }
     // Resolved here because the band names are `stringResource`s and the effect
@@ -774,39 +766,48 @@ internal fun StreamDestination(
         streamsUiState.emptyStateReason,
     ) {
         if (!isPartyResolution || partyResolutionHandled) return@LaunchedEffect
-        if (
-            !com.nuvio.app.features.playback.isStreamlinedSelectionReady(
+        // Reported, not owned: this route is torn down the moment playback starts, so the work it
+        // is doing on the party's behalf has to be visible somewhere that outlives it.
+        partyRealizationKey?.let(PartySourceRealizer::matching)
+        val decision = decidePartyRealization(
+            catalogueSettled = com.nuvio.app.features.playback.isStreamlinedSelectionReady(
                 requestToken = streamsUiState.requestToken,
                 expectedRequestToken = expectedStreamsRequestToken,
                 isAnyLoading = streamsUiState.isAnyLoading,
                 candidateCount = playbackCandidates.size,
                 hasTerminalEmptyState = streamsUiState.emptyStateReason != null,
                 hasStreams = streamsUiState.groups.any { it.streams.isNotEmpty() },
-            )
-        ) return@LaunchedEffect
-
-        partyResolutionHandled = true
-        val tiered = partyTieredSources
-        if (tiered == null || tiered.tier == PartySourceMatchTier.None || tiered.candidates.isEmpty()) {
-            streamLog.w {
-                "party source unavailable: party=${partyResolutionContext?.partyId?.take(8)} " +
-                    "sourceGeneration=${partyResolutionContext?.sourceGeneration} " +
-                    "fallbackAvailable=${tiered?.fallback != null}"
+            ),
+            tiered = partyTieredSources,
+        )
+        when (decision) {
+            PartyRealizationDecision.Wait -> return@LaunchedEffect
+            PartyRealizationDecision.FallbackRequired -> {
+                partyResolutionHandled = true
+                partyRealizationKey?.let(PartySourceRealizer::fallbackRequired)
+                streamLog.w {
+                    "party source unavailable: party=${partyResolutionContext?.partyId?.take(8)} " +
+                        "sourceGeneration=${partyResolutionContext?.sourceGeneration} " +
+                        "fallbackAvailable=${partyTieredSources?.fallback != null}"
+                }
+                // A fallback is only an offer. Never seed or open it: the user must explicitly
+                // choose an alternate from the uncovered list, and the lobby remains the durable
+                // owner.
+                giveUpToSourceList(hostSourceUnavailableMessage, path = "party_source_unavailable")
             }
-            // A fallback is only an offer. Never seed or open it: the user must explicitly choose
-            // an alternate from the uncovered list, and the lobby remains the durable owner.
-            giveUpToSourceList(hostSourceUnavailableMessage, path = "party_source_unavailable")
-            return@LaunchedEffect
+            is PartyRealizationDecision.Resolve -> {
+                partyResolutionHandled = true
+                streamLog.i {
+                    "party source matched: party=${partyResolutionContext?.partyId?.take(8)} " +
+                        "sourceGeneration=${partyResolutionContext?.sourceGeneration} " +
+                        "tier=${partyTieredSources?.tier} candidates=${decision.candidates.size}"
+                }
+                qualitySheetDismissed = true
+                autoPlaybackStarting = true
+                partyRealizationKey?.let(PartySourceRealizer::resolving)
+                StreamsRepository.seedAutoPlayCandidates(decision.candidates.map { it.stream })
+            }
         }
-
-        streamLog.i {
-            "party source matched: party=${partyResolutionContext?.partyId?.take(8)} " +
-                "sourceGeneration=${partyResolutionContext?.sourceGeneration} " +
-                "tier=${tiered.tier} candidates=${tiered.candidates.size}"
-        }
-        qualitySheetDismissed = true
-        autoPlaybackStarting = true
-        StreamsRepository.seedAutoPlayCandidates(tiered.candidates.map { it.value.stream })
     }
 
     /**

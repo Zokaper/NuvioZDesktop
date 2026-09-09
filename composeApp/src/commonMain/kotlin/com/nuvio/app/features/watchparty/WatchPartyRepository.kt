@@ -4,8 +4,6 @@ import co.touchlab.kermit.Logger
 import com.nuvio.app.core.network.ZSessionBridge
 import com.nuvio.app.core.network.ZSupabaseProvider
 import com.nuvio.app.core.network.shouldReexchangeZSession
-import com.nuvio.app.features.player.PartyPlayerLaunchKey
-import com.nuvio.app.features.player.PlayerLaunchStore
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.rpc
@@ -212,31 +210,12 @@ object WatchPartyRepository {
         lastLoggedHeartbeatStatus = null
         lastLoggedPollFailure = null
         playbackTelemetry = null
+        // Cleared here rather than only inside `leave()`: a departure RPC that fails deliberately
+        // keeps local state for a retry, and one profile's resolved media may never outlive the
+        // switch to another - whether or not the server was reachable at the time.
+        PartySourceRealizer.clear()
         scope.launch { if (_uiState.value.party != null) leave() else WatchPartySync.updateAuthority(null) }
-        launchedSourceGeneration = null
         _uiState.value = WatchPartyUiState(activeProfileId = profileId)
-    }
-
-    /**
-     * The source generation this client has already left the lobby for.
-     *
-     * Every member - the host included - is sent to the player by one effect in the lobby, keyed on
-     * the party leaving `waiting_for_host_source`. Without a latch that effect fires again the
-     * moment somebody backs out of the player into the lobby, which is a trap with no way out; with
-     * the latch stored in the lobby's composition it was lost on that same back navigation, which
-     * is the same trap. It lives here because it has to outlive both screens.
-     *
-     * Only choosing/changing a source bumps `source_generation`. Reattaching a player for the same
-     * generation deliberately bypasses this automatic launch latch and is initiated by the user's
-     * lobby action instead.
-     */
-    private var launchedSourceGeneration: Int? = null
-
-    /** True exactly once per source generation: the caller may hand off to the player. */
-    fun claimSourceLaunch(generation: Int): Boolean {
-        if (launchedSourceGeneration == generation) return false
-        launchedSourceGeneration = generation
-        return true
     }
 
     /**
@@ -519,8 +498,7 @@ object WatchPartyRepository {
             log.w(failure) { "departure rpc failed party=${party.id.shortId()}, retaining local state for retry" }
             throw failure
         }
-        stopPolling(); WatchPartySync.updateAuthority(null); clockOffsetPartyId = null
-        launchedSourceGeneration = null
+        stopPolling(); WatchPartySync.updateAuthority(null); PartySourceRealizer.clear(); clockOffsetPartyId = null
         lastSuccessfulContactEpochMs = 0L
         _uiState.value = WatchPartyUiState(activeProfileId = profile)
         Unit
@@ -548,22 +526,17 @@ object WatchPartyRepository {
             lastLoggedState = signature
             log.i { "state viewer=${_uiState.value.activeProfileId.shortId()} $signature" }
         }
-        // A different party is a different everything: neither the host's staged pick nor the launch
-        // latch means anything about this one. Cleared in the same update that installs the snapshot,
-        // so no frame is ever composed with one party's state and another's pick.
+        // A different party - or a different source generation - is a different everything: neither
+        // the host's staged pick nor anything realized for the old identity means anything about this
+        // one. The realizer's authority moves in the same update that installs the snapshot, so no
+        // frame is ever composed with one party's state and another's pick or realization.
         val previousParty = _uiState.value.party
-        val carriesOver = previousParty?.id == snapshot.id
         val stagedPickCarriesOver = shouldRetainStagedHostSource(previousParty, snapshot)
-        if (!carriesOver) launchedSourceGeneration = null
-        PlayerLaunchStore.invalidateRetainedPartyLaunchUnless(
-            snapshot.sourceFingerprint?.let { descriptor ->
-                PartyPlayerLaunchKey(
-                    partyId = snapshot.id,
-                    contentGeneration = snapshot.contentGeneration,
-                    sourceGeneration = snapshot.sourceGeneration,
-                    descriptor = descriptor,
-                )
-            },
+        // An ended party is never re-entered as a party, so its resolved media has no remaining
+        // use - and it is the kind of thing that must not sit in memory for want of a reason to
+        // drop it.
+        PartySourceRealizer.updateAuthority(
+            snapshot.takeIf { it.status != WatchPartyStatus.ended }?.partySourceKey(),
         )
         _uiState.value = _uiState.value.copy(
             party = snapshot,

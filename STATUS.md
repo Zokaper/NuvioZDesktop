@@ -2,6 +2,38 @@
 
 Last updated: 2026-09-09
 
+## Watch Together deterministic architecture — Stage 4 automated checkpoint (2026-09-09)
+
+Party source realization is now owned by a process-scoped `PartySourceRealizer` keyed on the exact
+authoritative identity `(partyId, contentGeneration, sourceGeneration, descriptor)`. It owns the
+work states (`Unresolved`/`Matching`/`Resolving`/`Ready`/`FallbackRequired`/`Failed`), the one-shot
+automatic-launch claim, and the sensitive resolved `PlayerLaunch`, of which only an opaque
+realization ID ever leaves the object. Every entry point is rejected unless it names the current
+authority, so a match or resolution that completes after the host changed the source cannot report
+into - or resolve for - the party as it now is.
+
+The three route-local owners this replaces are gone: `WatchPartyRepository`'s
+`launchedSourceGeneration` latch and `claimSourceLaunch()`, `PlayerLaunchStore`'s three party-launch
+retention methods, and the strict-match rule that existed only as a `remember` block inside
+`StreamDestination`. That rule is now the pure `tierPartyPlaybackSources` + `decidePartyRealization`
+pair, so the settle gate and the match are testable without a composition. `StreamDestination`
+reports `matching`/`resolving`/`fallbackRequired` and, through the single `giveUpToSourceList` choke
+point, `abandoned`; it no longer owns any of that state. `PartyStreamLaunchContext` carries the
+content generation so the route builds the same complete key the repository installs.
+
+Readiness is now derived from real work rather than from whichever screen is composed: the session
+coordinator publishes `fetching`/`resolving`/`choosing_fallback`/`failed`/`source_ready` from
+realizer transitions, each carrying its source generation. The realization is dropped on source or
+content generation advance, leave, end (including a remote end arriving by snapshot), profile
+change - now unconditionally, so a failed departure RPC cannot carry one profile's resolved media
+into another - and account wipe. Returning from the player to the lobby reuses the retained
+realization without a `StreamRoute` and cannot re-arm the automatic launch.
+
+Focused party/player suites pass 270/270, the mandatory Stage 4 full `:composeApp:desktopTest` gate
+passes 1,708/1,708 with zero failures, errors, or skips, and explicit `:composeApp:compileKotlinDesktop`
+passes. Stage 4 has no physical gate of its own; Stage 2
+and Stage 3 physical gates remain outstanding and unchanged.
+
 ## Watch Together deterministic architecture — Stage 3 automated checkpoint (2026-09-09)
 
 Stage 3 active-player architecture is implemented and focused-green. `PlayerScreenRuntime` now

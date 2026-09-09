@@ -37,6 +37,7 @@ import com.nuvio.app.features.watchprogress.ContinueWatchingPreferencesRepositor
 import com.nuvio.app.features.watchprogress.ContinueWatchingEnrichmentCache
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import com.nuvio.app.features.watchprogress.WatchProgressSourceCoordinator
+import com.nuvio.app.features.watchparty.PartySourceRealizer
 import com.nuvio.app.features.watched.WatchedRepository
 
 internal object LocalAccountDataCleaner {
@@ -82,6 +83,9 @@ internal object LocalAccountDataCleaner {
         SearchRepository.reset()
         SubtitleRepository.clear()
         PlayerLaunchStore.clear()
+        // The resolved party launch is sensitive and is owned by the realizer, not by the launch
+        // store it used to hide in. A wipe that cleared only the store left it behind.
+        PartySourceRealizer.clear()
         StreamLaunchStore.clear()
         StreamContextStore.clear()
     }

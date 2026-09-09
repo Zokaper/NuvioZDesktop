@@ -12,6 +12,7 @@ enum class PartyStreamLaunchPurpose {
 data class PartyStreamLaunchContext(
     val partyId: String,
     val isHost: Boolean,
+    val contentGeneration: Int,
     val sourceGeneration: Int,
     val targetFingerprint: PartySourceDescriptorV2? = null,
     val purpose: PartyStreamLaunchPurpose = PartyStreamLaunchPurpose.RESOLVE_PLAYBACK,
