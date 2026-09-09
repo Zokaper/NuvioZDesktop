@@ -322,7 +322,7 @@ fun WatchPartyLobbyScreen(
                                 PartyStatusBand(
                                     party = party,
                                     inviteCode = state.inviteCode,
-                                    connection = state.connection,
+                                    connection = presentation.connection,
                                     sync = syncState,
                                     hostSourceStaged = state.stagedHostSource != null,
                                 )
@@ -380,7 +380,7 @@ fun WatchPartyLobbyScreen(
                         PartyHero(
                             party = party,
                             inviteCode = state.inviteCode,
-                            connection = state.connection,
+                            connection = presentation.connection,
                             sync = syncState,
                             wide = wide,
                             hostSourceStaged = state.stagedHostSource != null,

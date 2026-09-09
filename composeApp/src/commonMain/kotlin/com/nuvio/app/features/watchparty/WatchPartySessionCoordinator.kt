@@ -30,8 +30,6 @@ private object RepositoryDurablePartyGateway : DurablePartyGateway {
     override fun updatePlaybackTelemetry(telemetry: PartyPlaybackTelemetry?) = WatchPartyRepository.updatePlaybackTelemetry(telemetry)
 }
 
-data class PartySessionShadowState(val matchesLegacySnapshot: Boolean = true, val mismatch: String? = null)
-
 private sealed interface PartySessionIntent {
     data class Register(val context: ActivePlaybackContext, val sessionId: String, val deviceId: String) : PartySessionIntent
     data class Unregister(val attachmentId: String) : PartySessionIntent
@@ -52,15 +50,19 @@ private sealed interface PartySessionIntent {
     data class Snapshot(val value: WatchPartyState?) : PartySessionIntent
 }
 
-/** Serialized process owner. The repository remains the Stage-1 UI source while this reducer shadows it. */
+/**
+ * Serialized process owner for party session semantics.
+ *
+ * It carried a shadow comparison against the legacy repository snapshot while Stage 1 was switching
+ * over. Nothing ever read it after the switch, and a comparison nobody looks at is not a safety net
+ * - it is a second answer with no arbiter, which is the thing these stages exist to remove.
+ */
 object WatchPartySessionCoordinator {
     private val gateway: DurablePartyGateway = RepositoryDurablePartyGateway
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val intents = Channel<PartySessionIntent>(Channel.UNLIMITED)
     private val _state = MutableStateFlow(PartySessionState())
     val state: StateFlow<PartySessionState> = _state.asStateFlow()
-    private val _shadow = MutableStateFlow(PartySessionShadowState())
-    val shadow: StateFlow<PartySessionShadowState> = _shadow.asStateFlow()
     private var presenceSessionId: String? = null
     private var presenceDeviceId: String? = null
 
@@ -174,7 +176,6 @@ object WatchPartySessionCoordinator {
             PartySessionIntent.ContinueAfterEnd -> _state.value = PartySessionState(playback = _state.value.playback)
             is PartySessionIntent.Snapshot -> observeSnapshot(intent.value)
         }
-        updateShadow(gateway.currentParty())
     }
 
     private fun observeSnapshot(party: WatchPartyState?) {
@@ -185,16 +186,5 @@ object WatchPartySessionCoordinator {
         val generation = party.partyGenerationKey()
         _state.value = if (_state.value.generation == null) reducePartySession(_state.value, PartySessionEvent.Restored(generation))
         else reducePartySession(_state.value, PartySessionEvent.SnapshotAdvanced(generation))
-    }
-
-    private fun updateShadow(party: WatchPartyState?) {
-        val state = _state.value
-        val mismatch = when {
-            party == null && state.membershipRetained -> "reducer retained membership without durable party"
-            party != null && !state.membershipRetained -> "durable party missing from reducer membership"
-            party != null && state.generation != party.partyGenerationKey() -> "generation differs from durable snapshot"
-            else -> null
-        }
-        _shadow.value = PartySessionShadowState(mismatch == null, mismatch)
     }
 }

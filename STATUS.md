@@ -2,6 +2,33 @@
 
 Last updated: 2026-09-09
 
+## Watch Together deterministic architecture — Stage 7 partial (2026-09-09)
+
+The first deletions of Stage 7, limited to scaffolding that is provably dead or provably duplicated.
+
+`WatchPartyUiState` no longer carries `connection` or `connectionBannerMessage`. Both were copies of
+what `PartyPresentationProjector` produces, recomputed inside `updateHealth` and cached on the
+repository, which made the repository a second presentation authority for a fact it does not own -
+and one that could disagree with the screen beside it. The lobby already projects its own
+presentation and now reads the connection from it; `connectionBannerMessage` had no reader at all.
+
+`PartySessionShadowState` and the shadow comparison in `WatchPartySessionCoordinator` are gone. They
+existed to compare the Stage 1 reducer against the legacy repository snapshot during the switchover,
+and nothing has read them since. A comparison nobody looks at is not a safety net - it is a second
+answer with no arbiter.
+
+Verified by inspection as already complete, and needing no deletion: disposal-as-lobby (location is
+published from explicit session intents, and attachment loss publishes nothing), the destructive
+active-player lobby flow (Stage 3), the repository launch latch and route-owned resolution (Stage 4),
+and the duplicate client host claim (Stage 5).
+
+**Stage 7 remains open.** v2 contract removal is deliberately not started: mobile still calls the v2
+party RPCs against this backend, so removal waits on the Phase 5 repointing rather than on this
+stage. Stage 7's exit is the full physical matrix, which is outstanding along with the Stage 2, 3, 5
+and 6 physical gates.
+
+Focused party/player tests 289/289 and `:composeApp:compileKotlinDesktop` pass.
+
 ## Watch Together deterministic architecture — Stage 6 automated checkpoint (2026-09-09)
 
 Active source switching is implemented in-route. A member picking a source from the player's own

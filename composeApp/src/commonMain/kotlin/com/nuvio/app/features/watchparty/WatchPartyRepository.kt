@@ -43,7 +43,6 @@ data class WatchPartyUiState(
     // that is not held here is gone for good; it lived in the lobby composition and vanished the
     // moment the host navigated away.
     val inviteCode: String? = null,
-    val connection: PartyConnectionState = PartyConnectionState.disconnected,
     val health: PartyHealthState = PartyHealthState(),
     val serverClockOffsetMs: Long = 0,
     /**
@@ -68,7 +67,6 @@ data class WatchPartyUiState(
     val stagedHostSource: PartySourceDescriptorV2? = null,
     /** How [stagedHostSource] reads in the lobby - the release the host picked, in their words. */
     val stagedHostSourceLabel: String? = null,
-    val connectionBannerMessage: String? = null,
     val isWorking: Boolean = false,
     val errorMessage: String? = null,
 )
@@ -115,19 +113,11 @@ object WatchPartyRepository {
 
     private fun updateHealth(event: PartyHealthEvent) {
         _uiState.update { current ->
-            val next = reducePartyHealth(current.health, event)
-            val presentation = PartyPresentationProjector.project(
-                party = current.party,
-                selfProfileId = current.activeProfileId,
-                health = next,
-                realtime = WatchPartySync.state.value,
-                partyNowMs = WatchPartySync.partyNowMs(),
-            )
-            current.copy(
-                health = next,
-                connection = presentation.connection,
-                connectionBannerMessage = presentation.connectionBanner,
-            )
+            // Health, and only health. The connection state and its banner are projected facts,
+            // and every surface that shows them already runs the projector itself - keeping a copy
+            // here made the repository a second presentation authority for a fact it does not own,
+            // and one that could disagree with the screen next to it.
+            current.copy(health = reducePartyHealth(current.health, event))
         }
     }
 
