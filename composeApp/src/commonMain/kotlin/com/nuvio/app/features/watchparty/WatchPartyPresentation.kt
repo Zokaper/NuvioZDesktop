@@ -40,7 +40,7 @@ data class DerivedMemberStatus(
  * Derives truthful, fine-grained member status considering connection, location, resolution, and party state.
  */
 fun WatchPartyParticipant.derivedStatus(
-    party: WatchPartyState? = null,
+    livePlaybackStatus: WatchPartyStatus? = null,
     isSelfResyncing: Boolean = false,
 ): DerivedMemberStatus {
     if (!connected || readyState == SourceResolutionState.disconnected) {
@@ -78,7 +78,7 @@ fun WatchPartyParticipant.derivedStatus(
         return DerivedMemberStatus("Buffering", PartyReadyTone.Buffering)
     }
     if (clientLocation == WatchPartyClientLocation.player) {
-        return when (party?.status) {
+        return when (livePlaybackStatus) {
             WatchPartyStatus.buffering -> DerivedMemberStatus("Buffering", PartyReadyTone.Buffering)
             WatchPartyStatus.playing -> DerivedMemberStatus("Playing", PartyReadyTone.Ready)
             WatchPartyStatus.paused -> DerivedMemberStatus("Paused", PartyReadyTone.Paused)
@@ -104,8 +104,7 @@ fun SourceResolutionState.tone(connected: Boolean = true): PartyReadyTone = when
     else -> PartyReadyTone.Working
 }
 
-fun WatchPartyParticipant.readyTone(party: WatchPartyState? = null): PartyReadyTone =
-    derivedStatus(party).tone
+fun WatchPartyParticipant.readyTone(): PartyReadyTone = derivedStatus().tone
 
 /**
  * The short, human label for a readiness state.
@@ -127,8 +126,145 @@ fun SourceResolutionState.readyLabel(): String = when (this) {
 /**
  * What a member's pill says, given that a lost connection hides whatever they last reported.
  */
-fun WatchPartyParticipant.readyLabel(party: WatchPartyState? = null): String =
-    derivedStatus(party).label
+fun WatchPartyParticipant.readyLabel(): String = derivedStatus().label
+
+/**
+ * Who moved the party, said the way a person would say it.
+ *
+ * Collaborative parties made this necessary and host-only parties hid the need for it: with one
+ * possible actor there was nothing to attribute, so nothing did, and the player simply showed the
+ * transport changing under the viewer with no account of who had changed it. The 2026-09-10 run is
+ * the report - a guest paused, every member paused correctly, and no screen said whose doing it
+ * was.
+ *
+ * The actor is the accepted command's [PartyCommand.issuedByProfileId], which the backend binds
+ * from the row it locked rather than from anything a client wrote into a payload, so this is the
+ * server's answer to "who", not a claim the sender made about itself. Host-ness is never consulted:
+ * hard-coding it is exactly the assumption that produced the bug.
+ *
+ * Null for the viewer's own command. The person who pressed the button does not need telling, and
+ * the press already has its own local feedback; announcing it back to them is noise on every single
+ * transport action they take.
+ */
+fun partyActorNotice(
+    kind: PartyCommandKind,
+    actorProfileId: String,
+    viewerProfileId: String?,
+    actorName: String,
+    seekingBackwards: Boolean = false,
+): String? {
+    if (actorProfileId == viewerProfileId) return null
+    // An actor the durable snapshot has never named - a member who left between issuing and
+    // arriving, or a command that outlived its generation - is better left unannounced than
+    // announced as a profile id.
+    if (actorName.isBlank()) return null
+    val verb = when (kind) {
+        PartyCommandKind.play -> "resumed"
+        PartyCommandKind.pause -> "paused"
+        PartyCommandKind.seek -> if (seekingBackwards) "skipped back" else "skipped ahead"
+        PartyCommandKind.speed -> "changed the speed"
+    }
+    return "$actorName $verb"
+}
+
+/**
+ * The actor's name as the *other* members should read it.
+ *
+ * [displayName] answers "You" for the viewer, which is right on a member list and wrong in a
+ * sentence this function's caller only ever builds about somebody else. Falls back through the
+ * social profile the party already carries; blank when the member is not in the snapshot at all,
+ * which [partyActorNotice] reads as "say nothing".
+ */
+fun WatchPartyState.actorDisplayName(profileId: String): String =
+    members.firstOrNull { it.profileId == profileId }
+        // A member the social profile has not named would fall back to a truncated profile id,
+        // which is not a thing to put in a sentence. Blank instead, and the caller says nothing.
+        ?.takeIf { !it.profile?.displayName.isNullOrBlank() || !it.profile?.handle.isNullOrBlank() }
+        // Asked as a stranger would, so it never answers "You": this name is only ever read by the
+        // members who did *not* do the thing.
+        ?.displayName(viewerProfileId = null)
+        .orEmpty()
+
+data class PartyMemberPresentation(
+    val profileId: String,
+    val label: String,
+    val tone: PartyReadyTone,
+    val connected: Boolean,
+)
+
+data class PartyPresentationState(
+    val capability: PartySyncCapability,
+    val connection: PartyConnectionState,
+    val connectionBanner: String?,
+    val members: Map<String, PartyMemberPresentation>,
+    val freshHostStatus: WatchPartyStatus?,
+)
+
+/**
+ * The one presentation authority shared by the Compose lobby and native player surface.
+ *
+ * Durable party state owns membership/readiness/location. Playback labels require fresh,
+ * exact-generation live evidence: the host's tick or a guest's peer telemetry. In particular,
+ * the party-wide durable status is never reused as a participant's engine status.
+ */
+object PartyPresentationProjector {
+    fun project(
+        party: WatchPartyState?,
+        selfProfileId: String?,
+        health: PartyHealthState,
+        realtime: WatchPartySyncState,
+        partyNowMs: Long,
+        localPlaybackStatus: WatchPartyStatus? = null,
+        selfResyncing: Boolean = false,
+    ): PartyPresentationState {
+        val capability = health.capability()
+        val connection = when (health.realtime) {
+            PartyRealtimeHealth.Live -> PartyConnectionState.connected
+            PartyRealtimeHealth.Connecting,
+            PartyRealtimeHealth.SubscribedUnverified,
+            PartyRealtimeHealth.Degraded,
+            -> PartyConnectionState.reconnecting
+            PartyRealtimeHealth.Detached -> PartyConnectionState.disconnected
+        }
+        val hostStatus = realtime.tickStatus.takeIf {
+            realtime.tickCapturedAtPartyMs?.let { captured ->
+                partyNowMs - captured <= WatchPartyTickStaleMs
+            } == true
+        }
+        val projectedMembers = party?.members.orEmpty().associate { member ->
+            val liveStatus = when {
+                member.profileId == selfProfileId -> localPlaybackStatus
+                member.profileId == party?.hostProfileId -> hostStatus
+                else -> realtime.peerTelemetry[member.profileId]?.takeIf {
+                    partyNowMs - it.receivedAtPartyMs <= WatchPartyClockStaleMs
+                }?.status
+            }
+            val derived = member.derivedStatus(
+                livePlaybackStatus = liveStatus,
+                isSelfResyncing = member.profileId == selfProfileId && selfResyncing,
+            )
+            member.profileId to PartyMemberPresentation(
+                profileId = member.profileId,
+                label = derived.label,
+                tone = derived.tone,
+                connected = member.connected && derived.tone != PartyReadyTone.Offline,
+            )
+        }
+        return PartyPresentationState(
+            capability = capability,
+            connection = connection,
+            connectionBanner = when (capability) {
+                PartySyncCapability.FullSync -> null
+                PartySyncCapability.DurableFallback -> "Live sync unavailable — following the party every few seconds"
+                PartySyncCapability.RealtimeOnly -> "Party service unavailable — live playback continuing"
+                PartySyncCapability.OfflineLocalPlayback -> if (party == null) null else
+                    "Connection lost — playback continuing locally"
+            },
+            members = projectedMembers,
+            freshHostStatus = hostStatus,
+        )
+    }
+}
 
 
 /** How many connected members have a source open, over how many are present. */

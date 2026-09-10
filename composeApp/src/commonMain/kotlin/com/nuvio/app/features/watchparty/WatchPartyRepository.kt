@@ -3,20 +3,14 @@ package com.nuvio.app.features.watchparty
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.network.ZSessionBridge
 import com.nuvio.app.core.network.ZSupabaseProvider
-import com.nuvio.app.features.player.PartyPlayerLaunchKey
-import com.nuvio.app.features.player.PlayerLaunchStore
+import com.nuvio.app.core.network.shouldReexchangeZSession
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.rpc
-import io.github.jan.supabase.realtime.RealtimeChannel
-import io.github.jan.supabase.realtime.broadcastFlow
-import io.github.jan.supabase.realtime.channel
-import io.github.jan.supabase.realtime.realtime
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -25,6 +19,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -35,8 +30,6 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.floatOrNull
-import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlin.time.TimeSource
@@ -50,7 +43,7 @@ data class WatchPartyUiState(
     // that is not held here is gone for good; it lived in the lobby composition and vanished the
     // moment the host navigated away.
     val inviteCode: String? = null,
-    val connection: PartyConnectionState = PartyConnectionState.disconnected,
+    val health: PartyHealthState = PartyHealthState(),
     val serverClockOffsetMs: Long = 0,
     /**
      * Whether the host holds the party for a guest whose stream has stalled.
@@ -74,7 +67,6 @@ data class WatchPartyUiState(
     val stagedHostSource: PartySourceDescriptorV2? = null,
     /** How [stagedHostSource] reads in the lobby - the release the host picked, in their words. */
     val stagedHostSourceLabel: String? = null,
-    val connectionBannerMessage: String? = null,
     val isWorking: Boolean = false,
     val errorMessage: String? = null,
 )
@@ -105,15 +97,8 @@ object WatchPartyRepository {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _uiState = MutableStateFlow(WatchPartyUiState())
     val uiState: StateFlow<WatchPartyUiState> = _uiState.asStateFlow()
-    private var channel: RealtimeChannel? = null
-    private var collector: Job? = null
     private var pollJob: Job? = null
-    private var channelJob: Job? = null
-    private var channelPartyId: String? = null
-    // Holding a channel is not the same as being subscribed to one: the attempt is held from the
-    // moment it exists so a teardown can remove it, so only this says whether it is carrying state.
-    private var channelSubscribed = false
-    private var refreshJob: Job? = null
+    private var playbackTelemetry: PartyPlaybackTelemetry? = null
     // The periodic and transition heartbeats sample playback independently. If their requests are
     // allowed to overlap, an older sample can finish last and overwrite the newer host state.
     private val heartbeatMutex = Mutex()
@@ -121,6 +106,79 @@ object WatchPartyRepository {
     // whole snapshot. Serializing them prevents an earlier response from arriving last and
     // restoring the pre-ready member row over the newer local state.
     private val memberStateMutex = Mutex()
+
+    fun updatePlaybackTelemetry(telemetry: PartyPlaybackTelemetry?) {
+        playbackTelemetry = telemetry
+    }
+
+    private fun updateHealth(event: PartyHealthEvent) {
+        var before = PartyHealthState()
+        var after = PartyHealthState()
+        _uiState.update { current ->
+            // Health, and only health. The connection state and its banner are projected facts,
+            // and every surface that shows them already runs the projector itself - keeping a copy
+            // here made the repository a second presentation authority for a fact it does not own,
+            // and one that could disagree with the screen next to it.
+            before = current.health
+            after = reducePartyHealth(current.health, event)
+            current.copy(health = after)
+        }
+        // ⚠ **The transition, not the event.** The two-client run had `RealtimeSubscribed` in the
+        // log and `Live sync lost` on the screen, and nothing anywhere said those were the same
+        // fact - that a subscribe had happened and had proved nothing. Every change of the three
+        // axes and the capability they combine into is now one line, so "why does it say lost" is
+        // answerable from the file rather than from the source.
+        if (before.realtime != after.realtime ||
+            before.api != after.api ||
+            before.capability() != after.capability()
+        ) {
+            log.i {
+                "health realtime=${before.realtime}->${after.realtime} api=${before.api}->${after.api} " +
+                    "capability=${before.capability()}->${after.capability()} " +
+                    "instance=${after.channelInstance} polling=${after.polling} " +
+                    "lastAuthority=${after.lastAuthorityTrafficAtMs} lastPeer=${after.lastPeerTrafficAtMs} " +
+                    "lastClock=${after.lastClockTrafficAtMs} lastSend=${after.lastRealtimeSendOutcome} " +
+                    "by=${event::class.simpleName}"
+            }
+        }
+        if (after.realtime == PartyRealtimeHealth.SubscribedUnverified &&
+            before.realtime != PartyRealtimeHealth.SubscribedUnverified
+        ) {
+            armUnverifiedRealtimeWatch(after.channelInstance)
+        }
+    }
+
+    /**
+     * Says out loud when a subscribed channel has still delivered nothing.
+     *
+     * This is the shape of the defect that cost a whole physical run: subscribed, healthy-looking,
+     * sends "succeeding", and not one message ever arriving from anybody. It is invisible without a
+     * peer to compare against, so the client has to notice it about itself. One line, once per
+     * channel instance, naming the interval - not a banner, because the projector already shows
+     * `Live sync lost` and a second surface for the same fact is a second thing to keep right.
+     */
+    private fun armUnverifiedRealtimeWatch(instance: Long) {
+        unverifiedRealtimeWatch?.cancel()
+        unverifiedRealtimeWatch = scope.launch {
+            delay(WatchPartyRealtimeVerificationGraceMs)
+            val health = _uiState.value.health
+            if (health.channelInstance != instance) return@launch
+            if (health.realtime != PartyRealtimeHealth.SubscribedUnverified) return@launch
+            log.w {
+                "realtime still unverified after ${WatchPartyRealtimeVerificationGraceMs}ms " +
+                    "instance=$instance party=${_uiState.value.party?.id.shortId()} - subscribed, " +
+                    "nothing received from any member; the party is running on durable polling"
+            }
+            WatchPartyDiagnostics.transport(
+                "unverified-timeout",
+                _uiState.value.party?.id,
+                realtime = "subscribed-unverified",
+                detail = "${WatchPartyRealtimeVerificationGraceMs}ms",
+            )
+        }
+    }
+
+    private var unverifiedRealtimeWatch: Job? = null
 
     fun installAuthorizedSnapshot(snapshot:WatchPartyState) = installSnapshot(snapshot)
 
@@ -146,7 +204,7 @@ object WatchPartyRepository {
             val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_set_client_location", buildJsonObject {
                 put("p_party_id", requireParty().id); put("p_profile_id", requireProfile()); put("p_location", location)
             }).decodeAs<WatchPartyState>()
-            installSnapshot(snapshot, reopenChannel = false)
+            installSnapshot(snapshot)
         }
     }
 
@@ -180,37 +238,31 @@ object WatchPartyRepository {
     )
     private var clockOffsetPartyId: String? = null
 
+    init {
+        WatchPartySync.configure(
+            health = ::updateHealth,
+            stateBroadcast = { payload ->
+                if (!applyBroadcastState(payload)) refreshRequests.tryEmit(Unit)
+            },
+            refresh = ::requestRefresh,
+            failure = { message -> _uiState.update { it.copy(errorMessage = message) } },
+        )
+        refreshRequests.onEach { refresh() }.launchIn(scope)
+    }
+
     fun setActiveProfile(profileId: String?) {
         if (_uiState.value.activeProfileId == profileId) return
         log.i { "profile from=${_uiState.value.activeProfileId.shortId()} to=${profileId.shortId()}" }
         lastLoggedState = null
         lastLoggedHeartbeatStatus = null
         lastLoggedPollFailure = null
-        scope.launch { if (_uiState.value.party != null) leave() else stopChannel() }
-        launchedSourceGeneration = null
+        playbackTelemetry = null
+        // Cleared here rather than only inside `leave()`: a departure RPC that fails deliberately
+        // keeps local state for a retry, and one profile's resolved media may never outlive the
+        // switch to another - whether or not the server was reachable at the time.
+        PartySourceRealizer.clear()
+        scope.launch { if (_uiState.value.party != null) leave() else WatchPartySync.updateAuthority(null) }
         _uiState.value = WatchPartyUiState(activeProfileId = profileId)
-    }
-
-    /**
-     * The source generation this client has already left the lobby for.
-     *
-     * Every member - the host included - is sent to the player by one effect in the lobby, keyed on
-     * the party leaving `waiting_for_host_source`. Without a latch that effect fires again the
-     * moment somebody backs out of the player into the lobby, which is a trap with no way out; with
-     * the latch stored in the lobby's composition it was lost on that same back navigation, which
-     * is the same trap. It lives here because it has to outlive both screens.
-     *
-     * Only choosing/changing a source bumps `source_generation`. Reattaching a player for the same
-     * generation deliberately bypasses this automatic launch latch and is initiated by the user's
-     * lobby action instead.
-     */
-    private var launchedSourceGeneration: Int? = null
-
-    /** True exactly once per source generation: the caller may hand off to the player. */
-    fun claimSourceLaunch(generation: Int): Boolean {
-        if (launchedSourceGeneration == generation) return false
-        launchedSourceGeneration = generation
-        return true
     }
 
     /**
@@ -294,7 +346,7 @@ object WatchPartyRepository {
                 sourceGeneration?.let { put("p_source_generation", it) }
                 sourceMatch?.let { put("p_source_match", it.name) }
             }).decodeAs<WatchPartyState>()
-            installSnapshot(snapshot, reopenChannel = false)
+            installSnapshot(snapshot)
         }
     }
 
@@ -314,7 +366,7 @@ object WatchPartyRepository {
             put("p_host_profile_id", requireProfile())
             put("p_addon_signature", json.encodeToJsonElement(addons))
         }).decodeAs<WatchPartyState>()
-        installSnapshot(snapshot, reopenChannel = false)
+        installSnapshot(snapshot)
     }
 
     /** Backward source-compatible name for callers that have not adopted the preflight flow yet. */
@@ -326,7 +378,7 @@ object WatchPartyRepository {
             put("p_profile_id", requireProfile())
             put("p_addon_signature", json.encodeToJsonElement(addons))
         }).decodeAs<WatchPartyState>()
-        installSnapshot(snapshot, reopenChannel = false)
+        installSnapshot(snapshot)
     }
 
     suspend fun selectSource(
@@ -342,38 +394,79 @@ object WatchPartyRepository {
             put("p_source_descriptor", json.encodeToJsonElement(fingerprint))
             put("p_contract_version",PartySourceContractVersion)
         }).decodeAs<WatchPartyState>()
-        installSnapshot(snapshot, reopenChannel = false)
+        installSnapshot(snapshot)
     }
 
-    suspend fun submit(command: WatchPartyCommand): Result<Unit> = call {
-        log.i {
-            "command party=${_uiState.value.party?.id.shortId()} profile=${_uiState.value.activeProfileId.shortId()} " +
-                "type=${command.type} positionMs=${command.positionMs} speed=${command.playbackSpeed}"
+    suspend fun submit(command: WatchPartyCommand): Result<Unit> {
+        val startedAt = currentEpochMs()
+        val partyAtStart = _uiState.value.party
+        val result = call {
+            log.i {
+                "command party=${_uiState.value.party?.id.shortId()} profile=${_uiState.value.activeProfileId.shortId()} " +
+                    "type=${command.type} positionMs=${command.positionMs} speed=${command.playbackSpeed}"
+            }
+            val party=requireParty()
+            val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_submit_command_v2", buildJsonObject {
+                put("p_party_id", party.id); put("p_profile_id", requireProfile()); put("p_command_id", command.commandId)
+                put("p_command_type", command.type); put("p_payload", buildJsonObject {
+                    command.positionMs?.let { put("position_ms", it) }; command.playbackSpeed?.let { put("playback_speed", it) }
+                    // The barrier. Carried here because this RPC is now the *transport* for a
+                    // command and not merely its record: no client may write the authority plane,
+                    // so what the backend emits from this call is what every other member executes.
+                    command.startAtPartyMs?.let { put("start_at_party_ms", it) }
+                    command.playAfter?.let { put("play_after", it) }
+                })
+                put("p_content_generation",party.contentGeneration);put("p_source_generation",party.sourceGeneration)
+                put("p_authority_epoch",party.authorityEpoch)
+            }).decodeAs<WatchPartyState>()
+            installSnapshot(snapshot)
         }
-        val party=requireParty()
-        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_submit_command_v2", buildJsonObject {
-            put("p_party_id", party.id); put("p_profile_id", requireProfile()); put("p_command_id", command.commandId)
-            put("p_command_type", command.type); put("p_payload", buildJsonObject {
-                command.positionMs?.let { put("position_ms", it) }; command.playbackSpeed?.let { put("playback_speed", it) }
-            })
-            put("p_content_generation",party.contentGeneration);put("p_source_generation",party.sourceGeneration)
-            put("p_authority_epoch",party.authorityEpoch)
-        }).decodeAs<WatchPartyState>()
-        installSnapshot(snapshot, reopenChannel = false)
+        WatchPartyDiagnostics.durableCommand(
+            command = command,
+            party = partyAtStart,
+            outcome = if (result.isSuccess) "success" else "failed",
+            durationMs = (currentEpochMs() - startedAt).coerceAtLeast(0L),
+        )
+        return result
     }
 
     @OptIn(ExperimentalUuidApi::class)
-    suspend fun play(positionMs: Long, commandId: String = Uuid.random().toString()) =
-        submit(WatchPartyCommand(commandId, "play", positionMs))
+    suspend fun play(
+        positionMs: Long,
+        commandId: String = Uuid.random().toString(),
+        startAtPartyMs: Long? = null,
+    ) = submit(WatchPartyCommand(commandId, "play", positionMs, startAtPartyMs = startAtPartyMs, playAfter = true))
     @OptIn(ExperimentalUuidApi::class)
     suspend fun pause(positionMs: Long, commandId: String = Uuid.random().toString()) =
-        submit(WatchPartyCommand(commandId, "pause", positionMs))
+        submit(WatchPartyCommand(commandId, "pause", positionMs, playAfter = false))
     @OptIn(ExperimentalUuidApi::class)
-    suspend fun seek(positionMs: Long, commandId: String = Uuid.random().toString()) =
-        submit(WatchPartyCommand(commandId, "seek", positionMs))
+    suspend fun seek(
+        positionMs: Long,
+        commandId: String = Uuid.random().toString(),
+        startAtPartyMs: Long? = null,
+        playAfter: Boolean = true,
+    ) = submit(WatchPartyCommand(commandId, "seek", positionMs, startAtPartyMs = startAtPartyMs, playAfter = playAfter))
     @OptIn(ExperimentalUuidApi::class)
     suspend fun setSpeed(speed: Float, commandId: String = Uuid.random().toString()) =
         submit(WatchPartyCommand(commandId, "speed", playbackSpeed = speed))
+
+    /**
+     * Submits an accepted local command, as the remote half of `WatchPartySync.issueCommand`.
+     *
+     * One place, because this is now the only path a command has to the other members and a call
+     * site that maps a kind to the wrong RPC argument would cost the party the command rather than
+     * a log line.
+     */
+    suspend fun submitAccepted(command: PartyCommand): Result<Unit> = submit(
+        WatchPartyCommand(
+            commandId = command.commandId,
+            type = command.kind.name,
+            positionMs = command.startPositionMs,
+            playbackSpeed = command.playbackSpeed.takeIf { command.kind == PartyCommandKind.speed },
+            startAtPartyMs = command.startAtPartyMs,
+            playAfter = command.playAfter,
+        ),
+    )
 
     /**
      * The durable position, aged forward to roughly when the server will write it.
@@ -412,7 +505,7 @@ object WatchPartyRepository {
                 put("p_party_id", requireParty().id); put("p_profile_id", requireProfile()); put("p_position_ms", aged)
                 put("p_duration_ms", durationMs); put("p_playback_speed", speed); put("p_status", status.name)
             }).decodeAs<WatchPartyState>()
-            installSnapshot(snapshot, reopenChannel = false)
+            installSnapshot(snapshot)
         }
     }
 
@@ -424,21 +517,21 @@ object WatchPartyRepository {
             fingerprint?.let { put("p_source_descriptor", json.encodeToJsonElement(it)) }; qualityIntent?.let { put("p_track_intent", it) }
             put("p_contract_version",PartySourceContractVersion)
         }).decodeAs<WatchPartyState>()
-        installSnapshot(snapshot, reopenChannel = false)
+        installSnapshot(snapshot)
     }
 
     suspend fun setControlMode(mode: WatchPartyControlMode): Result<Unit> = call {
         val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_set_control_mode", buildJsonObject {
             put("p_party_id", requireParty().id); put("p_host_profile_id", requireProfile()); put("p_mode", mode.name)
         }).decodeAs<WatchPartyState>()
-        installSnapshot(snapshot, reopenChannel = false)
+        installSnapshot(snapshot)
     }
 
     suspend fun refresh(): Result<Unit> = call {
         val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_snapshot", buildJsonObject {
             put("p_party_id", requireParty().id); put("p_profile_id", requireProfile())
         }).decodeAs<WatchPartyState>()
-        installSnapshot(snapshot, reopenChannel = false)
+        installSnapshot(snapshot)
     }
 
     suspend fun measureClockOffset(): Result<Long> = call {
@@ -455,13 +548,6 @@ object WatchPartyRepository {
         log.i { "clock offsetMs=$bestOffset bestRttMs=${if (bestRtt == Long.MAX_VALUE) -1 else bestRtt}" }
         _uiState.value = _uiState.value.copy(serverClockOffsetMs = bestOffset)
         bestOffset
-    }
-
-    suspend fun claimHostAfterGrace(): Result<Unit> = call {
-        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_claim_or_transfer_host", buildJsonObject {
-            put("p_party_id", requireParty().id); put("p_requester_profile_id", requireProfile())
-        }).decodeAs<WatchPartyState>()
-        installSnapshot(snapshot, reopenChannel = false)
     }
 
     suspend fun depart(mode: PartyDepartureMode): Result<Unit> = runCatching {
@@ -482,8 +568,7 @@ object WatchPartyRepository {
             log.w(failure) { "departure rpc failed party=${party.id.shortId()}, retaining local state for retry" }
             throw failure
         }
-        stopPolling(); stopChannel(); clockOffsetPartyId = null
-        launchedSourceGeneration = null
+        stopPolling(); WatchPartySync.updateAuthority(null); PartySourceRealizer.clear(); clockOffsetPartyId = null
         lastSuccessfulContactEpochMs = 0L
         _uiState.value = WatchPartyUiState(activeProfileId = profile)
         Unit
@@ -493,7 +578,7 @@ object WatchPartyRepository {
 
     suspend fun leave(): Result<Unit> = depart(PartyDepartureMode.LEAVE_AND_TRANSFER)
 
-    private fun installSnapshot(snapshot: WatchPartyState, reopenChannel: Boolean = true) {
+    private fun installSnapshot(snapshot: WatchPartyState) {
         lastSuccessfulContactEpochMs = currentEpochMs()
         val held = _uiState.value.party
         if (held != null && isStalePartySnapshot(held, snapshot)) {
@@ -511,22 +596,17 @@ object WatchPartyRepository {
             lastLoggedState = signature
             log.i { "state viewer=${_uiState.value.activeProfileId.shortId()} $signature" }
         }
-        // A different party is a different everything: neither the host's staged pick nor the launch
-        // latch means anything about this one. Cleared in the same update that installs the snapshot,
-        // so no frame is ever composed with one party's state and another's pick.
+        // A different party - or a different source generation - is a different everything: neither
+        // the host's staged pick nor anything realized for the old identity means anything about this
+        // one. The realizer's authority moves in the same update that installs the snapshot, so no
+        // frame is ever composed with one party's state and another's pick or realization.
         val previousParty = _uiState.value.party
-        val carriesOver = previousParty?.id == snapshot.id
         val stagedPickCarriesOver = shouldRetainStagedHostSource(previousParty, snapshot)
-        if (!carriesOver) launchedSourceGeneration = null
-        PlayerLaunchStore.invalidateRetainedPartyLaunchUnless(
-            snapshot.sourceFingerprint?.let { descriptor ->
-                PartyPlayerLaunchKey(
-                    partyId = snapshot.id,
-                    contentGeneration = snapshot.contentGeneration,
-                    sourceGeneration = snapshot.sourceGeneration,
-                    descriptor = descriptor,
-                )
-            },
+        // An ended party is never re-entered as a party, so its resolved media has no remaining
+        // use - and it is the kind of thing that must not sit in memory for want of a reason to
+        // drop it.
+        PartySourceRealizer.updateAuthority(
+            snapshot.takeIf { it.status != WatchPartyStatus.ended }?.partySourceKey(),
         )
         _uiState.value = _uiState.value.copy(
             party = snapshot,
@@ -535,13 +615,13 @@ object WatchPartyRepository {
             isWorking = false,
             errorMessage = null,
         )
+        WatchPartySync.updateAuthority(snapshot.authorityContext(_uiState.value.activeProfileId))
         // The poll is the floor under this whole feature, so nothing may come before it. Opening the
         // channel used to, and `subscribe(blockUntilSubscribed = true)` never returns for a topic
         // the server refuses - so a channel that could not be authorized left this line unreached
         // for the life of the app. The member kept whatever state they joined with, forever: a
         // lobby that never noticed the party had started.
         startPolling()
-        if (reopenChannel) ensureChannel(snapshot.id)
     }
 
     /**
@@ -557,11 +637,14 @@ object WatchPartyRepository {
      */
     private fun startPolling() {
         if (pollJob?.isActive == true) return
+        updateHealth(PartyHealthEvent.PollingChanged(running = true))
+        WatchPartyDiagnostics.poll(_uiState.value.party?.id, running = true, api = "idle")
         pollJob = scope.launch {
             while (true) {
                 delay(WatchPartySnapshotIntervalMs)
                 val partyId = _uiState.value.party?.id ?: break
                 val profileId = _uiState.value.activeProfileId ?: break
+                val pollStartedAt = currentEpochMs()
                 // Drift is measured against the server's clock, so the offset has to be taken for
                 // every party - including one whose channel never opens, which is where this used
                 // to live. Without it a guest corrects towards this machine's idea of now, and two
@@ -570,10 +653,6 @@ object WatchPartyRepository {
                     clockOffsetPartyId = partyId
                     runCatching { measureClockOffset() }
                 }
-                // Realtime is worth another attempt whenever it is down: the party is still live,
-                // and the alternative is running the rest of it on this interval. The first attempt
-                // belongs to installSnapshot, so this tick is only ever the retry.
-                if (!channelSubscribed) ensureChannel(partyId)
                 // Deliberately not routed through call(): a background poll must not flip the
                 // working flag or overwrite an error the user is still reading.
                 runCatching {
@@ -582,33 +661,53 @@ object WatchPartyRepository {
                     // reporting. Only the player used to heartbeat, so a member sitting in the lobby
                     // or on the source list looked disconnected after fifteen seconds - and a host
                     // waiting on them to be ready would give up on them for no reason.
+                    val liveGeneration = _uiState.value.party?.partyGenerationKey()
+                    val telemetry = playbackTelemetry?.takeIf {
+                        liveGeneration != null && liveGeneration.accepts(it.generation) &&
+                            currentEpochMs() - it.capturedAtMs <= WatchPartySnapshotIntervalMs * 2
+                    }
                     val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_heartbeat", buildJsonObject {
-                        put("p_party_id", partyId); put("p_profile_id", profileId)
+                        put("p_party_id", partyId)
+                        put("p_profile_id", profileId)
+                        telemetry?.let { sample ->
+                            val agedPosition = if (sample.status == WatchPartyStatus.playing) {
+                                val age = (currentEpochMs() - sample.capturedAtMs)
+                                    .coerceIn(0L, WatchPartySnapshotIntervalMs)
+                                sample.positionMs + (age.toDouble() * sample.playbackSpeed.toDouble()).toLong()
+                            } else {
+                                sample.positionMs
+                            }
+                            put("p_position_ms", agedPosition)
+                            put("p_duration_ms", sample.durationMs)
+                            put("p_playback_speed", sample.playbackSpeed)
+                            put("p_status", sample.status.name)
+                        }
                     }).decodeAs<WatchPartyState>()
-                    installSnapshot(snapshot, reopenChannel = false)
+                    installSnapshot(snapshot)
                 }.onSuccess {
-                    lastSuccessfulContactEpochMs = currentEpochMs()
-                    lastLoggedPollFailure = null
-                    if (_uiState.value.connection != PartyConnectionState.connected || _uiState.value.connectionBannerMessage != null) {
-                        _uiState.value = _uiState.value.copy(
-                            connection = PartyConnectionState.connected,
-                            connectionBannerMessage = null,
-                        )
-                    }
-                }.onFailure { cause ->
                     val now = currentEpochMs()
-                    val elapsedSinceContact = if (lastSuccessfulContactEpochMs > 0L) now - lastSuccessfulContactEpochMs else 0L
-                    if (elapsedSinceContact > 15_000L) {
-                        _uiState.value = _uiState.value.copy(
-                            connection = PartyConnectionState.reconnecting,
-                            connectionBannerMessage = "Connection lost — playback continuing locally",
-                        )
-                    } else if (elapsedSinceContact > 5_000L) {
-                        _uiState.value = _uiState.value.copy(
-                            connection = PartyConnectionState.reconnecting,
-                            connectionBannerMessage = "Reconnecting…",
-                        )
-                    }
+                    lastSuccessfulContactEpochMs = now
+                    lastLoggedPollFailure = null
+                    updateHealth(PartyHealthEvent.DurableSucceeded(now, heartbeat = true))
+                    WatchPartyDiagnostics.poll(
+                        partyId,
+                        running = true,
+                        api = "success",
+                        sequence = _uiState.value.party?.sequence,
+                        durationMs = (currentEpochMs() - pollStartedAt).coerceAtLeast(0L),
+                    )
+                }.onFailure { cause ->
+                    WatchPartyDiagnostics.poll(
+                        partyId,
+                        running = true,
+                        api = "failed",
+                        durationMs = (currentEpochMs() - pollStartedAt).coerceAtLeast(0L),
+                    )
+                    val now = currentEpochMs()
+                    updateHealth(
+                        if (cause is PostgrestRestException) PartyHealthEvent.DurableRejected(now)
+                        else PartyHealthEvent.DurableFailed(now),
+                    )
                     val reason = cause.message ?: cause::class.simpleName
                     if (reason != lastLoggedPollFailure) {
                         lastLoggedPollFailure = reason
@@ -617,6 +716,8 @@ object WatchPartyRepository {
                 }
             }
             pollJob = null
+            updateHealth(PartyHealthEvent.PollingChanged(running = false))
+            WatchPartyDiagnostics.poll(_uiState.value.party?.id, running = false, api = "idle")
         }
     }
 
@@ -633,59 +734,35 @@ object WatchPartyRepository {
      * whole payload to the fallback.
      */
     private fun applyBroadcastState(payload: JsonObject): Boolean {
-        fun str(key: String) = payload[key]?.jsonPrimitive?.contentOrNull
-
-        val held = _uiState.value.party ?: return false
-        if (str("party_id") != held.id) return false
-        val sequence = payload["sequence"]?.jsonPrimitive?.longOrNull ?: return false
-        val updatedAt = str("state_updated_at") ?: return false
-        val updatedAtMs = parseIsoEpochMs(updatedAt) ?: return false
-        val generation = payload["content_generation"]?.jsonPrimitive?.intOrNull ?: return false
-        if (generation != held.contentGeneration) return false
-        // The selected fingerprint is intentionally excluded from realtime. A generation move is
-        // therefore an invalidation: refresh once to obtain the new sanitized fingerprint instead
-        // of applying a payload that can only describe half of the preflight transition.
-        val sourceGeneration = payload["source_generation"]?.jsonPrimitive?.intOrNull
-            ?: held.sourceGeneration
-        if (sourceGeneration != held.sourceGeneration) return false
-        val status = str("status")?.let { name -> runCatching { WatchPartyStatus.valueOf(name) }.getOrNull() }
-            ?: return false
-        val positionMs = payload["position_ms"]?.jsonPrimitive?.longOrNull ?: return false
-
-        // `party_heartbeat` moves the host's position and `state_updated_at` *without* bumping
-        // `sequence`, so a strict `sequence >` guard would drop every running-position update and
-        // leave a guest correcting against a clock that never moved. The order is lexicographic
-        // over the pair, and the timestamps are compared as epoch millis because Postgres trims
-        // trailing zeros from fractional seconds - the ISO strings do not sort correctly as text.
-        val heldUpdatedAtMs = parseIsoEpochMs(held.stateUpdatedAt) ?: Long.MIN_VALUE
-        val newer = sequence > held.sequence || (sequence == held.sequence && updatedAtMs > heldUpdatedAtMs)
-
-        val serverTimeMs = str("server_time")?.let { parseIsoEpochMs(it) }
-        log.i {
-            val age = serverTimeMs?.let { currentEpochMs() + _uiState.value.serverClockOffsetMs - it }
-            "broadcast party=${held.id.shortId()} seq=$sequence status=$status ageMs=${age ?: -1} applied=$newer"
+        val held = _uiState.value.party
+        val outcome = applyPartyStateBroadcast(held, payload, ::parseIsoEpochMs)
+        val serverTimeMs = payload["server_time"]?.jsonPrimitive?.contentOrNull?.let { parseIsoEpochMs(it) }
+        if (held != null) {
+            log.i {
+                val age = serverTimeMs?.let { currentEpochMs() + _uiState.value.serverClockOffsetMs - it }
+                val applied = outcome is PartyBroadcastOutcome.Applied
+                "broadcast party=${held.id.shortId()} " +
+                    "seq=${payload["sequence"]?.jsonPrimitive?.longOrNull} " +
+                    "outcome=${outcome::class.simpleName} ageMs=${age ?: -1} applied=$applied"
+            }
         }
-        if (!newer) return true
-
-        _uiState.value = _uiState.value.copy(
-            party = held.copy(
-                sequence = sequence,
-                status = status,
-                positionMs = positionMs,
-                stateUpdatedAt = updatedAt,
-                durationMs = payload["duration_ms"]?.jsonPrimitive?.longOrNull ?: held.durationMs,
-                playbackSpeed = payload["playback_speed"]?.jsonPrimitive?.floatOrNull ?: held.playbackSpeed,
-                hostProfileId = str("host_profile_id") ?: held.hostProfileId,
-                controlMode = str("control_mode")
-                    ?.let { name -> runCatching { WatchPartyControlMode.valueOf(name) }.getOrNull() }
-                    ?: held.controlMode,
-                sourceGeneration = sourceGeneration,
-                stage = str("stage")
-                    ?.let { name -> runCatching { WatchPartyStage.valueOf(name) }.getOrNull() }
-                    ?: held.stage,
-            ),
-        )
-        return true
+        return when (outcome) {
+            PartyBroadcastOutcome.RefreshRequired -> false
+            PartyBroadcastOutcome.Ignored -> {
+                held?.let { WatchPartyDiagnostics.durableState(it.id, it.sequence, it.status, applied = false) }
+                true
+            }
+            is PartyBroadcastOutcome.Applied -> {
+                WatchPartyDiagnostics.durableState(
+                    outcome.party.id,
+                    outcome.party.sequence,
+                    outcome.party.status,
+                    applied = true,
+                )
+                _uiState.value = _uiState.value.copy(party = outcome.party)
+                true
+            }
+        }
     }
 
     /**
@@ -702,108 +779,8 @@ object WatchPartyRepository {
 
     private fun stopPolling() {
         pollJob?.cancel(); pollJob = null
-    }
-
-    /**
-     * Opens the party channel without anything waiting on it.
-     *
-     * Realtime is an accelerator over [startPolling], never a prerequisite for it, and the way to
-     * keep that true is to make it structurally impossible for the socket to block a caller: the
-     * subscription runs in its own job on the repository scope, so an RPC path that installs a
-     * snapshot returns whether or not the channel ever comes up.
-     */
-    private fun ensureChannel(partyId: String) {
-        if (channelSubscribed && channel?.topic == "realtime:party:$partyId") return
-        if (channelPartyId == partyId && channelJob?.isActive == true) return
-        channelPartyId = partyId
-        channelJob?.cancel()
-        channelJob = scope.launch { openChannel(partyId) }
-    }
-
-    private suspend fun stopChannel() {
-        channelJob?.cancel(); channelJob = null; channelPartyId = null
-        closeChannel()
-    }
-
-    private suspend fun openChannel(partyId: String) {
-        // The party topic is a private channel gated by RLS on realtime.messages, so the socket must
-        // carry the Z token rather than the publishable key.
-        val profileId = _uiState.value.activeProfileId
-        if (profileId != null && !ZSessionBridge.ensureSession(profileId)) {
-            _uiState.value = _uiState.value.copy(
-                connection = PartyConnectionState.disconnected,
-                errorMessage = ZSessionBridge.lastFailure,
-            )
-            return
-        }
-        closeChannel()
-        _uiState.value = _uiState.value.copy(connection = PartyConnectionState.reconnecting)
-
-        // `reconnecting` was set before the attempt and cleared only on success, so anything thrown
-        // below left the lobby reporting "Reconnecting" forever with no way to tell why.
-        //
-        // Realtime is an accelerator, not the source of truth: every snapshot still comes from an
-        // RPC, so a party whose channel will not open is degraded rather than broken. Say so, and
-        // carry on.
-        val opened = runCatching {
-            ZSupabaseProvider.client.realtime.setAuth()
-            val next = ZSupabaseProvider.client.channel("party:$partyId") { isPrivate = true; presence { key = requireProfile() } }
-            // Held before it is subscribed, because a channel dropped on the floor is not idle: the
-            // client library goes on retrying its join, and nothing is left holding it to stop.
-            channel = next
-            // A broadcast that carries the state is applied here and now; one that does not - a
-            // member change, an older server, a payload this build cannot read - falls through to
-            // the snapshot RPC. The fallback is what keeps this an optimisation rather than a
-            // second source of truth.
-            collector = next.broadcastFlow<JsonObject>("state")
-                .onEach { payload -> if (!applyBroadcastState(payload)) refreshRequests.tryEmit(Unit) }
-                .launchIn(scope)
-            refreshJob?.cancel()
-            refreshJob = refreshRequests.onEach { refresh() }.launchIn(scope)
-            // A refused topic never reports itself subscribed - the join is retried in the
-            // background and this call simply never returns - so the wait needs a deadline of its
-            // own to be a wait at all rather than a coroutine parked for the life of the app.
-            withTimeout(WatchPartyChannelSubscribeTimeoutMs) { next.subscribe(blockUntilSubscribed = true) }
-            next.track(buildJsonObject { put("profile_id", requireProfile()) })
-            channelSubscribed = true
-            // The timing plane rides this channel and nothing else, so it starts here and stops in
-            // `closeChannel`. It is an accelerator over the poll in exactly the way the channel
-            // itself is: a party whose socket will not open still follows along, five seconds at a
-            // time, on the anchor the database carries.
-            WatchPartySync.attach(next, partyId)
-        }
-
-        opened.onFailure { cause ->
-            // A timeout is a channel that will not open and is worth saying so. A plain cancellation
-            // is this party going away underneath the attempt, and a banner written on the way out
-            // would outlive the thing it describes.
-            if (cause !is CancellationException || cause is TimeoutCancellationException) {
-                log.w { "realtime party=${partyId.shortId()} state=disconnected cause=${cause.message ?: cause::class.simpleName}" }
-                closeChannel()
-                _uiState.value = _uiState.value.copy(
-                    connection = PartyConnectionState.disconnected,
-                    errorMessage = "Live sync unavailable: ${cause.message ?: cause::class.simpleName}",
-                )
-            }
-        }.onSuccess {
-            log.i { "realtime party=${partyId.shortId()} state=connected" }
-            _uiState.value = _uiState.value.copy(connection = PartyConnectionState.connected, errorMessage = null)
-            refresh()
-        }
-    }
-
-    private suspend fun closeChannel() {
-        channelSubscribed = false
-        WatchPartySync.detach()
-        collector?.cancel(); collector = null
-        refreshJob?.cancel(); refreshJob = null
-        // Leaving a channel means sending over the socket that has just failed, so this is bounded
-        // for the same reason the subscription is: `leave()` runs through here from a button press,
-        // and a party that cannot be left is worse than one that cannot be joined.
-        channel?.let {
-            runCatching { withTimeout(WatchPartyChannelCloseTimeoutMs) { ZSupabaseProvider.client.realtime.removeChannel(it) } }
-        }
-        channel = null
+        updateHealth(PartyHealthEvent.PollingChanged(running = false))
+        WatchPartyDiagnostics.poll(_uiState.value.party?.id, running = false, api = "idle")
     }
 
     private suspend fun partyCall(name: String, params: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit): Result<Unit> = call {
@@ -817,16 +794,23 @@ object WatchPartyRepository {
             return Result.failure(IllegalStateException("Nuvio Z session unavailable"))
         }
         var result = runCatching { block() }
-        if (result.isFailure && profileId != null) {
+        if (profileId != null && result.exceptionOrNull()?.let(::shouldReexchangeZSession) == true) {
             // A rejected Z token is the expected failure once one expires; the official session is
             // still live, so re-exchanging is the recovery. Retried once, so a real server error is
             // reported rather than looped on. Party control actions are latency-sensitive, which is
             // why this recovers in place instead of surfacing a reconnect to the user.
-            ZSessionBridge.invalidate()
-            if (ZSessionBridge.ensureSession(profileId)) result = runCatching { block() }
+            if (ZSessionBridge.reexchange(profileId)) result = runCatching { block() }
         }
-        return result.onSuccess { _uiState.value = _uiState.value.copy(isWorking = false) }
+        return result.onSuccess {
+            updateHealth(PartyHealthEvent.DurableSucceeded(currentEpochMs()))
+            _uiState.value = _uiState.value.copy(isWorking = false)
+        }
             .onFailure {
+                val now = currentEpochMs()
+                updateHealth(
+                    if (it is PostgrestRestException) PartyHealthEvent.DurableRejected(now)
+                    else PartyHealthEvent.DurableFailed(now),
+                )
                 // Until now a rejected RPC only ever reached the lobby's error line, which the
                 // player never shows - so a party that quietly stopped working looked like a party
                 // that was working.

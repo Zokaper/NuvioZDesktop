@@ -82,7 +82,6 @@ data class PlayerLaunch(
 object PlayerLaunchStore {
     private var nextLaunchId = 1L
     private val launches = mutableMapOf<Long, PlayerLaunch>()
-    private var retainedPartyLaunch: Pair<PartyPlayerLaunchKey, PlayerLaunch>? = null
 
     fun put(launch: PlayerLaunch): Long {
         val launchId = nextLaunchId++
@@ -96,28 +95,9 @@ object PlayerLaunchStore {
         launches.remove(launchId)
     }
 
-    /**
-     * Keeps only the resolved media launch for the currently authoritative party source.
-     *
-     * This is process-local and is never serialized. It deliberately retains no player/controller:
-     * PlayerRoute still owns and tears down the native engine. The cache merely avoids selecting or
-     * resolving the same source again when a member steps into the durable lobby and comes back.
-     */
-    fun retainPartyLaunch(key: PartyPlayerLaunchKey, launch: PlayerLaunch) {
-        retainedPartyLaunch = key to launch
-    }
-
-    fun reusablePartyLaunch(key: PartyPlayerLaunchKey): PlayerLaunch? =
-        retainedPartyLaunch?.takeIf { it.first == key }?.second
-
-    fun invalidateRetainedPartyLaunchUnless(key: PartyPlayerLaunchKey?) {
-        if (key == null || retainedPartyLaunch?.first != key) retainedPartyLaunch = null
-    }
-
     fun clear() {
         nextLaunchId = 1L
         launches.clear()
-        retainedPartyLaunch = null
     }
 }
 

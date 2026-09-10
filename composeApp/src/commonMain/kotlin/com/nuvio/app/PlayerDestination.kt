@@ -22,9 +22,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.features.playback.PlaybackLoadingController
-import com.nuvio.app.features.player.PartyPlayerLaunchKey
 import com.nuvio.app.features.streams.StreamsRepository
 import com.nuvio.app.features.watchparty.WatchPartyRepository
+import com.nuvio.app.features.watchparty.PartySourceRealizer
+import com.nuvio.app.features.watchparty.partySourceKey
 import com.nuvio.app.features.watchparty.matchesPlayback
 import org.jetbrains.compose.resources.stringResource
 import nuvio.composeapp.generated.resources.Res
@@ -57,24 +58,13 @@ internal fun PlayerDestination(
     }
     val partyUi by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
     val retainedPartyKey = partyUi.party?.let { party ->
-        val descriptor = party.sourceFingerprint
-        if (
-            descriptor != null &&
-            descriptor == launch.partySourceDescriptor &&
-            party.matchesPlayback(launch.parentMetaId, launch.videoId)
-        ) {
-            PartyPlayerLaunchKey(
-                partyId = party.id,
-                contentGeneration = party.contentGeneration,
-                sourceGeneration = party.sourceGeneration,
-                descriptor = descriptor,
-            )
-        } else {
-            null
+        party.partySourceKey()?.takeIf { key ->
+            key.descriptor == launch.partySourceDescriptor &&
+                party.matchesPlayback(launch.parentMetaId, launch.videoId)
         }
     }
     LaunchedEffect(route.launchId, retainedPartyKey) {
-        retainedPartyKey?.let { PlayerLaunchStore.retainPartyLaunch(it, launch) }
+        retainedPartyKey?.let { PartySourceRealizer.retain(it, launch) }
     }
     var requestedPartyLobbyId by remember { mutableStateOf<String?>(null) }
     val onBack = rememberGuardedPlayerPopBackStack(

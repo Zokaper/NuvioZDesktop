@@ -19,6 +19,8 @@ import com.nuvio.app.features.player.PlayerEngineController
 import com.nuvio.app.features.player.PlayerExitDiagnostics
 import com.nuvio.app.features.player.PlayerPlaybackSnapshot
 import com.nuvio.app.features.player.PlayerPartyMember
+import com.nuvio.app.features.player.PlayerPartyInviteTarget
+import com.nuvio.app.features.player.PartyRoomViewState
 import com.nuvio.app.features.player.PlayerOpeningFact
 import com.nuvio.app.features.player.PlayerResizeMode
 import com.nuvio.app.features.player.SUBTITLE_DELAY_MAX_MS
@@ -1722,17 +1724,7 @@ internal fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
         append(',')
         appendJsonField("partyBannerText", partyBannerText)
         append(',')
-        appendJsonField("partyPanelVisible", partyPanelVisible)
-        append(',')
-        appendJsonField("partyControlModeLabel", partyControlModeLabel)
-        append(',')
-        appendJsonField("partyReadySummary", partyReadySummary)
-        append(',')
-        appendJsonField("partyTransportEnabled", partyTransportEnabled)
-        append(',')
-        appendJsonField("partyIsHost", partyIsHost)
-        append(',')
-        appendJsonArrayField("partyMembers", partyMembers) { appendPartyMemberJson(it) }
+        appendPartyRoomJson(partyRoom)
         append(',')
         appendJsonField("presenceJoinPolicyVisible", presenceJoinPolicyVisible)
         append(',')
@@ -1971,6 +1963,52 @@ private fun StringBuilder.appendPartyMemberJson(item: PlayerPartyMember) {
     appendJsonField("avatarUrl", item.avatarUrl.orEmpty())
     append(',')
     appendJsonField("connected", item.connected)
+    append('}')
+}
+
+private fun StringBuilder.appendPartyInviteTargetJson(item: PlayerPartyInviteTarget) {
+    append('{')
+    appendJsonField("index", item.index)
+    append(',')
+    appendJsonField("name", item.name)
+    append(',')
+    appendJsonField("avatarUrl", item.avatarUrl.orEmpty())
+    append('}')
+}
+
+private fun StringBuilder.appendPartyRoomJson(room: PartyRoomViewState) {
+    append("\"partyRoom\":{")
+    appendJsonField("available", room.available)
+    append(',')
+    appendJsonField("open", room.open)
+    append(',')
+    appendJsonField("contentTitle", room.contentTitle)
+    append(',')
+    appendJsonField("contentDetail", room.contentDetail)
+    append(',')
+    appendJsonField("sourceLabel", room.sourceLabel)
+    append(',')
+    appendJsonField("healthLabel", room.healthLabel)
+    append(',')
+    appendJsonField("syncLabel", room.syncLabel)
+    append(',')
+    appendJsonField("controlModeLabel", room.controlModeLabel)
+    append(',')
+    appendJsonField("readySummary", room.readySummary)
+    append(',')
+    appendJsonField("transportEnabled", room.transportEnabled)
+    append(',')
+    appendJsonField("isHost", room.isHost)
+    append(',')
+    appendJsonField("waitForEveryone", room.waitForEveryone)
+    append(',')
+    appendJsonField("inviteCode", room.inviteCode)
+    append(',')
+    appendJsonField("errorMessage", room.errorMessage)
+    append(',')
+    appendJsonArrayField("members", room.members) { appendPartyMemberJson(it) }
+    append(',')
+    appendJsonArrayField("inviteTargets", room.inviteTargets) { appendPartyInviteTargetJson(it) }
     append('}')
 }
 

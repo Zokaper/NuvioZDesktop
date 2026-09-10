@@ -4,8 +4,19 @@ import co.touchlab.kermit.Logger
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
+import com.nuvio.app.features.playback.PlaybackSelectionContext
+import com.nuvio.app.features.playback.PlaybackSourceCandidate
+import com.nuvio.app.features.watchparty.PartyRealizationDecision
+import com.nuvio.app.features.watchparty.PartySourceHandoff
+import com.nuvio.app.features.watchparty.decidePartyRealization
+import com.nuvio.app.features.watchparty.decidePartySourceHandoff
+import com.nuvio.app.features.watchparty.tierPartyPlaybackSources
+import com.nuvio.app.features.watchparty.PartyExactMatchTiers
+import com.nuvio.app.features.watchparty.PartySourceRealizer
+import com.nuvio.app.features.watchparty.partySourceKey
 import com.nuvio.app.features.watchparty.DriftCorrectionKind
 import com.nuvio.app.features.watchparty.DriftTracker
 import com.nuvio.app.features.watchparty.PartyCommand
@@ -13,17 +24,21 @@ import com.nuvio.app.features.watchparty.PartyCommandKind
 import com.nuvio.app.features.watchparty.PartyConnectionState
 import com.nuvio.app.features.watchparty.PartyHoldReason
 import com.nuvio.app.features.watchparty.PartyPlaybackGate
+import com.nuvio.app.features.watchparty.PartyPlaybackTelemetry
+import com.nuvio.app.features.watchparty.PartyPresentationProjector
 import com.nuvio.app.features.watchparty.PartyTick
 import com.nuvio.app.features.watchparty.SourceResolutionState
 import com.nuvio.app.features.watchparty.PartySourceMatch
 import com.nuvio.app.features.watchparty.StallHoldBudget
 import com.nuvio.app.features.watchparty.WatchPartyControlMode
-import com.nuvio.app.features.watchparty.WatchPartyHostGraceMs
+import com.nuvio.app.features.watchparty.WatchPartyDiagnostics
 import com.nuvio.app.features.watchparty.WatchPartyIdleTickIntervalMs
 import com.nuvio.app.features.watchparty.WatchPartyPausedAlignToleranceMs
 import com.nuvio.app.features.watchparty.WatchPartyRepository
+import com.nuvio.app.features.watchparty.WatchPartySessionCoordinator
 import com.nuvio.app.features.watchparty.WatchPartySeekLandingPollMs
 import com.nuvio.app.features.watchparty.WatchPartySnapshotIntervalMs
+import com.nuvio.app.features.watchparty.WatchPartyStallWatchPollMs
 import com.nuvio.app.features.watchparty.WatchPartyStatusSettleMs
 import com.nuvio.app.features.watchparty.WatchPartyState
 import com.nuvio.app.features.watchparty.WatchPartyStatus
@@ -32,19 +47,22 @@ import com.nuvio.app.features.watchparty.WatchPartyTickIntervalMs
 import com.nuvio.app.features.watchparty.arePartyDurationsCompatible
 import com.nuvio.app.features.watchparty.currentEpochMs
 import com.nuvio.app.features.watchparty.expectedPartyPositionMs
+import com.nuvio.app.features.watchparty.actorDisplayName
 import com.nuvio.app.features.watchparty.matchesPlayback
+import com.nuvio.app.features.watchparty.memberMayControl
+import com.nuvio.app.features.watchparty.partyActorNotice
 import com.nuvio.app.features.watchparty.PartySourceMatchTier
 import com.nuvio.app.features.watchparty.partySourceMatchTier
 import com.nuvio.app.features.watchparty.partyBarrierPlan
 import com.nuvio.app.features.watchparty.partyFallbackDriftCorrection
 import com.nuvio.app.features.watchparty.partyMembersAwaitingSource
 import com.nuvio.app.features.watchparty.partyPlaybackGate
+import com.nuvio.app.features.watchparty.resolvePartyStartupHold
+import com.nuvio.app.features.watchparty.partyGenerationKey
 import com.nuvio.app.features.watchparty.partySeekPlan
 import com.nuvio.app.features.watchparty.pendingPartySeek
 import com.nuvio.app.features.watchparty.shortId
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
@@ -93,11 +111,16 @@ private val partyLog = Logger.withTag("WatchPartyPlayer")
 /**
  * Identifies one stretch of shared playback.
  *
- * Content generation is part of it because advancing an episode returns the party to a lobby: the
- * start gate has to close again for the new content rather than stay open because the previous one
- * played.
+ * The whole authority tuple, because every part of it ends a stretch. Advancing an episode returns
+ * the party to a lobby, so the start gate has to close again for the new content rather than stay
+ * open because the previous one played. A source change is the same event for a different reason:
+ * everybody is realizing something new and resumes together once they have it. And a host transfer
+ * advances the epoch, after which commands, ticks and telemetry from the old authority are no
+ * longer this stretch's. Omitting the last two is what let a source switch leave every party
+ * effect running against the source it replaced.
  */
-private fun WatchPartyState.generationKey(): String = "$id:$contentGeneration"
+private fun WatchPartyState.generationKey(): String =
+    "$id:$contentGeneration:$sourceGeneration:$authorityEpoch"
 
 /**
  * A position and the instant it was actually read.
@@ -207,6 +230,13 @@ internal fun PlayerScreenRuntime.rememberWatchPartyStatus(): WatchPartyPlayerSta
     val partyUi by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
     val syncState by WatchPartySync.state.collectAsStateWithLifecycle()
     val party = partyUi.party?.takeIf { it.matchesPlayback(parentMetaId, playbackSession.videoId) }
+    val presentation = PartyPresentationProjector.project(
+        party = party,
+        selfProfileId = partyUi.activeProfileId,
+        health = partyUi.health,
+        realtime = syncState,
+        partyNowMs = WatchPartySync.partyNowMs(),
+    )
     return WatchPartyPlayerStatus(
         gate = partyPlaybackGate(
             party = party,
@@ -215,16 +245,16 @@ internal fun PlayerScreenRuntime.rememberWatchPartyStatus(): WatchPartyPlayerSta
             hostBufferingReleased = false,
         ),
         isHost = party != null && party.hostProfileId == partyUi.activeProfileId,
-        syncDegraded = party != null && partyUi.connection != PartyConnectionState.connected,
+        syncDegraded = party != null && presentation.connection != PartyConnectionState.connected,
         // The timeline says this seconds before the database row does, and "Host is buffering" is
         // the banner a guest is staring at while it waits.
         hostBuffering = party != null &&
             party.hostProfileId != partyUi.activeProfileId &&
-            syncState.tickStatus == WatchPartyStatus.buffering,
+            presentation.freshHostStatus == WatchPartyStatus.buffering,
         // The gate reads the database row, which is up to five seconds behind. Without this a guest
         // that the timeline has already started plays on under a banner still telling them to wait
         // for the host - which is the feature reporting itself broken while it works.
-        timelinePlaying = syncState.tickStatus == WatchPartyStatus.playing,
+        timelinePlaying = presentation.freshHostStatus == WatchPartyStatus.playing,
         // A player standing still while the party watches on has to say why, or it reads as broken.
         //
         // Deliberately the refusal and not the duration comparison. Two releases of the same film
@@ -266,6 +296,27 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
         hostStartReleased = generationKey != null && partyStartReleasedKey == generationKey,
         hostBufferingReleased = false,
     )
+
+    // What the party is doing to this player, for the startup watchdog and for the log.
+    //
+    // Recomputed on every composition rather than in a `LaunchedEffect`, because the watchdog polls
+    // it once a second from a coroutine that is not keyed on any of these inputs: a value that
+    // updated a frame late would charge the source a second of hold it was in.
+    val startupHold = resolvePartyStartupHold(
+        inMatchingParty = matchingParty != null,
+        gate = gate,
+        holdingForBarrier = partyHoldingForBarrier,
+        partyWantsPlayback = shouldPlay,
+    )
+    SideEffect { partyStartupHold = startupHold }
+    LaunchedEffect(generationKey, startupHold) {
+        if (generationKey == null) return@LaunchedEffect
+        partyLog.i {
+            "hold $generationKey role=${if (isHost) "host" else "guest"} held=${startupHold.isHeld} " +
+                "reason=${startupHold.reason} gateReason=${startupHold.gateReason} " +
+                "shouldPlay=$shouldPlay barrier=$partyHoldingForBarrier"
+        }
+    }
 
     // A party that is held but does not match this playback is silent by design and indistinguishable
     // from no party at all - which is exactly the shape of "Watch Together did nothing". Logged once
@@ -312,14 +363,14 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
                     PartySourceMatch.alternate
                 }
             }
-            WatchPartyRepository.updateReady(
+            WatchPartySessionCoordinator.reportReadiness(
                 SourceResolutionState.ready,
                 playbackSnapshot.durationMs,
                 sourceGeneration = matchingParty?.sourceGeneration,
                 sourceMatch = match,
             )
         } else {
-            WatchPartyRepository.updateReady(
+            WatchPartySessionCoordinator.reportReadiness(
                 SourceResolutionState.resolving,
                 sourceGeneration = matchingParty?.sourceGeneration,
             )
@@ -397,28 +448,31 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
         }
     }
 
-    // The durable heartbeat: the liveness stamp and the anchor a client falls back to when the
-    // socket is down. Five seconds is right for that job and always was; what was wrong was it
-    // being the *only* thing carrying position.
-    LaunchedEffect(generationKey) {
-        if (generationKey == null) return@LaunchedEffect
-        while (true) {
-            val live = WatchPartyRepository.uiState.value.party
-            if (live == null || live.status == WatchPartyStatus.ended) break
-            val snapshot = playbackSnapshot
-            val sample = samplePlaybackPosition()
-            WatchPartyRepository.heartbeat(
+    // Composition supplies fresh telemetry; the process-scoped repository poll owns liveness and
+    // durable publication. Disposing this effect can no longer silently stop the heartbeat.
+    LaunchedEffect(
+        generationKey,
+        playbackSnapshot.positionMs,
+        playbackSnapshot.durationMs,
+        playbackSnapshot.playbackSpeed,
+        playbackSnapshot.isPlaying,
+        playbackSnapshot.isLoading,
+        shouldPlay,
+        partyHoldingForBarrier,
+    ) {
+        val generation = matchingParty?.partyGenerationKey() ?: return@LaunchedEffect
+        val snapshot = playbackSnapshot
+        val sample = samplePlaybackPosition()
+        WatchPartySessionCoordinator.reportPlaybackTelemetry(
+            PartyPlaybackTelemetry(
+                generation = generation,
                 positionMs = sample.positionMs,
+                capturedAtMs = sample.atEpochMs,
                 durationMs = snapshot.durationMs,
-                speed = snapshot.playbackSpeed,
-                // Derived here, from the snapshot this pass just read, and deliberately not from
-                // the composable-level value: this loop is keyed only on the generation, so a value
-                // computed in the composition that launched it is captured once and never updated.
+                playbackSpeed = snapshot.playbackSpeed,
                 status = partyStatusFor(snapshot, shouldPlay, partyHoldingForBarrier),
-                positionCapturedAtMs = sample.atEpochMs,
-            )
-            delay(WatchPartySnapshotIntervalMs)
-        }
+            ),
+        )
     }
 
     /**
@@ -517,12 +571,24 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
 
     // Wait for everyone: a guest that stalls used to be left behind and then dragged back by a seek,
     // which on a torrent or debrid source is most of what a party feels like.
+    //
+    // Read on a clock rather than collected from the transport's state, because the edge that
+    // matters most here is not a message. A guest recovering sends one status - the one that starts
+    // the settle - and then has nothing more to say; the release is [WatchPartyStallRecoverySettleMs]
+    // of silence later. Collecting messages, the host therefore learned it could start again only at
+    // the guest's next liveness ping, and the 2026-09-10 run reported exactly that as the party
+    // staying paused until somebody pressed play.
     LaunchedEffect(generationKey, isHost) {
         if (generationKey == null || !isHost) return@LaunchedEffect
-        WatchPartySync.state
-            .map { it.holdingProfiles }
-            .distinctUntilChanged()
-            .collect { holding -> reactToStalledGuests(holding) }
+        var reactedTo: List<String>? = null
+        while (true) {
+            val holding = WatchPartySync.refreshStallWatch()
+            if (holding != reactedTo) {
+                reactedTo = holding
+                reactToStalledGuests(holding)
+            }
+            delay(WatchPartyStallWatchPollMs)
+        }
     }
 
     /**
@@ -622,21 +688,117 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
         }
     }
 
-    LaunchedEffect(matchingParty?.hostProfileId, matchingParty?.members) {
-        val state = matchingParty ?: return@LaunchedEffect
-        val hostConnected = state.members.firstOrNull { it.profileId == state.hostProfileId }?.connected != false
-        if (hostConnected || state.hostProfileId == partyUi.activeProfileId) return@LaunchedEffect
-        // The server refuses the claim until its own fifteen-second grace has run, and every refusal
-        // lands in the party error banner. Waiting the grace out locally first means the claim is
-        // attempted once, when it can actually succeed, instead of being rejected on every snapshot.
-        delay(WatchPartyHostGraceMs)
-        val current = WatchPartyRepository.uiState.value.party ?: return@LaunchedEffect
-        val stillGone = current.members.firstOrNull { it.profileId == current.hostProfileId }?.connected == false
-        if (stillGone && current.hostProfileId != partyUi.activeProfileId) {
-            partyLog.w { "host ${current.hostProfileId.shortId()} gone past grace, claiming" }
-            WatchPartyRepository.claimHostAfterGrace()
+    // The party's source moved, and this player adopts it without going anywhere.
+    //
+    // Everything about this is in-route by construction: the catalogue is the player's own sources
+    // panel repository, the swap is the same `switchToSource` an in-player pick uses, and the old
+    // source keeps playing the whole time. No navigation, no route replacement, no controller or
+    // HWND teardown - which is the difference between an active source switch and the destructive
+    // lobby round trip it replaces.
+    val partyHandoff = decidePartySourceHandoff(
+        party = matchingParty,
+        localDescriptor = activePartySourceDescriptor,
+        handledSourceGeneration = partyHandledSourceGeneration,
+    )
+    val partySourceCatalogue by PlayerStreamsRepository.sourceState.collectAsStateWithLifecycle()
+    LaunchedEffect(partyHandoff) {
+        val adopt = partyHandoff as? PartySourceHandoff.Adopt ?: run {
+            // Nothing to adopt: either the party has no authoritative source yet, or this player is
+            // already playing it. Recording the generation settles the decision without reporting
+            // preparation nobody is doing. It also means a guest who deliberately picked an
+            // alternate under host-only control is left on it rather than pulled back.
+            matchingParty?.let { partyHandledSourceGeneration = it.sourceGeneration }
+            return@LaunchedEffect
+        }
+        partySourceHandoffInFlight = true
+        partyLog.i { "source handoff begin generation=${adopt.sourceGeneration}" }
+        WatchPartySessionCoordinator.reportReadiness(
+            SourceResolutionState.fetching,
+            sourceGeneration = adopt.sourceGeneration,
+        )
+        PlayerStreamsRepository.loadSources(
+            type = contentType ?: parentMetaType,
+            videoId = activeVideoId ?: playbackSession.videoId,
+            season = activeSeasonNumber,
+            episode = activeEpisodeNumber,
+        )
+    }
+
+    LaunchedEffect(partyHandoff, partySourceCatalogue) {
+        val adopt = partyHandoff as? PartySourceHandoff.Adopt ?: return@LaunchedEffect
+        if (!partySourceHandoffInFlight) return@LaunchedEffect
+        val candidates = partySourceCatalogue.groups.flatMapIndexed { addonOrder, group ->
+            group.streams.map { stream ->
+                PlaybackSourceCandidate(stream = stream, addonOrder = addonOrder)
+            }
+        }
+        val decision = decidePartyRealization(
+            catalogueSettled = !partySourceCatalogue.isAnyLoading &&
+                (candidates.isNotEmpty() || partySourceCatalogue.emptyStateReason != null),
+            tiered = tierPartyPlaybackSources(
+                host = adopt.target,
+                candidates = candidates,
+                normalOrder = emptyList(),
+                selection = PlaybackSelectionContext(
+                    isEpisode = activeSeasonNumber != null && activeEpisodeNumber != null,
+                    allowTorrentSources = true,
+                ),
+            ),
+        )
+        when (decision) {
+            PartyRealizationDecision.Wait -> return@LaunchedEffect
+            PartyRealizationDecision.FallbackRequired -> {
+                // The old source keeps playing. A member who cannot realize the party's new pick is
+                // out of sync, not stranded, and the generation is never silently rolled back to
+                // the one they can play - the party moved, and only the party can move it again.
+                partySourceHandoffInFlight = false
+                partyHandledSourceGeneration = adopt.sourceGeneration
+                partyLog.w { "source handoff unavailable generation=${adopt.sourceGeneration}" }
+                WatchPartySessionCoordinator.reportReadiness(
+                    SourceResolutionState.choosing_fallback,
+                    sourceGeneration = adopt.sourceGeneration,
+                )
+            }
+            is PartyRealizationDecision.Resolve -> {
+                val winner = decision.candidates.firstOrNull() ?: return@LaunchedEffect
+                partySourceHandoffInFlight = false
+                partyHandledSourceGeneration = adopt.sourceGeneration
+                // Published before the swap, not after: this is the generation the member is now
+                // preparing, and the host's wait gate reads it while the new source opens.
+                WatchPartySessionCoordinator.reportReadiness(
+                    SourceResolutionState.resolving,
+                    sourceGeneration = adopt.sourceGeneration,
+                )
+                partyLog.i { "source handoff adopt generation=${adopt.sourceGeneration}" }
+                // Not `switchToUserSelectedSource`: nobody here picked anything, and refunding the
+                // credential budget for a source the party chose would hand an automatic retry a
+                // fresh budget on every generation.
+                switchToSource(winner.stream)
+            }
         }
     }
+
+    // An active player *is* this authority's automatic launch, so it spends that claim.
+    //
+    // Without this a member who adopted a source change in place, and then deliberately backed out
+    // to the lobby, would be thrown straight back into the player by the lobby's start effect: the
+    // claim for the new generation was never spent by anybody, because nobody navigated to make it.
+    // Spending it here is the same statement the lobby's own hand-off makes, from the one place
+    // that knows the player is already playing the party's release.
+    LaunchedEffect(matchingParty?.partySourceKey(), activePartySourceDescriptor) {
+        val key = matchingParty?.partySourceKey() ?: return@LaunchedEffect
+        val local = activePartySourceDescriptor ?: return@LaunchedEffect
+        if (partySourceMatchTier(key.descriptor, local) !in PartyExactMatchTiers) return@LaunchedEffect
+        if (PartySourceRealizer.claimAutomaticLaunch(key)) {
+            partyLog.i { "automatic launch claim spent by active player generation=${key.sourceGeneration}" }
+        }
+    }
+
+    // Host transfer used to be decided twice: once by `party_transfer_stale_host`, which the
+    // backend already runs from the heartbeat trigger, and once here by a local grace-and-claim
+    // race against it - with a different candidate window, so the two could disagree about who the
+    // host now is. Stage 5 left the server rule as the only one. This client learns the new host
+    // from the state broadcast like every other authority change.
 }
 
 /**
@@ -662,9 +824,20 @@ private suspend fun awaitPartyInstant(atPartyMs: Long) {
  * code agreeing.
  */
 private suspend fun PlayerScreenRuntime.executePartyBarrier(command: PartyCommand) {
-    val controller = playerController ?: return
+    val partyId = WatchPartyRepository.uiState.value.party?.id
+    // Announced from here because this is the one place every accepted command passes through,
+    // whoever issued it and whichever plane it arrived on - and it is announced before the plan is
+    // built, so the viewer is told who moved the party at the same moment the party moves.
+    announcePartyActor(command)
+    val controller = playerController ?: run {
+        WatchPartyDiagnostics.applied(command, partyId, outcome = "skipped-no-controller")
+        return
+    }
     val durationMs = playbackSnapshot.durationMs
-    if (durationMs <= 0L) return
+    if (durationMs <= 0L) {
+        WatchPartyDiagnostics.applied(command, partyId, outcome = "skipped-no-duration")
+        return
+    }
     val sample = samplePlaybackPosition()
     // A client with no clock estimate cannot be scheduled against one, and pretending otherwise
     // would put the barrier hours away or hours past. Reading the command as though it had arrived
@@ -701,10 +874,12 @@ private suspend fun PlayerScreenRuntime.executePartyBarrier(command: PartyComman
                 controller.pause()
             }
             controller.setPlaybackSpeed(plan.speed)
+            WatchPartyDiagnostics.applied(command, partyId, outcome = "pause")
         }
         PartyCommandKind.speed -> {
             if (clockUsable) awaitPartyInstant(command.startAtPartyMs)
             controller.setPlaybackSpeed(plan.speed)
+            WatchPartyDiagnostics.applied(command, partyId, outcome = "speed")
         }
         PartyCommandKind.play, PartyCommandKind.seek -> {
             partyBarrierAtMs = command.startAtPartyMs
@@ -731,10 +906,12 @@ private suspend fun PlayerScreenRuntime.executePartyBarrier(command: PartyComman
             if (!plan.playAfter) {
                 shouldPlay = false
                 controller.pause()
+                WatchPartyDiagnostics.applied(command, partyId, outcome = "seek-paused")
                 return
             }
             shouldPlay = true
             controller.play()
+            WatchPartyDiagnostics.applied(command, partyId, outcome = "${command.kind}-playing")
         }
     }
 }
@@ -868,6 +1045,32 @@ private suspend fun PlayerScreenRuntime.followPartyTick(tick: PartyTick, tracker
 }
 
 /**
+ * Says who just moved the party, when it was not this viewer.
+ *
+ * Reads the actor off the server-authored command rather than assuming the host: a collaborative
+ * party has as many possible actors as it has members, and presenting all of them as the host is
+ * what the physical run reported. The name comes from the durable snapshot's social profile, which
+ * is the same source the member list and the lobby already read.
+ */
+private fun PlayerScreenRuntime.announcePartyActor(command: PartyCommand) {
+    val ui = WatchPartyRepository.uiState.value
+    val party = ui.party?.takeIf { it.matchesPlayback(parentMetaId, playbackSession.videoId) } ?: return
+    // A seek's direction is what makes "skipped back" and "skipped ahead" different sentences, and
+    // the only honest reading of it is against where this player is standing right now.
+    val seekingBackwards = command.kind == PartyCommandKind.seek &&
+        command.startPositionMs < samplePlaybackPosition().positionMs
+    val notice = partyActorNotice(
+        kind = command.kind,
+        actorProfileId = command.issuedByProfileId,
+        viewerProfileId = ui.activeProfileId,
+        actorName = party.actorDisplayName(command.issuedByProfileId),
+        seekingBackwards = seekingBackwards,
+    ) ?: return
+    partyLog.i { "actor ${command.kind} by=${command.issuedByProfileId.shortId()} notice=\"$notice\"" }
+    showGestureMessage(notice)
+}
+
+/**
  * Holds the party for a guest whose stream has stalled, and starts it again together.
  *
  * Off is a legitimate answer - one bad connection should not be able to stop the film for everyone -
@@ -892,11 +1095,14 @@ private suspend fun PlayerScreenRuntime.reactToStalledGuests(holding: List<Strin
         }
         partyStallHoldBudget = partyStallHoldBudget.record(partyNow)
         partyAutoPausedForGuests = holding
-        partyLog.i { "waiting for ${holding.joinToString { it.shortId() }}" }
+        // `intent=playing` is the fact the resume below depends on, so it is stated where the hold
+        // is taken rather than inferred later from a party status that now reads `paused`.
+        partyLog.i { "waiting for ${holding.joinToString { it.shortId() }} intent=playing" }
         pausePartyPlayback(samplePlaybackPosition().positionMs, source = "stall-guard")
     } else if (holding.isEmpty() && partyAutoPausedForGuests.isNotEmpty()) {
+        val waited = partyAutoPausedForGuests
         partyAutoPausedForGuests = emptyList()
-        partyLog.i { "stalled guests recovered, resuming" }
+        partyLog.i { "stalled guests recovered, resuming for=${waited.joinToString { it.shortId() }}" }
         startPartyPlayback(samplePlaybackPosition().positionMs, source = "stall-guard")
     }
 }
@@ -936,7 +1142,7 @@ internal fun PlayerScreenRuntime.partyOwnsTransport(): Boolean =
 private fun PlayerScreenRuntime.mayControlParty(): Boolean {
     val ui = WatchPartyRepository.uiState.value
     val party = ui.party?.takeIf { it.matchesPlayback(parentMetaId, playbackSession.videoId) } ?: return false
-    return party.hostProfileId == ui.activeProfileId || party.controlMode == WatchPartyControlMode.collaborative
+    return party.memberMayControl(ui.activeProfileId)
 }
 
 /**
@@ -952,47 +1158,70 @@ private fun PlayerScreenRuntime.refusePartyControl(): Boolean {
 }
 
 /** Starts, or restarts, shared playback at an instant everyone can reach. */
-private fun PlayerScreenRuntime.startPartyPlayback(positionMs: Long, source: String) {
-    scope.launch {
-        // Named for the same reason a pause is: a party that starts and stops has to say who kept
-        // asking it to, and "who" is the difference between a user, a readiness gate and a stall
-        // guard that has decided a guest has recovered.
-        partyLog.i { "play src=$source positionMs=$positionMs" }
-        // A stall recorded before the party was playing is not evidence about the party playing. The
-        // ten seconds a guest spends resolving its own source is reported as `buffering`, and left in
-        // the window it made the party's first act a play followed instantly by a hold.
-        WatchPartySync.resetStallWatch()
-        val startAt = WatchPartySync.partyNowMs() + WatchPartySync.barrierLeadMs()
-        val command = WatchPartySync.issueCommand(
-            kind = PartyCommandKind.play,
-            startPositionMs = positionMs,
-            startAtPartyMs = startAt,
-            playbackSpeed = playbackSnapshot.playbackSpeed,
-        )
-        // The durable record follows the barrier rather than carrying it. A late joiner reads this;
-        // nobody waits on it.
-        if (command != null) WatchPartyRepository.play(positionMs, command.commandId)
-    }
+private fun PlayerScreenRuntime.startPartyPlayback(
+    positionMs: Long,
+    source: String,
+    diagnosticInputId: String? = null,
+) {
+    val uiAtInput = WatchPartyRepository.uiState.value
+    val inputId = diagnosticInputId ?: WatchPartyDiagnostics.input(
+        kind = PartyCommandKind.play,
+        positionMs = positionMs,
+        party = uiAtInput.party,
+        actorProfileId = uiAtInput.activeProfileId,
+        source = source,
+    )
+    // Named for the same reason a pause is: a party that starts and stops has to say who kept
+    // asking it to, and "who" is the difference between a user, a readiness gate and a stall
+    // guard that has decided a guest has recovered.
+    partyLog.i { "play src=$source positionMs=$positionMs" }
+    // A stall recorded before the party was playing is not evidence about the party playing. The
+    // ten seconds a guest spends resolving its own source is reported as `buffering`, and left in
+    // the window it made the party's first act a play followed instantly by a hold.
+    WatchPartySync.resetStallWatch()
+    val startAt = WatchPartySync.partyNowMs() + WatchPartySync.barrierLeadMs()
+    // The durable submission *is* the barrier's route to every other member: no client may write
+    // the authority plane, so `party_submit_command_v2` is what validates this command and emits
+    // it. The local player has already moved by the time this runs.
+    WatchPartySync.issueCommand(
+        kind = PartyCommandKind.play,
+        startPositionMs = positionMs,
+        startAtPartyMs = startAt,
+        playbackSpeed = playbackSnapshot.playbackSpeed,
+        diagnosticInputId = inputId,
+        submitDurable = { accepted -> scope.launch { WatchPartyRepository.submitAccepted(accepted) } },
+    )
 }
 
-private fun PlayerScreenRuntime.pausePartyPlayback(positionMs: Long, source: String) {
-    scope.launch {
-        // Every pause names where it came from. A pause with no origin is exactly what the
-        // 2026-09-02 run could not explain: the host's player stopped, no command was issued, and
-        // the guests learned about it only from the timeline's status.
-        partyLog.i { "pause src=$source positionMs=$positionMs" }
-        val command = WatchPartySync.issueCommand(
-            kind = PartyCommandKind.pause,
-            startPositionMs = positionMs,
-            // Pause carries no lead. Pausing 60ms apart is worth far more than pausing together and
-            // late, and the alignment that follows is paid while paused. Stamped with now rather
-            // than zero so the `leadMs` beside it is a number a person can read - the plan is what
-            // ignores the instant for a pause, not the sender.
-            startAtPartyMs = WatchPartySync.partyNowMs(),
-            playbackSpeed = playbackSnapshot.playbackSpeed,
-        )
-        if (command != null) WatchPartyRepository.pause(positionMs, command.commandId)
-    }
+private fun PlayerScreenRuntime.pausePartyPlayback(
+    positionMs: Long,
+    source: String,
+    diagnosticInputId: String? = null,
+) {
+    val uiAtInput = WatchPartyRepository.uiState.value
+    val inputId = diagnosticInputId ?: WatchPartyDiagnostics.input(
+        kind = PartyCommandKind.pause,
+        positionMs = positionMs,
+        party = uiAtInput.party,
+        actorProfileId = uiAtInput.activeProfileId,
+        source = source,
+    )
+    // Every pause names where it came from. A pause with no origin is exactly what the
+    // 2026-09-02 run could not explain: the host's player stopped, no command was issued, and
+    // the guests learned about it only from the timeline's status.
+    partyLog.i { "pause src=$source positionMs=$positionMs" }
+    WatchPartySync.issueCommand(
+        kind = PartyCommandKind.pause,
+        startPositionMs = positionMs,
+        // Pause carries no lead. Pausing 60ms apart is worth far more than pausing together and
+        // late, and the alignment that follows is paid while paused. Stamped with now rather
+        // than zero so the `leadMs` beside it is a number a person can read - the plan is what
+        // ignores the instant for a pause, not the sender.
+        startAtPartyMs = WatchPartySync.partyNowMs(),
+        playbackSpeed = playbackSnapshot.playbackSpeed,
+        diagnosticInputId = inputId,
+        submitDurable = { accepted -> scope.launch { WatchPartyRepository.submitAccepted(accepted) } },
+    )
 }
 
 /**
@@ -1004,7 +1233,13 @@ private fun PlayerScreenRuntime.pausePartyPlayback(positionMs: Long, source: Str
  */
 internal fun PlayerScreenRuntime.submitPartyPlayPause(isPlaying: Boolean, positionMs: Long): Boolean {
     if (!partyOwnsTransport()) return false
-    if (!mayControlParty()) return refusePartyControl()
+    val uiAtInput = WatchPartyRepository.uiState.value
+    val kind = if (isPlaying) PartyCommandKind.play else PartyCommandKind.pause
+    val inputId = WatchPartyDiagnostics.input(kind, positionMs, uiAtInput.party, uiAtInput.activeProfileId, source = "user")
+    if (!mayControlParty()) {
+        WatchPartyDiagnostics.rejected(inputId, kind, uiAtInput.party, uiAtInput.activeProfileId, reason = "permission")
+        return refusePartyControl()
+    }
     val party = WatchPartyRepository.uiState.value.party ?: return true
     // Pressing play while the gate is still holding is the force start: the host has decided not to
     // wait, and the command that follows is what tells everyone else the film has begun.
@@ -1017,16 +1252,15 @@ internal fun PlayerScreenRuntime.submitPartyPlayPause(isPlaying: Boolean, positi
     // decision it did not take.
     partyAutoPausedForGuests = emptyList()
     if (isPlaying) {
-        startPartyPlayback(positionMs, source = "user")
+        startPartyPlayback(positionMs, source = "user", diagnosticInputId = inputId)
     } else {
-        pausePartyPlayback(positionMs, source = "user")
+        pausePartyPlayback(positionMs, source = "user", diagnosticInputId = inputId)
     }
     return true
 }
 
 internal fun PlayerScreenRuntime.submitPartySeek(positionMs: Long): Boolean {
     if (!partyOwnsTransport()) return false
-    if (!mayControlParty()) return refusePartyControl()
     // Scrubbing a paused party is how anybody finds a scene, and the barrier used to resume everyone
     // when it landed - so dragging the bar on a paused film started it again, on every member. The
     // seek carries what the party was doing, because a guest cannot tell a scrub-while-paused from a
@@ -1038,34 +1272,85 @@ internal fun PlayerScreenRuntime.submitPartySeek(positionMs: Long): Boolean {
     // last frame and stop. Bounded once, at the one place they all pass through.
     val durationMs = playbackSnapshot.durationMs
     val targetMs = if (durationMs > 0L) positionMs.coerceIn(0L, durationMs - 1L) else positionMs.coerceAtLeast(0L)
-    scope.launch {
-        val startAt = WatchPartySync.partyNowMs() + WatchPartySync.barrierLeadMs()
-        val command = WatchPartySync.issueCommand(
-            kind = PartyCommandKind.seek,
-            startPositionMs = targetMs,
-            startAtPartyMs = startAt,
-            playbackSpeed = playbackSnapshot.playbackSpeed,
-            playAfter = resumeAfter,
+    val uiAtInput = WatchPartyRepository.uiState.value
+    val inputId = WatchPartyDiagnostics.input(
+        PartyCommandKind.seek,
+        targetMs,
+        uiAtInput.party,
+        uiAtInput.activeProfileId,
+        source = "user",
+    )
+    if (!mayControlParty()) {
+        WatchPartyDiagnostics.rejected(
+            inputId,
+            PartyCommandKind.seek,
+            uiAtInput.party,
+            uiAtInput.activeProfileId,
+            reason = "permission",
         )
-        if (command != null) WatchPartyRepository.seek(targetMs, command.commandId)
+        return refusePartyControl()
     }
+    val startAt = WatchPartySync.partyNowMs() + WatchPartySync.barrierLeadMs()
+    WatchPartySync.issueCommand(
+        kind = PartyCommandKind.seek,
+        startPositionMs = targetMs,
+        startAtPartyMs = startAt,
+        playbackSpeed = playbackSnapshot.playbackSpeed,
+        playAfter = resumeAfter,
+        diagnosticInputId = inputId,
+        submitDurable = { accepted -> scope.launch { WatchPartyRepository.submitAccepted(accepted) } },
+    )
     return true
 }
 
 internal fun PlayerScreenRuntime.submitPartySpeed(speed: Float): Boolean {
     if (!partyOwnsTransport()) return false
-    if (!mayControlParty()) return refusePartyControl()
-    scope.launch {
-        val startAt = WatchPartySync.partyNowMs() + WatchPartySync.barrierLeadMs()
-        val command = WatchPartySync.issueCommand(
-            kind = PartyCommandKind.speed,
-            startPositionMs = samplePlaybackPosition().positionMs,
-            startAtPartyMs = startAt,
-            playbackSpeed = speed,
+    val uiAtInput = WatchPartyRepository.uiState.value
+    val inputId = WatchPartyDiagnostics.input(
+        PartyCommandKind.speed,
+        playbackSnapshot.positionMs,
+        uiAtInput.party,
+        uiAtInput.activeProfileId,
+        source = "user",
+    )
+    if (!mayControlParty()) {
+        WatchPartyDiagnostics.rejected(
+            inputId,
+            PartyCommandKind.speed,
+            uiAtInput.party,
+            uiAtInput.activeProfileId,
+            reason = "permission",
         )
-        if (command != null) WatchPartyRepository.setSpeed(speed, command.commandId)
+        return refusePartyControl()
     }
+    val startAt = WatchPartySync.partyNowMs() + WatchPartySync.barrierLeadMs()
+    val positionMs = samplePlaybackPosition().positionMs
+    WatchPartySync.issueCommand(
+        kind = PartyCommandKind.speed,
+        startPositionMs = positionMs,
+        startAtPartyMs = startAt,
+        playbackSpeed = speed,
+        diagnosticInputId = inputId,
+        submitDurable = { accepted -> scope.launch { WatchPartyRepository.submitAccepted(accepted) } },
+    )
     return true
+}
+
+/**
+ * The party's side of a startup abandonment, for the one log line that ends a play.
+ *
+ * `none` when this player is not in a party, which is what makes the line safe to read: a source
+ * abandoned with `party=none` really was abandoned on its own account.
+ */
+internal fun PlayerScreenRuntime.partyAbandonContext(): String {
+    val ui = WatchPartyRepository.uiState.value
+    val party = ui.party?.takeIf { it.matchesPlayback(parentMetaId, playbackSession.videoId) } ?: return "none"
+    val hold = partyStartupHold
+    return "role=${if (party.hostProfileId == ui.activeProfileId) "host" else "guest"}" +
+        ",status=${party.status},stage=${party.stage}" +
+        ",held=${hold.isHeld},holdReason=${hold.reason},gateReason=${hold.gateReason}" +
+        ",shouldPlay=$shouldPlay,barrier=$partyHoldingForBarrier" +
+        ",gen=${party.contentGeneration}/${party.sourceGeneration},epoch=${party.authorityEpoch}"
 }
 
 /**

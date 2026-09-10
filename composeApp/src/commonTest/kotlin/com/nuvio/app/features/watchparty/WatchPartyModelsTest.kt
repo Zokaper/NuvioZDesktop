@@ -2,6 +2,7 @@ package com.nuvio.app.features.watchparty
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -120,5 +121,86 @@ class WatchPartyModelsTest {
         val host = SourceFingerprint(infoHash="ABC",fileIndex=1,releaseFingerprint="x")
         val same = SourceFingerprint(infoHash="abc",fileIndex=1,releaseFingerprint="different")
         assertEquals(10_000, sourceFingerprintMatchScore(host,same))
+    }
+
+    // ------------------------------------------------------------------- Watch Together holds
+    //
+    // The physically reproduced abandonment: a guest held at the readiness gate, then paused by the
+    // host before its first frame settled, was declared stalled twelve seconds later and dumped
+    // back to the source list. The startup watchdog could not tell "no progress" from "no progress
+    // asked for", and this is the fact it was missing.
+
+    @Test
+    fun `a play outside a party is never held`() {
+        val hold = resolvePartyStartupHold(
+            inMatchingParty = false,
+            gate = PartyPlaybackGate(allowPlayback = false, reason = PartyHoldReason.WAITING_FOR_HOST),
+            holdingForBarrier = true,
+            partyWantsPlayback = false,
+        )
+        assertEquals(PartyStartupHold.none, hold)
+    }
+
+    @Test
+    fun `the readiness gate is a hold, and it says which gate`() {
+        val hold = resolvePartyStartupHold(
+            inMatchingParty = true,
+            gate = PartyPlaybackGate(
+                allowPlayback = false,
+                reason = PartyHoldReason.WAITING_FOR_PARTICIPANTS,
+                waitingOn = 2,
+            ),
+            holdingForBarrier = false,
+            partyWantsPlayback = false,
+        )
+        assertEquals(true, hold.isHeld)
+        assertEquals(PartyStartupHoldReason.GATE, hold.reason)
+        assertEquals(PartyHoldReason.WAITING_FOR_PARTICIPANTS, hold.gateReason)
+    }
+
+    @Test
+    fun `a barrier park is a hold`() {
+        val hold = resolvePartyStartupHold(
+            inMatchingParty = true,
+            gate = PartyPlaybackGate(allowPlayback = true, reason = PartyHoldReason.NONE),
+            holdingForBarrier = true,
+            partyWantsPlayback = false,
+        )
+        assertEquals(true, hold.isHeld)
+        assertEquals(PartyStartupHoldReason.BARRIER, hold.reason)
+    }
+
+    @Test
+    fun `a party that has paused this player is holding it`() {
+        // The 7257ms case. The gate has released, no barrier is running, and the player is still
+        // deliberately motionless because the host pressed pause.
+        val hold = resolvePartyStartupHold(
+            inMatchingParty = true,
+            gate = PartyPlaybackGate(allowPlayback = true, reason = PartyHoldReason.NONE),
+            holdingForBarrier = false,
+            partyWantsPlayback = false,
+        )
+        assertEquals(true, hold.isHeld)
+        assertEquals(PartyStartupHoldReason.PAUSED, hold.reason)
+    }
+
+    @Test
+    fun `a party that has asked for playback is not holding anything`() {
+        // The invariant that keeps the watchdog useful: told to play and not playing is exactly the
+        // source it exists to catch, and being in a party must not excuse it.
+        val hold = resolvePartyStartupHold(
+            inMatchingParty = true,
+            gate = PartyPlaybackGate(allowPlayback = true, reason = PartyHoldReason.NONE),
+            holdingForBarrier = false,
+            partyWantsPlayback = true,
+        )
+        assertEquals(PartyStartupHold.none, hold)
+    }
+
+    @Test
+    fun `the two live planes are distinct topics`() {
+        assertEquals("party:abc", watchPartyAuthorityTopic("abc"))
+        assertEquals("party_peer:abc", watchPartyPeerTopic("abc"))
+        assertNotEquals(watchPartyAuthorityTopic("abc"), watchPartyPeerTopic("abc"))
     }
 }

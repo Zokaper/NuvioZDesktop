@@ -149,13 +149,24 @@
 
       <aside class="party-panel" id="partyPanel" aria-label="Watch Together participants" aria-hidden="true">
         <div class="party-panel-header">
-          <strong>Watch Together</strong>
-          <span id="partyControlMode"></span>
+          <div><strong>Party Room</strong><span id="partyControlMode"></span></div>
+          <button type="button" class="party-room-close" data-command="partyRoomClose" aria-label="Close Party Room">&times;</button>
+        </div>
+        <div class="party-room-content">
+          <strong id="partyContentTitle"></strong><span id="partyContentDetail"></span><span id="partySourceLabel"></span>
+        </div>
+        <div class="party-room-health">
+          <span id="partyHealthLabel"></span><span id="partySyncLabel"></span>
+          <span id="partyErrorMessage" class="party-room-error"></span>
         </div>
         <div class="party-member-list" id="partyMemberList"></div>
+        <div class="party-room-invites" id="partyInviteSection">
+          <div class="party-room-section-title">Invite friends</div>
+          <div id="partyInviteTargets"></div><div id="partyInviteCode"></div>
+        </div>
         <div class="party-panel-actions">
-          <button type="button" data-command="partyLobby">Open lobby</button>
           <button type="button" id="partyControlModeButton" data-command="partyToggleControlMode">Change controls</button>
+          <button type="button" id="partyWaitButton" data-command="partyToggleWait">Wait for everyone</button>
           <button type="button" data-command="partyLeave">Leave</button>
           <button type="button" id="partyEndButton" class="danger" data-command="partyEnd">End party</button>
         </div>

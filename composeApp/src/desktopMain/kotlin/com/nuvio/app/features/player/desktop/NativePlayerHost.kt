@@ -491,7 +491,10 @@ internal class NativePlayerHost : Canvas() {
     }
 
     override fun removeNotify() {
-        isVisible = false
+        // Do not mutate Swing visibility here. Compose may already have disposed its SkiaLayer when
+        // AWT removes this interop child; setVisible(false) invalidates SwingInteropViewGroup and
+        // asks that disposed layer to render. The explicit player-exit path conceals the native
+        // surface earlier, and AWT removal itself makes this peer non-displayable.
         PlayerExitDiagnostics.recordT3("NativePlayerHost.removeNotify")
         onDisplayableChanged?.invoke(false)
         firstPaintNotified = false

@@ -67,7 +67,17 @@ const partyPanel = document.getElementById("partyPanel");
 const partyControlMode = document.getElementById("partyControlMode");
 const partyMemberList = document.getElementById("partyMemberList");
 const partyControlModeButton = document.getElementById("partyControlModeButton");
+const partyWaitButton = document.getElementById("partyWaitButton");
 const partyEndButton = document.getElementById("partyEndButton");
+const partyContentTitle = document.getElementById("partyContentTitle");
+const partyContentDetail = document.getElementById("partyContentDetail");
+const partySourceLabel = document.getElementById("partySourceLabel");
+const partyHealthLabel = document.getElementById("partyHealthLabel");
+const partySyncLabel = document.getElementById("partySyncLabel");
+const partyErrorMessage = document.getElementById("partyErrorMessage");
+const partyInviteSection = document.getElementById("partyInviteSection");
+const partyInviteTargets = document.getElementById("partyInviteTargets");
+const partyInviteCode = document.getElementById("partyInviteCode");
 const socialNotification = document.getElementById("socialNotification");
 const socialNotificationActor = document.getElementById("socialNotificationActor");
 const socialNotificationMessage = document.getElementById("socialNotificationMessage");
@@ -310,12 +320,12 @@ let state = {
   openingReleaseName: "",
   partyBannerVisible: false,
   partyBannerText: "",
-  partyPanelVisible: false,
-  partyControlModeLabel: "",
-  partyReadySummary: "",
-  partyTransportEnabled: true,
-  partyIsHost: false,
-  partyMembers: [],
+  partyRoom: {
+    available: false, open: false, contentTitle: "", contentDetail: "", sourceLabel: "",
+    healthLabel: "", syncLabel: "", controlModeLabel: "", readySummary: "",
+    transportEnabled: true, isHost: false, waitForEveryone: true, inviteCode: "",
+    errorMessage: "", members: [], inviteTargets: [],
+  },
   socialNotificationVisible: false,
   socialNotificationActor: "",
   socialNotificationMessage: "",
@@ -584,6 +594,50 @@ const showCommandToast = command => {
   if (seekLabel) {
     showPlayerToast(seekLabel);
   }
+};
+
+/**
+ * Whether this member is in a party that does not let it move playback.
+ *
+ * True for a guest under host-only controls, false for everyone else and for anybody not in a
+ * party at all - `available` is what keeps ordinary playback untouched by this.
+ */
+const isPartyTransportLocked = () =>
+  Boolean(state.partyRoom && state.partyRoom.available && !state.partyRoom.transportEnabled);
+
+/**
+ * Refuses a playback control this member is not allowed to use, and says so.
+ *
+ * The lock used to be *styling*: `party-transport-locked` dimmed the buttons and `.disabled` was
+ * set on two of them. Styling is not a rule, and playback on this page is not reached through
+ * buttons alone - the surface click, the spacebar, the keyboard toggle, the arrow-key fine seek,
+ * the scroll-over-scrubber seek and the mouse thumb buttons all reach it directly. So a guest
+ * under host-only controls pressed play, watched its own player answer, and was dragged back by
+ * the party a second later. Every one of those entry points asks this first now, and the refusal
+ * happens before any local state moves - `requestPlaybackState` flips `state.isPlaying`
+ * optimistically for 1500ms, which is precisely the "responds locally for about a second" that was
+ * reported.
+ *
+ * Volume, fullscreen, subtitles, audio and the chrome are deliberately not covered: they are this
+ * viewer's own, not the party's.
+ */
+const partyTransportCommands = new Set([
+  "toggle",
+  "seekBack",
+  "seekForward",
+  "keyboardSeekBack",
+  "keyboardSeekForward",
+  "keyboardToggle",
+  "keyboardFineSeekForward",
+  "keyboardFineSeekBack",
+  "speed",
+  "nextEpisode",
+]);
+
+const refusePartyTransport = () => {
+  if (!isPartyTransportLocked()) return false;
+  showPlayerToast("The host controls playback");
+  return true;
 };
 
 const queueSettingToast = command => {
@@ -2060,18 +2114,27 @@ const renderPartyBanner = suppress => {
 const PARTY_STATUS_TONES = ["ready", "working", "failed", "offline", "paused", "buffering", "reconnecting"];
 
 const renderPartyPanel = suppress => {
-  const show = Boolean(!suppress && state.partyPanelVisible && Array.isArray(state.partyMembers));
+  const room = state.partyRoom || {};
+  const show = Boolean(!suppress && room.available && room.open && Array.isArray(room.members));
   partyPanel.classList.toggle("visible", show);
   partyPanel.setAttribute("aria-hidden", show ? "false" : "true");
   // The header used to carry only the control mode. Mid-film the number that matters is how many
   // people actually have a stream open, so that leads and the mode follows it.
-  const summary = String(state.partyReadySummary || "").trim();
-  const mode = String(state.partyControlModeLabel || "").trim();
+  const summary = String(room.readySummary || "").trim();
+  const mode = String(room.controlModeLabel || "").trim();
   partyControlMode.textContent = summary && mode ? `${summary} · ${mode}` : (summary || mode);
+  setText(partyContentTitle, room.contentTitle);
+  setText(partyContentDetail, room.contentDetail);
+  setText(partySourceLabel, room.sourceLabel);
+  setText(partyHealthLabel, room.healthLabel);
+  setText(partySyncLabel, room.syncLabel);
+  setText(partyErrorMessage, room.errorMessage);
   partyMemberList.replaceChildren();
-  partyControlModeButton.hidden = !state.partyIsHost;
-  partyEndButton.hidden = !state.partyIsHost;
-  (state.partyMembers || []).forEach(member => {
+  partyControlModeButton.hidden = !room.isHost;
+  partyWaitButton.hidden = !room.isHost;
+  partyWaitButton.textContent = room.waitForEveryone ? "Wait for everyone: On" : "Wait for everyone: Off";
+  partyEndButton.hidden = !room.isHost;
+  (room.members || []).forEach(member => {
     const row = document.createElement("div");
     row.className = `party-member${member.connected ? "" : " offline"}`;
     const avatar = document.createElement("span");
@@ -2106,6 +2169,20 @@ const renderPartyPanel = suppress => {
     row.append(avatar, copy);
     partyMemberList.append(row);
   });
+  partyInviteTargets.replaceChildren();
+  (room.inviteTargets || []).forEach(target => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = `Invite ${target.name || "friend"}`;
+    button.addEventListener("click", event => {
+      event.stopPropagation();
+      send("partyInvite", Number(target.index));
+    });
+    partyInviteTargets.append(button);
+  });
+  const inviteCode = String(room.inviteCode || "").trim();
+  partyInviteCode.textContent = inviteCode ? `Invite code: ${inviteCode}` : "";
+  partyInviteSection.hidden = !(room.isHost && ((room.inviteTargets || []).length || inviteCode));
 };
 
 const renderSocialNotification = suppress => {
@@ -2408,7 +2485,7 @@ const renderChrome = () => {
   renderPartyPanel(showOpening || showError || Boolean(activeModal));
   renderSocialNotification(showOpening || showError || Boolean(activeModal));
   renderPartyEndedChoice(showOpening || showError || Boolean(activeModal));
-  const partyTransportLocked = state.partyPanelVisible && !state.partyTransportEnabled;
+  const partyTransportLocked = Boolean(state.partyRoom?.available && !state.partyRoom?.transportEnabled);
   root.classList.toggle("party-transport-locked", partyTransportLocked);
   [toggle, seek, ...document.querySelectorAll('[data-command="seekBack"], [data-command="seekForward"], [data-command="speed"], [data-command="nextEpisode"]')]
     .filter(Boolean)
@@ -2500,6 +2577,7 @@ const isTextEntryTarget = target => {
 };
 
 const requestPlaybackState = (eventType, revealControls) => {
+  if (refusePartyTransport()) return;
   const currentIsPlaying = pendingIsPlaying === null
     ? Boolean(state.isPlaying)
     : pendingIsPlaying;
@@ -2635,6 +2713,7 @@ let fineSeekAccumulatedMs = 0;
 let fineSeekDirection = null;
 
 const fineSeek = isForward => {
+  if (refusePartyTransport()) return;
   const direction = isForward ? "forward" : "backward";
   const stepMs = isForward ? 1000 : -1000;
 
@@ -2729,10 +2808,12 @@ const clearPressedButton = () => {
 
 document.addEventListener("pointerdown", event => {
   if (event.button === 3) {
+    if (refusePartyTransport()) return;
     showCommandToast("seekBack");
     send("seekBack", 0);
     return;
   } else if (event.button === 4) {
+    if (refusePartyTransport()) return;
     showCommandToast("seekForward");
     send("seekForward", 0);
     return;
@@ -2815,6 +2896,7 @@ document.querySelectorAll("[data-command]").forEach(button => {
     }
     noteChromeActivity(true);
     const command = button.dataset.command;
+    if (partyTransportCommands.has(command) && refusePartyTransport()) return;
     if (command === "toggle") {
       if (event.detail !== 0 && suppressNextPointerToggleClick) {
         suppressNextPointerToggleClick = false;
@@ -3089,11 +3171,16 @@ p2pConsentEnableButton.addEventListener("click", event => {
 
 skipPrompt.addEventListener("click", event => {
   event.stopPropagation();
+  // A skip is a seek wearing a different label, and this button is not one of the ones the lock
+  // dims - it appears and disappears on its own schedule.
+  if (refusePartyTransport()) return;
   send("skipInterval", 0);
 });
 
 nextEpisodeCard.addEventListener("click", event => {
   event.stopPropagation();
+  // The `nextEpisode` button is locked and this card does the same thing without being one.
+  if (refusePartyTransport()) return;
   if (state.nextEpisodePlayable) {
     send("playNextEpisode", 0);
   }
@@ -3105,6 +3192,7 @@ nextEpisodeDismiss.addEventListener("click", event => {
 });
 
 seek.addEventListener("input", () => {
+  if (refusePartyTransport()) return;
   noteChromeActivity();
   isScrubbing = true;
   scrubPositionMs = rangePositionMs();
@@ -3113,6 +3201,7 @@ seek.addEventListener("input", () => {
 });
 
 seek.addEventListener("change", () => {
+  if (refusePartyTransport()) return;
   noteChromeActivity();
   scrubPositionMs = rangePositionMs();
   isScrubbing = false;
@@ -3318,6 +3407,10 @@ let spaceHoldTimer = null;
 let isSpaceBoosting = false;
 
 const startSpeedBoost = () => {
+  // Speed is a party command like any other, and this is the one way to reach it that never
+  // touches the speed button - hold right-click, or hold space - so it inherits none of the
+  // button's disabling.
+  if (refusePartyTransport()) return;
   if (isSpeedBoosting) return;
   isSpeedBoosting = true;
   if (preSpeedBoostRate == null) {
@@ -3568,6 +3661,9 @@ document.addEventListener("keydown", event => {
   event.preventDefault();
   focusShortcutRoot();
   noteChromeActivity();
+  // Before the volume and toggle branches below, because the keyboard reaches playback without
+  // ever touching a button and so inherits none of the disabling that the chrome gets.
+  if (partyTransportCommands.has(command) && refusePartyTransport()) return;
   if (command === "keyboardVolumeUp") {
     sendKeyboardVolume(1);
     return;

@@ -11,10 +11,12 @@ import com.nuvio.app.features.streams.PartyStreamLaunchContext
 import com.nuvio.app.features.streams.PartyStreamLaunchPurpose
 import com.nuvio.app.features.streams.StreamLaunch
 import com.nuvio.app.features.streams.StreamLaunchStore
-import com.nuvio.app.features.player.PartyPlayerLaunchKey
 import com.nuvio.app.features.player.PlayerLaunchStore
 import com.nuvio.app.features.watchparty.WatchPartyLobbyScreen
+import com.nuvio.app.features.watchparty.partySourceKey
+import com.nuvio.app.features.watchparty.PartySourceRealizer
 import com.nuvio.app.features.watchparty.WatchPartyRepository
+import com.nuvio.app.features.watchparty.WatchPartySessionCoordinator
 import com.nuvio.app.features.watchparty.WatchPartyState
 import com.nuvio.app.features.watchparty.WatchPartyStatus
 import com.nuvio.app.navigation.DetailRoute
@@ -58,7 +60,7 @@ internal fun WatchPartyLobbyDestination(
     }
 
     LaunchedEffect(state.party?.id) {
-        if (state.party != null) WatchPartyRepository.setClientLocation("lobby")
+        state.party?.id?.let(WatchPartySessionCoordinator::enterLobby)
     }
 
     fun prepareSource(party: WatchPartyState, purpose: PartyStreamLaunchPurpose) {
@@ -67,14 +69,9 @@ internal fun WatchPartyLobbyDestination(
         }
         if (purpose == PartyStreamLaunchPurpose.RESOLVE_PLAYBACK && target == null) return
 
-        if (target != null) {
-            val key = PartyPlayerLaunchKey(
-                partyId = party.id,
-                contentGeneration = party.contentGeneration,
-                sourceGeneration = party.sourceGeneration,
-                descriptor = target,
-            )
-            PlayerLaunchStore.reusablePartyLaunch(key)?.let { retained ->
+        val key = target?.let { party.partySourceKey() }
+        if (key != null) {
+            PartySourceRealizer.reusable(key)?.let { retained ->
                 val playerLaunch = retained.copy(
                     initialPositionMs = WatchPartyRepository.authoritativePositionMs(party),
                     initialProgressFraction = null,
@@ -106,6 +103,7 @@ internal fun WatchPartyLobbyDestination(
                 partyContext = PartyStreamLaunchContext(
                     partyId = party.id,
                     isHost = party.hostProfileId == state.activeProfileId,
+                    contentGeneration = party.contentGeneration,
                     sourceGeneration = party.sourceGeneration,
                     targetFingerprint = target,
                     purpose = purpose,

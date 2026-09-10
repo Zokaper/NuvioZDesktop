@@ -1,6 +1,7 @@
 package com.nuvio.app.features.player.desktop
 
 import com.nuvio.app.features.player.PlayerControlsState
+import com.nuvio.app.features.player.PartyRoomViewState
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.float
 import kotlinx.serialization.json.boolean
@@ -14,7 +15,7 @@ class NativePlayerControlsJsonTest {
     fun partyNotificationAndSessionPolicyStateReachTheNativeControlsPayload() {
         val payload = Json.parseToJsonElement(
             PlayerControlsState(
-                partyPanelVisible = true,
+                partyRoom = PartyRoomViewState(available = true, open = true, contentTitle = "Movie"),
                 partyEndedChoiceVisible = true,
                 socialNotificationVisible = true,
                 presenceJoinPolicyVisible = true,
@@ -22,7 +23,10 @@ class NativePlayerControlsJsonTest {
             ).toControlsJson(isFullscreen = false),
         ).jsonObject
 
-        assertEquals(true, payload.getValue("partyPanelVisible").jsonPrimitive.boolean)
+        val room = payload.getValue("partyRoom").jsonObject
+        assertEquals(true, room.getValue("available").jsonPrimitive.boolean)
+        assertEquals(true, room.getValue("open").jsonPrimitive.boolean)
+        assertEquals("Movie", room.getValue("contentTitle").jsonPrimitive.content)
         assertEquals(true, payload.getValue("partyEndedChoiceVisible").jsonPrimitive.boolean)
         assertEquals(true, payload.getValue("socialNotificationVisible").jsonPrimitive.boolean)
         assertEquals(true, payload.getValue("presenceJoinPolicyVisible").jsonPrimitive.boolean)

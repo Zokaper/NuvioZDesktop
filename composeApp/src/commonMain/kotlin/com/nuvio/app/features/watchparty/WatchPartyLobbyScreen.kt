@@ -171,13 +171,13 @@ fun WatchPartyLobbyScreen(
      * right: the host publishes on Start, the snapshot reaches everyone, and everyone leaves for
      * the player off the same signal.
      *
-     * `claimSourceLaunch` is the latch, and it lives in the repository rather than here: this
+     * `PartySourceRealizer.claimAutomaticLaunch` is process-owned rather than held here: this
      * composition is destroyed when the player goes on top of it, so a latch held locally would be
      * gone by the time somebody backed out - and this effect would throw them straight back in.
      */
-    LaunchedEffect(state.party?.sourceGeneration, state.party?.sourceFingerprint) {
+    LaunchedEffect(state.party?.partySourceKey()) {
         val party = state.party ?: return@LaunchedEffect
-        if (party.sourceFingerprint == null) return@LaunchedEffect
+        val key = party.partySourceKey() ?: return@LaunchedEffect
         if (
             party.effectiveStage() !in setOf(
                 WatchPartyStage.resolving_sources,
@@ -185,13 +185,20 @@ fun WatchPartyLobbyScreen(
                 WatchPartyStage.playing,
             )
         ) return@LaunchedEffect
-        if (!WatchPartyRepository.claimSourceLaunch(party.sourceGeneration)) return@LaunchedEffect
+        if (!PartySourceRealizer.claimAutomaticLaunch(key)) return@LaunchedEffect
         lobbyLog.i { "launching party=${party.id.shortId()} generation=${party.sourceGeneration}" }
         onChooseSource(party, PartyStreamLaunchPurpose.RESOLVE_PLAYBACK)
     }
 
     val party = state.party
     val isHost = party != null && party.hostProfileId == state.activeProfileId
+    val presentation = PartyPresentationProjector.project(
+        party = party,
+        selfProfileId = state.activeProfileId,
+        health = state.health,
+        realtime = syncState,
+        partyNowMs = WatchPartySync.partyNowMs(),
+    )
     val requestDeparture = { showDepartureDialog = true }
 
     // Hosted outside a Surface, so LocalContentColor falls back to black. Without this the whole
@@ -315,7 +322,7 @@ fun WatchPartyLobbyScreen(
                                 PartyStatusBand(
                                     party = party,
                                     inviteCode = state.inviteCode,
-                                    connection = state.connection,
+                                    connection = presentation.connection,
                                     sync = syncState,
                                     hostSourceStaged = state.stagedHostSource != null,
                                 )
@@ -324,6 +331,7 @@ fun WatchPartyLobbyScreen(
                                 PartyParticipants(
                                     party = party,
                                     viewerProfileId = state.activeProfileId,
+                                    presentation = presentation,
                                     invitableFriends = invitableFriends,
                                     onInvite = onInvite,
                                 )
@@ -372,7 +380,7 @@ fun WatchPartyLobbyScreen(
                         PartyHero(
                             party = party,
                             inviteCode = state.inviteCode,
-                            connection = state.connection,
+                            connection = presentation.connection,
                             sync = syncState,
                             wide = wide,
                             hostSourceStaged = state.stagedHostSource != null,
@@ -389,6 +397,7 @@ fun WatchPartyLobbyScreen(
                         PartyParticipants(
                             party = party,
                             viewerProfileId = state.activeProfileId,
+                            presentation = presentation,
                             invitableFriends = invitableFriends,
                             onInvite = onInvite,
                         )
@@ -1025,6 +1034,7 @@ private fun PartyStageRail(stage: WatchPartyStage) {
 private fun PartyParticipants(
     party: WatchPartyState,
     viewerProfileId: String?,
+    presentation: PartyPresentationState,
     invitableFriends: List<SocialProfileSummary>,
     onInvite: (String) -> Unit,
 ) {
@@ -1052,6 +1062,7 @@ private fun PartyParticipants(
                     member = member,
                     isHost = member.profileId == party.hostProfileId,
                     viewerProfileId = viewerProfileId,
+                    status = presentation.members.getValue(member.profileId),
                 )
             }
             if (invitableFriends.isNotEmpty() && party.members.size < WatchPartyMaxParticipants) {
@@ -1102,8 +1113,8 @@ private fun PartyParticipantTile(
     member: WatchPartyParticipant,
     isHost: Boolean,
     viewerProfileId: String?,
+    status: PartyMemberPresentation,
 ) {
-    val status = member.derivedStatus()
     val tone = status.tone
     val offline = tone == PartyReadyTone.Offline
     Surface(

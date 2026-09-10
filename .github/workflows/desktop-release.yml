@@ -360,9 +360,12 @@ jobs:
           NUVIO_MACOS_NOTARY_KEYCHAIN_PROFILE: ''
           NUVIO_MACOS_SIGNING_IDENTITY: ''
         run: |
+          tasks=(:composeApp:packageReleaseDmg)
+          if [[ -n "${SENTRY_AUTH_TOKEN}" ]]; then
+            tasks+=(:desktopSentry:sentryUploadSourceBundleJava)
+          fi
           ./gradlew \
-            :composeApp:packageReleaseDmg \
-            :desktopSentry:sentryUploadSourceBundleJava \
+            "${tasks[@]}" \
             "-Pnuvio.macos.arch=${MACOS_ARCH}" \
             -Pcompose.desktop.packaging.checkJdkVendor=false \
             --no-configuration-cache \
@@ -390,7 +393,7 @@ jobs:
           MACOS_ARCH: ${{ matrix.arch }}
           RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
         run: |
-          dmg_path="composeApp/build/compose/release-dmgs/Nuvio-macOS-${MACOS_ARCH}-${RELEASE_VERSION}.dmg"
+          dmg_path="composeApp/build/compose/release-dmgs/Nuvio-Z-macOS-${MACOS_ARCH}-${RELEASE_VERSION}.dmg"
           if [[ ! -f "${dmg_path}" ]]; then
             echo "Expected DMG was not produced: ${dmg_path}" >&2
             exit 1

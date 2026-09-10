@@ -20,6 +20,7 @@ import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamsUiState
 import com.nuvio.app.features.tracking.TrackingMediaReference
 import com.nuvio.app.features.watched.WatchedUiState
+import com.nuvio.app.features.watchparty.PartyStartupHold
 import com.nuvio.app.features.watchparty.PendingPartySeek
 import com.nuvio.app.features.watchparty.StallHoldBudget
 import com.nuvio.app.features.watchparty.WatchPartyStatus
@@ -143,6 +144,8 @@ internal class PlayerScreenRuntime(
     var controlsVisible by mutableStateOf(false)
     var controlsActivityTick by mutableStateOf(0)
     var playerControlsLocked by mutableStateOf(false)
+    /** Player-owned presentation state; opening the room never changes route or party identity. */
+    var partyRoomOpen by mutableStateOf(false)
     var activeSourceUrl by mutableStateOf(sourceUrl)
     var activeSourceAudioUrl by mutableStateOf(sourceAudioUrl)
     var activeSourceHeaders by mutableStateOf(sanitizePlaybackHeaders(sourceHeaders))
@@ -347,6 +350,28 @@ internal class PlayerScreenRuntime(
      */
     var partyStartReleasedKey by mutableStateOf<String?>(null)
 
+    /**
+     * The party source generation this player has already acted on, adopted or already playing.
+     *
+     * Deliberately not cleared by a failed adoption. A source the party moved to and this client
+     * cannot realize stays failed for that generation: retrying it against a catalogue that has
+     * already answered is a loop, and the party is told `choosing_fallback` instead. The next real
+     * source change advances the generation and arms this again.
+     */
+    var partyHandledSourceGeneration by mutableStateOf<Int?>(null)
+
+    /** True while this player is realizing the party's new source with the old one still playing. */
+    var partySourceHandoffInFlight by mutableStateOf(false)
+
+    /**
+     * The party source generation this player has already published a source change for.
+     *
+     * A pick is one deliberate transition. Without this latch a recomposition, a retry, or a debrid
+     * re-resolution of the same pick would advance the generation again, and every other member
+     * would tear down a realization they had just finished building.
+     */
+    var partyPublishedSourceGeneration by mutableStateOf<Int?>(null)
+
     /** The party generation whose shared position has already replaced this profile's resume point. */
     var partyStartPositionAppliedKey by mutableStateOf<String?>(null)
 
@@ -375,6 +400,16 @@ internal class PlayerScreenRuntime(
      */
     var partyHoldingForBarrier by mutableStateOf(false)
 
+    /**
+     * Whether Watch Together is deliberately keeping this player still, and why.
+     *
+     * Published by `BindWatchPartyEffect` and read by the startup watchdog, which must not count
+     * held time towards a stall deadline. Physically reproduced: a guest held at the readiness gate
+     * and then paused by the host before its first frame settled was abandoned twelve seconds
+     * later, failed over and popped back to the source list, out of a party that was working.
+     */
+    var partyStartupHold by mutableStateOf(PartyStartupHold.none)
+
     /** The seek this client has issued and is waiting to see land, or null. Expires on its own. */
     var partyPendingSeek: PendingPartySeek? = null
 
@@ -397,9 +432,15 @@ internal class PlayerScreenRuntime(
     /**
      * The stalled guests this host paused the party for, empty when it did not.
      *
-     * Held so the resume is owned by the same rule that took the pause: without it, a host that
-     * paused for a stalled guest and then had them recover would either never start again or would
-     * start again over a pause the *user* had taken in the meantime.
+     * Non-empty *is* the retained playing intent, and that is the whole point of it. A stall hold
+     * stops the engine without the party ever having decided to stop watching, so the intent has to
+     * outlive the pause somewhere or the party needs a person to press play again to get out of a
+     * state nobody chose. Held here so the resume is owned by the same rule that took the pause:
+     * without it, a host that paused for a stalled guest and then had them recover would either
+     * never start again or would start again over a pause the *user* had taken in the meantime.
+     *
+     * Cleared by any user transport command, which is how the intent is revoked: a person who
+     * pauses during a hold has decided the party is stopped, and the guard must not undo that.
      */
     var partyAutoPausedForGuests: List<String> = emptyList()
 

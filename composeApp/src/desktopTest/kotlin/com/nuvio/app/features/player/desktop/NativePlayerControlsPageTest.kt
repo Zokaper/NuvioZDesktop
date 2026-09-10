@@ -67,8 +67,9 @@ class NativePlayerControlsPageTest {
         val script = resourceText("/player-ui/controls.js")
 
         listOf(
-            "partyLobby",
+            "partyRoomClose",
             "partyToggleControlMode",
+            "partyToggleWait",
             "partyLeave",
             "partyEnd",
             "partyEndContinue",
@@ -78,6 +79,8 @@ class NativePlayerControlsPageTest {
         ).forEach { command ->
             assertTrue(html.contains("data-command=\"$command\""), "missing native command $command")
         }
+        assertFalse(html.contains("data-command=\"partyLobby\""), "active playback must not navigate to the lobby")
+        assertTrue(script.contains("partyInvite"), "dynamic party invitations must reach Kotlin")
         listOf("socialNotificationAccept", "socialNotificationDecline", "socialNotificationJoin").forEach { command ->
             assertTrue(script.contains(command), "missing dynamic notification command $command")
         }

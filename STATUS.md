@@ -1,6 +1,450 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-08
+Last updated: 2026-09-10
+
+## Phase 4 Watch Together — closure status (2026-09-10)
+
+**Final status: DONE WITH NON-BLOCKING QA DEBT.** The architecture below (Stages 1–7 of
+`PLAN-watch-together-architecture.md`) is implemented, backend-deployed, and has now been
+exercised on two real desktop clients with a successful outcome for the core experience. The
+formal 21-scenario matrix in `PHASE-4-TWO-CLIENT-VERIFICATION.md` (invites, host transfer,
+reconnects, cross-addon/cross-debrid matching, etc.) has **not** been executed; only the five-item
+refinement retest in that file has a recorded physical result. Phase 5 has not started.
+
+Confirmed working on two real clients, real profiles, isolated data roots (2026-09-10, MSI
+`Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi`, SHA-256 `0469315D11CDA34E865E468F7C936A538B46DAC20D4275811841F0FA704C02BF`):
+realtime peer/server delivery with no "Live sync lost", host/guest playback sync (effectively
+frame-perfect in the observed run), pause/resume sync, seek sync, guest-ready-first barrier hold,
+host-ready-first barrier hold with automatic resume and no manual Play, host-only lock making every
+guest transport control inert while volume/fullscreen/subtitles/audio stay local, and the earlier
+false startup-stall/bounce-to-source-loading bug not recurring. See the "Result, 2026-09-10" note
+under the refinement retest in `PHASE-4-TWO-CLIENT-VERIFICATION.md` for the exact wording.
+
+**Known non-blocking bug — deferred, not fixed here.** Collaborative-control actor attribution:
+when collaborative controls are enabled and a guest (e.g. "Big Z") pauses, resumes, or seeks, the
+in-player indicator can still attribute the action to the host instead of naming the guest.
+Command authority and playback correctness are unaffected — this is presentation-only. Related
+caveat: a machine-generated barrier pause/resume may also read as human-attributed; distinguishing
+that properly needs additional command/wire semantics and is out of scope for Phase 4.
+
+**Future UX/performance polish — deferred, not started here.** The in-player Watch Together panel
+works but needs a later pass on (1) visual hierarchy/layout/readability/information density and
+(2) responsiveness — state-update latency, recomposition/update behavior, interaction feedback, and
+any unnecessary delay/jank. Not a Phase 4 blocker; do not redesign it as part of this closure.
+
+**Carried Phase 5 debt (already deployed, documented in full under the entry below):** the backend
+tolerates a missing `authority_epoch` on Realtime party broadcasts so an install between protocol
+v1 and v2 fails for a chosen reason and mobile's Phase 5 repointing isn't blocked on the epoch field
+landing first. Removal instructions are in `202609100001_release_liveness_authz_and_lifecycle.sql`
+and section 12 of `HANDOFF-phase-4-codex-2.md`.
+
+**Known unrelated flaky tests (not Phase 4 blockers):** `WatchedItemsStoreTest`,
+`DesktopDownloadQueueE2ETest`'s trickle/drop case, and
+`NativePlayerControllerTeardownTest.failedOrdinaryDisposeBlocksTerminalNavigation` — all fail only
+under machine load and pass run alone; unrelated to Watch Together.
+
+## Watch Together - the Realtime transport had never delivered anything (2026-09-10)
+
+The first physical two-client run produced two independently-proven failures. Both are fixed here;
+neither has been re-verified on hardware, and the physical gate is still open.
+
+### Bug A - no client broadcast has ever been delivered
+
+The logs said it plainly once somebody looked: both clients subscribed, both stayed
+`realtime=subscribed`, every send returned local success, durable polling succeeded continuously,
+and `WatchPartyTrace T3 RealtimeReceived` was **zero for the entire run** - and zero in every
+historical debugTools log beside it. `PartyRealtimeHealth` therefore never left
+`SubscribedUnverified`, `PartyPresentationProjector` correctly showed "Live sync lost", and the
+party ran entirely on five-second durable polling.
+
+The cause is a misunderstanding of what `realtime.messages` RLS is. **Supabase Realtime authorizes a
+private channel, not a message.** On join it asks the policies for a read capability and a write
+capability and caches both for the life of the socket; the write capability is decided by inserting
+a **stub row** - topic and extension set, `payload` NULL - inside a transaction it then rolls back.
+There is no per-broadcast payload hook. `nuvio_private_realtime_write` called
+`realtime_party_write_allowed(party, payload, extension)`, whose first payload test refuses an
+absent `sender_profile_id`, so it was asked about NULL and refused. Every authenticated member was
+granted read and refused write, permanently. A refused push is answered with nothing at all, and
+supabase-kt does not await an ack for `broadcast()`, so the client saw only successes.
+
+Proven live rather than by calling the helper: two authenticated members of a real party joined
+`party:<id>`, both joins replied `{"status":"ok"}`, and a push of the exact protocol-v2 tick
+payload - correct sender, correct generations, correct epoch, a payload the helper itself returns
+`true` for - reached nobody, not even the sender under `broadcast.self`. A payload-free capability
+policy delivered both frames to both sockets. A second push carrying *no* sender or generation
+fields at all was delivered just as readily: the payload is never consulted per message, so the
+"strict" checks were not protecting anything - they were only refusing the join probe.
+
+Since per-message sender binding does not exist at this layer, authority moved to the topic:
+
+- **`party:<id>` is the authority plane.** Members read it; **no client may write it**. The backend
+  authors everything on it - the existing `state` broadcasts, and now the accepted transport
+  command, which `party_submit_command_v2` emits from the row it just locked with the actor,
+  generations, epoch and committed sequence *it* knows, plus `origin=server`.
+- **`party_peer:<id>` is the peer plane.** Members read and write it: host position ticks, the clock
+  exchange, per-member telemetry, presence. Nothing on it may command the party, and
+  `partyMessageIsAdmissible` refuses a command arriving there before anything looks at it. Every
+  sender-sensitive message is still checked against the durable snapshot - a tick only from the host
+  the server named, a pong only from that host for an exchange this client started.
+
+This is strictly tighter than what was deployed, because clients could not write the party topic at
+all: a forged `state` payload - which a bare "make the policy payload-free" fix would newly have
+allowed - stays impossible. A guest cannot forge the host, a stale generation cannot become
+authoritative, a non-member reaches neither plane, and a host transfer bumps the epoch that the next
+authored command carries. The one thing deliberately not closed: a member can still misreport its
+own buffering state to the party, which costs a hold it did not need and nothing else.
+
+`WatchPartySync.issueCommand` now takes a required `submitDurable` lambda instead of broadcasting.
+The local directive still fires first, so the sender's own player never waits on the network; the
+durable submission is the command's only route to anybody else, and being a parameter is what stops
+a call site forgetting it - forgetting it used to cost a database row, and now costs every other
+member the command. `WatchPartyCommand` carries `start_at_party_ms` and `play_after` so the barrier
+survives the trip. `PartyRealtimeSendOutcome.Success` is renamed **`LocallyAccepted`**: it was never
+evidence of delivery, and naming it `Success` is what made a dead transport look healthy.
+
+### Bug B - a party hold was counted as a playback startup stall
+
+Also physically reproduced, and not authority churn, not a realizer restart, not a launch-claim
+failure: a guest's source loads slowly, the startup watchdog arms, Watch Together holds the guest at
+the readiness gate while it waits for the party, the host starts, and the host pauses again before
+the guest's first frame has settled. The guest sits deliberately paused at 7257ms. Its buffer stops
+advancing - a paused player has nothing to advance for - and twelve seconds later
+`PlaybackStartupWatchdog` reported `Stalled`, `onFatalPlaybackError` ran
+`failOverAfterPlaybackStarted()`, `signalFailoverRetry()`, `popBack()`, and the guest was dumped
+into source loading out of a party that was working.
+
+`PlaybackStartupSample.isHeld` **freezes** every deadline rather than exempting the source from any
+of them: `State.holdMs` accumulates held wall-clock and every comparison runs against
+`effectiveElapsedMs`. A hold that ends also rebases the stall deadline once, because a player parked
+for a minute has an empty pipeline to refill and handing it back whatever fraction of the deadline
+was left would abandon a source for the restart the party itself caused. A source that is genuinely
+dead after release still fails over. `isHeld` defaults to false, so non-party startup behaviour is
+unchanged - asserted, not assumed.
+
+The player publishes the hold through `resolvePartyStartupHold`, which names the mechanism doing the
+holding (gate, barrier, or a party pause) and carries the gate's own reason with it.
+
+### Logging hardening
+
+Two clients launched in the same second wrote into the **same log file**, and the whole physical run
+was interleaved with no way to attribute a line. Disk logs are now
+`nuvio-debug-<stamp>-p<pid>-<entropy>.log`, the instance tag rides **every** line rather than only
+the header, and the header names the appdata root as well. `PartyHealthState` transitions are logged
+as transitions - `realtime=X->Y api=X->Y capability=X->Y` with the event that caused them - because
+the run had `RealtimeSubscribed` in the log and "Live sync lost" on screen with nothing saying those
+were the same fact. A channel that is still `SubscribedUnverified` after 20s now says so once, and
+`PlaybackStartup` abandon diagnostics carry the party role, status, stage, hold reason, gate reason
+and generation tuple.
+
+### Verification
+
+- pgTAP **235/235** against a database reset from scratch, including 16 new assertions that
+  exercise the NULL-payload stub row the way a channel join does.
+- Backend migration `202609110001_realtime_capability_and_server_authored_commands.sql` **deployed**
+  to `pzbpghmmordvzcfbayoh`; live policies and the installed `party_submit_command_v2` read back
+  afterwards read-only and match.
+- Live two-plane probe on a real stack: 7/7 - both members join both planes, the peer plane carries
+  ticks and telemetry both ways, a forged command pushed at the authority plane reaches nobody, and
+  the server-authored command arrives with the server's sender and the committed tuple.
+- Pure suites **all 8 groups green (517 tests)**. Group 6 had been *silently failing to compile* at
+  HEAD - `PartySessionContracts.kt` was never added to it, so nine "passing" tests were nine
+  initialization errors. The transport's pure rules are now in `WatchPartySyncRules.kt` so the suite
+  compiles and executes them rather than reporting a green it had not earned.
+- Focused desktop party/player/playback tests **597/597**, and `:composeApp:compileKotlinDesktop`.
+
+**The physical gate has not passed.** Nothing here has been observed on two real clients; that run
+is the next step and Phase 5 has not started.
+
+## Watch Together deterministic architecture - desktop UltraReview fixes (2026-09-10)
+
+Two findings from the desktop UltraReview of PR #7, both closed.
+
+The reconnect loop could stop reconnecting for the life of the process. `openChannel` wraps the
+subscribe in `withTimeout`, and the `TimeoutCancellationException` that throws *is* a
+`CancellationException`, so `maintainChannel`'s `catch (c: CancellationException) { throw c }` sent
+it out through the `collectLatest` on `desiredAuthority` that drives `WatchPartySync` for the whole
+app. One subscribe that ran long took the authority collector with it, and every party after that
+one sat on the durable poll with nothing left to reopen a channel. The classification now lives in
+`partyChannelFailureIsScopeCancellation`, which reads a cancellation the loop caused itself as a
+failed attempt and only a cancellation it did not cause as the scope going away: a subscribe timeout
+takes the ordinary degraded/report/backoff/retry path, and genuine cancellation still propagates
+untouched. The shared reporting is one `reportOpenFailure`.
+
+`WatchPartyRepository.installSnapshot` no longer takes `reopenChannel`. Every caller that named it
+passed `false`, and the ones that took the default made a second `WatchPartySync.updateAuthority`
+call with the argument the method had already passed a few lines earlier - a no-op by that method's
+own equality checks, and a second place to have to keep right.
+
+`WatchPartyChannelReconnectTest` covers the regression with real casualties rather than hand-built
+stand-ins: a genuine `withTimeout` expiry, and a genuine cancellation observed by a child whose
+scope went away. Focused Watch Party desktop tests 150/150 and `:composeApp:compileKotlinDesktop`
+pass. No desktop UltraReview finding remains open. The physical matrix is untouched and still
+outstanding.
+
+## Watch Together deterministic architecture — Stage 7 partial (2026-09-09)
+
+The first deletions of Stage 7, limited to scaffolding that is provably dead or provably duplicated.
+
+`WatchPartyUiState` no longer carries `connection` or `connectionBannerMessage`. Both were copies of
+what `PartyPresentationProjector` produces, recomputed inside `updateHealth` and cached on the
+repository, which made the repository a second presentation authority for a fact it does not own -
+and one that could disagree with the screen beside it. The lobby already projects its own
+presentation and now reads the connection from it; `connectionBannerMessage` had no reader at all.
+
+`PartySessionShadowState` and the shadow comparison in `WatchPartySessionCoordinator` are gone. They
+existed to compare the Stage 1 reducer against the legacy repository snapshot during the switchover,
+and nothing has read them since. A comparison nobody looks at is not a safety net - it is a second
+answer with no arbiter.
+
+Verified by inspection as already complete, and needing no deletion: disposal-as-lobby (location is
+published from explicit session intents, and attachment loss publishes nothing), the destructive
+active-player lobby flow (Stage 3), the repository launch latch and route-owned resolution (Stage 4),
+and the duplicate client host claim (Stage 5).
+
+**Stage 7 remains open.** v2 contract removal is deliberately not started: mobile still calls the v2
+party RPCs against this backend, so removal waits on the Phase 5 repointing rather than on this
+stage. Stage 7's exit is the full physical matrix, which is outstanding along with the Stage 2, 3, 5
+and 6 physical gates.
+
+Focused party/player tests 289/289 and `:composeApp:compileKotlinDesktop` pass.
+
+## Watch Together deterministic architecture — Stage 6 automated checkpoint (2026-09-09)
+
+Active source switching is implemented in-route. A member picking a source from the player's own
+sources panel now moves the whole party: `shouldPublishPartySourceChange` gates it on the party
+playing this exact content, the member being permitted (host always, guest only while
+collaborative), and the pick not being the source the party is already on. The advance names the
+generation it expects, so two simultaneous picks produce one advance and one rejection, and a local
+latch stops a retry or a debrid re-resolution of the same pick from advancing it twice. A refused
+advance releases both latches and leaves the local swap standing as an alternate.
+
+Every other member adopts the new source without going anywhere. `decidePartySourceHandoff` returns
+`Adopt` only for a generation this player has not acted on and is not already playing; the player
+loads the catalogue through its own `PlayerStreamsRepository`, runs the Stage 4 strict matcher and
+settle decision over it, and hands off with the same `switchToSource` an in-player pick uses. The
+old source plays throughout, and the route, controller and HWND are untouched by construction. A
+member who cannot realize the party's new pick reports `choosing_fallback` and keeps playing what
+they have: the generation is never silently rolled back, and a failed adoption is remembered so it
+is not retried against a catalogue that has already answered.
+
+The player's party identity key was `"$id:$contentGeneration"` and is now the whole authority tuple.
+Omitting source generation and authority epoch is what would have left every party effect - gate,
+readiness, ticks, drift, telemetry - running against the source or the host it had just replaced. An
+active player also spends the automatic-launch claim for the authority it is playing, so a member who
+adopted a switch in place and then backed out to the lobby is not thrown straight back into it.
+
+Focused party/player tests pass 289/289 - the full blast radius of the change - and
+`:composeApp:compileKotlinDesktop` passes. Stage 6's exit gate is physical and outstanding: a
+two-client switch, exactly one generation advance, and failure/fallback/cancel/retry/stale behaviour
+on real clients.
+
+## Watch Together deterministic architecture — Stage 5 automated checkpoint (2026-09-09)
+
+Backend commit `b681c45` in `nuvio-z-backend` carries the minimum change the Stage 1-4 client
+evidence proved necessary, and nothing else. The party state broadcast now carries
+`authority_epoch` alongside the `source_generation` and `stage` that were already deployed; the
+member broadcast now fires on `client_location`, which was the one member field the presentation
+reads that nothing announced. Liveness has one owner per question: 15 seconds is host-transfer grace
+only, `party_heartbeat` marks a member offline at 20 to match `party_reap_stale`, and transfer picks
+a replacement from members live within that same 20-second window rather than any member seen in the
+last minute. `party_claim_or_transfer_host` stays as an RPC because mobile still calls it, but it now
+delegates to `party_transfer_stale_host` instead of deciding again with its own window.
+
+On the desktop client, `applyBroadcastState` is now the pure `applyPartyStateBroadcast`, which
+returns a typed outcome and treats an authority advance the way it already treated a generation
+move: as an invalidation to refresh through, never as a payload to apply. The local grace-and-claim
+host race is deleted - the client learns its new host from the broadcast like any other authority
+change - and `WatchPartyHostGraceMs` is documented as the backend's number, mirrored for description
+rather than applied.
+
+pgTAP passes 165/165 against a fresh local database including ten new Stage 5 assertions; focused
+party/player tests pass 280/280; `:composeApp:compileKotlinDesktop` passes. **The migration is not
+deployed.** `supabase db push` is the maintainer's to run against project `pzbpghmmordvzcfbayoh`;
+both directions are compatible, so client and backend may land in either order. Stage 5's
+two-client physical verification of transfer and location propagation is outstanding, as are the
+Stage 2 and Stage 3 physical gates.
+
+## Watch Together deterministic architecture — Stage 4 automated checkpoint (2026-09-09)
+
+Party source realization is now owned by a process-scoped `PartySourceRealizer` keyed on the exact
+authoritative identity `(partyId, contentGeneration, sourceGeneration, descriptor)`. It owns the
+work states (`Unresolved`/`Matching`/`Resolving`/`Ready`/`FallbackRequired`/`Failed`), the one-shot
+automatic-launch claim, and the sensitive resolved `PlayerLaunch`, of which only an opaque
+realization ID ever leaves the object. Every entry point is rejected unless it names the current
+authority, so a match or resolution that completes after the host changed the source cannot report
+into - or resolve for - the party as it now is.
+
+The three route-local owners this replaces are gone: `WatchPartyRepository`'s
+`launchedSourceGeneration` latch and `claimSourceLaunch()`, `PlayerLaunchStore`'s three party-launch
+retention methods, and the strict-match rule that existed only as a `remember` block inside
+`StreamDestination`. That rule is now the pure `tierPartyPlaybackSources` + `decidePartyRealization`
+pair, so the settle gate and the match are testable without a composition. `StreamDestination`
+reports `matching`/`resolving`/`fallbackRequired` and, through the single `giveUpToSourceList` choke
+point, `abandoned`; it no longer owns any of that state. `PartyStreamLaunchContext` carries the
+content generation so the route builds the same complete key the repository installs.
+
+Readiness is now derived from real work rather than from whichever screen is composed: the session
+coordinator publishes `fetching`/`resolving`/`choosing_fallback`/`failed`/`source_ready` from
+realizer transitions, each carrying its source generation. The realization is dropped on source or
+content generation advance, leave, end (including a remote end arriving by snapshot), profile
+change - now unconditionally, so a failed departure RPC cannot carry one profile's resolved media
+into another - and account wipe. Returning from the player to the lobby reuses the retained
+realization without a `StreamRoute` and cannot re-arm the automatic launch.
+
+Focused party/player suites pass 270/270, the mandatory Stage 4 full `:composeApp:desktopTest` gate
+passes 1,708/1,708 with zero failures, errors, or skips, and explicit `:composeApp:compileKotlinDesktop`
+passes. Stage 4 has no physical gate of its own; Stage 2
+and Stage 3 physical gates remain outstanding and unchanged.
+
+## Watch Together deterministic architecture — Stage 3 automated checkpoint (2026-09-09)
+
+Stage 3 active-player architecture is implemented and focused-green. `PlayerScreenRuntime` now
+owns `partyRoomOpen`; the Watch Together control toggles the native Party Room for an active party,
+and Back/Escape closes the room before any player exit. Opening/closing it performs no navigation,
+RPC, source/generation mutation, controller release, or HWND mutation. The former active-player
+`partyLobby -> requestBack()` command is removed.
+
+Kotlin sends one typed `PartyRoomViewState` containing projected participant status, live health
+and sync text, content/source details, invitations, control mode, wait setting, lifecycle actions,
+and recovery errors. JavaScript only renders it and emits typed actions. Existing-party invitation
+acceptance now resolves through the explicit `OpenPrePlaybackLobby` outcome, so same-content joins
+still release the current player and begin a fresh party-owned preparation/attachment; only the
+existing explicit create-around-current-playback action promotes in place.
+
+Focused Party Room wire/page, entry-guard, lifecycle, retained-launch, player-surface, and session
+tests pass; `node --check` passes; explicit `:composeApp:compileKotlinDesktop` passes. Stage 3 remains
+formally `IN_PROGRESS` until repeated open/close, Back/Escape, same/different-content invitation,
+and controller/HWND preservation are physically verified. Per the maintainer's architecture-first
+strategy, Stage 4 may proceed while that physical gate remains recorded.
+
+## Watch Together deterministic architecture — Stage 2 automated gate green (2026-09-09)
+
+Post-checkpoint physical testing exposed two lifecycle races, now fixed in the pending Stage 2
+stabilization checkpoint. A rejected Z token is replaced under the session mutex without first
+publishing `NotAuthenticated`; only an actual HTTP 401 triggers that exchange, and the Z client no
+longer runs an independent platform-auth setup. This prevents Realtime from tearing down private
+channels while concurrent durable calls fall back to the publishable key. Realtime close is now
+idempotent and distinguishes reconnect cleanup from intentional detach, while cancellation of an
+in-flight broadcast is no longer reported as a failed send. Leaving a party also no longer changes
+Swing visibility from `NativePlayerHost.removeNotify`, avoiding an invalidation of an already
+disposed Compose `SkiaLayer`. Focused auth/transport/airspace tests and
+`:composeApp:compileKotlinDesktop` pass. The physical two-client sync/leave gate remains outstanding.
+
+Stage 2 remains `IN_PROGRESS` on `codex/watch-together-architecture`; implementation commit
+`7365d45` completes the automated Realtime-transport and unified-presentation checkpoint. The
+private channel now belongs to `WatchPartySync`: it creates the authenticated channel with
+broadcast acknowledgements enabled, owns subscription/reconnect/close and protocol collectors,
+reports actual lifecycle/send/receive health by channel instance, and clears generation-scoped
+ticks, telemetry, dedupe, and hold state without replacing a healthy channel. Backend/API success
+no longer claims live Realtime health; only validated traffic from another party member does.
+
+Accepted play, pause, seek, and speed commands now emit their local directive synchronously before
+either network path begins. Realtime send and durable persistence run independently in the
+background, and a delayed send completion cannot update a replacement channel's health. Host-only
+guest controls are rejected before any directive. Guest telemetry is visible to every client for
+fresh per-member presentation while the existing host-only buffering watch retains all prior
+grace, settle, cooldown, budget, late-join, and drift behavior.
+
+`PartyPresentationProjector` is now the shared pure authority for connection banners, fresh host
+status, and participant labels in the lobby and native player payload. Actual local playback owns
+the self label; remote labels use only fresh live tick/peer evidence and never the global durable
+party status. Stale evidence falls back to readiness/location rather than claiming playback.
+
+The backend authorization correction is already committed as `67d4ced` in `nuvio-z-backend` and
+was already deployed with migration history repaired; it was not repeated here. Verification on
+the final source is green: explicit `:composeApp:compileKotlinDesktop`; 32/32 focused protocol,
+health/permission, projector, playback-lifecycle, and retained-launch tests; and the mandatory
+Stage 2 full `:composeApp:desktopTest` gate, **1,687/1,687**, zero failures/errors/skips. The
+previously flaky stalled-download harness test passed in that full run.
+
+Fresh release-style debug-tools MSI:
+`composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi`
+(258,725,663 bytes; SHA-256
+`AF4445327C5AAAF39BA4F802F24AF0371F3FBCC2D1D6DD5D5A7E5F35CF0C243E`). The physical two-client
+Stage 2 exit gate is still **NOT RUN**: prove p95 command delivery below 500 ms with no sample above
+1 s, local directive below 50 ms, truthful degradation/recovery, and per-member labels. Do not
+start Stage 3 until that evidence passes or the maintainer explicitly decides otherwise.
+
+## Watch Together deterministic architecture — Stage 1 PartySession ownership and health split (2026-09-09)
+
+Stage 1 is `DONE` on `codex/watch-together-architecture`. New domain seams separate the durable
+gateway and live transport from the serialized, process-scoped `WatchPartySessionCoordinator`.
+The coordinator now reduces typed intents in one queue, models attachment loss independently from
+party membership/lobby entry, routes readiness/lifecycle actions, and shadow-compares its identity
+and generation state with the legacy repository snapshot while that snapshot remains the Stage 1
+UI authority. The durable gateway exposes party-domain snapshots rather than `WatchPartyUiState`,
+and the live transport consumes an immutable authority context plus typed health/refresh sinks
+instead of reading repository or UI state.
+
+Health now records durable API reachability, poll activity, heartbeat success, Realtime channel
+instance/lifecycle, receive time, peer and clock freshness, and send outcome independently. A
+successful subscription or send remains `SubscribedUnverified`; only peer channel traffic proves
+the live plane. Replacement channels clear prior live-plane telemetry, clock traffic does not
+refresh peer freshness, and successful HTTP work never claims Realtime health. The existing RPCs,
+broadcast payloads, generation checks, durable polling fallback, and wait-for-everyone timing
+behavior remain compatible; no backend code or schema changed.
+
+Durable heartbeat ownership is process-scoped: the repository poll keeps member liveness alive in
+lobby/source/player states and publishes only fresh exact-generation telemetry supplied by the
+player binding. Player disposal now reports attachment loss and clears process-local telemetry
+without inferring lobby membership; explicit lobby entry publishes lobby location. Authorized
+notification snapshots still install synchronously before navigation, while their semantic reducer
+event remains serialized, avoiding a redundant-join race introduced by a fully queued install.
+
+Stage 1 verification on the final source is green: 64/64 focused desktop tests pass across session
+health, protocol, playback lifecycle, retained party launches, player surface lifetime, exit
+navigation, and party route behavior; explicit `:composeApp:compileKotlinDesktop` passes. The prior
+full `:composeApp:desktopTest` attempt ran 1,679 tests and failed only the untouched
+`DesktopDownloadQueueE2ETest.a stalled download restarts from zero once before giving up`: after
+240 seconds its 6 MiB fixture had completed instead of failing. The isolated unchanged test then
+passed 1/1 in 135.83 seconds, evidence of an unrelated timing-sensitive harness failure rather than
+a Stage 1 regression. Under the persistent verification policy, full desktop suites run after
+Stages 2, 4, and 7/final (or earlier for unusually broad changes), not merely because a stage ends.
+The next full-suite gate is Stage 2. Missing private-channel delivery remains unresolved and is the
+Stage 2 transport problem; faster durable polling is still not an accepted correction. Stage 2 has
+not begun.
+
+## Watch Together deterministic architecture — Stage 0 instrumentation (2026-09-08)
+
+Branch `codex/watch-together-architecture`. Added debug-gated, privacy-safe `WatchPartyTrace`
+correlation for T0 input, T1 permission/acceptance, T2 Realtime send outcome and duration, T3 peer
+receipt/validation, and T4 native-engine directive application. The same trace records channel
+instances/lifecycle, independent observed API/Realtime/poll facts, durable command and snapshot
+arrival, clock/tick freshness, and guest hold start/release evidence. No playback, send ordering,
+health, source, navigation, or lifecycle behavior has been changed. The physical procedure is
+`WATCH-TOGETHER-STAGE0-TRACE.md`.
+
+Verification on the final source: desktop compilation passes; focused Watch Together/player-launch
+tests pass (96/96). The immediately preceding complete instrumentation revision passed the full
+desktop suite (1,674/1,674), and the final revision only tightened debug gating and added trace-only
+outcomes before the focused rerun. The physical two-client 10 pause/resume + 10 seek matrix and
+controlled Realtime interruption remain **NOT RUN**, so Stage 0 remains `IN_PROGRESS` and no
+behavioral Stage 1 work may begin.
+
+Instrumentation is committed as `dd3e2b4f2755bc5149911dcfa6aa38f68e3f559f`. Its background
+release-style packaging completed with the Gradle-managed JetBrains JDK; Gradle's generated jpackage
+arguments confirm `-Dnuvio.debugTools=true`. The install artifact is
+`composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` (258,631,455 bytes;
+SHA-256 `133AEEA118C756CC326DD4EC33CA85B7F84A1C7513DED44476176DBC92E63F25`). The
+published artifact and both `main-release/msi` copies are byte-identical. This is the required
+physical Stage 0 test build; packaging does not advance the stage.
+
+A partial same-machine physical run used two installed clients and produced distinct host/guest
+logs. It covered five pauses, four resumes, and three seeks. Every host T2 send reported success,
+yet the guest recorded zero T3 receives and no timing-plane clock/tick traffic while both clients
+claimed `realtime=subscribed`. The guest followed durable state via `fallbackHold`/`fallbackDrift`:
+11 observed user-command sequences arrived in 1,045–6,097 ms (median 3,560 ms; average 3,730.5 ms),
+and one short pause was overwritten before the guest observed its sequence. Host T1–T2 itself cost
+468–766 ms because local emission follows the awaited broadcast. This reproduces and attributes the
+reported delay to absent live peer delivery plus durable fallback, but the private-channel failure's
+cause is not yet established. The exact evidence is recorded in `WATCH-TOGETHER-STAGE0-TRACE.md`.
+Seven more seeks and the controlled interruption/recovery segment remain required, so Stage 0 stays
+`IN_PROGRESS` and Stage 1 remains blocked.
+
+Maintainer decision after reviewing that evidence: Stage 0 is `DONE` and the remaining five
+ordinary seeks plus controlled Realtime interruption/recovery segment are **SKIPPED**, not passed.
+Stage 1 is now `IN_PROGRESS`. Missing private-channel delivery remains an open defect; Stage 1/2
+must diagnose and correct live delivery and truthful health rather than shorten the durable poll.
 
 ## Phase 4 follow-up hardening: lifecycle resilience, truthful presence & UI fidelity (2026-09-08)
 
