@@ -1,6 +1,8 @@
 package com.nuvio.app.features.settings
 
 import nuvio.composeapp.generated.resources.compose_settings_page_subtitles
+import nuvio.composeapp.generated.resources.settings_social_description
+import nuvio.composeapp.generated.resources.settings_social_title
 import nuvio.composeapp.generated.resources.settings_subtitles_section_languages
 import nuvio.composeapp.generated.resources.settings_subtitles_section_rendering
 import nuvio.composeapp.generated.resources.settings_playback_section_source_preferences
@@ -112,6 +114,7 @@ internal fun settingsSearchEntries(
     val contentDiscoveryPage = stringResource(Res.string.compose_settings_page_content_discovery)
     val downloadsPage = stringResource(Res.string.downloads_settings_title)
     val playbackPage = stringResource(Res.string.compose_settings_page_playback)
+    val socialPage = stringResource(Res.string.settings_social_title)
     val streamsPage = stringResource(Res.string.compose_settings_page_streams)
     val integrationsPage = stringResource(Res.string.compose_settings_page_integrations)
     val notificationsPage = stringResource(Res.string.compose_settings_page_notifications)
@@ -235,6 +238,16 @@ internal fun settingsSearchEntries(
         description = stringResource(Res.string.compose_settings_root_advanced_description),
         category = advancedCategory,
         icon = Icons.Rounded.Tune,
+    )
+    // ⚠ Indexed unconditionally, in both states of the preference. Settings search is how
+    // somebody who turned the social layer off finds their way back to it, so hiding the entry
+    // when it is off would hide the only route back behind the very switch it controls.
+    addPage(
+        page = SettingsPage.Social,
+        key = "social",
+        title = socialPage,
+        description = stringResource(Res.string.settings_social_description),
+        icon = Icons.Rounded.People,
     )
     addPage(
         page = SettingsPage.ContentDiscovery,

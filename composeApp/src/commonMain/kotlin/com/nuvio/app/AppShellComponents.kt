@@ -667,29 +667,30 @@ internal fun TabletFloatingTopBar(
                             },
                         )
                     }
+                    // The social tab is a feature the user can switch off; see SocialFeatureGate.
                     if (socialEnabled) {
-                    TabletTopPillItem(
-                        label = stringResource(Res.string.compose_nav_social),
-                        selected = selectedTab == AppScreenTab.Social,
-                        onClick = { onTabSelected(AppScreenTab.Social) },
-                        labelFraction = labelFraction,
-                        pillHeight = pillHeight,
-                        expandedHorizontalPadding = expandedHorizontalPadding,
-                        collapsedHorizontalPadding = iconCollapsedPadding,
-                        textStyle = labelTextStyle,
-                        icon = {
-                            Icon(
-                                imageVector = Icons.Filled.People,
-                                contentDescription = stringResource(Res.string.compose_nav_social),
-                                modifier = Modifier.size(navIconSize),
-                                tint = if (selectedTab == AppScreenTab.Social) {
-                                    tokens.colors.textPrimary
-                                } else {
-                                    Color.White.copy(alpha = 0.70f)
-                                },
-                            )
-                        },
-                    )
+                        TabletTopPillItem(
+                            label = stringResource(Res.string.compose_nav_social),
+                            selected = selectedTab == AppScreenTab.Social,
+                            onClick = { onTabSelected(AppScreenTab.Social) },
+                            labelFraction = labelFraction,
+                            pillHeight = pillHeight,
+                            expandedHorizontalPadding = expandedHorizontalPadding,
+                            collapsedHorizontalPadding = iconCollapsedPadding,
+                            textStyle = labelTextStyle,
+                            icon = {
+                                Icon(
+                                    imageVector = Icons.Filled.People,
+                                    contentDescription = stringResource(Res.string.compose_nav_social),
+                                    modifier = Modifier.size(navIconSize),
+                                    tint = if (selectedTab == AppScreenTab.Social) {
+                                        tokens.colors.textPrimary
+                                    } else {
+                                        Color.White.copy(alpha = 0.70f)
+                                    },
+                                )
+                            },
+                        )
                     }
                     TabletTopPillItem(
                         label = stringResource(Res.string.compose_nav_settings),
