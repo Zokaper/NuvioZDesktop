@@ -43,3 +43,33 @@ For every scenario, record party ID, content generation, source generation, auth
 | Cleanup | End/leave/kill clients | Inspect backend | No active orphan membership, live presence, join request, invitation, or abandoned party remains | NOT RUN | |
 
 The exit gate fails if a guest silently plays a lower-tier release while an exact host match exists, even if synchronization appears correct.
+
+## Refinement retest, 2026-09-10 (commit 1ec3ae6f)
+
+Four findings from the first physical run were addressed. The gate stays open: none of this has
+been re-run on hardware. This section is the short sequence that re-checks the four, not a
+replacement for the table above.
+
+Two clients, two real profiles, isolated data roots, **collaborative** control mode with "wait for
+everyone" on, unless a step says otherwise.
+
+1. **Barrier keeps the play intent, guest ready first.** Play, seek somewhere unbuffered, let the
+   guest finish loading before the host. Expect: guest waits, both start together, nobody presses
+   anything.
+2. **Barrier keeps the play intent, host ready first.** Same, but let the *host* finish first. Expect:
+   host starts, pauses for the guest within ~2.5s, and **starts again on its own within about half a
+   second of the guest becoming ready.** This is the finding - if it needs a manual Play, it failed.
+   Log lines to confirm: `waiting for <id> intent=playing`, then `stalled guests recovered,
+   resuming for=<id>`.
+3. **Actor attribution.** From the guest, press pause. Expect the host's screen to read
+   "<guest name> paused", not nothing and not "the host". Repeat with resume and with a scrub in
+   both directions ("skipped back" / "skipped ahead"). The acting client shows no notice - correct.
+4. **Locked transport.** Switch the party to **host-only** and, on the guest, try each of: the play
+   button, spacebar, the scrub bar, the ±10s buttons, the arrow-key fine seek, mouse thumb buttons,
+   scroll over the scrubber, hold-right-click for 2x, the skip-intro prompt, and the next-episode
+   card. Expect every one to do nothing locally and to say "The host controls playback". Then
+   confirm **volume, fullscreen, subtitles and audio still work** - those are the viewer's own.
+5. **Residual drift.** Pause/resume five times and seek five times. Watch `driftMs` on the guest.
+   Expect steady state inside ~±65ms, and expect `holdMs` on the guest's `barrier` lines to now be
+   **greater than zero** for most commands rather than zero for all of them - that is the barrier
+   lead change working. Post-resume excursions should stay under ~350ms and close in about a second.
