@@ -112,14 +112,73 @@ object WatchPartyRepository {
     }
 
     private fun updateHealth(event: PartyHealthEvent) {
+        var before = PartyHealthState()
+        var after = PartyHealthState()
         _uiState.update { current ->
             // Health, and only health. The connection state and its banner are projected facts,
             // and every surface that shows them already runs the projector itself - keeping a copy
             // here made the repository a second presentation authority for a fact it does not own,
             // and one that could disagree with the screen next to it.
-            current.copy(health = reducePartyHealth(current.health, event))
+            before = current.health
+            after = reducePartyHealth(current.health, event)
+            current.copy(health = after)
+        }
+        // ⚠ **The transition, not the event.** The two-client run had `RealtimeSubscribed` in the
+        // log and `Live sync lost` on the screen, and nothing anywhere said those were the same
+        // fact - that a subscribe had happened and had proved nothing. Every change of the three
+        // axes and the capability they combine into is now one line, so "why does it say lost" is
+        // answerable from the file rather than from the source.
+        if (before.realtime != after.realtime ||
+            before.api != after.api ||
+            before.capability() != after.capability()
+        ) {
+            log.i {
+                "health realtime=${before.realtime}->${after.realtime} api=${before.api}->${after.api} " +
+                    "capability=${before.capability()}->${after.capability()} " +
+                    "instance=${after.channelInstance} polling=${after.polling} " +
+                    "lastAuthority=${after.lastAuthorityTrafficAtMs} lastPeer=${after.lastPeerTrafficAtMs} " +
+                    "lastClock=${after.lastClockTrafficAtMs} lastSend=${after.lastRealtimeSendOutcome} " +
+                    "by=${event::class.simpleName}"
+            }
+        }
+        if (after.realtime == PartyRealtimeHealth.SubscribedUnverified &&
+            before.realtime != PartyRealtimeHealth.SubscribedUnverified
+        ) {
+            armUnverifiedRealtimeWatch(after.channelInstance)
         }
     }
+
+    /**
+     * Says out loud when a subscribed channel has still delivered nothing.
+     *
+     * This is the shape of the defect that cost a whole physical run: subscribed, healthy-looking,
+     * sends "succeeding", and not one message ever arriving from anybody. It is invisible without a
+     * peer to compare against, so the client has to notice it about itself. One line, once per
+     * channel instance, naming the interval - not a banner, because the projector already shows
+     * `Live sync lost` and a second surface for the same fact is a second thing to keep right.
+     */
+    private fun armUnverifiedRealtimeWatch(instance: Long) {
+        unverifiedRealtimeWatch?.cancel()
+        unverifiedRealtimeWatch = scope.launch {
+            delay(WatchPartyRealtimeVerificationGraceMs)
+            val health = _uiState.value.health
+            if (health.channelInstance != instance) return@launch
+            if (health.realtime != PartyRealtimeHealth.SubscribedUnverified) return@launch
+            log.w {
+                "realtime still unverified after ${WatchPartyRealtimeVerificationGraceMs}ms " +
+                    "instance=$instance party=${_uiState.value.party?.id.shortId()} - subscribed, " +
+                    "nothing received from any member; the party is running on durable polling"
+            }
+            WatchPartyDiagnostics.transport(
+                "unverified-timeout",
+                _uiState.value.party?.id,
+                realtime = "subscribed-unverified",
+                detail = "${WatchPartyRealtimeVerificationGraceMs}ms",
+            )
+        }
+    }
+
+    private var unverifiedRealtimeWatch: Job? = null
 
     fun installAuthorizedSnapshot(snapshot:WatchPartyState) = installSnapshot(snapshot)
 
@@ -351,6 +410,11 @@ object WatchPartyRepository {
                 put("p_party_id", party.id); put("p_profile_id", requireProfile()); put("p_command_id", command.commandId)
                 put("p_command_type", command.type); put("p_payload", buildJsonObject {
                     command.positionMs?.let { put("position_ms", it) }; command.playbackSpeed?.let { put("playback_speed", it) }
+                    // The barrier. Carried here because this RPC is now the *transport* for a
+                    // command and not merely its record: no client may write the authority plane,
+                    // so what the backend emits from this call is what every other member executes.
+                    command.startAtPartyMs?.let { put("start_at_party_ms", it) }
+                    command.playAfter?.let { put("play_after", it) }
                 })
                 put("p_content_generation",party.contentGeneration);put("p_source_generation",party.sourceGeneration)
                 put("p_authority_epoch",party.authorityEpoch)
@@ -367,17 +431,42 @@ object WatchPartyRepository {
     }
 
     @OptIn(ExperimentalUuidApi::class)
-    suspend fun play(positionMs: Long, commandId: String = Uuid.random().toString()) =
-        submit(WatchPartyCommand(commandId, "play", positionMs))
+    suspend fun play(
+        positionMs: Long,
+        commandId: String = Uuid.random().toString(),
+        startAtPartyMs: Long? = null,
+    ) = submit(WatchPartyCommand(commandId, "play", positionMs, startAtPartyMs = startAtPartyMs, playAfter = true))
     @OptIn(ExperimentalUuidApi::class)
     suspend fun pause(positionMs: Long, commandId: String = Uuid.random().toString()) =
-        submit(WatchPartyCommand(commandId, "pause", positionMs))
+        submit(WatchPartyCommand(commandId, "pause", positionMs, playAfter = false))
     @OptIn(ExperimentalUuidApi::class)
-    suspend fun seek(positionMs: Long, commandId: String = Uuid.random().toString()) =
-        submit(WatchPartyCommand(commandId, "seek", positionMs))
+    suspend fun seek(
+        positionMs: Long,
+        commandId: String = Uuid.random().toString(),
+        startAtPartyMs: Long? = null,
+        playAfter: Boolean = true,
+    ) = submit(WatchPartyCommand(commandId, "seek", positionMs, startAtPartyMs = startAtPartyMs, playAfter = playAfter))
     @OptIn(ExperimentalUuidApi::class)
     suspend fun setSpeed(speed: Float, commandId: String = Uuid.random().toString()) =
         submit(WatchPartyCommand(commandId, "speed", playbackSpeed = speed))
+
+    /**
+     * Submits an accepted local command, as the remote half of `WatchPartySync.issueCommand`.
+     *
+     * One place, because this is now the only path a command has to the other members and a call
+     * site that maps a kind to the wrong RPC argument would cost the party the command rather than
+     * a log line.
+     */
+    suspend fun submitAccepted(command: PartyCommand): Result<Unit> = submit(
+        WatchPartyCommand(
+            commandId = command.commandId,
+            type = command.kind.name,
+            positionMs = command.startPositionMs,
+            playbackSpeed = command.playbackSpeed.takeIf { command.kind == PartyCommandKind.speed },
+            startAtPartyMs = command.startAtPartyMs,
+            playAfter = command.playAfter,
+        ),
+    )
 
     /**
      * The durable position, aged forward to roughly when the server will write it.

@@ -2,6 +2,118 @@
 
 Last updated: 2026-09-10
 
+## Watch Together - the Realtime transport had never delivered anything (2026-09-10)
+
+The first physical two-client run produced two independently-proven failures. Both are fixed here;
+neither has been re-verified on hardware, and the physical gate is still open.
+
+### Bug A - no client broadcast has ever been delivered
+
+The logs said it plainly once somebody looked: both clients subscribed, both stayed
+`realtime=subscribed`, every send returned local success, durable polling succeeded continuously,
+and `WatchPartyTrace T3 RealtimeReceived` was **zero for the entire run** - and zero in every
+historical debugTools log beside it. `PartyRealtimeHealth` therefore never left
+`SubscribedUnverified`, `PartyPresentationProjector` correctly showed "Live sync lost", and the
+party ran entirely on five-second durable polling.
+
+The cause is a misunderstanding of what `realtime.messages` RLS is. **Supabase Realtime authorizes a
+private channel, not a message.** On join it asks the policies for a read capability and a write
+capability and caches both for the life of the socket; the write capability is decided by inserting
+a **stub row** - topic and extension set, `payload` NULL - inside a transaction it then rolls back.
+There is no per-broadcast payload hook. `nuvio_private_realtime_write` called
+`realtime_party_write_allowed(party, payload, extension)`, whose first payload test refuses an
+absent `sender_profile_id`, so it was asked about NULL and refused. Every authenticated member was
+granted read and refused write, permanently. A refused push is answered with nothing at all, and
+supabase-kt does not await an ack for `broadcast()`, so the client saw only successes.
+
+Proven live rather than by calling the helper: two authenticated members of a real party joined
+`party:<id>`, both joins replied `{"status":"ok"}`, and a push of the exact protocol-v2 tick
+payload - correct sender, correct generations, correct epoch, a payload the helper itself returns
+`true` for - reached nobody, not even the sender under `broadcast.self`. A payload-free capability
+policy delivered both frames to both sockets. A second push carrying *no* sender or generation
+fields at all was delivered just as readily: the payload is never consulted per message, so the
+"strict" checks were not protecting anything - they were only refusing the join probe.
+
+Since per-message sender binding does not exist at this layer, authority moved to the topic:
+
+- **`party:<id>` is the authority plane.** Members read it; **no client may write it**. The backend
+  authors everything on it - the existing `state` broadcasts, and now the accepted transport
+  command, which `party_submit_command_v2` emits from the row it just locked with the actor,
+  generations, epoch and committed sequence *it* knows, plus `origin=server`.
+- **`party_peer:<id>` is the peer plane.** Members read and write it: host position ticks, the clock
+  exchange, per-member telemetry, presence. Nothing on it may command the party, and
+  `partyMessageIsAdmissible` refuses a command arriving there before anything looks at it. Every
+  sender-sensitive message is still checked against the durable snapshot - a tick only from the host
+  the server named, a pong only from that host for an exchange this client started.
+
+This is strictly tighter than what was deployed, because clients could not write the party topic at
+all: a forged `state` payload - which a bare "make the policy payload-free" fix would newly have
+allowed - stays impossible. A guest cannot forge the host, a stale generation cannot become
+authoritative, a non-member reaches neither plane, and a host transfer bumps the epoch that the next
+authored command carries. The one thing deliberately not closed: a member can still misreport its
+own buffering state to the party, which costs a hold it did not need and nothing else.
+
+`WatchPartySync.issueCommand` now takes a required `submitDurable` lambda instead of broadcasting.
+The local directive still fires first, so the sender's own player never waits on the network; the
+durable submission is the command's only route to anybody else, and being a parameter is what stops
+a call site forgetting it - forgetting it used to cost a database row, and now costs every other
+member the command. `WatchPartyCommand` carries `start_at_party_ms` and `play_after` so the barrier
+survives the trip. `PartyRealtimeSendOutcome.Success` is renamed **`LocallyAccepted`**: it was never
+evidence of delivery, and naming it `Success` is what made a dead transport look healthy.
+
+### Bug B - a party hold was counted as a playback startup stall
+
+Also physically reproduced, and not authority churn, not a realizer restart, not a launch-claim
+failure: a guest's source loads slowly, the startup watchdog arms, Watch Together holds the guest at
+the readiness gate while it waits for the party, the host starts, and the host pauses again before
+the guest's first frame has settled. The guest sits deliberately paused at 7257ms. Its buffer stops
+advancing - a paused player has nothing to advance for - and twelve seconds later
+`PlaybackStartupWatchdog` reported `Stalled`, `onFatalPlaybackError` ran
+`failOverAfterPlaybackStarted()`, `signalFailoverRetry()`, `popBack()`, and the guest was dumped
+into source loading out of a party that was working.
+
+`PlaybackStartupSample.isHeld` **freezes** every deadline rather than exempting the source from any
+of them: `State.holdMs` accumulates held wall-clock and every comparison runs against
+`effectiveElapsedMs`. A hold that ends also rebases the stall deadline once, because a player parked
+for a minute has an empty pipeline to refill and handing it back whatever fraction of the deadline
+was left would abandon a source for the restart the party itself caused. A source that is genuinely
+dead after release still fails over. `isHeld` defaults to false, so non-party startup behaviour is
+unchanged - asserted, not assumed.
+
+The player publishes the hold through `resolvePartyStartupHold`, which names the mechanism doing the
+holding (gate, barrier, or a party pause) and carries the gate's own reason with it.
+
+### Logging hardening
+
+Two clients launched in the same second wrote into the **same log file**, and the whole physical run
+was interleaved with no way to attribute a line. Disk logs are now
+`nuvio-debug-<stamp>-p<pid>-<entropy>.log`, the instance tag rides **every** line rather than only
+the header, and the header names the appdata root as well. `PartyHealthState` transitions are logged
+as transitions - `realtime=X->Y api=X->Y capability=X->Y` with the event that caused them - because
+the run had `RealtimeSubscribed` in the log and "Live sync lost" on screen with nothing saying those
+were the same fact. A channel that is still `SubscribedUnverified` after 20s now says so once, and
+`PlaybackStartup` abandon diagnostics carry the party role, status, stage, hold reason, gate reason
+and generation tuple.
+
+### Verification
+
+- pgTAP **235/235** against a database reset from scratch, including 16 new assertions that
+  exercise the NULL-payload stub row the way a channel join does.
+- Backend migration `202609110001_realtime_capability_and_server_authored_commands.sql` **deployed**
+  to `pzbpghmmordvzcfbayoh`; live policies and the installed `party_submit_command_v2` read back
+  afterwards read-only and match.
+- Live two-plane probe on a real stack: 7/7 - both members join both planes, the peer plane carries
+  ticks and telemetry both ways, a forged command pushed at the authority plane reaches nobody, and
+  the server-authored command arrives with the server's sender and the committed tuple.
+- Pure suites **all 8 groups green (517 tests)**. Group 6 had been *silently failing to compile* at
+  HEAD - `PartySessionContracts.kt` was never added to it, so nine "passing" tests were nine
+  initialization errors. The transport's pure rules are now in `WatchPartySyncRules.kt` so the suite
+  compiles and executes them rather than reporting a green it had not earned.
+- Focused desktop party/player/playback tests **597/597**, and `:composeApp:compileKotlinDesktop`.
+
+**The physical gate has not passed.** Nothing here has been observed on two real clients; that run
+is the next step and Phase 5 has not started.
+
 ## Watch Together deterministic architecture - desktop UltraReview fixes (2026-09-10)
 
 Two findings from the desktop UltraReview of PR #7, both closed.

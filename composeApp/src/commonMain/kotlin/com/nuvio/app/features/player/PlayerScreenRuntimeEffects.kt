@@ -425,6 +425,7 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         }
         var lastLoggedProgressMs = 0L
         var wasEvidenceOfLifeLogged = false
+        var lastLoggedHold = partyStartupHold
         while (true) {
             delay(PlaybackStartupWatchdog.POLL_INTERVAL_MS)
             val snapshot = playbackSnapshot
@@ -451,6 +452,10 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
                     durationMs = snapshot.durationMs,
                 ) ?: activeInitialPositionMs.coerceAtLeast(0L),
                 hasExternalEvidenceOfLife = probePassed,
+                // ⚠ **Watch Together parks this player on purpose, and a parked player does not
+                // buffer.** Held time is frozen rather than exempted: see
+                // `PlaybackStartupSample.isHeld` for the two-client failure this closes.
+                isHeld = partyStartupHold.isHeld,
             )
             // ⚠ **Checked before the watchdog's verdict, because the watchdog would say Started.**
             // A provider's "being prepared" slate plays perfectly: position advances, the buffer
@@ -479,6 +484,18 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
                 return@LaunchedEffect
             }
             watch = PlaybackStartupWatchdog.observe(watch, sample)
+            // Every transition of the party's grip on this player, beside the deadlines it moves.
+            // Without it a source that took thirty seconds to start looks identical in the log
+            // whether the party was holding it for twenty of them or not.
+            if (partyStartupHold != lastLoggedHold) {
+                startupLog.i {
+                    "watchdog hold: attempt=${args.playbackAttempt} held=${partyStartupHold.isHeld} " +
+                        "reason=${partyStartupHold.reason} gateReason=${partyStartupHold.gateReason} " +
+                        "elapsed=${sample.elapsedMs}ms effective=${watch.effectiveElapsedMs}ms " +
+                        "heldTotal=${watch.holdMs}ms"
+                }
+                lastLoggedHold = partyStartupHold
+            }
             if (!wasEvidenceOfLifeLogged && watch.hasEvidenceOfLife) {
                 wasEvidenceOfLifeLogged = true
                 startupLog.i {
@@ -512,11 +529,18 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
                     // "measured badly" look identical on screen. Nothing logged this, so a chain
                     // burning three healthy sources looked exactly like three dead ones.
                     startupLog.w {
+                        // The party context is the difference between "this source is dead" and
+                        // "the party was holding it and the watchdog counted the hold". The run
+                        // that produced the second of those had no line saying a party was
+                        // involved at all, so the abandonment read as a source fault for a day.
                         "abandoning $activeStreamTitle: reason=$reason " +
                             "attempt=${args.playbackAttempt} " +
-                            "elapsed=${sample.elapsedMs}ms progress=${watch.bestProgressMs}ms " +
+                            "elapsed=${sample.elapsedMs}ms effective=${watch.effectiveElapsedMs}ms " +
+                            "heldTotal=${watch.holdMs}ms " +
+                            "progress=${watch.bestProgressMs}ms " +
                             "lastAdvance=${watch.lastAdvanceMs}ms duration=${sample.durationMs}ms " +
                             "evidenceOfLife=${watch.hasEvidenceOfLife} " +
+                            "party=${partyAbandonContext()} " +
                             "engine=${snapshot.engineName}"
                     }
                     StreamsRepository.noteAutoPickFailureReason(

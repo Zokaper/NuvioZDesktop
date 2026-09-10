@@ -94,7 +94,7 @@ class WatchPartySessionStateTest {
     @Test fun subscriptionAndSuccessfulSendDoNotClaimFullSync() {
         var health=reducePartyHealth(PartyHealthState(),PartyHealthEvent.RealtimeConnecting(7))
         health=reducePartyHealth(health,PartyHealthEvent.RealtimeSubscribed(7))
-        health=reducePartyHealth(health,PartyHealthEvent.RealtimeSendCompleted(7,10,PartyRealtimeSendOutcome.Success))
+        health=reducePartyHealth(health,PartyHealthEvent.RealtimeSendCompleted(7,10,PartyRealtimeSendOutcome.LocallyAccepted))
         health=reducePartyHealth(health,PartyHealthEvent.DurableSucceeded(11,heartbeat=true))
         assertEquals(PartyRealtimeHealth.SubscribedUnverified,health.realtime)
         assertEquals(PartySyncCapability.DurableFallback,health.capability())
@@ -107,6 +107,21 @@ class WatchPartySessionStateTest {
         health=reducePartyHealth(health,PartyHealthEvent.RealtimeReceived(7,11))
         assertEquals(PartyRealtimeHealth.Live,health.realtime)
         assertEquals(PartySyncCapability.FullSync,health.capability())
+    }
+
+    @Test fun authorityPlaneTrafficIsTrackedApartFromPeerAndClock() {
+        // The three axes answer different questions, and after the capability defect the useful one
+        // is "has the server-authored plane ever delivered a command here". A party can exchange
+        // clock pings all day while no command has ever crossed.
+        var health=reducePartyHealth(PartyHealthState(),PartyHealthEvent.RealtimeConnecting(7))
+        health=reducePartyHealth(health,PartyHealthEvent.RealtimeSubscribed(7))
+        health=reducePartyHealth(health,PartyHealthEvent.RealtimeReceived(7,11,PartyRealtimeTrafficKind.Clock))
+        assertNull(health.lastAuthorityTrafficAtMs)
+        health=reducePartyHealth(health,PartyHealthEvent.RealtimeReceived(7,12,PartyRealtimeTrafficKind.Authority))
+        assertEquals(12,health.lastAuthorityTrafficAtMs)
+        assertEquals(11,health.lastClockTrafficAtMs)
+        assertNull(health.lastPeerTrafficAtMs)
+        assertEquals(PartyRealtimeHealth.Live,health.realtime)
     }
 
     @Test fun clockAndPeerFreshnessRemainIndependent() {
@@ -122,7 +137,7 @@ class WatchPartySessionStateTest {
     @Test fun replacementChannelStartsWithNoInheritedTelemetry() {
         var health=reducePartyHealth(PartyHealthState(),PartyHealthEvent.RealtimeConnecting(7))
         health=reducePartyHealth(health,PartyHealthEvent.RealtimeReceived(7,11,PartyRealtimeTrafficKind.Clock))
-        health=reducePartyHealth(health,PartyHealthEvent.RealtimeSendCompleted(7,12,PartyRealtimeSendOutcome.Success))
+        health=reducePartyHealth(health,PartyHealthEvent.RealtimeSendCompleted(7,12,PartyRealtimeSendOutcome.LocallyAccepted))
         health=reducePartyHealth(health,PartyHealthEvent.RealtimeConnecting(8))
         assertEquals(PartyRealtimeHealth.Connecting,health.realtime)
         assertNull(health.lastRealtimeReceiveAtMs)

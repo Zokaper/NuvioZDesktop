@@ -20,6 +20,7 @@ import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamsUiState
 import com.nuvio.app.features.tracking.TrackingMediaReference
 import com.nuvio.app.features.watched.WatchedUiState
+import com.nuvio.app.features.watchparty.PartyStartupHold
 import com.nuvio.app.features.watchparty.PendingPartySeek
 import com.nuvio.app.features.watchparty.StallHoldBudget
 import com.nuvio.app.features.watchparty.WatchPartyStatus
@@ -398,6 +399,16 @@ internal class PlayerScreenRuntime(
      * exactly what it was told.
      */
     var partyHoldingForBarrier by mutableStateOf(false)
+
+    /**
+     * Whether Watch Together is deliberately keeping this player still, and why.
+     *
+     * Published by `BindWatchPartyEffect` and read by the startup watchdog, which must not count
+     * held time towards a stall deadline. Physically reproduced: a guest held at the readiness gate
+     * and then paused by the host before its first frame settled was abandoned twelve seconds
+     * later, failed over and popped back to the source list, out of a party that was working.
+     */
+    var partyStartupHold by mutableStateOf(PartyStartupHold.none)
 
     /** The seek this client has issued and is waiting to see land, or null. Expires on its own. */
     var partyPendingSeek: PendingPartySeek? = null

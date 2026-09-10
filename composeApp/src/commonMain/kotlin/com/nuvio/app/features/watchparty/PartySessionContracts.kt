@@ -15,8 +15,39 @@ enum class PartyApiHealth { Unknown, Reachable, Unreachable }
  */
 enum class PartyRealtimeHealth { Detached, Connecting, SubscribedUnverified, Live, Degraded }
 
-enum class PartyRealtimeSendOutcome { None, Success, Failed, Unavailable }
-enum class PartyRealtimeTrafficKind { Peer, Clock }
+/**
+ * What happened to a broadcast this client tried to push - **on this machine, and no further**.
+ *
+ * ⚠ **[LocallyAccepted] is not delivery, and calling it `Success` is what made a dead transport
+ * look healthy for weeks.** supabase-kt does not await a server acknowledgement for a broadcast
+ * push, and Supabase Realtime answers a push it has refused with no reply at all. So a client whose
+ * write capability was denied at join - which was every client, see `watchPartyAuthorityTopic` -
+ * logged an unbroken run of successful sends while nothing it sent left the process.
+ *
+ * Only [PartyHealthEvent.RealtimeReceived] proves the transport works, and nothing here may set
+ * [PartyRealtimeHealth.Live].
+ */
+enum class PartyRealtimeSendOutcome {
+    None,
+
+    /** The client library took the frame. Says nothing about the server, and nothing about a peer. */
+    LocallyAccepted,
+
+    /** The push threw on the way out - usually a socket that has already gone. */
+    Failed,
+
+    /** There was no channel to push onto. */
+    Unavailable,
+}
+/**
+ * Which kind of live traffic proved the transport is delivering.
+ *
+ * [Authority] is the server-authored plane - a command the backend emitted after accepting it.
+ * [Peer] and [Clock] are the member-written plane. Kept apart because they prove different things:
+ * clock traffic can flow while no command ever arrives, and after the capability defect that is a
+ * distinction worth being able to read off a health state rather than infer from a log.
+ */
+enum class PartyRealtimeTrafficKind { Authority, Peer, Clock }
 
 enum class PartySyncCapability { FullSync, DurableFallback, RealtimeOnly, OfflineLocalPlayback }
 
@@ -31,6 +62,7 @@ data class PartyHealthState(
     val lastRealtimeReceiveAtMs: Long? = null,
     val lastPeerTrafficAtMs: Long? = null,
     val lastClockTrafficAtMs: Long? = null,
+    val lastAuthorityTrafficAtMs: Long? = null,
     val lastRealtimeSendAtMs: Long? = null,
     val lastRealtimeSendOutcome: PartyRealtimeSendOutcome = PartyRealtimeSendOutcome.None,
 ) {
@@ -84,6 +116,7 @@ fun reducePartyHealth(state: PartyHealthState, event: PartyHealthEvent): PartyHe
         lastRealtimeReceiveAtMs = null,
         lastPeerTrafficAtMs = null,
         lastClockTrafficAtMs = null,
+        lastAuthorityTrafficAtMs = null,
         lastRealtimeSendAtMs = null,
         lastRealtimeSendOutcome = PartyRealtimeSendOutcome.None,
     )
@@ -95,6 +128,8 @@ fun reducePartyHealth(state: PartyHealthState, event: PartyHealthEvent): PartyHe
         lastRealtimeReceiveAtMs = event.atMs,
         lastPeerTrafficAtMs = if (event.kind == PartyRealtimeTrafficKind.Peer) event.atMs else state.lastPeerTrafficAtMs,
         lastClockTrafficAtMs = if (event.kind == PartyRealtimeTrafficKind.Clock) event.atMs else state.lastClockTrafficAtMs,
+        lastAuthorityTrafficAtMs =
+            if (event.kind == PartyRealtimeTrafficKind.Authority) event.atMs else state.lastAuthorityTrafficAtMs,
     )
     is PartyHealthEvent.RealtimeSendCompleted -> if (event.instance != state.channelInstance) state else state.copy(
         lastRealtimeSendAtMs = event.atMs,
@@ -108,6 +143,7 @@ fun reducePartyHealth(state: PartyHealthState, event: PartyHealthEvent): PartyHe
         lastRealtimeReceiveAtMs = null,
         lastPeerTrafficAtMs = null,
         lastClockTrafficAtMs = null,
+        lastAuthorityTrafficAtMs = null,
     )
 }
 

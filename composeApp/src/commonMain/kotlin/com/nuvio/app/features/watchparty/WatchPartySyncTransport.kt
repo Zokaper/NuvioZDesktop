@@ -12,7 +12,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -25,6 +24,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -33,38 +33,6 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.JsonObject
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
-
-internal data class PartyChannelClosePlan(
-    val partyId: String?,
-    val channelInstance: Long,
-    val detached: Boolean,
-)
-
-/** Returns null after the binding has already been consumed, making teardown idempotent. */
-internal fun partyChannelClosePlan(
-    hasChannel: Boolean,
-    boundPartyId: String?,
-    channelInstance: Long,
-    detached: Boolean,
-): PartyChannelClosePlan? = if (!hasChannel && boundPartyId == null) {
-    null
-} else {
-    PartyChannelClosePlan(boundPartyId, channelInstance, detached)
-}
-
-/**
- * Whether a throwable out of a channel open is the scope going away, rather than a failure the
- * reconnect loop is supposed to absorb.
- *
- * The subscribe is wrapped in `withTimeout`, and the [TimeoutCancellationException] it throws *is*
- * a [CancellationException] - so a bare `catch (c: CancellationException) { throw c }` sent it out
- * through the `collectLatest` on [desiredAuthority] that drives this object for the whole process.
- * One subscribe that ran long took the authority collector with it: every party after that one was
- * left on the poll floor, with nothing left in the process to reopen a channel. A cancellation the
- * loop caused itself is a failed attempt; only one it did not cause belongs to the scope.
- */
-internal fun partyChannelFailureIsScopeCancellation(failure: Throwable): Boolean =
-    failure is CancellationException && failure !is TimeoutCancellationException
 
 /**
  * The party's timing plane, carried between clients over the channel that is already open.
@@ -76,9 +44,27 @@ internal fun partyChannelFailureIsScopeCancellation(failure: Throwable): Boolean
  * Postgres -> trigger -> Realtime -> guest, two server hops for a button press, and the best
  * measurement of it was 225ms.
  *
- * Here a pause is one hop. The channel is private and RLS-gated to party members, so the ability to
- * send on it is already the ability to be in the party; what a payload *claims* is checked against
- * the durable snapshot, which is the only thing that says who the host is.
+ * **That was implemented over one channel and it never worked.** A private channel's write
+ * capability is decided once, at join, by inserting a stub `realtime.messages` row whose payload is
+ * NULL; the policy called a validator that refused a missing `sender_profile_id`, so every member
+ * was granted read and refused write for the life of the socket. Both clients subscribed, every
+ * send returned local success - supabase-kt does not await an ack for a broadcast push, and a
+ * refused push is answered with nothing at all - and no client broadcast was ever delivered, on
+ * this run or on any historical one. See `watchPartyAuthorityTopic` for the full account.
+ *
+ * So the party has two topics, and which one a message arrived on is the whole of its authority:
+ *
+ *  - `party:<id>` carries what the **backend** authors - the durable `state` broadcasts, and the
+ *    accepted transport command that `party_submit_command_v2` emits after validating it against
+ *    the locked row. No client may write it, so a command's sender is knowable.
+ *  - `party_peer:<id>` carries what **members** author - host position ticks, the clock exchange
+ *    and per-member telemetry. Nothing on it may command the party, and every sender-sensitive
+ *    message on it is checked against the durable snapshot before use: a tick only from the host
+ *    the server named, a pong only from that host, for an exchange this client started.
+ *
+ * A pause therefore costs one round trip to Postgres rather than nothing, and the sender's own
+ * player still moves immediately - [issueCommand] dispatches locally before it submits. The barrier
+ * is what absorbs the difference, which is what barriers were for.
  *
  * State this object holds is deliberately not in `WatchPartyUiState`: it changes twice a second and
  * recomposing the lobby at that rate would be the cost of the feature. [state] carries the summary
@@ -125,9 +111,20 @@ internal object WatchPartySync : PartyRealtimeTransport {
     )
     val ticks: SharedFlow<PartyTick> = _ticks.asSharedFlow()
 
-    private var channel: RealtimeChannel? = null
+    /**
+     * The server-authored plane. Read-only by policy: no client may write `party:<id>` at all.
+     *
+     * Commands and durable state arrive here, which is what makes a command's sender knowable -
+     * the backend stamped it from the row it had just locked, and nothing else can put a frame on
+     * this topic. See `watchPartyAuthorityTopic`.
+     */
+    private var authorityChannel: RealtimeChannel? = null
+
+    /** The member-written plane: ticks, the clock exchange, telemetry, presence. Never authority. */
+    private var peerChannel: RealtimeChannel? = null
     private var boundPartyId: String? = null
-    private var collector: Job? = null
+    private var authorityCollector: Job? = null
+    private var peerCollector: Job? = null
     private var stateCollector: Job? = null
     private var statusCollector: Job? = null
     private var clockJob: Job? = null
@@ -281,27 +278,36 @@ internal object WatchPartySync : PartyRealtimeTransport {
     }
 
     private fun attach(
-        channel: RealtimeChannel,
+        authority: RealtimeChannel,
+        peer: RealtimeChannel,
         partyId: String,
         channelInstance: Long,
     ) {
         resetProtocolState()
-        this.channel = channel
+        this.authorityChannel = authority
+        this.peerChannel = peer
         boundPartyId = partyId
         this.channelInstance = channelInstance
         WatchPartyDiagnostics.channelAttached(partyId)
-        log.i { "attach party=${partyId.shortId()} role=${if (isHost()) "host" else "guest"}" }
-        collector = channel.broadcastFlow<JsonObject>(WatchPartySyncEvent)
-            .onEach { payload -> receive(payload) }
+        log.i {
+            "attach party=${partyId.shortId()} role=${if (isHost()) "host" else "guest"} " +
+                "authority=${watchPartyAuthorityTopic(partyId)} peer=${watchPartyPeerTopic(partyId)}"
+        }
+        authorityCollector = authority.broadcastFlow<JsonObject>(WatchPartySyncEvent)
+            .onEach { payload -> receive(payload, PartyRealtimePlane.Authority) }
             .launchIn(scope)
-        stateCollector = channel.broadcastFlow<JsonObject>("state")
+        peerCollector = peer.broadcastFlow<JsonObject>(WatchPartySyncEvent)
+            .onEach { payload -> receive(payload, PartyRealtimePlane.Peer) }
+            .launchIn(scope)
+        stateCollector = authority.broadcastFlow<JsonObject>("state")
             .onEach(stateBroadcastSink)
             .launchIn(scope)
     }
 
     private fun resetProtocolState() {
         WatchPartyDiagnostics.channelDetached(boundPartyId)
-        collector?.cancel(); collector = null
+        authorityCollector?.cancel(); authorityCollector = null
+        peerCollector?.cancel(); peerCollector = null
         stateCollector?.cancel(); stateCollector = null
         statusCollector?.cancel(); statusCollector = null
         clockJob?.cancel(); clockJob = null
@@ -343,8 +349,14 @@ internal object WatchPartySync : PartyRealtimeTransport {
             try {
                 openChannel(partyId, profileId)
                 retryMs = 500L
-                val live = channel ?: continue
-                live.status.drop(1).first { it == RealtimeChannel.Status.UNSUBSCRIBED }
+                val liveAuthority = authorityChannel ?: continue
+                val livePeer = peerChannel ?: continue
+                // Either plane going away is the transport going away. A party running on the
+                // authority plane alone takes commands and never publishes a tick; one running on
+                // the peer plane alone follows the host's position and never hears a pause. Both
+                // are worse than a reconnect, and both would look "subscribed" to the health state.
+                merge(liveAuthority.status.drop(1), livePeer.status.drop(1))
+                    .first { it == RealtimeChannel.Status.UNSUBSCRIBED }
                 healthSink(PartyHealthEvent.RealtimeDegraded(channelInstance))
             } catch (failure: Throwable) {
                 if (partyChannelFailureIsScopeCancellation(failure)) throw failure
@@ -380,25 +392,42 @@ internal object WatchPartySync : PartyRealtimeTransport {
         channelInstance += 1
         val openingInstance = channelInstance
         healthSink(PartyHealthEvent.RealtimeConnecting(openingInstance))
-        val next = ZSupabaseProvider.client.channel("party:$partyId") {
+        // Read-only by policy. `acknowledgeBroadcasts` and presence are deliberately absent: this
+        // client never writes here, and asking to track presence on a topic it may not write would
+        // be asking the server for a refusal on every reconnect.
+        val nextAuthority = ZSupabaseProvider.client.channel(watchPartyAuthorityTopic(partyId)) {
+            isPrivate = true
+        }
+        val nextPeer = ZSupabaseProvider.client.channel(watchPartyPeerTopic(partyId)) {
             isPrivate = true
             broadcast { acknowledgeBroadcasts = true }
             presence { key = profileId }
         }
-        attach(next, partyId, openingInstance)
-        statusCollector = next.status.onEach { status ->
-            when (status) {
-                RealtimeChannel.Status.SUBSCRIBING -> healthSink(PartyHealthEvent.RealtimeConnecting(openingInstance))
-                RealtimeChannel.Status.SUBSCRIBED -> healthSink(PartyHealthEvent.RealtimeSubscribed(openingInstance))
-                RealtimeChannel.Status.UNSUBSCRIBING,
-                RealtimeChannel.Status.UNSUBSCRIBED,
-                -> if (desiredAuthority.value?.partyId == partyId) {
-                    healthSink(PartyHealthEvent.RealtimeDegraded(openingInstance))
-                }
+        attach(nextAuthority, nextPeer, partyId, openingInstance)
+        statusCollector = merge(nextAuthority.status, nextPeer.status).onEach { _ ->
+            val authorityStatus = nextAuthority.status.value
+            val peerStatus = nextPeer.status.value
+            when {
+                // Subscribed is the *conjunction*. Reporting it on the first plane to arrive is how
+                // a half-open transport would be reported as live.
+                authorityStatus == RealtimeChannel.Status.SUBSCRIBED &&
+                    peerStatus == RealtimeChannel.Status.SUBSCRIBED ->
+                    healthSink(PartyHealthEvent.RealtimeSubscribed(openingInstance))
+                authorityStatus == RealtimeChannel.Status.UNSUBSCRIBED ||
+                    peerStatus == RealtimeChannel.Status.UNSUBSCRIBED ||
+                    authorityStatus == RealtimeChannel.Status.UNSUBSCRIBING ||
+                    peerStatus == RealtimeChannel.Status.UNSUBSCRIBING ->
+                    if (desiredAuthority.value?.partyId == partyId) {
+                        healthSink(PartyHealthEvent.RealtimeDegraded(openingInstance))
+                    }
+                else -> healthSink(PartyHealthEvent.RealtimeConnecting(openingInstance))
             }
         }.launchIn(scope)
-        withTimeout(WatchPartyChannelSubscribeTimeoutMs) { next.subscribe(blockUntilSubscribed = true) }
-        next.track(buildJsonObject { put("profile_id", profileId) })
+        withTimeout(WatchPartyChannelSubscribeTimeoutMs) {
+            nextAuthority.subscribe(blockUntilSubscribed = true)
+            nextPeer.subscribe(blockUntilSubscribed = true)
+        }
+        nextPeer.track(buildJsonObject { put("profile_id", profileId) })
         clockJob = scope.launch { runClockExchange(partyId) }
         healthMonitorJob = scope.launch {
             while (true) {
@@ -417,18 +446,20 @@ internal object WatchPartySync : PartyRealtimeTransport {
     }
 
     private suspend fun closeChannel(clearProtocol: Boolean, detached: Boolean = true) {
-        val closing = channel
+        val closingAuthority = authorityChannel
+        val closingPeer = peerChannel
         val closingPartyId = boundPartyId
         val closingInstance = channelInstance
         val closePlan = partyChannelClosePlan(
-            hasChannel = closing != null,
+            hasChannel = closingAuthority != null || closingPeer != null,
             boundPartyId = closingPartyId,
             channelInstance = closingInstance,
             detached = detached,
         ) ?: return
-        channel = null
+        authorityChannel = null
+        peerChannel = null
         if (clearProtocol) resetProtocolState()
-        if (closing != null) {
+        listOfNotNull(closingAuthority, closingPeer).forEach { closing ->
             runCatching {
                 withTimeout(WatchPartyChannelCloseTimeoutMs) {
                     ZSupabaseProvider.client.realtime.removeChannel(closing)
@@ -474,9 +505,16 @@ internal object WatchPartySync : PartyRealtimeTransport {
     }
 
     /**
-     * Broadcasts a transport action and applies it here through the same path every guest uses.
+     * Applies a transport action here, and hands it to the one path that reaches everybody else.
      *
      * Returns null when this client may not control the party, so a caller cannot half-issue one.
+     *
+     * [submitDurable] is **required**, and it is the remote half of the command - not a durable
+     * record that follows one. A client cannot write the authority plane, so the accepted command
+     * only reaches other members by way of `party_submit_command_v2`, which validates it against
+     * the locked row and then emits the authoritative broadcast with the sender and generations it
+     * read there. It is a parameter rather than a call the caller makes afterwards because
+     * forgetting it no longer costs a database row - it costs every other member the command.
      */
     @OptIn(ExperimentalUuidApi::class)
     fun issueCommand(
@@ -486,6 +524,7 @@ internal object WatchPartySync : PartyRealtimeTransport {
         playbackSpeed: Float,
         playAfter: Boolean = true,
         diagnosticInputId: String? = null,
+        submitDurable: (PartyCommand) -> Unit,
     ): PartyCommand? {
         val context = authority ?: run {
             diagnosticInputId?.let { WatchPartyDiagnostics.rejected(it, kind, null, null, "authority-missing") }
@@ -521,9 +560,7 @@ internal object WatchPartySync : PartyRealtimeTransport {
         dispatchPartyCommandLocallyFirst(
             command = command,
             emitDirective = { _commands.tryEmit(it) },
-            enqueueSend = {
-                scope.launch { send(PartyCommandMessage(partyId = context.partyId, command = it)) }
-            },
+            enqueueRemoteDelivery = submitDurable,
         )
         return command
     }
@@ -554,10 +591,23 @@ internal object WatchPartySync : PartyRealtimeTransport {
         }
     }
 
+    /**
+     * Puts a message on the peer plane, which is the only topic this client may write.
+     *
+     * A [PartyCommandMessage] never comes through here. The accepted command is authored by
+     * `party_submit_command_v2` and emitted by the backend onto the authority plane; sending one
+     * from a client would be re-creating the forgeable path the topic split exists to close, and
+     * with the peer plane's policy it would be accepted by the socket and then ignored by every
+     * receiver. Refused loudly rather than silently, because the silent version is a party where
+     * pauses stop working and nothing says why.
+     */
     private suspend fun send(message: PartySyncMessage) {
-        val commandMessage = message as? PartyCommandMessage
+        if (message is PartyCommandMessage) {
+            log.w { "refusing to broadcast a command from the client; the backend authors those" }
+            return
+        }
         val startedAt = currentEpochMs()
-        val live = channel
+        val live = peerChannel
         val sendInstance = channelInstance
         if (live == null) {
             healthSink(
@@ -567,9 +617,6 @@ internal object WatchPartySync : PartyRealtimeTransport {
                     PartyRealtimeSendOutcome.Unavailable,
                 ),
             )
-            commandMessage?.let {
-                WatchPartyDiagnostics.send(it.command, it.partyId, startedAt, outcome = "unavailable")
-            }
             return
         }
         // A send that throws is a socket that has gone away, and the poll underneath this is what
@@ -580,10 +627,9 @@ internal object WatchPartySync : PartyRealtimeTransport {
                 PartyHealthEvent.RealtimeSendCompleted(
                     sendInstance,
                     currentEpochMs(),
-                    PartyRealtimeSendOutcome.Success,
+                    PartyRealtimeSendOutcome.LocallyAccepted,
                 ),
             )
-            commandMessage?.let { WatchPartyDiagnostics.send(it.command, it.partyId, startedAt, outcome = "success") }
         } catch (cancelled: CancellationException) {
             // Channel teardown cancels its in-flight broadcasts. That is normal lifecycle cleanup,
             // not a failed transport send and must not poison live-health telemetry.
@@ -596,12 +642,11 @@ internal object WatchPartySync : PartyRealtimeTransport {
                     PartyRealtimeSendOutcome.Failed,
                 ),
             )
-            commandMessage?.let { WatchPartyDiagnostics.send(it.command, it.partyId, startedAt, outcome = "failed") }
             log.d { "send failed kind=${message::class.simpleName} cause=${cause.message}" }
         }
     }
 
-    private fun receive(payload: JsonObject) {
+    private fun receive(payload: JsonObject, plane: PartyRealtimePlane) {
         // Null is every kind of "this build cannot act on it": a newer protocol, an unknown type, a
         // field an older sender did not write. All of them mean fall back, none of them mean guess.
         val message = decodePartySyncMessage(payload) ?: return
@@ -609,13 +654,37 @@ internal object WatchPartySync : PartyRealtimeTransport {
         val generation = context.generation
         val self = context.selfProfileId
         if (message.partyId != context.partyId) return
-        if (message.fromProfileId == self) return
+        // ⚠ **The whole of the sender binding lives on this line.** A command is trusted because it
+        // arrived on a topic no client may write; a tick is trusted only as far as the durable host
+        // check in `acceptTick`. Reading the type off a plane it cannot have come from is the one
+        // way a member could put words in the server's mouth, so it is refused before anything else
+        // looks at it.
+        if (!partyMessageIsAdmissible(message, plane)) {
+            log.w { "dropping ${message::class.simpleName} arriving on the $plane plane" }
+            return
+        }
+        // A command emitted by the backend names its *actor*, so the actor's own client sees its
+        // own command come back. It has already run it locally, and re-running it would re-execute
+        // a barrier the user is already past. Everything else is genuinely peer traffic.
+        if (message.fromProfileId == self) {
+            if (plane == PartyRealtimePlane.Authority) {
+                lastValidatedReceiveAtMs = currentEpochMs()
+                healthSink(
+                    PartyHealthEvent.RealtimeReceived(
+                        channelInstance,
+                        lastValidatedReceiveAtMs ?: currentEpochMs(),
+                        PartyRealtimeTrafficKind.Authority,
+                    ),
+                )
+            }
+            return
+        }
         // Subscription and successful sends proved nothing in Stage 0. Only an authenticated,
         // party-matching message from another member establishes live peer delivery.
-        val trafficKind = if (message is PartyClockPingMessage || message is PartyClockPongMessage) {
-            PartyRealtimeTrafficKind.Clock
-        } else {
-            PartyRealtimeTrafficKind.Peer
+        val trafficKind = when {
+            plane == PartyRealtimePlane.Authority -> PartyRealtimeTrafficKind.Authority
+            message is PartyClockPingMessage || message is PartyClockPongMessage -> PartyRealtimeTrafficKind.Clock
+            else -> PartyRealtimeTrafficKind.Peer
         }
         val receivedAt = currentEpochMs()
         lastValidatedReceiveAtMs = receivedAt
@@ -817,33 +886,4 @@ internal object WatchPartySync : PartyRealtimeTransport {
     }
 
     private fun absDelta(a: Long, b: Long): Long = if (a > b) a - b else b - a
-}
-
-/**
- * The summary of the timing plane that the UI and the debug overlay want.
- *
- * Written only when something in it changes, so a tick twice a second does not recompose anything.
- */
-data class WatchPartySyncState(
-    val clockLocked: Boolean = false,
-    val clockOffsetMs: Long = 0L,
-    val bestRttMs: Long = -1L,
-    val tickStatus: WatchPartyStatus? = null,
-    val tickCapturedAtPartyMs: Long? = null,
-    val holdingProfiles: List<String> = emptyList(),
-    val peerTelemetry: Map<String, PartyPeerTelemetry> = emptyMap(),
-)
-
-data class PartyPeerTelemetry(
-    val status: WatchPartyStatus,
-    val receivedAtPartyMs: Long,
-)
-
-internal inline fun dispatchPartyCommandLocallyFirst(
-    command: PartyCommand,
-    emitDirective: (PartyCommand) -> Unit,
-    enqueueSend: (PartyCommand) -> Unit,
-) {
-    emitDirective(command)
-    enqueueSend(command)
 }

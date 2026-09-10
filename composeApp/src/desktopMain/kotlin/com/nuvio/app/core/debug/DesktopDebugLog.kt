@@ -35,6 +35,25 @@ object DesktopDebugLog {
     private val timestampFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
     private val fileStampFormat = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
 
+    /**
+     * This process, in a form a person reading two interleaved logs can tell apart.
+     *
+     * ⚠ **Two clients launched in the same second wrote into the same file.** The two-client run
+     * that finally attributed the Realtime defect was nearly unreadable for it: the name was
+     * `nuvio-debug-<yyyyMMdd-HHmmss>.log`, both processes resolved the same second, both opened it
+     * in append mode, and every line of the whole physical test was interleaved with no way to say
+     * which machine wrote it. Seconds are not an identity - a PID is, and it costs nothing.
+     *
+     * The random suffix is for the case a PID does not settle either: two runs of the same test on
+     * the same machine can reuse a PID after a restart, and appending to a stranger's log is worse
+     * than making a second file.
+     */
+    val processTag: String by lazy {
+        val pid = runCatching { ProcessHandle.current().pid() }.getOrNull() ?: 0L
+        val entropy = Integer.toHexString((System.nanoTime().toInt() and 0xFFFF)).padStart(4, '0')
+        "p$pid-$entropy"
+    }
+
     @Volatile
     private var sink: PrintStream? = null
 
@@ -54,7 +73,10 @@ object DesktopDebugLog {
 
         val logDir = DesktopStorage.resolveAppDataDir().resolve("logs")
         if (!logDir.exists()) runCatching { Files.createDirectories(logDir) }
-        val logFile = logDir.resolve("nuvio-debug-${LocalDateTime.now().format(fileStampFormat)}.log")
+        // Timestamp *and* process identity. See [processTag] for the run this cost.
+        val logFile = logDir.resolve(
+            "nuvio-debug-${LocalDateTime.now().format(fileStampFormat)}-$processTag.log",
+        )
 
         val stream = runCatching {
             // Autoflush, because a session that ends in a hard crash must still leave the lines
@@ -67,6 +89,8 @@ object DesktopDebugLog {
 
         stream.println("=== Nuvio Z desktop debug log ===")
         stream.println("started   ${LocalDateTime.now().format(timestampFormat)}")
+        stream.println("instance  $processTag")
+        stream.println("appdata   ${DesktopStorage.resolveAppDataDir()}")
         stream.println("os        ${System.getProperty("os.name")} ${System.getProperty("os.version")} ${System.getProperty("os.arch")}")
         stream.println("java      ${System.getProperty("java.version")} (${System.getProperty("java.vendor")})")
         stream.println("log file  $logFile")
@@ -134,7 +158,9 @@ object DesktopDebugLog {
         private fun flushLine() {
             val line = pending.toString(Charsets.UTF_8)
             pending.reset()
-            file.println("${LocalDateTime.now().format(timestampFormat)} [$tag] $line")
+            // The instance tag rides every line, not only the header: a tester who pastes an
+            // extract from the middle of a file, or concatenates two, still has attribution.
+            file.println("${LocalDateTime.now().format(timestampFormat)} [$processTag/$tag] $line")
         }
     }
 }

@@ -50,6 +50,32 @@ private const val TypeClockPing = "clk_ping"
 private const val TypeClockPong = "clk_pong"
 private const val TypePeerStatus = "peer"
 
+/**
+ * Which of the party's two live topics a message arrived on.
+ *
+ * Carried into validation rather than read off the payload, because the payload is exactly the
+ * thing that cannot be trusted to say. Supabase Realtime authorizes a private channel once, at
+ * join, with a stub row whose payload is NULL, and caches the answer - there is no per-broadcast
+ * payload hook - so "who sent this" is only knowable from *where it could have been written*. See
+ * `watchPartyAuthorityTopic`.
+ */
+enum class PartyRealtimePlane { Authority, Peer }
+
+/**
+ * Whether a decoded message may be acted on, given the plane it arrived on.
+ *
+ * A whitelist per plane rather than a rejection of the one case that matters today, so a message
+ * type added later gets a decision made about it here instead of inheriting whichever branch it
+ * happened to fall through.
+ */
+fun partyMessageIsAdmissible(message: PartySyncMessage, plane: PartyRealtimePlane): Boolean =
+    when (plane) {
+        // Only the backend can write the authority topic, so only it may carry a command.
+        PartyRealtimePlane.Authority -> message is PartyCommandMessage
+        // Members write the peer topic, so nothing arriving on it may command the party.
+        PartyRealtimePlane.Peer -> message !is PartyCommandMessage
+    }
+
 sealed interface PartySyncMessage {
     val partyId: String
     val fromProfileId: String

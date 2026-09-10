@@ -613,16 +613,6 @@ class WatchPartySyncProtocolTest {
         assertEquals(PartyChannelClosePlan("party", 7, detached = true), first)
         assertNull(duplicate, "the null authority emission after cancellation must not close twice")
     }
-    @Test fun acceptedLocalDirectiveIsDispatchedBeforeRealtimeSendIsEnqueued() {
-        val events = mutableListOf<String>()
-        dispatchPartyCommandLocallyFirst(
-            command = command(PartyCommandKind.pause, startPositionMs = 1_000, startAtPartyMs = 2_000),
-            emitDirective = { events += "directive" },
-            enqueueSend = { events += "send" },
-        )
-        assertEquals(listOf("directive", "send"), events)
-    }
-
     @Test fun everyMessageSurvivesARoundTrip() {
         val messages = listOf(
             PartyTickMessage("host", tick(positionMs = 1_234, capturedAtPartyMs = 99_000, speed = 1.5f)),
@@ -763,5 +753,52 @@ class WatchPartyChannelReconnectTest {
         assertEquals(1, opened, "cancellation stops the loop at the attempt that saw it")
         assertEquals(0, reported, "a cancelled scope is not a transport failure to report")
         assertSame(cancelled, escaped, "genuine cancellation must propagate unchanged")
+    }
+
+    // --------------------------------------------------------------- which plane may say what
+    //
+    // Supabase Realtime authorizes a private channel once, at join, with a stub row whose payload is
+    // NULL, and caches the answer. There is no per-broadcast payload hook, so nothing a message
+    // *claims* about its sender can be checked - the topic it could have been written to is the
+    // only sender binding this transport has.
+
+    @Test fun onlyTheServerAuthoredPlaneMayCarryACommand() {
+        val command = PartyCommandMessage("party", command(PartyCommandKind.pause, 1_000, 2_000))
+        assertTrue(partyMessageIsAdmissible(command, PartyRealtimePlane.Authority))
+        assertFalse(
+            partyMessageIsAdmissible(command, PartyRealtimePlane.Peer),
+            "members can write the peer plane, so a command arriving on it is a forgery",
+        )
+    }
+
+    @Test fun peerTrafficIsRefusedOnTheAuthorityPlane() {
+        val peerPlane = listOf(
+            PartyTickMessage("host", tick(positionMs = 10, capturedAtPartyMs = 20, speed = 1f)),
+            PartyClockPingMessage("party", "guest", exchangeId = "x", sentAtMs = 1),
+            PartyClockPongMessage("party", "host", toProfileId = "guest", exchangeId = "x", sentAtMs = 1, hostAtMs = 2),
+            PartyPeerStatusMessage("party", "guest", WatchPartyStatus.buffering, atPartyMs = 3),
+        )
+        peerPlane.forEach { message ->
+            assertTrue(
+                partyMessageIsAdmissible(message, PartyRealtimePlane.Peer),
+                "${message::class.simpleName} belongs on the peer plane",
+            )
+            assertFalse(
+                partyMessageIsAdmissible(message, PartyRealtimePlane.Authority),
+                "${message::class.simpleName} is not something the backend authors",
+            )
+        }
+    }
+
+    @Test fun anAcceptedCommandReachesTheOtherMembersThroughTheDurableSubmission() {
+        // A client may not write the authority plane, so the durable submit is the command's only
+        // route to anybody else - and it must not overtake the sender's own player.
+        val events = mutableListOf<String>()
+        dispatchPartyCommandLocallyFirst(
+            command = command(PartyCommandKind.pause, startPositionMs = 1_000, startAtPartyMs = 2_000),
+            emitDirective = { events += "directive" },
+            enqueueRemoteDelivery = { events += "durable" },
+        )
+        assertEquals(listOf("directive", "durable"), events)
     }
 }

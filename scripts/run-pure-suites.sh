@@ -258,10 +258,12 @@ java -cp "$WORK/out-debrid:$CP_RUN:$CP_JSON:$CP_COROUTINES" org.junit.runner.JUn
 # the JSON runtime is for WatchPartySyncProtocol.kt, which is hand-rolled over JsonObject so that
 # the encoder can be executed against the decoder instead of trusted to agree with it.
 rm -rf "$WORK/out-watchparty"
-kotlinc -nowarn -cp "$CP_BUILD:$CP_JSON" -Xplugin="$WORK/serialization-plugin-${KOTLIN_VERSION}.jar" \
+kotlinc -nowarn -cp "$CP_BUILD:$CP_JSON:$CP_COROUTINES" -Xplugin="$WORK/serialization-plugin-${KOTLIN_VERSION}.jar" \
   -d "$WORK/out-watchparty" \
   "$M/features/watchparty/WatchPartyModels.kt" \
   "$M/features/watchparty/PartySourceDescriptorV2.kt" \
+  "$M/features/watchparty/PartySessionContracts.kt" \
+  "$M/features/watchparty/WatchPartySyncRules.kt" \
   "$M/features/watchparty/WatchPartySessionState.kt" \
   "$M/features/watchparty/WatchPartyPlaybackLifecycle.kt" \
   "$M/features/watchparty/WatchPartyClock.kt" \
@@ -275,7 +277,7 @@ kotlinc -nowarn -cp "$CP_BUILD:$CP_JSON" -Xplugin="$WORK/serialization-plugin-${
   "$T/features/watchparty/WatchPartySyncTest.kt" \
   2>&1 | grep -v "^warning:" | grep -v "Picked up JAVA" || true
 
-java -cp "$WORK/out-watchparty:$CP_RUN:$CP_JSON" org.junit.runner.JUnitCore \
+java -cp "$WORK/out-watchparty:$CP_RUN:$CP_JSON:$CP_COROUTINES" org.junit.runner.JUnitCore \
   com.nuvio.app.features.watchparty.WatchPartyModelsTest \
   com.nuvio.app.features.watchparty.PartySourceDescriptorV2Test \
   com.nuvio.app.features.watchparty.WatchPartySessionStateTest \
