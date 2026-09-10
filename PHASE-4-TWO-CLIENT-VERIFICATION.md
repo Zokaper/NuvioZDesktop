@@ -46,6 +46,15 @@ The exit gate fails if a guest silently plays a lower-tier release while an exac
 
 ## Refinement retest, 2026-09-10 (commit 1ec3ae6f)
 
+Build under test for this section:
+
+- MSI: `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi`
+- Size: `252,915,904` bytes
+- SHA-256: `0469315D11CDA34E865E468F7C936A538B46DAC20D4275811841F0FA704C02BF`
+- Build command: `./gradlew :composeApp:packageReleaseMsi "-Pnuvio.desktop.debugTools=true" --no-configuration-cache --console=plain` on Temurin 21.0.12
+- File logging confirmed in the packaged app: `[JavaOptions] java-options=-Dnuvio.debugTools=true`
+- Backend unchanged; the deployed Phase 4 migrations on `pzbpghmmordvzcfbayoh` are the prerequisite as above.
+
 Four findings from the first physical run were addressed. The gate stays open: none of this has
 been re-run on hardware. This section is the short sequence that re-checks the four, not a
 replacement for the table above.
