@@ -305,8 +305,12 @@ fun SetupWizardScreen(
         // and until somebody commits it the migration rule keeps re-deriving it on every launch.
         // Seeing the question and walking past it is a decision; the Welcome skip, which never
         // reaches this step, deliberately is not - see `resolveSocialFeaturesEnabled`.
+        // ⚠ Through `setSocialEnabled`, not straight to the repository. A first run has no party
+        // to leave, but this same screen is the dismissible re-run from Settings, and walking past
+        // this step with the switch off is as much a decision to turn social off as moving the
+        // switch is - so it has to take the layer down in the same order.
         if (step == SetupStep.SocialOptIn && socialPreferences.storedPreference == null) {
-            SocialFeaturePreferencesRepository.setEnabled(socialPreferences.enabled)
+            setSocialEnabled(socialPreferences.enabled)
         }
         if (isFinalSetupStep(step, plan)) {
             complete()

@@ -38,7 +38,22 @@ object SocialFeatureGate {
             initialValue = SocialFeaturePreferencesRepository.uiState.value.enabled,
         )
 
-    val isEnabled: Boolean get() = enabled.value
+    /**
+     * The same answer, outside composition.
+     *
+     * ⚠ `ensureLoaded()` first, and it is not belt-and-braces. `AppGate` loads the repository at
+     * startup, so in practice the value is on disk before anything asks - but the non-composable
+     * readers are things like `SocialWatchedActivity`, which fire from the middle of a watched-history
+     * write and have no ordering relationship with the gate at all. An unloaded repository answers
+     * `false`, and a `false` here means "silently publish nothing", which is the kind of fault that
+     * is only ever noticed as an empty activity feed weeks later. The load is a synchronous
+     * key/value read and idempotent.
+     */
+    val isEnabled: Boolean
+        get() {
+            SocialFeaturePreferencesRepository.ensureLoaded()
+            return enabled.value
+        }
 }
 
 /**

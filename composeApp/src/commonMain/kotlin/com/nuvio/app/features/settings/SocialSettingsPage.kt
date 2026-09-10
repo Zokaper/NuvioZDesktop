@@ -7,6 +7,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -16,6 +17,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.social.SocialFeaturePreferencesRepository
 import com.nuvio.app.features.social.SocialIdentityBody
 import com.nuvio.app.features.social.SocialRepository
@@ -74,6 +76,18 @@ private fun SocialSettingsSections(isTablet: Boolean) {
     }.collectAsStateWithLifecycle()
     val socialState by remember { SocialRepository.uiState }.collectAsStateWithLifecycle()
     val partySession by remember { WatchPartySessionCoordinator.state }.collectAsStateWithLifecycle()
+    val profileState by remember { ProfileRepository.state }.collectAsStateWithLifecycle()
+
+    // ⚠ **The other place the migration probe has to run.** A user who skipped the wizard - or
+    // completed it before this preference existed - can arrive here with the switch showing a
+    // value derived from a local cache that a second install or a cleared data root has left
+    // empty. Without this they would see "off" for an account that has a handle and friends, and
+    // the only way to find out otherwise would be to flip a switch they have been told is already
+    // correct. The repository runs it at most once per profile and never persists the result.
+    val socialProfileId = profileState.activeProfile?.id?.takeIf(String::isNotBlank)
+    LaunchedEffect(socialProfileId) {
+        SocialFeaturePreferencesRepository.refreshIdentityProbe(socialProfileId)
+    }
 
     var confirmLeaveParty by remember { mutableStateOf(false) }
     var showHandleDialog by remember { mutableStateOf(false) }
