@@ -2,6 +2,47 @@
 
 Last updated: 2026-09-10
 
+## Phase 4 Watch Together — closure status (2026-09-10)
+
+**Final status: DONE WITH NON-BLOCKING QA DEBT.** The architecture below (Stages 1–7 of
+`PLAN-watch-together-architecture.md`) is implemented, backend-deployed, and has now been
+exercised on two real desktop clients with a successful outcome for the core experience. The
+formal 21-scenario matrix in `PHASE-4-TWO-CLIENT-VERIFICATION.md` (invites, host transfer,
+reconnects, cross-addon/cross-debrid matching, etc.) has **not** been executed; only the five-item
+refinement retest in that file has a recorded physical result. Phase 5 has not started.
+
+Confirmed working on two real clients, real profiles, isolated data roots (2026-09-10, MSI
+`Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi`, SHA-256 `0469315D11CDA34E865E468F7C936A538B46DAC20D4275811841F0FA704C02BF`):
+realtime peer/server delivery with no "Live sync lost", host/guest playback sync (effectively
+frame-perfect in the observed run), pause/resume sync, seek sync, guest-ready-first barrier hold,
+host-ready-first barrier hold with automatic resume and no manual Play, host-only lock making every
+guest transport control inert while volume/fullscreen/subtitles/audio stay local, and the earlier
+false startup-stall/bounce-to-source-loading bug not recurring. See the "Result, 2026-09-10" note
+under the refinement retest in `PHASE-4-TWO-CLIENT-VERIFICATION.md` for the exact wording.
+
+**Known non-blocking bug — deferred, not fixed here.** Collaborative-control actor attribution:
+when collaborative controls are enabled and a guest (e.g. "Big Z") pauses, resumes, or seeks, the
+in-player indicator can still attribute the action to the host instead of naming the guest.
+Command authority and playback correctness are unaffected — this is presentation-only. Related
+caveat: a machine-generated barrier pause/resume may also read as human-attributed; distinguishing
+that properly needs additional command/wire semantics and is out of scope for Phase 4.
+
+**Future UX/performance polish — deferred, not started here.** The in-player Watch Together panel
+works but needs a later pass on (1) visual hierarchy/layout/readability/information density and
+(2) responsiveness — state-update latency, recomposition/update behavior, interaction feedback, and
+any unnecessary delay/jank. Not a Phase 4 blocker; do not redesign it as part of this closure.
+
+**Carried Phase 5 debt (already deployed, documented in full under the entry below):** the backend
+tolerates a missing `authority_epoch` on Realtime party broadcasts so an install between protocol
+v1 and v2 fails for a chosen reason and mobile's Phase 5 repointing isn't blocked on the epoch field
+landing first. Removal instructions are in `202609100001_release_liveness_authz_and_lifecycle.sql`
+and section 12 of `HANDOFF-phase-4-codex-2.md`.
+
+**Known unrelated flaky tests (not Phase 4 blockers):** `WatchedItemsStoreTest`,
+`DesktopDownloadQueueE2ETest`'s trickle/drop case, and
+`NativePlayerControllerTeardownTest.failedOrdinaryDisposeBlocksTerminalNavigation` — all fail only
+under machine load and pass run alone; unrelated to Watch Together.
+
 ## Watch Together - the Realtime transport had never delivered anything (2026-09-10)
 
 The first physical two-client run produced two independently-proven failures. Both are fixed here;

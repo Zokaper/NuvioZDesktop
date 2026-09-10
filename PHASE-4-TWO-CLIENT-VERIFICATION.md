@@ -55,9 +55,22 @@ Build under test for this section:
 - File logging confirmed in the packaged app: `[JavaOptions] java-options=-Dnuvio.debugTools=true`
 - Backend unchanged; the deployed Phase 4 migrations on `pzbpghmmordvzcfbayoh` are the prerequisite as above.
 
-Four findings from the first physical run were addressed. The gate stays open: none of this has
-been re-run on hardware. This section is the short sequence that re-checks the four, not a
-replacement for the table above.
+Four findings from the first physical run were addressed. This section is the short sequence that
+re-checks the four; it is **not** a replacement for the 21-scenario table above, which remains
+`NOT RUN` in full.
+
+**Result, 2026-09-10 (reported by the maintainer running two real clients on this MSI):** items
+1, 2, 4 and 5 passed as specified — realtime genuinely delivered peer/server traffic, no
+"Live sync lost", host/guest sync held (effectively frame-perfect in the observed run),
+pause/resume and seeks synced correctly, both barrier orderings (guest-ready-first and
+host-ready-first) worked with no manual Play needed, host-only lock made every guest control
+inert while volume/fullscreen/subtitles/audio stayed live, and the former false
+startup-stall/bounce-to-source-loading bug did not recur. Item 3 (actor attribution) **did not
+fully pass**: synchronization was correct, but the in-player indicator can still attribute a
+guest's pause/resume/seek to the host instead of naming the guest. This is tracked as a
+non-blocking presentation bug — see `STATUS.md` and `ROADMAP.md` — and is deliberately not fixed
+in this pass. This run is a targeted smoke/retest of five prior findings, not the formal
+21-scenario matrix above; every row in that table is still `NOT RUN`.
 
 Two clients, two real profiles, isolated data roots, **collaborative** control mode with "wait for
 everyone" on, unless a step says otherwise.
