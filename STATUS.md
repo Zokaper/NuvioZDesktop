@@ -89,6 +89,30 @@ longer: the playback step drew *"Only play what I can watch"* as "Only play what
 "Identity and release engineering" 7, iOS 8, TV 9. `HANDOFF-phase-4-codex-2.md` §12 still says
 "Phase 5" for the mobile repointing; that means Phase 6 now.
 
+### Phase 5 friend-test MSI published (2026-09-10) — TEST ARTIFACT, not a closure
+
+⚠ **This is not Stage 9, not Stage 10, and does not close Phase 5.** It is a manually cut MSI handed
+to a friend outside the automated CI release pipeline, published purely so physical-install QA has
+something to run against. Stages 9 and 10 remain **NOT STARTED** exactly as above.
+
+GitHub prerelease `phase5-test-20260910` (https://github.com/Zokaper/NuvioZDesktop/releases/tag/phase5-test-20260910),
+built from `claude/phase-5-onboarding` at commit `096add38e676eefb5117e26965689f53a7eab346` (the same
+commit this status section already describes — working tree was clean, nothing new landed for this
+build). `Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi` (253,022,400 bytes; SHA-256
+`76ABF78944D72B45D5E7F8EF512450B40229434CBC84A186AEF274365AD36471`), packaged with the standard
+release-style `:composeApp:packageReleaseMsi` task (no `-Pnuvio.desktop.debugChannel=true`) — same
+shape as the Phase 4 friend-test artifact, not the debug-channel build.
+
+**Deliberately invisible to both in-app updaters**, verified against the current predicates in
+`AppUpdaterPlatform.desktop.kt`/`AppUpdater.kt`: the release channel requires `!prerelease`
+(`includePrereleases = false` when not `debugChannel`) and this release has `prerelease: true`; the
+debug channel requires the tag to start with `debug-` and `phase5-test-20260910` does not. No
+existing Nuvio Z install, release or debug, will ever offer this as an update.
+
+Phase 5 remains **OPEN**. This build proves nothing about Stage 9 (Hot Reload/MCP) or Stage 10 (the
+physical matrix) — it only makes a real MSI available for a friend to start running that matrix
+against.
+
 ## Phase 4 Watch Together — closure status (2026-09-10)
 
 **Final status: DONE WITH NON-BLOCKING QA DEBT.** The architecture below (Stages 1–7 of
