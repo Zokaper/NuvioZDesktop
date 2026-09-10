@@ -128,6 +128,63 @@ fun SourceResolutionState.readyLabel(): String = when (this) {
  */
 fun WatchPartyParticipant.readyLabel(): String = derivedStatus().label
 
+/**
+ * Who moved the party, said the way a person would say it.
+ *
+ * Collaborative parties made this necessary and host-only parties hid the need for it: with one
+ * possible actor there was nothing to attribute, so nothing did, and the player simply showed the
+ * transport changing under the viewer with no account of who had changed it. The 2026-09-10 run is
+ * the report - a guest paused, every member paused correctly, and no screen said whose doing it
+ * was.
+ *
+ * The actor is the accepted command's [PartyCommand.issuedByProfileId], which the backend binds
+ * from the row it locked rather than from anything a client wrote into a payload, so this is the
+ * server's answer to "who", not a claim the sender made about itself. Host-ness is never consulted:
+ * hard-coding it is exactly the assumption that produced the bug.
+ *
+ * Null for the viewer's own command. The person who pressed the button does not need telling, and
+ * the press already has its own local feedback; announcing it back to them is noise on every single
+ * transport action they take.
+ */
+fun partyActorNotice(
+    kind: PartyCommandKind,
+    actorProfileId: String,
+    viewerProfileId: String?,
+    actorName: String,
+    seekingBackwards: Boolean = false,
+): String? {
+    if (actorProfileId == viewerProfileId) return null
+    // An actor the durable snapshot has never named - a member who left between issuing and
+    // arriving, or a command that outlived its generation - is better left unannounced than
+    // announced as a profile id.
+    if (actorName.isBlank()) return null
+    val verb = when (kind) {
+        PartyCommandKind.play -> "resumed"
+        PartyCommandKind.pause -> "paused"
+        PartyCommandKind.seek -> if (seekingBackwards) "skipped back" else "skipped ahead"
+        PartyCommandKind.speed -> "changed the speed"
+    }
+    return "$actorName $verb"
+}
+
+/**
+ * The actor's name as the *other* members should read it.
+ *
+ * [displayName] answers "You" for the viewer, which is right on a member list and wrong in a
+ * sentence this function's caller only ever builds about somebody else. Falls back through the
+ * social profile the party already carries; blank when the member is not in the snapshot at all,
+ * which [partyActorNotice] reads as "say nothing".
+ */
+fun WatchPartyState.actorDisplayName(profileId: String): String =
+    members.firstOrNull { it.profileId == profileId }
+        // A member the social profile has not named would fall back to a truncated profile id,
+        // which is not a thing to put in a sentence. Blank instead, and the caller says nothing.
+        ?.takeIf { !it.profile?.displayName.isNullOrBlank() || !it.profile?.handle.isNullOrBlank() }
+        // Asked as a stranger would, so it never answers "You": this name is only ever read by the
+        // members who did *not* do the thing.
+        ?.displayName(viewerProfileId = null)
+        .orEmpty()
+
 data class PartyMemberPresentation(
     val profileId: String,
     val label: String,

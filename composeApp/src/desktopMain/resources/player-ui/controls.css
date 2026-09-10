@@ -740,6 +740,12 @@ button:disabled {
 
 .party-member.offline { opacity: .5; }
 
+/*
+ * Truly inert, not merely dim. `opacity` and `cursor` alone said "disabled" while the controls
+ * kept working, so a guest under host-only controls could press play and watch its own player
+ * answer for a second before the party corrected it. `pointer-events: none` sends the press
+ * through to the surface, where the refusal lives and says why.
+ */
 .player.party-transport-locked .playback-action,
 .player.party-transport-locked [data-command="speed"],
 .player.party-transport-locked [data-command="nextEpisode"],
@@ -747,6 +753,7 @@ button:disabled {
 .player.party-transport-locked .scrub {
   opacity: .38;
   cursor: not-allowed;
+  pointer-events: none;
 }
 
 @keyframes party-banner-pulse {

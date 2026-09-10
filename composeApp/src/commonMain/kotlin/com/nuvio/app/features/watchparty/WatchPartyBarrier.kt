@@ -23,8 +23,37 @@ package com.nuvio.app.features.watchparty
  * Import-free, so `scripts/run-pure-suites.sh` runs this file rather than a copy of it.
  */
 
-/** Floor on the barrier lead. Below this a slow local seek misses its own start. */
-const val WatchPartyBarrierMinLeadMs = 250L
+/**
+ * Floor on the barrier lead, and in practice the lead itself.
+ *
+ * Was 250ms, and the 2026-09-10 two-client run says that number was measured against the wrong
+ * path. The lead is sized from the worst round trip anyone has *reported*, and every round trip
+ * this feature measures is a peer-plane broadcast between two clients. A command does not travel
+ * that way: it goes through `party_submit_command_v2`, which locks the row and authors the
+ * broadcast itself, so the hop is client to server to member with an RPC in the middle. The peer
+ * plane never sees it, so `worstRtt / 2 + margin` came out under the floor every single time and
+ * the floor was the whole answer - `leadMs=250` on all twenty-one commands of that run.
+ *
+ * What that cost is measurable in the same logs. All forty commands arrived *after* their own
+ * barrier: median 180ms late, 652ms at the worst. A late barrier holds for nothing and carries its
+ * overshoot into the target, so a resume that should have been "start on this frame" became a
+ * forward seek on twenty-four of thirty-five, and a forward seek costs the decoder a flush and a
+ * refill - 11:27:22 shows a 315ms corrective seek take the guest from 166ms out to 397ms out, then
+ * three and a half seconds of nudging to get back inside the deadband. That excursion is the
+ * "half a second apart after a resume" the physical run reported; steady state in the same logs
+ * sits at 11-65ms.
+ *
+ * 550ms is where the measured distribution stops paying: it takes the commands needing no
+ * corrective seek at all from 11 of 35 to 31 of 35, and the worst overshoot from 652ms to 352ms.
+ * Past it the curve flattens and the only thing still growing is how long the host waits for its
+ * own play button. Still well under [WatchPartyBarrierMaxLeadMs], which is the bound on exactly
+ * that. Pause is unaffected - it carries no lead by design - so nothing about stopping got slower.
+ *
+ * This is a floor sized from one run on one pair of machines, not a measurement the feature takes.
+ * The honest fix is for a receiver to report the lateness it actually saw so the sender can size
+ * the next lead from it; that is a peer-plane protocol addition and deliberately not done here.
+ */
+const val WatchPartyBarrierMinLeadMs = 550L
 
 /** Ceiling on the barrier lead. Past this the host feels their own button lag. */
 const val WatchPartyBarrierMaxLeadMs = 800L
@@ -86,13 +115,26 @@ const val WatchPartySeekLandingPollMs = 50L
 const val WatchPartyGuestBufferingGraceMs = 2_500L
 
 /**
- * How long a guest has to be *playing* again - not merely "no longer buffering" - before the host
+ * How long a guest has to be *ready* again - not merely "no longer buffering" - before the host
  * starts the party back up.
  *
- * A guest that has finished aligning is paused on the right frame and not yet running, and reading
- * that as recovery is what turned one stall into a pause, a resume, and another stall.
+ * A guest that has finished aligning but is still starved reports `buffering`, and reading that as
+ * recovery is what turned one stall into a pause, a resume, and another stall.
  */
 const val WatchPartyStallRecoverySettleMs = 400L
+
+/**
+ * How often the host re-reads the stall watch when no message has arrived to move it.
+ *
+ * Both edges of a hold are elapsed time rather than a message, and the *release* edge has no
+ * message behind it at all: the last thing a recovering guest sends is the status that starts the
+ * settle, and by construction the settle has not run out yet when it lands. Driven only by
+ * incoming telemetry, the release therefore waited for the guest's next liveness ping -
+ * [WatchPartyClockPingIntervalMs] - which is more than ten times the settle and is what the
+ * 2026-09-10 run reported as the party never starting again on its own. Well under
+ * [WatchPartyStallRecoverySettleMs], so the settle is what decides the release rather than this.
+ */
+const val WatchPartyStallWatchPollMs = 150L
 
 /** The least time between two automatic holds, so one flapping source cannot machine-gun the party. */
 const val WatchPartyStallHoldCooldownMs = 5_000L
@@ -301,13 +343,23 @@ fun pendingPartySeek(
  *
  * The transition is in [advance] rather than in the query, because both edges are about elapsed time
  * rather than about a message: a stall becomes a hold when the grace runs out, and a hold ends when
- * the guest has been *playing* again for the settle. Reading "no longer buffering" as recovery is
- * what made one stall produce a pause, a resume, and another stall a moment later - the guest was
- * parked on the right frame and not yet running, which is neither.
+ * the guest is *ready* again for the settle. Reading "no longer buffering" as recovery is what made
+ * one stall produce a pause, a resume, and another stall a moment later - the guest was parked on
+ * the right frame and not yet running, which is neither.
+ *
+ * "Ready" is `playing` for a member the party is not holding, and `playing` **or** `paused` for one
+ * it is. That second case is not a loosening, it is the only reading that terminates: holding a
+ * member pauses the party, the member obeys, and it then reports `paused` for as long as the hold
+ * lasts. Demanding `playing` of a member the host has just stopped is a condition it cannot meet,
+ * and the 2026-09-10 two-client run is what that costs - the guest finished buffering, said so, and
+ * the party sat paused until somebody pressed play. `paused` is safe to read as ready here because
+ * a member that is still starved says `buffering` instead: `partyStatusFor` tests the engine's
+ * `isLoading` before it tests the transport, so `paused` means parked and full, never parked and
+ * empty.
  */
 data class GuestBufferingWatch(
     val bufferingSinceByProfile: Map<String, Long> = emptyMap(),
-    val playingSinceByProfile: Map<String, Long> = emptyMap(),
+    val readySinceByProfile: Map<String, Long> = emptyMap(),
     val heldSinceByProfile: Map<String, Long> = emptyMap(),
 ) {
     /** Members the host is holding the party for right now. */
@@ -321,23 +373,45 @@ data class GuestBufferingWatch(
                 } else {
                     bufferingSinceByProfile + (profileId to partyNowMs)
                 },
-                playingSinceByProfile = playingSinceByProfile - profileId,
+                readySinceByProfile = readySinceByProfile - profileId,
             )
             WatchPartyStatus.playing -> copy(
                 bufferingSinceByProfile = bufferingSinceByProfile - profileId,
-                playingSinceByProfile = if (playingSinceByProfile.containsKey(profileId)) {
-                    playingSinceByProfile
+                readySinceByProfile = markReady(profileId, partyNowMs),
+            )
+            // `paused` is two different facts depending on who caused it.
+            //
+            // From a member the party is holding, it is the party's own pause arriving back: the
+            // host stopped everyone for this member, so demanding that it start playing again
+            // before the hold may end is asking it to disobey the command that is holding it. It
+            // has stopped buffering - that is what `paused` rather than `buffering` means - so the
+            // recovery clock starts here and the hold ends on the ordinary settle.
+            //
+            // From a member nobody is holding, it is a person who pressed pause, and it is neither
+            // a stall nor a recovery. Any hold that is standing stays standing on its own timer.
+            WatchPartyStatus.paused -> copy(
+                bufferingSinceByProfile = bufferingSinceByProfile - profileId,
+                readySinceByProfile = if (heldSinceByProfile.containsKey(profileId)) {
+                    markReady(profileId, partyNowMs)
                 } else {
-                    playingSinceByProfile + (profileId to partyNowMs)
+                    readySinceByProfile - profileId
                 },
             )
-            // A deliberate pause, a lobby, an ended party: not a stall, and not a recovery either.
-            // A member sitting here keeps an existing hold alive until [WatchPartyStallHoldWindowMs]
-            // releases it, rather than ending one it has not actually come back from.
+            // A lobby, an ended party: not a stall, and not a recovery either. A member sitting
+            // here keeps an existing hold alive until [WatchPartyStallHoldMaxMs] releases it,
+            // rather than ending one it has not actually come back from.
             else -> copy(
                 bufferingSinceByProfile = bufferingSinceByProfile - profileId,
-                playingSinceByProfile = playingSinceByProfile - profileId,
+                readySinceByProfile = readySinceByProfile - profileId,
             )
+        }
+
+    /** Starts the recovery clock, or leaves a running one alone so the settle is not restarted. */
+    private fun markReady(profileId: String, partyNowMs: Long): Map<String, Long> =
+        if (readySinceByProfile.containsKey(profileId)) {
+            readySinceByProfile
+        } else {
+            readySinceByProfile + (profileId to partyNowMs)
         }
 
     /**
@@ -352,8 +426,8 @@ data class GuestBufferingWatch(
         }
         val released = next.keys.filter { profileId ->
             if (bufferingSinceByProfile.containsKey(profileId)) return@filter false
-            val playingSince = playingSinceByProfile[profileId]
-            val settled = playingSince != null && partyNowMs - playingSince >= WatchPartyStallRecoverySettleMs
+            val readySince = readySinceByProfile[profileId]
+            val settled = readySince != null && partyNowMs - readySince >= WatchPartyStallRecoverySettleMs
             // A member that answers nothing at all cannot be waited for forever; the party is worth
             // more than one silent client.
             val abandoned = partyNowMs - (next[profileId] ?: partyNowMs) >= WatchPartyStallHoldMaxMs
@@ -365,7 +439,7 @@ data class GuestBufferingWatch(
 
     fun forget(profileId: String): GuestBufferingWatch = copy(
         bufferingSinceByProfile = bufferingSinceByProfile - profileId,
-        playingSinceByProfile = playingSinceByProfile - profileId,
+        readySinceByProfile = readySinceByProfile - profileId,
         heldSinceByProfile = heldSinceByProfile - profileId,
     )
 }

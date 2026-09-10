@@ -596,6 +596,50 @@ const showCommandToast = command => {
   }
 };
 
+/**
+ * Whether this member is in a party that does not let it move playback.
+ *
+ * True for a guest under host-only controls, false for everyone else and for anybody not in a
+ * party at all - `available` is what keeps ordinary playback untouched by this.
+ */
+const isPartyTransportLocked = () =>
+  Boolean(state.partyRoom && state.partyRoom.available && !state.partyRoom.transportEnabled);
+
+/**
+ * Refuses a playback control this member is not allowed to use, and says so.
+ *
+ * The lock used to be *styling*: `party-transport-locked` dimmed the buttons and `.disabled` was
+ * set on two of them. Styling is not a rule, and playback on this page is not reached through
+ * buttons alone - the surface click, the spacebar, the keyboard toggle, the arrow-key fine seek,
+ * the scroll-over-scrubber seek and the mouse thumb buttons all reach it directly. So a guest
+ * under host-only controls pressed play, watched its own player answer, and was dragged back by
+ * the party a second later. Every one of those entry points asks this first now, and the refusal
+ * happens before any local state moves - `requestPlaybackState` flips `state.isPlaying`
+ * optimistically for 1500ms, which is precisely the "responds locally for about a second" that was
+ * reported.
+ *
+ * Volume, fullscreen, subtitles, audio and the chrome are deliberately not covered: they are this
+ * viewer's own, not the party's.
+ */
+const partyTransportCommands = new Set([
+  "toggle",
+  "seekBack",
+  "seekForward",
+  "keyboardSeekBack",
+  "keyboardSeekForward",
+  "keyboardToggle",
+  "keyboardFineSeekForward",
+  "keyboardFineSeekBack",
+  "speed",
+  "nextEpisode",
+]);
+
+const refusePartyTransport = () => {
+  if (!isPartyTransportLocked()) return false;
+  showPlayerToast("The host controls playback");
+  return true;
+};
+
 const queueSettingToast = command => {
   if (command !== "resize" && command !== "speed") return;
   pendingSettingToastCommand = command;
@@ -2533,6 +2577,7 @@ const isTextEntryTarget = target => {
 };
 
 const requestPlaybackState = (eventType, revealControls) => {
+  if (refusePartyTransport()) return;
   const currentIsPlaying = pendingIsPlaying === null
     ? Boolean(state.isPlaying)
     : pendingIsPlaying;
@@ -2668,6 +2713,7 @@ let fineSeekAccumulatedMs = 0;
 let fineSeekDirection = null;
 
 const fineSeek = isForward => {
+  if (refusePartyTransport()) return;
   const direction = isForward ? "forward" : "backward";
   const stepMs = isForward ? 1000 : -1000;
 
@@ -2762,10 +2808,12 @@ const clearPressedButton = () => {
 
 document.addEventListener("pointerdown", event => {
   if (event.button === 3) {
+    if (refusePartyTransport()) return;
     showCommandToast("seekBack");
     send("seekBack", 0);
     return;
   } else if (event.button === 4) {
+    if (refusePartyTransport()) return;
     showCommandToast("seekForward");
     send("seekForward", 0);
     return;
@@ -2848,6 +2896,7 @@ document.querySelectorAll("[data-command]").forEach(button => {
     }
     noteChromeActivity(true);
     const command = button.dataset.command;
+    if (partyTransportCommands.has(command) && refusePartyTransport()) return;
     if (command === "toggle") {
       if (event.detail !== 0 && suppressNextPointerToggleClick) {
         suppressNextPointerToggleClick = false;
@@ -3122,11 +3171,16 @@ p2pConsentEnableButton.addEventListener("click", event => {
 
 skipPrompt.addEventListener("click", event => {
   event.stopPropagation();
+  // A skip is a seek wearing a different label, and this button is not one of the ones the lock
+  // dims - it appears and disappears on its own schedule.
+  if (refusePartyTransport()) return;
   send("skipInterval", 0);
 });
 
 nextEpisodeCard.addEventListener("click", event => {
   event.stopPropagation();
+  // The `nextEpisode` button is locked and this card does the same thing without being one.
+  if (refusePartyTransport()) return;
   if (state.nextEpisodePlayable) {
     send("playNextEpisode", 0);
   }
@@ -3138,6 +3192,7 @@ nextEpisodeDismiss.addEventListener("click", event => {
 });
 
 seek.addEventListener("input", () => {
+  if (refusePartyTransport()) return;
   noteChromeActivity();
   isScrubbing = true;
   scrubPositionMs = rangePositionMs();
@@ -3146,6 +3201,7 @@ seek.addEventListener("input", () => {
 });
 
 seek.addEventListener("change", () => {
+  if (refusePartyTransport()) return;
   noteChromeActivity();
   scrubPositionMs = rangePositionMs();
   isScrubbing = false;
@@ -3351,6 +3407,10 @@ let spaceHoldTimer = null;
 let isSpaceBoosting = false;
 
 const startSpeedBoost = () => {
+  // Speed is a party command like any other, and this is the one way to reach it that never
+  // touches the speed button - hold right-click, or hold space - so it inherits none of the
+  // button's disabling.
+  if (refusePartyTransport()) return;
   if (isSpeedBoosting) return;
   isSpeedBoosting = true;
   if (preSpeedBoostRate == null) {
@@ -3601,6 +3661,9 @@ document.addEventListener("keydown", event => {
   event.preventDefault();
   focusShortcutRoot();
   noteChromeActivity();
+  // Before the volume and toggle branches below, because the keyboard reaches playback without
+  // ever touching a button and so inherits none of the disabling that the chrome gets.
+  if (partyTransportCommands.has(command) && refusePartyTransport()) return;
   if (command === "keyboardVolumeUp") {
     sendKeyboardVolume(1);
     return;

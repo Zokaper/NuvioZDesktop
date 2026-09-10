@@ -329,8 +329,31 @@ class WatchPartyTimelineTest {
 class WatchPartyBarrierTest {
     @Test fun theLeadIsBoundedAtBothEnds() {
         assertEquals(WatchPartyBarrierMinLeadMs, watchPartyBarrierLeadMs(0))
-        assertEquals(340, watchPartyBarrierLeadMs(260))
+        assertEquals(WatchPartyBarrierMinLeadMs, watchPartyBarrierLeadMs(260))
+        assertEquals(700, watchPartyBarrierLeadMs(620))
         assertEquals(WatchPartyBarrierMaxLeadMs, watchPartyBarrierLeadMs(5_000))
+    }
+
+    /**
+     * The floor has to cover the path a command actually travels, not the one the clock measures.
+     *
+     * Round trips are measured peer to peer; a command goes through the server RPC that authors the
+     * broadcast, and the 2026-09-10 run had every one of forty commands arrive after its own
+     * barrier - median 180ms late against a 250ms lead. A late barrier turns a resume into a
+     * forward seek, which is what put the guest half a second out. Asserted rather than left in a
+     * comment, because the floor reading as a round number is exactly how it goes back to 250.
+     */
+    @Test fun theLeadFloorCoversTheMeasuredCommandPath() {
+        val observedLeadMs = 250L
+        val medianLatenessMs = 180L
+        val ninetiethLatenessMs = 421L
+        assertTrue(WatchPartyBarrierMinLeadMs >= observedLeadMs + medianLatenessMs)
+        assertTrue(WatchPartyBarrierMinLeadMs >= observedLeadMs + ninetiethLatenessMs - 150L)
+        // And still inside the bound on how long a host waits for its own button.
+        assertTrue(WatchPartyBarrierMinLeadMs < WatchPartyBarrierMaxLeadMs)
+        // A resume whose barrier lands within the align tolerance takes no seek at all, which is
+        // the entire point of widening it.
+        assertTrue(WatchPartyBarrierAlignToleranceMs > 0)
     }
 
     /**
@@ -469,34 +492,114 @@ class WatchPartyBarrierTest {
         assertTrue(WatchPartyGuestBufferingGraceMs > WatchPartySeekRecoveryLeadMs)
     }
 
-    /** A guest parked on the right frame is not yet playing, and reading that as recovery flaps. */
-    @Test fun aHoldEndsOnlyOnceTheGuestIsPlayingAgain() {
+    /**
+     * The hold ends once the member it is holding is full again, however that member reads.
+     *
+     * A held member reports `paused`, because the hold *is* a party pause and it obeyed: demanding
+     * `playing` of it is asking it to disobey the command holding it, and the 2026-09-10 two-client
+     * run is what that cost - the guest finished buffering, said so, and the party sat paused until
+     * somebody pressed play. `paused` is only ever "parked and full" here, since a member still
+     * starved reports `buffering`.
+     */
+    @Test fun aHoldEndsOnceTheHeldGuestIsFullAgain() {
         val held = GuestBufferingWatch()
             .observe("guest", WatchPartyStatus.buffering, partyNowMs = 0)
             .advance(WatchPartyGuestBufferingGraceMs)
         assertEquals(listOf("guest"), held.holdingProfiles)
 
-        // Paused on the aligned frame: no longer stalling, not yet recovered.
-        val aligned = held.observe("guest", WatchPartyStatus.paused, partyNowMs = WatchPartyGuestBufferingGraceMs)
-        assertEquals(listOf("guest"), aligned.advance(WatchPartyGuestBufferingGraceMs + 10).holdingProfiles)
-
-        val resumed = aligned.observe("guest", WatchPartyStatus.playing, partyNowMs = WatchPartyGuestBufferingGraceMs)
+        val full = held.observe("guest", WatchPartyStatus.paused, partyNowMs = WatchPartyGuestBufferingGraceMs)
         assertEquals(
             listOf("guest"),
-            resumed.advance(WatchPartyGuestBufferingGraceMs + WatchPartyStallRecoverySettleMs - 1).holdingProfiles,
+            full.advance(WatchPartyGuestBufferingGraceMs + WatchPartyStallRecoverySettleMs - 1).holdingProfiles,
         )
         assertEquals(
             emptyList(),
-            resumed.advance(WatchPartyGuestBufferingGraceMs + WatchPartyStallRecoverySettleMs).holdingProfiles,
+            full.advance(WatchPartyGuestBufferingGraceMs + WatchPartyStallRecoverySettleMs).holdingProfiles,
         )
     }
 
-    /** One silent member must not be able to hold the party for the length of the film. */
+    /** A member that is still starved keeps the hold, whatever the settle says. */
+    @Test fun aStillStarvedGuestIsNotReadyNoMatterHowLongItHasBeenHeld() {
+        val held = GuestBufferingWatch()
+            .observe("guest", WatchPartyStatus.buffering, partyNowMs = 0)
+            .advance(WatchPartyGuestBufferingGraceMs)
+            .observe("guest", WatchPartyStatus.buffering, partyNowMs = WatchPartyGuestBufferingGraceMs)
+        assertEquals(
+            listOf("guest"),
+            held.advance(WatchPartyGuestBufferingGraceMs + WatchPartyStallRecoverySettleMs).holdingProfiles,
+        )
+    }
+
+    /**
+     * A pause from a member nobody is holding is a person, not a recovery.
+     *
+     * This is the half of the old rule worth keeping: reading every `paused` as recovery is what
+     * made one stall produce a hold, a release and another hold moments later.
+     */
+    @Test fun aPauseFromAnUnheldGuestStartsNoRecoveryClock() {
+        val watch = GuestBufferingWatch()
+            .observe("guest", WatchPartyStatus.paused, partyNowMs = 0)
+        assertEquals(emptyMap(), watch.readySinceByProfile)
+        // And it cannot shorten a hold that is taken afterwards.
+        val held = watch
+            .observe("guest", WatchPartyStatus.buffering, partyNowMs = 100)
+            .advance(100 + WatchPartyGuestBufferingGraceMs)
+        assertEquals(listOf("guest"), held.holdingProfiles)
+    }
+
+    /**
+     * Readiness order one: the guest is ready before the host is.
+     *
+     * Nothing is ever held, so nothing has to be released - the start gate is what makes the guest
+     * wait here, not the stall guard.
+     */
+    @Test fun aGuestReadyBeforeTheHostIsNeverHeld() {
+        val watch = GuestBufferingWatch()
+            .observe("guest", WatchPartyStatus.buffering, partyNowMs = 0)
+            .observe("guest", WatchPartyStatus.paused, partyNowMs = 200)
+            .observe("guest", WatchPartyStatus.playing, partyNowMs = 400)
+        assertEquals(emptyList(), watch.advance(10_000).holdingProfiles)
+    }
+
+    /**
+     * Readiness order two: the host is ready first, starts, and holds for the guest.
+     *
+     * The whole reported failure in one sequence - hold taken late, guest recovers into the party's
+     * own pause, hold released without anybody pressing anything. Held past the settle so the
+     * release is the settle's doing and not [WatchPartyStallHoldMaxMs] abandonment.
+     */
+    @Test fun aHostThatStartedFirstReleasesItsHoldWhenTheGuestCatchesUp() {
+        val grace = WatchPartyGuestBufferingGraceMs
+        val settle = WatchPartyStallRecoverySettleMs
+        assertTrue(grace + settle < WatchPartyStallHoldMaxMs)
+
+        val held = GuestBufferingWatch()
+            .observe("guest", WatchPartyStatus.buffering, partyNowMs = 0)
+            .advance(grace)
+        assertEquals(listOf("guest"), held.holdingProfiles)
+
+        // The host's stall-guard pause reaches the guest, which is still starved: still held.
+        val obeying = held.observe("guest", WatchPartyStatus.buffering, partyNowMs = grace + 50)
+        assertEquals(listOf("guest"), obeying.advance(grace + 100).holdingProfiles)
+
+        // The guest fills and reports the pause it was given.
+        val recovered = obeying.observe("guest", WatchPartyStatus.paused, partyNowMs = grace + 500)
+        assertEquals(listOf("guest"), recovered.advance(grace + 500 + settle - 1).holdingProfiles)
+        assertEquals(emptyList(), recovered.advance(grace + 500 + settle).holdingProfiles)
+    }
+
+    /**
+     * One member that never comes back must not hold the party for the length of the film.
+     *
+     * Held on a member that has dropped to a lobby: it is neither starved nor ready, so no settle
+     * can release it and the window is the only thing that can.
+     */
     @Test fun aHoldIsAbandonedOnceItHasOutlastedTheWindow() {
         val held = GuestBufferingWatch()
             .observe("guest", WatchPartyStatus.buffering, partyNowMs = 0)
             .advance(WatchPartyGuestBufferingGraceMs)
-            .observe("guest", WatchPartyStatus.paused, partyNowMs = WatchPartyGuestBufferingGraceMs)
+            .observe("guest", WatchPartyStatus.lobby, partyNowMs = WatchPartyGuestBufferingGraceMs)
+        assertEquals(listOf("guest"), held.advance(WatchPartyGuestBufferingGraceMs + 10).holdingProfiles)
         assertEquals(
             emptyList(),
             held.advance(WatchPartyGuestBufferingGraceMs + WatchPartyStallHoldMaxMs).holdingProfiles,

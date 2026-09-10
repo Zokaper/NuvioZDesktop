@@ -432,9 +432,15 @@ internal class PlayerScreenRuntime(
     /**
      * The stalled guests this host paused the party for, empty when it did not.
      *
-     * Held so the resume is owned by the same rule that took the pause: without it, a host that
-     * paused for a stalled guest and then had them recover would either never start again or would
-     * start again over a pause the *user* had taken in the meantime.
+     * Non-empty *is* the retained playing intent, and that is the whole point of it. A stall hold
+     * stops the engine without the party ever having decided to stop watching, so the intent has to
+     * outlive the pause somewhere or the party needs a person to press play again to get out of a
+     * state nobody chose. Held here so the resume is owned by the same rule that took the pause:
+     * without it, a host that paused for a stalled guest and then had them recover would either
+     * never start again or would start again over a pause the *user* had taken in the meantime.
+     *
+     * Cleared by any user transport command, which is how the intent is revoked: a person who
+     * pauses during a hold has decided the party is stopped, and the guard must not undo that.
      */
     var partyAutoPausedForGuests: List<String> = emptyList()
 

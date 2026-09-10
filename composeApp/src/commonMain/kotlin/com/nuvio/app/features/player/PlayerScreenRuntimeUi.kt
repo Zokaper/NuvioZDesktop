@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import com.nuvio.app.features.watchparty.PartyContent
 import com.nuvio.app.features.watchparty.PartyConnectionState
 import com.nuvio.app.features.watchparty.WatchPartyControlMode
+import com.nuvio.app.features.watchparty.memberMayControl
 import com.nuvio.app.features.watchparty.PartyReadyTone
 import com.nuvio.app.features.watchparty.PartyPresentationProjector
 import com.nuvio.app.features.watchparty.readyCount
@@ -165,9 +166,11 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             WatchPartySessionCoordinator.partyEnded(viewerWasHost = false)
         }
     }
+    // Through the shared rule rather than spelled out again: this value is what disables the
+    // controls, and the transport is what refuses the press, so the two disagreeing is a guest with
+    // live-looking buttons that do nothing - or dim ones that still move its player.
     val partyMayControl = activeParty == null ||
-        activeParty.hostProfileId == watchPartyUiState.activeProfileId ||
-        activeParty.controlMode == WatchPartyControlMode.collaborative
+        activeParty.memberMayControl(watchPartyUiState.activeProfileId)
     val currentGestureFeedback = liveGestureFeedback ?: gestureFeedback
     val isP2pPlaybackActive = activeTorrentInfoHash != null
     val p2pConnecting = p2pStreamingState as? P2pStreamingState.Connecting

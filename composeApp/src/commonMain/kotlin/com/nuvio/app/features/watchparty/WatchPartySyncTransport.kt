@@ -229,8 +229,9 @@ internal object WatchPartySync : PartyRealtimeTransport {
      * Members the host is holding the party for, when the party waits for everyone.
      *
      * [GuestBufferingWatch.advance] is where both edges are decided - a stall becoming a hold when
-     * the grace runs out, a hold ending when the guest has been playing again for the settle - and
-     * neither of those is a message, so it has to be driven from a read rather than from `observe`.
+     * the grace runs out, a hold ending when the held member has been ready again for the settle -
+     * and neither of those is a message, so it has to be driven from a read rather than from
+     * `observe`.
      */
     private fun advanceBufferWatch(): List<String> {
         val before = bufferWatch
@@ -255,13 +256,34 @@ internal object WatchPartySync : PartyRealtimeTransport {
                 engineState = guestStatus[profileId],
                 telemetryAgeMs = guestLastTelemetryAtPartyMs[profileId]?.let { now - it } ?: -1L,
                 holdAgeMs = before.heldSinceByProfile[profileId]?.let { now - it } ?: -1L,
-                classification = if (guestStatus[profileId] == WatchPartyStatus.playing) "recovered" else "telemetry-stale",
+                // A member released while it reads `paused` has recovered just as much as one
+                // reading `playing`: the party's own hold is what stopped it, and `paused` rather
+                // than `buffering` is the engine saying it is full. Only a member still reading
+                // `buffering` at release was abandoned rather than waited out.
+                classification = when (guestStatus[profileId]) {
+                    WatchPartyStatus.playing, WatchPartyStatus.paused -> "recovered"
+                    else -> "telemetry-stale"
+                },
             )
         }
         return bufferWatch.holdingProfiles
     }
 
     fun holdingProfiles(): List<String> = advanceBufferWatch()
+
+    /**
+     * Re-reads the stall watch on a clock, and republishes only when it actually moved.
+     *
+     * The host's caller polls this because a hold's *release* has no message behind it: the guest's
+     * last word is the status that starts the settle, and the settle has not run out at the instant
+     * it arrives. Everything else that advances the watch is a message, so this is the only path by
+     * which a pure elapsed-time transition reaches anybody.
+     */
+    fun refreshStallWatch(): List<String> {
+        val holding = advanceBufferWatch()
+        if (_state.value.holdingProfiles != holding) publishState()
+        return holding
+    }
 
     /**
      * Forgets what everyone was doing before the party started playing.

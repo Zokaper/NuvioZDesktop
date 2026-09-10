@@ -188,6 +188,18 @@ data class PartyAuthorityContext(
 fun PartyAuthorityContext.mayControl(profileId: String): Boolean =
     profileId == hostProfileId || controlMode == WatchPartyControlMode.collaborative
 
+/**
+ * The same rule, asked of the durable party the player has in hand.
+ *
+ * One rule and one wording, because two of them is how the player and the transport come to
+ * disagree about who is allowed to press play - and the player is the side the *button* asks. Every
+ * transport entry point on the player runs through this before anything local moves, so a member
+ * without authority never reaches its own engine and is never dragged back by the party a second
+ * later. A null viewer is nobody, and nobody may control a party.
+ */
+fun WatchPartyState.memberMayControl(profileId: String?): Boolean =
+    profileId != null && (profileId == hostProfileId || controlMode == WatchPartyControlMode.collaborative)
+
 interface PartyRealtimeTransport {
     val state: StateFlow<WatchPartySyncState>
     fun updateAuthority(context: PartyAuthorityContext?)
