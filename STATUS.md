@@ -1,6 +1,69 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-10
+Last updated: 2026-09-11
+
+## Desktop Social + Watch Together stabilization pass — Stage 0/2, Watching Now root-caused (2026-09-11)
+
+Named pre-Phase-6 release gate, **not** a numbered phase; Phases 6–9 are not renumbered. Persistent
+ledger: workspace-root `PLAN-social-watch-together-stabilization.md`. Opened from a two-user friend
+test on the Phase 5 MSI that found eight Social/Watch Together defects. Branch
+`claude/phase-5-onboarding`, first commit `c1c104fd`.
+
+**Finding D (Watching Now showed nobody) is fixed, and it was not the social gate.** Planning
+proposed the Phase 5 gate as a shared seam for two findings; the maintainer's test facts killed it
+(master toggle ON and Share Watching Now ON on both clients, one actively playing). The real cause
+was found in the database rather than by reasoning, and then proven against the live project.
+
+⚠ **A JSON null is not an absent key.** `social_publish_presence` sanitizes with
+`sanitize_source_descriptor_v2(p_entry->'source_fingerprint')`, whose null guard is
+`if p_value is null then return null` — an **SQL** NULL test. An absent key reads as SQL NULL and
+returns cleanly; an explicit `"source_fingerprint": null` reads as jsonb `'null'`, which is *not*
+SQL NULL, so the guard misses it, `jsonb_typeof` answers `'null'` rather than `'object'`, and the
+publish aborts with `invalid_source_descriptor` (22023). kotlinx defaults `explicitNulls` to
+**true**, so from `d7cf2bf7` (2026-09-08, which added the descriptor to the presence payload) every
+publish made **outside** a party failed. Fix: `SocialRepository`'s encoder sets
+`explicitNulls = false`. **No backend or schema change.**
+
+⚠ **There were two of these, not one.** `sanitize_party_track_intent` fails the same way on the
+same input — verified live, it raises `invalid_track_intent` on jsonb `'null'` — and
+`SocialPresencePublish.trackIntent` is *always* null on this path. So the presence payload carried
+two independent kill-switches, and fixing only the descriptor would have changed nothing. One
+encoder setting closes both, which is the argument for fixing it there rather than field by field.
+
+⚠ **The second half of the bug was silence.** `publishCurrent` discarded the publish `Result`, so a
+rejected RPC was indistinguishable from a healthy one, and the readiness guard
+(`isEnded || isLoading || durationMs <= 0`) returned without saying so. Both now report through a
+`SocialPresence` log tag. Keep them; "no row in `watch_presence`" is otherwise indistinguishable
+from "never asked".
+
+**The evidence, for anyone re-treading this.** `watch_presence` has **no reaper** — the 90-second
+window is a read-time filter — so rows survive and the table is a usable audit log:
+
+- Friend test reconstructed from `social_activity_events`: seraph S1E1 at 18:50, zokaper S1E1 at
+  19:41, **both S1E2 at 20:26:17, 0.3 s apart** — the party. `created_at ≈ watched_at` throughout,
+  so these are organic writes, not an outbox backfill.
+- Across that whole window, **zero** `watch_presence` rows from either client. Newest presence:
+  seraph 09-09, zokaper 09-03. Every row ever written has a NULL `source_fingerprint`.
+- Watched-activity publishing from the *same* sessions worked repeatedly, which exonerates auth,
+  the profile, the friendship and `share_watching_now` — and, since `SocialWatchedActivity` is
+  gated on `SocialFeatureGate.isEnabled`, independently **proves the social gate was ON**.
+- `watch_parties` holds a sanitized descriptor for the 19:43 party, so the sanitizer accepts the
+  real descriptor; only the null case fails.
+
+**Verified:** `:composeApp:compileKotlinDesktop`; `:composeApp:desktopTest --tests
+"…features.social.*"` green including the four new `SocialPresencePayloadTest` cases;
+`scripts/run-pure-suites.sh` all groups green (the `explicitNulls` change touches decoding too, so
+the broad suite is the real check here). ⚠ The `buildWindowsPlayerBridge` configuration-cache
+warning is pre-existing and unrelated.
+
+**Owed on this finding:** one physical run to confirm a row now appears — this needs **one** client
+playing anything for ~30 s, not a two-client party. Then re-check `watch_presence`.
+
+**Recommended, not done, needs authorization:** harden both sanitizers to treat jsonb `'null'` as
+absent (`if p_value is null or jsonb_typeof(p_value) = 'null'`). The client fix closes desktop, but
+**mobile will meet the identical trap in Phase 6** the moment it is repointed at this backend, and
+any future caller that emits explicit nulls hits it again. That is a function change plus a deploy,
+so it is the maintainer's call — the client is already correct without it.
 
 ## Phase 5 Setup / onboarding redesign — code complete, unverified on hardware (2026-09-10)
 
