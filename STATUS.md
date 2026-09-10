@@ -54,8 +54,12 @@ social surface that stays visible when social is off; without it the preference 
 - `scripts/run-pure-suites.sh` — all eight groups green. `SetupWizardStepsTest` 24 → **34 tests**,
   covering all 24 plan permutations through both termination properties, all three ways a step can
   leave the plan under the user, every removed step name, and the full migration truth table.
-- `./gradlew :composeApp:desktopTest` — **BUILD SUCCESSFUL**. Baseline on `1c5ee9ea` was also green
-  in 14m 14s, including all three known flakies, so a red run from them here is load, not this branch.
+- `./gradlew :composeApp:desktopTest` — **BUILD SUCCESSFUL in 15m 29s, 1,783 tests, no failures**,
+  including all three known flakies. Baseline on `1c5ee9ea` was also fully green, in 14m 14s, so a
+  red run from those three here is load rather than this branch.
+  ⚠ Run it **alone**. Two concurrent Gradle invocations on this project produced one spurious
+  `desktopTest FAILED` during this session — the collision `AGENTS.md` rule 3 describes. `./gradlew
+  --stop`, delete `composeApp/build/kotlin/compileKotlinDesktop/classpath-snapshot/`, run once.
 - `SetupWizardRenderHarness` now draws **three full runs** — `streamlined`, `instant`,
   `classic-social-off` — at four window sizes, 128 PNGs in `composeApp/build/setup-wizard-render/`.
 
