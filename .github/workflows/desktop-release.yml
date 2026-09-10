@@ -393,7 +393,7 @@ jobs:
           MACOS_ARCH: ${{ matrix.arch }}
           RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
         run: |
-          dmg_path="composeApp/build/compose/release-dmgs/Nuvio-macOS-${MACOS_ARCH}-${RELEASE_VERSION}.dmg"
+          dmg_path="composeApp/build/compose/release-dmgs/Nuvio-Z-macOS-${MACOS_ARCH}-${RELEASE_VERSION}.dmg"
           if [[ ! -f "${dmg_path}" ]]; then
             echo "Expected DMG was not produced: ${dmg_path}" >&2
             exit 1
