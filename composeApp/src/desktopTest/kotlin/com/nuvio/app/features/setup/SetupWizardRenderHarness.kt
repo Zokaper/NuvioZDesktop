@@ -12,6 +12,8 @@ import com.nuvio.app.core.ui.NuvioTheme
 import com.nuvio.app.core.ui.desktopUiScaleForWindow
 import com.nuvio.app.features.details.MetaEpisodeCardStyle
 import com.nuvio.app.features.details.MetaScreenBackgroundMode
+import com.nuvio.app.features.downloads.DynamicRangePolicy
+import com.nuvio.app.features.playback.LanguageStrictness
 import com.nuvio.app.features.playback.PlaybackMode
 import com.nuvio.app.features.watchprogress.ContinueWatchingSectionStyle
 import org.jetbrains.skia.EncodedImageFormat
@@ -165,61 +167,58 @@ class SetupWizardRenderHarness {
      * 8. A run with an addon installed drops that step; the layout is the same either way.
      */
     private fun renderDesktopSteps(widthDp: Int, heightDp: Int, failures: MutableList<String>) {
-        val plan = SetupWizardPlan(offerSources = true)
-        val steps = setupWizardSteps(plan).filter { it != SetupStep.Welcome }
+        // ⚠ **Every branch, not one plan.** Revision 7 made three of the nine steps conditional,
+        // and two of the conditions change what a step *asks* rather than only whether it appears:
+        // Streamlined and Instant put the same three controls under opposite promises. Rendering a
+        // single plan would leave the Instant copy and the whole social pair undrawn, which is the
+        // state the last four revisions kept reaching a device in.
+        //
+        // Classic is included precisely because it has *no* playback-setup step: what it proves is
+        // that the flow reads correctly without one.
+        val runs = listOf(
+            SetupRun("streamlined", PlaybackMode.STREAMLINED, socialEnabled = true),
+            SetupRun("instant", PlaybackMode.INSTANT, socialEnabled = true),
+            SetupRun("classic-social-off", PlaybackMode.CLASSIC, socialEnabled = false),
+        )
 
-        for (step in steps) {
-            val specimen = when (step) {
-                SetupStep.Cards -> SetupSpecimen.Cards
-                SetupStep.Home -> SetupSpecimen.Home
-                SetupStep.Details -> SetupSpecimen.Details
-                SetupStep.Theme -> SetupSpecimen.Theme
-                else -> SetupSpecimen.Diagram
-            }
-            val name = "desktop-${step.name.lowercase()}-${widthDp}x$heightDp"
-            render(
-                name = name,
-                widthDp = widthDp,
-                heightDp = heightDp,
-                theme = AppTheme.WHITE,
-                amoled = false,
-                failures = failures,
-                platformDensity = platformDensityFor(widthDp),
-            ) {
-                SetupWizardDesktopLayout(
-                    step = step,
-                    plan = plan,
-                    specimen = specimen,
-                    dismissible = step != SetupStep.Cards,
-                    onDismiss = {},
-                    playbackMode = PlaybackMode.STREAMLINED,
-                    posterWidthDp = 126,
-                    posterCornerRadiusDp = 8,
-                    landscapeCards = false,
-                    showCardTitles = true,
-                    heroEnabled = true,
-                    continueWatchingStyle = ContinueWatchingSectionStyle.Card,
-                    useEpisodeThumbnails = true,
-                    blurNextUp = false,
-                    backgroundMode = MetaScreenBackgroundMode.Cinematic,
-                    episodeCardStyle = MetaEpisodeCardStyle.Horizontal,
-                    blurUnwatchedEpisodes = false,
-                    tabLayout = false,
-                    nextUpLabel = "Next episode",
-                    topInset = 0.dp,
-                    bottomInset = 0.dp,
-                    onBack = {},
-                    onAdvance = {},
-                    modifier = Modifier.fillMaxSize(),
+        for (run in runs) {
+            val plan = SetupWizardPlan(
+                // Sources included so the step count reads at its longest; a run with an addon
+                // installed drops it and the layout is the same either way.
+                offerSources = true,
+                playbackModeName = run.mode.name,
+                socialEnabled = run.socialEnabled,
+                offerSocialIdentity = true,
+            )
+            val steps = setupWizardSteps(plan).filter { it != SetupStep.Welcome }
+
+            for (step in steps) {
+                val specimen = when (step) {
+                    SetupStep.Look -> SetupSpecimen.Cards
+                    SetupStep.Theme -> SetupSpecimen.Theme
+                    else -> SetupSpecimen.Diagram
+                }
+                val name = "desktop-${run.label}-${step.name.lowercase()}-${widthDp}x$heightDp"
+                render(
+                    name = name,
+                    widthDp = widthDp,
+                    heightDp = heightDp,
+                    theme = AppTheme.WHITE,
+                    amoled = false,
+                    failures = failures,
+                    platformDensity = platformDensityFor(widthDp),
                 ) {
-                    SetupStepBody(
+                    SetupWizardDesktopLayout(
                         step = step,
-                        goingForward = true,
-                        playbackMode = PlaybackMode.STREAMLINED,
+                        plan = plan,
+                        specimen = specimen,
+                        dismissible = step != SetupStep.Look,
+                        onDismiss = {},
+                        playbackMode = run.mode,
                         posterWidthDp = 126,
                         posterCornerRadiusDp = 8,
                         landscapeCards = false,
-                        hideLabels = false,
+                        showCardTitles = true,
                         heroEnabled = true,
                         continueWatchingStyle = ContinueWatchingSectionStyle.Card,
                         useEpisodeThumbnails = true,
@@ -228,19 +227,56 @@ class SetupWizardRenderHarness {
                         episodeCardStyle = MetaEpisodeCardStyle.Horizontal,
                         blurUnwatchedEpisodes = false,
                         tabLayout = false,
-                        selectedTheme = AppTheme.WHITE,
-                        amoledEnabled = false,
-                        addonUrl = "",
-                        addonBusy = false,
-                        addonError = null,
-                        addonInstalledName = null,
-                        onAddonUrlChange = {},
-                        onInstallAddon = {},
-                    )
+                        nextUpLabel = "Next episode",
+                        topInset = 0.dp,
+                        bottomInset = 0.dp,
+                        onBack = {},
+                        onAdvance = {},
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        SetupStepBody(
+                            step = step,
+                            goingForward = true,
+                            playbackMode = run.mode,
+                            languageStrictness = LanguageStrictness.REQUIRE,
+                            dynamicRangePolicy = DynamicRangePolicy.ANY,
+                            qualityCeilingMbps = 0,
+                            posterWidthDp = 126,
+                            landscapeCards = false,
+                            selectedTheme = AppTheme.WHITE,
+                            amoledEnabled = false,
+                            socialEnabled = run.socialEnabled,
+                            // Drawn on the social step of the signed-out run, because the "we
+                            // could not check your account" line is a real state and an unread
+                            // one is how it would ship wrong.
+                            socialProbeUnknown = !run.socialEnabled,
+                            socialSignedIn = run.socialEnabled,
+                            socialHandle = if (run.socialEnabled) "big_z" else "",
+                            socialHandleBusy = false,
+                            socialHandleMessage = null,
+                            sourcesReady = true,
+                            onSocialEnabledChange = {},
+                            onSocialHandleChange = {},
+                            onSaveSocialHandle = {},
+                            addonUrl = "",
+                            addonBusy = false,
+                            addonError = null,
+                            addonInstalledName = null,
+                            onAddonUrlChange = {},
+                            onInstallAddon = {},
+                        )
+                    }
                 }
             }
         }
     }
+
+    /** One walk through the wizard, at a mode and a social answer. */
+    private data class SetupRun(
+        val label: String,
+        val mode: PlaybackMode,
+        val socialEnabled: Boolean,
+    )
 
     private fun renderBands(widthDp: Int, failures: MutableList<String>) {
         val variants = listOf<Pair<String, BandSettings>>(
@@ -390,7 +426,10 @@ class SetupWizardRenderHarness {
         fun Band() {
             SetupSpecimenBand(
                 specimen = specimen,
-                step = SetupStep.Cards,
+                // Any non-Diagram step will do: `SetupSpecimenBand` only reads `step` to hand it
+                // to `SetupDiagram`, and these variants never draw the diagram. `Look` is the
+                // step that owns the Cards specimen in the real flow.
+                step = SetupStep.Look,
                 playbackMode = PlaybackMode.STREAMLINED,
                 height = specimen.preferredHeight,
                 contentPaddingTop = 0.dp,

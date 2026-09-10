@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -1491,6 +1493,7 @@ private fun SetupParagraph(text: String) {
  * what the panel is painted with, so a card here would be invisible - the trap the quality
  * sheet hit. These use an `overlayHover` lift instead, which is what that sheet settled on.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun <T> SetupChoiceGroup(
     title: String,
@@ -1506,7 +1509,21 @@ private fun <T> SetupChoiceGroup(
             color = tokens.colors.textPrimary,
             fontWeight = FontWeight.SemiBold,
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // ⚠ **A wrapping flow of content-width chips, not a row of equal-weight ones, and the
+        // render harness is what settled it.** Equal weights plus `maxLines = 1` are fine for two
+        // or three short words and silently destroy anything longer: revision 7's playback step
+        // drew "Only play what I can watch" as "Only play what I", and rendered *Prefer SDR*,
+        // *Prefer HDR*, *Require HDR* and *Require Dolby Vision* as "Prefer", "Prefer", "Require"
+        // and "Require" - four chips, two visible labels, and no way to tell them apart.
+        //
+        // Sizing to the label instead means the option decides the chip rather than the chip
+        // truncating the option, and a group that does not fit wraps onto a second line instead
+        // of squeezing. That is also what lets the same component carry a two-option group and a
+        // five-option one without either being tuned by hand.
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             options.forEach { (label, value) ->
                 val isSelected = value == selected
                 Text(
@@ -1516,15 +1533,15 @@ private fun <T> SetupChoiceGroup(
                     color = if (isSelected) tokens.colors.onAccent else tokens.colors.textSecondary,
                     // ⚠ `textAlign` is load-bearing. Without it the label sits hard left inside
                     // its pill, which shipped in every build from revision 2 to revision 3
-                    // before anyone named it.
+                    // before anyone named it. Still true now that the pill hugs the label: a
+                    // chip that wraps to two lines centres them.
                     textAlign = TextAlign.Center,
-                    maxLines = 1,
+                    maxLines = 2,
                     modifier = Modifier
-                        .weight(1f)
                         .clip(RoundedCornerShape(999.dp))
                         .background(if (isSelected) tokens.colors.accent else tokens.colors.overlayHover)
                         .clickable { onSelected(value) }
-                        .padding(vertical = 11.dp),
+                        .padding(horizontal = 16.dp, vertical = 11.dp),
                 )
             }
         }

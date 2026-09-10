@@ -94,6 +94,7 @@ import com.nuvio.app.features.social.SocialNotificationKind
 import com.nuvio.app.features.social.SocialRepository
 import com.nuvio.app.features.social.SocialPresenceSession
 import com.nuvio.app.features.watchparty.WatchPartySessionCoordinator
+import com.nuvio.app.features.social.rememberSocialEnabled
 
 private val playerControlsLog = Logger.withTag("PlayerControls")
 
@@ -103,6 +104,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     val watchPartyUiState by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
     val watchPartySyncState by WatchPartySync.state.collectAsStateWithLifecycle()
     val socialUiState by SocialRepository.uiState.collectAsStateWithLifecycle()
+    val socialEnabled = rememberSocialEnabled()
     val socialPresenceSession by SocialPresenceSession.state.collectAsStateWithLifecycle()
     val partySessionState by WatchPartySessionCoordinator.state.collectAsStateWithLifecycle()
     val systemBackRegistration = args.onSystemBackHandlerChanged
@@ -154,8 +156,10 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     LaunchedEffect(activeParty?.id) {
         if (activeParty == null) partyRoomOpen = false
     }
+    // The repository is already empty when the layer is off, but stating the gate here means a
+    // stale emission during the teardown frame cannot flash a friend request over the player.
     val activeSocialNotification = socialUiState.notifications.firstOrNull {
-        it.readAt == null && it.availableActions.isNotEmpty()
+        socialEnabled && it.readAt == null && it.availableActions.isNotEmpty()
     }
     LaunchedEffect(watchPartyUiState.party?.id, watchPartyUiState.party?.status) {
         val party = watchPartyUiState.party ?: return@LaunchedEffect
@@ -517,7 +521,11 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             playerSettingsUiState.introDbApiKey.isNotBlank() &&
             !activeSubmitIntroImdbId().isNullOrBlank(),
         showVideoSettings = isIos,
-        showWatchTogether = activeParty != null || args.onStartWatchTogether != null,
+        // ⚠ Gated, and `activeParty` is deliberately still part of the test rather than replaced
+        // by it. With the layer off there is no party - `shutdownSocialLayer` departs it before
+        // the preference flips - so this reads false either way; keeping the original condition
+        // means the control never vanishes from *underneath* a party that somehow still exists.
+        showWatchTogether = socialEnabled && (activeParty != null || args.onStartWatchTogether != null),
         showSources = activeVideoId != null,
         showEpisodes = isSeries,
         showNextEpisode = nextEpisodeInfo?.hasAired == true,

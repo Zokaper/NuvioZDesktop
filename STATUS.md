@@ -2,6 +2,89 @@
 
 Last updated: 2026-09-10
 
+## Phase 5 Setup / onboarding redesign — code complete, unverified on hardware (2026-09-10)
+
+Branch `claude/phase-5-onboarding`, cut from `1c5ee9ea`. Persistent ledger: workspace-root
+`PLAN-phase-5-onboarding.md`. **Phase 4 is closed and none of its deferred debt was touched.**
+
+**Status: STAGES 0-8 DONE, STAGES 9-10 NOT STARTED.** Everything below compiles and passes the
+automated suites. **Nothing has been run on a real install**, and the wizard is a screen that gates
+the app — four of its previous six revisions reached a device broken in a way only looking caught.
+Treat the physical matrix in the plan as the real gate.
+
+The wizard is revision 7. It now asks **what Nuvio Z does before what it looks like**: playback
+mode → only the configuration that mode can use → sources → an explicit whole-app social opt-in →
+identity if that is on and not already set → two appearance steps instead of four → three summary
+lines. Preserved untouched: `PlaybackModeCard`, the animated storyboard and its pointer/no-pointer
+grammar, restart-on-mode-change, the Welcome still, named-step restoration, the dynamic plan,
+immediate real-setting writes, the monotonic revision protections and `nuvioConsumePointerEvents`.
+
+**The branch rule is outside Compose.** `playbackSetupVariant(modeName)` lives in the import-free
+`SetupWizardSteps.kt`, because that file is the only part of the wizard a test can reach.
+`PlaybackSetupVariantCoverageTest` walks the real `PlaybackMode` entries, so a mode added without a
+variant fails there rather than in front of a user. **Classic gets no playback-setup step at all** —
+its own card says *"You read the releases and pick one"* and the storyboard holds longest on a
+pointer walking every row, so offering to skip the list on the next screen would contradict both.
+`streamAutoPlayMode` stays in Settings.
+
+**The social preference is not a player setting.** `SocialFeaturePreferencesRepository` +
+`…Storage` under `features/social`, with its own `ProfileSettingsSync` payload, in the shape of
+`EpisodeReleaseNotifications`. It is stored **nullable** so "never answered" stays distinguishable
+from "chose off", which is what `resolveSocialFeaturesEnabled` needs to keep an established social
+user from losing their friends to a new boolean defaulting false. A cache-cold install is rescued
+by `SocialRepository.probeExistingIdentity`, which reuses the existing RPCs, opens no realtime and
+publishes no presence. ⚠ It is deliberately **not** routed through `mergeMonotonicSyncInt`: that is
+right for a revision that may only rise and wrong for a preference a user may switch back off.
+
+**Social OFF is a lifecycle transition, not a visibility change.** `shutdownSocialLayer()` departs
+any party through `WatchPartySessionCoordinator.leave()` and waits for the phase to settle, then
+`WatchPartyRepository.setActiveProfile(null)`, then `SocialRepository.activate(null)` — and the
+callers run it **before** writing the preference, so the surfaces cannot vanish out from under an
+in-flight departure. Sixteen surfaces are gated through one `SocialFeatureGate`.
+`coerceAvailableTab` is a pure coercion beside `AppScreenTab.fromName`, which still parses `Social`
+in both states.
+
+**New in Settings: a Social page.** Before this there were **zero** social rows anywhere in
+Settings — the handle, both privacy toggles and the join policy all lived inside `SocialScreen` and
+would have become unreachable the moment the tab could be hidden. The master toggle is the one
+social surface that stays visible when social is off; without it the preference is a one-way door.
+
+**Verified (automated only):**
+
+- `scripts/run-pure-suites.sh` — all eight groups green. `SetupWizardStepsTest` 24 → **34 tests**,
+  covering all 24 plan permutations through both termination properties, all three ways a step can
+  leave the plan under the user, every removed step name, and the full migration truth table.
+- `./gradlew :composeApp:desktopTest` — **BUILD SUCCESSFUL**. Baseline on `1c5ee9ea` was also green
+  in 14m 14s, including all three known flakies, so a red run from them here is load, not this branch.
+- `SetupWizardRenderHarness` now draws **three full runs** — `streamlined`, `instant`,
+  `classic-social-off` — at four window sizes, 128 PNGs in `composeApp/build/setup-wizard-render/`.
+
+**One real defect was found by looking at those PNGs and fixed.** `SetupChoiceGroup` gave every
+option `weight(1f)` and `maxLines = 1`, which is fine for two short words and destroys anything
+longer: the playback step drew *"Only play what I can watch"* as "Only play what I", and rendered
+*Prefer SDR*, *Prefer HDR*, *Require HDR* and *Require Dolby Vision* as "Prefer", "Prefer",
+"Require", "Require" — four chips, two readable labels, no way to tell them apart. It is a wrapping
+`FlowRow` of content-width chips now. **This is exactly what the harness is for; keep running it.**
+
+**Owed, and it is the whole remaining risk:**
+
+1. **Stage 9 — Hot Reload / MCP.** Not started. Needs `scripts/dev-desktop.ps1 hot` and then a
+   session restart so the MCP attaches. Drive the window to 1280×820, ~900 dp (below
+   `DesktopWizardMinWidth`, stacked) and 2560×1440 / 3840×2160.
+2. **Stage 10 — the physical matrix**, on a debug MSI. Listed in full in
+   `PLAN-phase-5-onboarding.md`. The launch that proves the wizard stays dismissed is the **second**
+   one. ⚠ `Settings → Run setup again` still has no physical result since the
+   `nuvioConsumePointerEvents` fix, and the two-client turn-social-off-mid-party case has never run.
+3. **`nuvio-z` was deliberately not touched.** Mirroring `SetupWizardSteps.kt` alone breaks the
+   mobile build — its `SetupWizardScreen.kt` and `SetupDiagram.kt` reference `SetupStep.Cards`,
+   `Home` and `Details` in nine places — and fixing that means porting mobile's wizard body, which
+   is Phase 6 work. The divergence map and the list of what Phase 6 can take wholesale are in
+   `PLAN-phase-5-onboarding.md` §Stage 11.
+
+**Roadmap renumbered.** Onboarding took the Phase 5 slot, so "Social to mobile" is now Phase 6,
+"Identity and release engineering" 7, iOS 8, TV 9. `HANDOFF-phase-4-codex-2.md` §12 still says
+"Phase 5" for the mobile repointing; that means Phase 6 now.
+
 ## Phase 4 Watch Together — closure status (2026-09-10)
 
 **Final status: DONE WITH NON-BLOCKING QA DEBT.** The architecture below (Stages 1–7 of

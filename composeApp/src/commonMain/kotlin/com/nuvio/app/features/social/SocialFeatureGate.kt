@@ -1,5 +1,8 @@
 package com.nuvio.app.features.social
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -36,4 +39,17 @@ object SocialFeatureGate {
         )
 
     val isEnabled: Boolean get() = enabled.value
+}
+
+/**
+ * [SocialFeatureGate.enabled], for a composable.
+ *
+ * A named function rather than sixteen copies of the same `collectAsStateWithLifecycle` call, so
+ * that every gated surface is visibly asking the same question and a search for this name finds
+ * all of them.
+ */
+@Composable
+fun rememberSocialEnabled(): Boolean {
+    val enabled by SocialFeatureGate.enabled.collectAsStateWithLifecycle()
+    return enabled
 }

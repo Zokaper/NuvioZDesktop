@@ -43,6 +43,7 @@ import com.nuvio.app.core.ui.NuvioNavigationBar
 import com.nuvio.app.core.ui.PlatformBackHandler
 import com.nuvio.app.core.ui.rememberNuvioNavBarScrollState
 import com.nuvio.app.core.build.AppFeaturePolicy
+import com.nuvio.app.features.social.rememberSocialEnabled
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.profiles.NuvioProfile
 import com.nuvio.app.features.profiles.ProfileSwitcherTab
@@ -80,6 +81,7 @@ internal fun MainTabsDestination(
     onProfileSelected: (NuvioProfile) -> Unit,
     onAddProfileRequested: () -> Unit,
 ) {
+    val socialEnabled = rememberSocialEnabled()
     PlatformBackHandler(enabled = true, onBack = onBack)
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -168,12 +170,14 @@ internal fun MainTabsDestination(
                                 contentDescription = stringResource(Res.string.compose_nav_downloads),
                             )
                         }
-                        NavItem(
-                            selected = selectedTab == AppScreenTab.Social,
-                            onClick = { onTabSelected(AppScreenTab.Social) },
-                            icon = Icons.Filled.People,
-                            contentDescription = stringResource(Res.string.compose_nav_social),
-                        )
+                        if (socialEnabled) {
+                            NavItem(
+                                selected = selectedTab == AppScreenTab.Social,
+                                onClick = { onTabSelected(AppScreenTab.Social) },
+                                icon = Icons.Filled.People,
+                                contentDescription = stringResource(Res.string.compose_nav_social),
+                            )
+                        }
                         NavItem(
                             selected = selectedTab == AppScreenTab.Settings,
                             onClick = { onTabSelected(AppScreenTab.Settings) },
@@ -287,13 +291,15 @@ internal fun MainTabsDestination(
                                 label = stringResource(Res.string.compose_nav_downloads),
                             )
                         }
-                        NavItem(
-                            selected = selectedTab == AppScreenTab.Social,
-                            onClick = { onTabSelected(AppScreenTab.Social) },
-                            icon = Icons.Filled.People,
-                            contentDescription = stringResource(Res.string.compose_nav_social),
-                            label = stringResource(Res.string.compose_nav_social),
-                        )
+                        if (socialEnabled) {
+                            NavItem(
+                                selected = selectedTab == AppScreenTab.Social,
+                                onClick = { onTabSelected(AppScreenTab.Social) },
+                                icon = Icons.Filled.People,
+                                contentDescription = stringResource(Res.string.compose_nav_social),
+                                label = stringResource(Res.string.compose_nav_social),
+                            )
+                        }
                         NavItem(
                             selected = selectedTab == AppScreenTab.Settings,
                             onClick = { onTabSelected(AppScreenTab.Settings) },

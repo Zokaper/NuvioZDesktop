@@ -183,6 +183,7 @@ import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.getString
 import org.jetbrains.compose.resources.stringResource
+import com.nuvio.app.features.social.rememberSocialEnabled
 
 private val watchedMarkerDiagnosticLog = Logger.withTag("WatchedMarkerDiag")
 private const val DetailScrolledBackgroundDefaultMaxAlpha = 0.86f
@@ -235,6 +236,10 @@ fun MetaDetailsScreen(
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
     modifier: Modifier = Modifier,
 ) {
+    // The Watch Together button is a social entry point, so it goes with the rest of the layer.
+    // Nulling the callback rather than hiding a disabled button is the point: a greyed control
+    // that says "enable this in Settings" is exactly the dead surface this preference removes.
+    val socialEnabled = rememberSocialEnabled()
     val uiState by MetaDetailsRepository.uiState.collectAsStateWithLifecycle()
     val displayedMeta = uiState.meta?.takeIf { it.type == type && it.id == id }
         ?: MetaDetailsRepository.peek(type, id)
@@ -1268,9 +1273,9 @@ fun MetaDetailsScreen(
                                         onWatchedClick = toggleWatched,
                                         onSaveClick = toggleSaved,
                                         onSaveLongClick = openLibraryListPicker,
-                                        onWatchTogetherClick = onWatchTogether?.let { callback ->
-                                            { callback(watchPartyContent) }
-                                        },
+                                        onWatchTogetherClick = onWatchTogether
+                                            ?.takeIf { socialEnabled }
+                                            ?.let { callback -> { callback(watchPartyContent) } },
                                     )
                                 }
 
@@ -1463,9 +1468,9 @@ fun MetaDetailsScreen(
                                     onSaveClick = toggleSaved,
                                     onSaveLongClick = openLibraryListPicker,
                                     onWatchedClick = toggleWatched,
-                                    onWatchTogetherClick = onWatchTogether?.let { callback ->
-                                        { callback(watchPartyContent) }
-                                    },
+                                    onWatchTogetherClick = onWatchTogether
+                                        ?.takeIf { socialEnabled }
+                                        ?.let { callback -> { callback(watchPartyContent) } },
                                     onDownloadClick = {
                                         presetDownloadScope = if (meta.type.lowercase() in setOf("series", "show", "tv", "tvshow") || hasEpisodes) {
                                             DownloadScope.SelectedSeasons(emptySet())

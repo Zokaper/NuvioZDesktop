@@ -659,6 +659,7 @@ private fun MobileSettingsScreen(
                         settingsRootContent(
                             isTablet = false,
                             onPlaybackClick = { onPageChange(SettingsPage.Playback) },
+                            onSocialClick = { onPageChange(SettingsPage.Social) },
                             onPlaybackModeClick = onPlaybackModeClick,
                             onAppearanceClick = { onPageChange(SettingsPage.Appearance) },
                             onAdvancedClick = { onPageChange(SettingsPage.Advanced) },
@@ -684,6 +685,7 @@ private fun MobileSettingsScreen(
                 SettingsPage.Account -> accountSettingsContent(
                     isTablet = false,
                 )
+                SettingsPage.Social -> socialSettingsContent(isTablet = false)
                 SettingsPage.SupportersContributors -> {
                     if (AppFeaturePolicy.supportersContributorsPageEnabled) {
                         supportersContributorsContent(isTablet = false)
@@ -1122,6 +1124,7 @@ private fun TabletSettingsScreen(
                             settingsRootContent(
                                 isTablet = true,
                                 onPlaybackClick = { openInlinePage(SettingsPage.Playback) },
+                                onSocialClick = { openInlinePage(SettingsPage.Social) },
                                 onPlaybackModeClick = onPlaybackModeClick,
                                     onAppearanceClick = { openInlinePage(SettingsPage.Appearance) },
                                     onAdvancedClick = { openInlinePage(SettingsPage.Advanced) },
@@ -1151,6 +1154,7 @@ private fun TabletSettingsScreen(
                         SettingsPage.Account -> accountSettingsContent(
                             isTablet = true,
                         )
+                        SettingsPage.Social -> socialSettingsContent(isTablet = true)
                         SettingsPage.SupportersContributors -> {
                             if (AppFeaturePolicy.supportersContributorsPageEnabled) {
                                 supportersContributorsContent(isTablet = true)

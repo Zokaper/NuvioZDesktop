@@ -145,6 +145,7 @@ import com.nuvio.app.features.settings.PluginsSettingsScreen
 import com.nuvio.app.features.settings.SupportersContributorsSettingsScreen
 import com.nuvio.app.features.settings.ThemeSettingsRepository
 import com.nuvio.app.features.social.SocialRepository
+import com.nuvio.app.features.social.rememberSocialEnabled
 import com.nuvio.app.features.social.SocialNotification
 import com.nuvio.app.features.social.SocialNotificationAction
 import com.nuvio.app.features.social.SocialNotificationKind
@@ -243,7 +244,19 @@ internal fun MainAppContent(
         val focusManager = LocalFocusManager.current
         val uriHandler = LocalUriHandler.current
         val coroutineScope = rememberCoroutineScope()
-        var selectedTab by rememberSaveable(initialTab) { mutableStateOf(initialTab) }
+        val socialEnabled = rememberSocialEnabled()
+        // ⚠ **Coerced, not parsed.** `initialTab` arrives from outside this composition - a saved
+        // tab from the last session, or a launch intent - and `AppScreenTab.Social` is still a
+        // legitimate parse in both states because it is persisted and it is half of the native
+        // navigation mapping. What it must not be is *shown* when the social layer is off: with no
+        // nav item to leave by, that is a route with nothing on it and no way out.
+        var selectedTab by rememberSaveable(initialTab) {
+            mutableStateOf(coerceAvailableTab(initialTab, socialEnabled))
+        }
+        // The same coercion for a session that turns social off while standing on the tab.
+        LaunchedEffect(socialEnabled) {
+            selectedTab = coerceAvailableTab(selectedTab, socialEnabled)
+        }
         var searchFocusRequestCount by remember { mutableStateOf(0) }
         val homeScrollToTopRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
         val searchScrollToTopRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
@@ -403,7 +416,7 @@ internal fun MainAppContent(
             }
             AppScreenTab.Library -> libraryScrollToTopRequests.tryEmit(Unit)
             AppScreenTab.Downloads -> downloadsScrollToTopRequests.tryEmit(Unit)
-            AppScreenTab.Social -> socialScrollToTopRequests.tryEmit(Unit)
+            AppScreenTab.Social -> if (socialEnabled) socialScrollToTopRequests.tryEmit(Unit)
             AppScreenTab.Settings -> settingsRootActionRequests.tryEmit(Unit)
         }
     }
@@ -645,7 +658,19 @@ internal fun MainAppContent(
         }
     }
 
-    val activeSocialProfileId = profileState.activeProfile?.id?.takeIf(String::isNotBlank)
+    // ⚠ **The chokepoint.** Gating here is what makes "social is off" mean the layer is not
+    // running rather than merely not drawn: no capability RPC, no `social:` Realtime channel, no
+    // presence, no party restore. Everything downstream is then genuinely empty, and the removed
+    // navigation items are what stop it being reachable.
+    //
+    // Passing null rather than skipping the block is deliberate: `activate(null)` and
+    // `setActiveProfile(null)` are the existing shutdown paths, so flipping the preference during
+    // a session tears the layer down through the same code a profile switch uses. The ordered
+    // teardown for a *live party* is `shutdownSocialLayer`, which the settings toggle runs before
+    // it writes the flag - by the time this effect sees `false` there is nothing left to depart.
+    val activeSocialProfileId = profileState.activeProfile?.id
+        ?.takeIf(String::isNotBlank)
+        ?.takeIf { socialEnabled }
     LaunchedEffect(ownsAppRuntime, activeSocialProfileId) {
         if (!ownsAppRuntime) return@LaunchedEffect
         SocialRepository.activate(activeSocialProfileId)
@@ -2262,8 +2287,11 @@ internal fun MainAppContent(
                     .zIndex(15f),
             )
 
+            // `socialUiState` is already empty when the layer is off - `activate(null)` resets
+            // it - but the gate is stated here as well, so the prompt cannot come back through a
+            // stale emission during the teardown frame.
             val socialNotification = socialUiState.notifications.firstOrNull {
-                it.readAt == null && it.availableActions.isNotEmpty()
+                socialEnabled && it.readAt == null && it.availableActions.isNotEmpty()
             }
             val socialNotificationPrimaryAction = socialNotification?.availableActions?.let { actions ->
                 when {

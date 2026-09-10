@@ -51,6 +51,7 @@ import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.getString
 import kotlin.time.TimeSource
+import com.nuvio.app.features.social.rememberSocialEnabled
 
 /**
  * The startup watchdog's own tag, because it is the one thing here that ends a play by itself.
@@ -63,8 +64,18 @@ private val startupLog = Logger.withTag("PlaybackStartup")
 
 @Composable
 internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
-    BindSocialPresenceEffect()
-    BindWatchPartyEffect()
+    // ⚠ **Both, or neither.** Presence is what tells friends what you are watching and the party
+    // effect is what keeps a party in step; with the social layer off there is nobody to tell and
+    // no party to keep. Skipping them here is what stops a heartbeat loop running for a feature
+    // the user has switched off.
+    //
+    // Safe to drop mid-session: turning social off runs `shutdownSocialLayer` *before* the
+    // preference flips, so any party has already been departed through the coordinator by the
+    // time this stops being composed. Nothing here abandons a live session.
+    if (rememberSocialEnabled()) {
+        BindSocialPresenceEffect()
+        BindWatchPartyEffect()
+    }
     val currentFeedback = liveGestureFeedback ?: gestureFeedback
     LaunchedEffect(currentFeedback) {
         if (currentFeedback != null) {

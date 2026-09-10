@@ -101,6 +101,7 @@ import com.nuvio.app.features.settings.AppBrandWordmark
 import com.nuvio.app.features.settings.NavBarStyle
 import com.nuvio.app.features.settings.SettingsScreen
 import com.nuvio.app.features.settings.ThemeSettingsRepository
+import com.nuvio.app.features.social.rememberSocialEnabled
 import com.nuvio.app.features.social.SocialScreen
 import com.nuvio.app.features.social.SocialNotification
 import com.nuvio.app.features.social.SocialNotificationAction
@@ -257,6 +258,7 @@ internal fun AppTabHost(
     actions: AppTabActions,
     modifier: Modifier = Modifier,
 ) {
+    val socialEnabled = rememberSocialEnabled()
     val tabStateHolder = rememberSaveableStateHolder()
     val isHomeSelected = selectedTab == AppScreenTab.Home
 
@@ -332,7 +334,7 @@ internal fun AppTabHost(
                             }
                         }
 
-                        AppScreenTab.Social -> {
+                        AppScreenTab.Social -> if (socialEnabled) {
                             SocialScreen(
                                 modifier = Modifier.fillMaxSize(),
                                 scrollToTopRequests = requests.socialScrollToTopRequests,
@@ -391,6 +393,7 @@ internal fun TabletFloatingTopBar(
     windowWidth: Dp? = null,
     modifier: Modifier = Modifier,
 ) {
+    val socialEnabled = rememberSocialEnabled()
     val tokens = MaterialTheme.nuvio
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val interactionSource = remember { MutableInteractionSource() }
@@ -664,6 +667,7 @@ internal fun TabletFloatingTopBar(
                             },
                         )
                     }
+                    if (socialEnabled) {
                     TabletTopPillItem(
                         label = stringResource(Res.string.compose_nav_social),
                         selected = selectedTab == AppScreenTab.Social,
@@ -686,6 +690,7 @@ internal fun TabletFloatingTopBar(
                             )
                         },
                     )
+                    }
                     TabletTopPillItem(
                         label = stringResource(Res.string.compose_nav_settings),
                         selected = selectedTab == AppScreenTab.Settings,
@@ -841,6 +846,7 @@ internal fun DesktopHoverSidebar(
     onProfileStackVisibleChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    val socialEnabled = rememberSocialEnabled()
     val tokens = MaterialTheme.nuvio
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val profileState by ProfileRepository.state.collectAsStateWithLifecycle()
@@ -986,18 +992,20 @@ internal fun DesktopHoverSidebar(
                         )
                     }
                 }
-                DesktopSidebarItem(
-                    label = stringResource(Res.string.compose_nav_social),
-                    selected = selectedTab == AppScreenTab.Social,
-                    expanded = sidebarExpanded,
-                    onClick = { selectTab(AppScreenTab.Social) },
-                ) { color ->
-                    Icon(
-                        imageVector = Icons.Filled.People,
-                        contentDescription = stringResource(Res.string.compose_nav_social),
-                        modifier = Modifier.size(DesktopSidebarIconSize),
-                        tint = color,
-                    )
+                if (socialEnabled) {
+                    DesktopSidebarItem(
+                        label = stringResource(Res.string.compose_nav_social),
+                        selected = selectedTab == AppScreenTab.Social,
+                        expanded = sidebarExpanded,
+                        onClick = { selectTab(AppScreenTab.Social) },
+                    ) { color ->
+                        Icon(
+                            imageVector = Icons.Filled.People,
+                            contentDescription = stringResource(Res.string.compose_nav_social),
+                            modifier = Modifier.size(DesktopSidebarIconSize),
+                            tint = color,
+                        )
+                    }
                 }
                 DesktopSidebarItem(
                     label = stringResource(Res.string.compose_settings_page_root),

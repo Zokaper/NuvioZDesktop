@@ -109,6 +109,8 @@ import com.nuvio.app.features.home.components.rememberContinueWatchingLayout
 import kotlinx.coroutines.CancellationException
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
+import com.nuvio.app.features.social.rememberSocialEnabled
+import com.nuvio.app.features.social.SocialUiState
 
 @Composable
 fun HomeScreen(
@@ -154,7 +156,14 @@ fun HomeScreen(
     val watchProgressUiState by WatchProgressRepository.uiState.collectAsStateWithLifecycle()
     val effectiveWatchProgressSource = watchProgressUiState.source
     val cloudLibraryUiState by CloudLibraryRepository.uiState.collectAsStateWithLifecycle()
-    val socialUiState by SocialRepository.uiState.collectAsStateWithLifecycle()
+    // ⚠ **Emptied here rather than gated at each of the four places it is read.** `activate(null)`
+    // already resets the repository when the layer goes off, but stating it at the source means
+    // the two section calls, the empty-state test and anything added later cannot disagree about
+    // whether the rows exist - and a stale emission during the teardown frame cannot put a
+    // friend's activity back on the home screen for one frame.
+    val socialEnabled = rememberSocialEnabled()
+    val liveSocialUiState by SocialRepository.uiState.collectAsStateWithLifecycle()
+    val socialUiState = if (socialEnabled) liveSocialUiState else EmptySocialUiState
     val networkStatusUiState by NetworkStatusRepository.uiState.collectAsStateWithLifecycle()
     val trackingSettingsUiState by remember {
         TrackingSettingsRepository.ensureLoaded()
@@ -1962,3 +1971,12 @@ private fun ContinueWatchingItem.isCloudLibraryContinueWatchingItem(): Boolean =
 private fun WatchProgressEntry.isCloudLibraryProgressEntry(): Boolean =
     contentType.equals(CloudLibraryContentType, ignoreCase = true) ||
         parentMetaType.equals(CloudLibraryContentType, ignoreCase = true)
+
+/**
+ * What the home screen sees when the social layer is off.
+ *
+ * A constant rather than `SocialUiState()` at the call site so it is allocated once and so the
+ * intent has a name: not "no data yet", which is what a loading state means, but "this feature
+ * does not exist for this profile".
+ */
+private val EmptySocialUiState = SocialUiState()
