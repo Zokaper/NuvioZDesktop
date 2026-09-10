@@ -1,5 +1,7 @@
 package com.nuvio.app.features.social
 
+import com.nuvio.app.core.auth.AuthRepository
+import com.nuvio.app.core.auth.AuthState
 import com.nuvio.app.core.network.ZSessionBridge
 import com.nuvio.app.core.network.ZSupabaseProvider
 import com.nuvio.app.core.network.shouldReexchangeZSession
@@ -32,6 +34,7 @@ import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 import com.nuvio.app.features.watchparty.PartySourceContractVersion
 import com.nuvio.app.features.watchparty.WatchPartyState
+import com.nuvio.app.features.setup.SocialIdentityProbe
 
 /** How long to wait for the social channel to report itself subscribed before giving up on it. */
 private const val SocialChannelSubscribeTimeoutMs = 12_000L
@@ -142,6 +145,57 @@ object SocialRepository {
         }).decodeAs<SocialProfileSummary>()
         refresh(false)
         result
+    }
+
+    /**
+     * Does this profile already have a social identity on the backend?
+     *
+     * Deliberately **not** [activate]: this opens no Realtime channel, publishes no presence,
+     * flushes no outbox and writes nothing to [uiState]. It exists for one question - the
+     * cache-cold half of the Phase 5 migration rule, where a second install or a cleared data
+     * root makes an established social user look locally new - and it may run on a launch that
+     * then decides the social layer is off, so it has to stay cheap and inert.
+     *
+     * Every call it makes already exists; there is no new RPC and no backend migration here.
+     *
+     * Answers [SocialIdentityProbe.Indeterminate] rather than [SocialIdentityProbe.Absent] for
+     * anything that is not a real answer - signed out, no Z session, a failed call. The two must
+     * not be confused: `Absent` is a fact about the account and `Indeterminate` is the absence of
+     * one, and only the first may ever influence what gets written down.
+     */
+    suspend fun probeExistingIdentity(profileId: String): SocialIdentityProbe {
+        val authState = AuthRepository.state.value
+        if (authState !is AuthState.Authenticated || authState.isAnonymous) {
+            return SocialIdentityProbe.Indeterminate
+        }
+        if (!ZSessionBridge.ensureSession(profileId)) return SocialIdentityProbe.Indeterminate
+
+        val capabilities = runCatching {
+            ZSupabaseProvider.client.postgrest.rpc("get_social_capabilities").decodeAs<SocialCapabilities>()
+        }.getOrElse { return SocialIdentityProbe.Indeterminate }
+        // A backend with no social layer deployed cannot be holding an identity. That is a real
+        // answer, not a failure to reach one.
+        if (!capabilities.socialEnabled) return SocialIdentityProbe.Absent
+
+        val rpcName = if (capabilities.partyContractVersion >= PartySourceContractVersion) {
+            "social_get_state_v2"
+        } else {
+            "social_get_state"
+        }
+        return runCatching {
+            ZSupabaseProvider.client.postgrest.rpc(
+                rpcName,
+                buildJsonObject {
+                    put("p_profile_id", profileId)
+                    put("p_limit", 1)
+                },
+            ).decodeAs<SocialStatePayload>()
+        }.fold(
+            onSuccess = { payload ->
+                if (payload.me != null) SocialIdentityProbe.Present else SocialIdentityProbe.Absent
+            },
+            onFailure = { SocialIdentityProbe.Indeterminate },
+        )
     }
 
     suspend fun setPrivacy(shareWatchingNow: Boolean, shareRecentlyWatched: Boolean): Result<Unit> = socialCall {

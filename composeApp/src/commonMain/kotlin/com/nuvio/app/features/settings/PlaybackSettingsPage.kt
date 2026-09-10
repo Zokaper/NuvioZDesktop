@@ -3099,8 +3099,12 @@ private fun playbackCodecPreferenceLabel(preference: CodecPreference): String = 
     CodecPreference.AVC -> stringResource(Res.string.settings_playback_codec_avc)
 }
 
+// `internal` rather than `private`: the setup wizard's playback step asks for the same three
+// preferences and must show the same words for them. Reusing the label is the cheapest way to
+// guarantee that - the alternative is a second description of the same enum, which is exactly how
+// the playback-mode copy drifted for a whole release.
 @Composable
-private fun playbackDynamicRangeLabel(policy: DynamicRangePolicy): String = when (policy) {
+internal fun playbackDynamicRangeLabel(policy: DynamicRangePolicy): String = when (policy) {
     DynamicRangePolicy.ANY -> stringResource(Res.string.settings_playback_preference_any)
     DynamicRangePolicy.AVOID_HDR -> stringResource(Res.string.settings_playback_dynamic_range_avoid)
     DynamicRangePolicy.PREFER_HDR -> stringResource(Res.string.settings_playback_dynamic_range_prefer)
@@ -3109,8 +3113,9 @@ private fun playbackDynamicRangeLabel(policy: DynamicRangePolicy): String = when
         stringResource(Res.string.settings_playback_dynamic_range_require_dv)
 }
 
+/** `internal` for the setup wizard - see [playbackDynamicRangeLabel]. */
 @Composable
-private fun playbackLanguageStrictnessLabel(strictness: LanguageStrictness): String =
+internal fun playbackLanguageStrictnessLabel(strictness: LanguageStrictness): String =
     when (strictness) {
         LanguageStrictness.OFF -> stringResource(Res.string.settings_playback_language_off)
         LanguageStrictness.PREFER -> stringResource(Res.string.settings_playback_language_prefer)
@@ -3124,10 +3129,11 @@ private fun playbackLanguageStrictnessLabel(strictness: LanguageStrictness): Str
  * what it will remove - so each step is described by the kind of release it stops at, which is
  * the same vocabulary the quality bands use.
  */
-private val PLAYBACK_QUALITY_CEILING_STEPS = listOf(0, 10, 20, 35, 60)
+internal val PLAYBACK_QUALITY_CEILING_STEPS = listOf(0, 10, 20, 35, 60)
 
+/** `internal` for the setup wizard - see [playbackDynamicRangeLabel]. */
 @Composable
-private fun playbackQualityCeilingLabel(mbps: Int): String = when {
+internal fun playbackQualityCeilingLabel(mbps: Int): String = when {
     mbps <= 0 -> stringResource(Res.string.settings_playback_quality_ceiling_off)
     else -> stringResource(Res.string.settings_playback_quality_ceiling_value, mbps)
 }

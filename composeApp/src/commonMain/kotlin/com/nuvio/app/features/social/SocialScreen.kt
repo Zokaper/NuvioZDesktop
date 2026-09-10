@@ -584,6 +584,14 @@ private fun SocialIdentityHeader(
     }
 }
 
+/**
+ * The tab's own route into handle setup.
+ *
+ * ⚠ **A frame around [SocialIdentityBody], not a second copy of it.** This screen and the setup
+ * wizard both ask for a handle, and the last time two surfaces described the same thing
+ * independently - the playback modes - one of them kept a stale caption for a whole release. The
+ * panel is this screen's furniture; everything inside it is shared.
+ */
 @Composable
 private fun SocialHandleSetup(
     handle: String,
@@ -592,34 +600,13 @@ private fun SocialHandleSetup(
     onSave: () -> Unit,
 ) {
     SocialPanel {
-        Text(
-            stringResource(Res.string.social_handle),
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold,
+        SocialIdentityBody(
+            handle = handle,
+            onHandleChange = onHandleChange,
+            message = message,
+            busy = false,
+            onSave = onSave,
         )
-        Text(
-            stringResource(Res.string.social_handle_help),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        OutlinedTextField(
-            value = handle,
-            onValueChange = onHandleChange,
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            label = { Text(stringResource(Res.string.social_handle)) },
-            prefix = { Text("@") },
-            isError = handle.isNotEmpty() && !isValidSocialHandle(handle),
-            supportingText = {
-                Text("3-24 characters: letters, numbers and underscores.", style = MaterialTheme.typography.labelSmall)
-            },
-        )
-        Button(onClick = onSave, enabled = isValidSocialHandle(handle)) {
-            Text(stringResource(Res.string.social_save_handle))
-        }
-        message?.let {
-            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-        }
     }
 }
 

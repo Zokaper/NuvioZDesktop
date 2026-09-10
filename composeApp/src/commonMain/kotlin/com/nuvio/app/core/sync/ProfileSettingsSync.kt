@@ -15,6 +15,7 @@ import com.nuvio.app.features.mdblist.MdbListMetadataService
 import com.nuvio.app.features.mdblist.MdbListSettingsStorage
 import com.nuvio.app.features.mdblist.MdbListSettingsRepository
 import com.nuvio.app.features.notifications.EpisodeReleaseNotificationsRepository
+import com.nuvio.app.features.social.SocialFeaturePreferencesRepository
 import com.nuvio.app.features.player.PlayerSettingsStorage
 import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.profiles.ProfileRepository
@@ -194,6 +195,7 @@ object ProfileSettingsSync {
             TrackingSettingsRepository.uiState.map { "trakt_settings" },
             TraktCommentsSettings.enabled.map { "trakt_comments" },
             EpisodeReleaseNotificationsRepository.uiState.map { "episode_release_alerts" },
+            SocialFeaturePreferencesRepository.uiState.map { "social_features" },
         )
 
         observeJob = scope.launch {
@@ -256,6 +258,9 @@ object ProfileSettingsSync {
                 traktCommentsSettings = TraktCommentsStorage.exportToSyncPayload(),
                 notificationsSettings = NotificationsSettingsPayload(
                     episodeReleaseAlertsEnabled = EpisodeReleaseNotificationsRepository.uiState.value.isEnabled,
+                ),
+                socialFeatures = SocialFeaturesPayload(
+                    socialFeaturesEnabled = SocialFeaturePreferencesRepository.exportStoredPreference(),
                 ),
             ),
         )
@@ -330,6 +335,7 @@ object ProfileSettingsSync {
         TraktCommentsSettings.onProfileChanged()
 
         EpisodeReleaseNotificationsRepository.applyFromSyncEnabled(blob.features.notificationsSettings.episodeReleaseAlertsEnabled)
+        SocialFeaturePreferencesRepository.applyFromSync(blob.features.socialFeatures.socialFeaturesEnabled)
     }
 
     private fun ensureRepositoriesLoaded() {
@@ -347,6 +353,7 @@ object ProfileSettingsSync {
         TrackingSettingsRepository.ensureLoaded()
         TraktCommentsSettings.ensureLoaded()
         EpisodeReleaseNotificationsRepository.ensureLoaded()
+        SocialFeaturePreferencesRepository.ensureLoaded()
     }
 
     private fun buildSignature(blob: MobileProfileSettingsBlob): String =
@@ -371,6 +378,7 @@ object ProfileSettingsSync {
         "trakt_settings=${TrackingSettingsRepository.uiState.value}",
         "trakt_comments=${TraktCommentsSettings.enabled.value}",
         "episode_release_alerts=${EpisodeReleaseNotificationsRepository.uiState.value.isEnabled}",
+        "social_features=${SocialFeaturePreferencesRepository.uiState.value.storedPreference}",
     ).joinToString(separator = "||")
 
 }
@@ -397,11 +405,32 @@ private data class MobileProfileSettingsFeatures(
     @SerialName("trakt_settings_payload") val traktSettingsPayload: String = "",
     @SerialName("trakt_comments_settings") val traktCommentsSettings: JsonObject = JsonObject(emptyMap()),
     @SerialName("notifications_settings") val notificationsSettings: NotificationsSettingsPayload = NotificationsSettingsPayload(),
+    @SerialName("social_features") val socialFeatures: SocialFeaturesPayload = SocialFeaturesPayload(),
 )
 
 @Serializable
 private data class NotificationsSettingsPayload(
     @SerialName("episode_release_alerts_enabled") val episodeReleaseAlertsEnabled: Boolean = false,
+)
+
+/**
+ * Whether the social product layer is switched on for this profile.
+ *
+ * ⚠ **Nullable, and it is the only field on this blob that has to be.** Three states must survive
+ * the round trip and only two of them are booleans: never answered, explicitly on, explicitly off.
+ * A blob written by a build that predates this field decodes to null, which
+ * `SocialFeaturePreferencesRepository.applyFromSync` treats as "the remote has not caught up"
+ * rather than as "the user chose off" - the same rule `syncKeysToClear` encodes, and the reason a
+ * pull once wiped every playback setting the remote had never heard of.
+ *
+ * It is a typed sub-payload rather than a field on `player_settings` because whether the social
+ * layer exists is an application-level preference, not a player setting - and because the player
+ * blob carries `mergeMonotonicSyncInt`, which is right for a revision that may only rise and
+ * exactly wrong for a preference the user may switch back off.
+ */
+@Serializable
+private data class SocialFeaturesPayload(
+    @SerialName("social_features_enabled") val socialFeaturesEnabled: Boolean? = null,
 )
 
 @Serializable

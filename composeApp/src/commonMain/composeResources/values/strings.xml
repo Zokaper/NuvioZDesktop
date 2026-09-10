@@ -2634,46 +2634,46 @@
     <string name="setup_welcome_start">Get started</string>
     <string name="setup_welcome_skip">Skip for now</string>
 
-    <string name="setup_cards_title">How should artwork look?</string>
-    <string name="setup_cards_subtitle">This is how every row of titles will be drawn.</string>
+    <!-- Revision 7 keeps shape and size, and only those. Corners and card titles moved to
+         Settings - Appearance: nobody has an opinion about a corner radius before using the app,
+         and every question asked here is one the user answers before they have seen the thing it
+         changes. `setup_cards_labels` and `setup_cards_corners` are gone with them. -->
+    <string name="setup_look_title">How should artwork look?</string>
+    <string name="setup_look_subtitle">This is how every row of titles will be drawn.</string>
     <string name="setup_cards_shape">Card shape</string>
     <string name="setup_cards_shape_poster">Poster</string>
     <string name="setup_cards_shape_landscape">Wide</string>
-    <string name="setup_cards_labels">Show titles under cards</string>
     <string name="setup_cards_size">Card size</string>
-    <string name="setup_cards_corners">Corners</string>
-
-    <string name="setup_home_title">Your home screen</string>
-    <string name="setup_home_subtitle">What you see first, every time you open Nuvio Z.</string>
-    <string name="setup_home_hero">Featured banner</string>
-    <string name="setup_home_hero_description">A large rotating showcase at the top of the home screen.</string>
-    <string name="setup_home_continue">Continue watching</string>
-    <string name="setup_home_cw_card">Card</string>
-    <string name="setup_home_cw_wide">Wide</string>
-    <string name="setup_home_cw_poster">Poster</string>
-    <string name="setup_cw_thumbnails">Use episode stills</string>
-    <string name="setup_cw_thumbnails_description">Show the frame from the episode rather than the show's own artwork.</string>
-    <string name="setup_cw_blur_next_up">Blur what's next</string>
-    <string name="setup_cw_blur_next_up_description">Hides the still for episodes you haven't started, so nothing is spoiled.</string>
-
-    <string name="setup_details_title">The details screen</string>
-    <string name="setup_details_subtitle">What you see when you open a film or a series.</string>
-    <string name="setup_details_background">Background</string>
-    <string name="setup_details_background_normal">Plain</string>
-    <string name="setup_details_background_cinematic">Blurred art</string>
-    <string name="setup_details_background_dominant">Matched colour</string>
-    <string name="setup_details_episodes">Episodes</string>
-    <string name="setup_details_episodes_horizontal">Large</string>
-    <string name="setup_details_episodes_list">Compact</string>
-    <string name="setup_episodes_blur_unwatched">Blur unwatched episodes</string>
-    <string name="setup_episodes_blur_unwatched_description">Keeps stills and synopses from episodes you haven't seen out of view.</string>
-    <string name="setup_details_tabs">Group sections into tabs</string>
-    <string name="setup_details_tabs_description">Cast, trailers and details share a row of tabs instead of stacking down the page.</string>
+    <string name="setup_look_more">Corners, titles under cards and the rest of the look live in Settings → Appearance.</string>
 
     <string name="setup_theme_title">Pick a colour</string>
     <string name="setup_theme_subtitle">Buttons, highlights and accents across the whole app.</string>
     <string name="setup_theme_amoled">Pure black background</string>
     <string name="setup_theme_amoled_description">Saves power on OLED screens and looks deeper in a dark room.</string>
+
+    <!-- Playback setup. Shown only for a mode that has something to configure - Classic has
+         nothing, because every automatic-selection preference is inert there. -->
+    <string name="setup_playback_setup_title">How should Nuvio choose?</string>
+    <string name="setup_playback_setup_subtitle_streamlined">You pick a quality; these decide which release Nuvio picks inside it.</string>
+    <string name="setup_playback_setup_subtitle_instant">Nuvio picks the quality from your connection. These are your limits on what it may pick.</string>
+    <string name="setup_playback_setup_body_streamlined">You will see a short list of qualities each time. Nuvio then chooses the best release in the one you pick.</string>
+    <string name="setup_playback_setup_body_instant">Nuvio measures your connection and starts playing without asking. A ceiling keeps it from choosing something bigger than you want.</string>
+    <string name="setup_playback_setup_more">Codec, audio and torrent preferences are in Settings → Playback.</string>
+
+    <!-- Social. The first question is whether the feature exists at all, not what it is called. -->
+    <string name="setup_social_title">Watch with friends?</string>
+    <string name="setup_social_subtitle">Nuvio Z can connect you to other people, or stay entirely private.</string>
+    <string name="setup_social_toggle">Enable social features</string>
+    <string name="setup_social_toggle_description">Friends, what they are watching, profiles and Watch Together.</string>
+    <string name="setup_social_on_body">You will get a Social tab, see what friends are watching, and be able to start a Watch Together party from anything you play.</string>
+    <string name="setup_social_off_body">Nuvio Z stays a private player. No Social tab, no friend activity on your home screen, and nothing about what you watch is shared. You can turn this on later in Settings → Social.</string>
+    <string name="setup_social_probe_unknown">We could not check whether you already have a Nuvio Z social account. You can turn this on later in Settings → Social.</string>
+
+    <string name="setup_social_identity_title">Pick a handle</string>
+    <string name="setup_social_identity_subtitle">This is how friends find you.</string>
+    <string name="setup_social_identity_body">Your handle is unique across Nuvio Z. Your display name and picture come from this profile.</string>
+    <string name="setup_social_identity_signed_out">Sign in to your Nuvio account to set a handle. Social features stay on — you can pick one later from Settings → Social.</string>
+    <string name="setup_social_identity_skip">Choose later</string>
 
     <string name="setup_sources_title">Add a source</string>
     <string name="setup_sources_subtitle">Nuvio Z has nothing to show until you add one.</string>
@@ -2685,8 +2685,35 @@
 
     <string name="setup_done_title">You're all set</string>
     <string name="setup_done_subtitle">Everything here can be changed again whenever you like.</string>
-    <string name="setup_done_body">Look under Settings → Appearance for anything visual, and Settings → Playback for how sources are chosen. You can run this setup again from the bottom of Settings.</string>
+    <string name="setup_done_body">You can change any of this later, and run setup again from the bottom of Settings.</string>
+    <string name="setup_done_playback">Playback</string>
+    <string name="setup_done_social">Social features</string>
+    <string name="setup_done_social_on">On</string>
+    <string name="setup_done_social_off">Off</string>
+    <string name="setup_done_sources">Sources</string>
+    <string name="setup_done_sources_ready">Ready</string>
     <string name="setup_done_finish">Start watching</string>
+
+    <!-- Settings - Social. The master control is the one social surface that stays visible when
+         the feature is off; it is the only way back. -->
+    <string name="settings_social_title">Social</string>
+    <string name="settings_social_description">Friends, activity and Watch Together.</string>
+    <string name="settings_social_enabled">Social features</string>
+    <string name="settings_social_enabled_description">Friends, what they are watching, profiles and Watch Together. Turning this off hides them and stops sharing — it does not delete your handle, your friends or your account.</string>
+    <string name="settings_social_handle">Handle</string>
+    <string name="settings_social_handle_unset">Not set</string>
+    <string name="settings_social_share_watching">Share what I am watching</string>
+    <string name="settings_social_share_watching_description">Friends can see the title you have open right now.</string>
+    <string name="settings_social_share_recent">Share what I have watched</string>
+    <string name="settings_social_share_recent_description">Finished episodes and films appear in your friends activity feed.</string>
+    <string name="settings_social_join_policy">Who can join my playback</string>
+    <string name="settings_social_join_policy_direct">Anyone I am friends with</string>
+    <string name="settings_social_join_policy_approval">Ask me first</string>
+    <string name="settings_social_join_policy_disabled">Nobody</string>
+    <string name="settings_social_leave_party_title">Leave your Watch Together party?</string>
+    <string name="settings_social_leave_party_body">You are in a party right now. Turning social features off will leave it first.</string>
+    <string name="settings_social_leave_party_confirm">Leave and turn off</string>
+    <string name="settings_social_leave_party_cancel">Cancel</string>
 
     <string name="settings_run_setup_again">Run setup again</string>
     <string name="settings_run_setup_again_description">Step through the look and playback choices from the start.</string>

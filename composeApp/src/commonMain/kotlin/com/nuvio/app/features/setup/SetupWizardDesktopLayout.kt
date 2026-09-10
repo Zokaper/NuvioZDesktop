@@ -183,6 +183,7 @@ fun SetupWizardDesktopLayout(
             SetupDesktopControlPane(
                 step = step,
                 plan = plan,
+                playbackMode = playbackMode,
                 dismissible = dismissible,
                 onDismiss = onDismiss,
                 topInset = topInset,
@@ -281,6 +282,7 @@ private val DesktopControlPanePadding = 32.dp
 private fun SetupDesktopControlPane(
     step: SetupStep,
     plan: SetupWizardPlan,
+    playbackMode: PlaybackMode,
     dismissible: Boolean,
     onDismiss: () -> Unit,
     topInset: Dp,
@@ -307,6 +309,7 @@ private fun SetupDesktopControlPane(
             SetupPanelHeader(
                 step = step,
                 plan = plan,
+                playbackMode = playbackMode,
                 dismissible = dismissible,
                 onDismiss = onDismiss,
             )

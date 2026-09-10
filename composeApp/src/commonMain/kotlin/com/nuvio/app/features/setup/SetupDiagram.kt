@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Extension
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -117,19 +118,31 @@ fun SetupDiagram(
             // The step asks how much of the choosing Nuvio does, so the drawing has to answer
             // that differently for each mode - otherwise it is decoration on the one step where
             // it could be doing work.
-            SetupStep.PlaybackMode -> DiagramModeStoryboard(playbackMode)
+            // ⚠ **The same loop keeps running on the configuration step that follows.** The
+            // mode step asks how much of the choosing Nuvio does; the next step asks how it
+            // should choose. Swapping the drawing between them would break the one thread the
+            // two screens share, and the storyboard is the only thing on screen that has
+            // already explained what a quality band is for.
+            SetupStep.PlaybackMode,
+            SetupStep.PlaybackSetup,
+            -> DiagramModeStoryboard(playbackMode)
 
             // An addon on the left filling catalog rows on the right.
             SetupStep.Sources -> DiagramAddonFeed()
+
+            // Two people and something being watched between them. Static: the storyboard is
+            // the one animated drawing in the flow and it earns that by carrying an argument
+            // no still picture can make. A second animation would just be motion.
+            SetupStep.SocialOptIn,
+            SetupStep.SocialIdentity,
+            -> DiagramSocial()
 
             SetupStep.Done -> DiagramDone()
 
             // Never reached - these steps have a real specimen - but enumerated rather than
             // defaulted so that adding a step is a compile error here instead of a blank band.
             SetupStep.Welcome,
-            SetupStep.Cards,
-            SetupStep.Home,
-            SetupStep.Details,
+            SetupStep.Look,
             SetupStep.Theme,
             -> Unit
         }
@@ -409,6 +422,41 @@ private fun DiagramAddonFeed() {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 repeat(3) { DiagramBlock(width = 44.dp, height = 34.dp, alpha = 0.5f) }
             }
+        }
+    }
+}
+
+/**
+ * Two people with something playing between them.
+ *
+ * The social steps are the one place in the flow where the question is "should this exist at
+ * all", and the answer has no settings screen to preview - so the band shows the shape of the
+ * feature rather than a mock of a surface. Two avatars, a play tile between them, and one
+ * shared row underneath: friends, something being watched, and the activity it produces.
+ *
+ * Built from the same primitives as the other two diagrams so it inherits their sizing, their
+ * density override on desktop and their disposability. Nothing here is a string resource, for
+ * the same reason nothing in [DiagramAddonFeed] is.
+ */
+@Composable
+private fun DiagramSocial() {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            DiagramCircle(icon = Icons.Rounded.Person, size = 48.dp)
+            DiagramBlock(width = 62.dp, height = 44.dp, alpha = 1f)
+            DiagramCircle(icon = Icons.Rounded.Person, size = 48.dp)
+        }
+        // The activity the two of them produce, fading out to the right the way a feed does.
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            DiagramBlock(width = 44.dp, height = 26.dp)
+            DiagramBlock(width = 44.dp, height = 26.dp, alpha = 0.65f)
+            DiagramBlock(width = 44.dp, height = 26.dp, alpha = 0.35f)
         }
     }
 }

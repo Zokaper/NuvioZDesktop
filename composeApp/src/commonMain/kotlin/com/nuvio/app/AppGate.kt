@@ -58,6 +58,7 @@ import com.nuvio.app.features.profiles.profileAvatarImageUrl
 import com.nuvio.app.features.setup.SETUP_WIZARD_REVISION
 import com.nuvio.app.features.setup.SetupWizardScreen
 import com.nuvio.app.features.setup.shouldShowSetupWizard
+import com.nuvio.app.features.social.SocialFeaturePreferencesRepository
 import com.nuvio.app.features.updater.AppReleaseNotes
 import com.nuvio.app.features.updater.fetchRecentReleaseNotes
 import com.nuvio.app.features.whatsnew.CurrentReleaseNotes
@@ -81,6 +82,7 @@ internal suspend fun warmProfileBoundRepositories() {
         ContinueWatchingPreferencesRepository.ensureLoaded()
         DownloadsRepository.ensureLoaded()
         EpisodeReleaseNotificationsRepository.ensureLoaded()
+        SocialFeaturePreferencesRepository.ensureLoaded()
         HomeCatalogSettingsRepository.snapshot()
         LibraryRepository.ensureLoaded()
         P2pSettingsRepository.ensureLoaded()
