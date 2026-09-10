@@ -43,7 +43,24 @@ private const val SocialChannelSubscribeTimeoutMs = 12_000L
 private const val SocialChannelCloseTimeoutMs = 3_000L
 
 object SocialRepository {
-    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    /**
+     * ⚠ `explicitNulls = false`, and it is load-bearing rather than tidiness.
+     *
+     * Every payload here is handed to a `security definer` RPC as a `jsonb` parameter, and those
+     * functions read it with `->>` and `->`, where an **absent key and a JSON null are not the
+     * same thing**. `social_publish_presence` sanitizes with
+     * `sanitize_source_descriptor_v2(p_entry->'source_fingerprint')`, whose null guard is
+     * `if p_value is null then return null` - an *SQL* NULL test. An absent key yields SQL NULL and
+     * returns cleanly; an explicit `"source_fingerprint": null` yields jsonb `'null'`, which is not
+     * SQL NULL, so the guard misses it, `jsonb_typeof` answers `'null'` rather than `'object'`, and
+     * the whole publish aborts with `invalid_source_descriptor` (22023).
+     *
+     * kotlinx defaults `explicitNulls` to **true**, so with the descriptor added to the presence
+     * payload every publish made outside a Watch Together party failed - silently, because the
+     * `Result` was discarded - and `Watching Now` showed nobody for anyone not already in a party.
+     * Proven against `pzbpghmmordvzcfbayoh`: the absent key returns null, the JSON null raises.
+     */
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _uiState = MutableStateFlow(SocialUiState())
     val uiState: StateFlow<SocialUiState> = _uiState.asStateFlow()
