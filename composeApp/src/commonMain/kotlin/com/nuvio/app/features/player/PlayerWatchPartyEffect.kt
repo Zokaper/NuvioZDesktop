@@ -78,6 +78,7 @@ import com.nuvio.app.features.watchparty.PartySourceDescriptorV2
 import com.nuvio.app.features.watchparty.decidePartyContentHandoff
 import com.nuvio.app.features.watchparty.shouldPublishPartyContentChange
 import com.nuvio.app.features.details.MetaVideo
+import com.nuvio.app.isDesktop
 
 /**
  * The decision half of the Watch Together trace; `WatchParty` carries the transport half.
@@ -1199,7 +1200,26 @@ private fun PlayerScreenRuntime.announcePartyActor(command: PartyCommand) {
         seekingBackwards = seekingBackwards,
     ) ?: return
     partyLog.i { "actor ${command.kind} by=${command.issuedByProfileId.shortId()} notice=\"$notice\"" }
-    showGestureMessage(notice)
+    // ⚠ **Desktop cannot see a Compose overlay here.** The chrome is drawn in the native controls
+    // layer above the video surface, so anything Compose paints over that surface is invisible -
+    // the same rule `RenderPlaybackOverlays` already states for the party banner, which is routed
+    // to `PlayerControlsState` for exactly this reason.
+    //
+    // That is why naming the actor looked unfixed after it had been fixed. `issuedByProfileId` is
+    // the true caller and has been since the backend began authoring commands, and this notice has
+    // never consulted host-ness - but on desktop nobody ever saw it, and the only party text a
+    // desktop viewer *did* see was the banner, whose vocabulary is host-centric ("Waiting for the
+    // host to start", "Host is buffering"). A correct sentence drawn where it cannot be read is
+    // indistinguishable from the wrong sentence.
+    //
+    // The native side already has a token-driven toast for precisely this shape of transient
+    // message, and the party path already uses it for its own failures.
+    if (isDesktop) {
+        playerNotificationMessage = notice
+        playerNotificationToken += 1
+    } else {
+        showGestureMessage(notice)
+    }
 }
 
 /**
