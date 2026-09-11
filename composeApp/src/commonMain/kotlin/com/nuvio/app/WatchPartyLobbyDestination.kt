@@ -3,6 +3,7 @@ package com.nuvio.app
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -13,6 +14,7 @@ import com.nuvio.app.features.streams.StreamLaunch
 import com.nuvio.app.features.streams.StreamLaunchStore
 import com.nuvio.app.features.player.PlayerLaunchStore
 import com.nuvio.app.features.watchparty.WatchPartyLobbyScreen
+import com.nuvio.app.features.watchparty.hydratePartyLaunchArtwork
 import com.nuvio.app.features.watchparty.partySourceKey
 import com.nuvio.app.features.watchparty.PartySourceRealizer
 import com.nuvio.app.features.watchparty.WatchPartyRepository
@@ -24,6 +26,7 @@ import com.nuvio.app.navigation.NuvioNavigator
 import com.nuvio.app.navigation.PlayerRoute
 import com.nuvio.app.navigation.StreamRoute
 import com.nuvio.app.navigation.WatchPartyLobbyRoute
+import kotlinx.coroutines.launch
 
 private val watchPartyLobbyDestinationLog = Logger.withTag("WatchPartyLobbyDestination")
 
@@ -41,6 +44,7 @@ internal fun WatchPartyLobbyDestination(
     playbackProfileId: Int,
 ) {
     val state by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(route.partyId, route.inviteCode) {
         val held = WatchPartyRepository.uiState.value.party
@@ -63,7 +67,7 @@ internal fun WatchPartyLobbyDestination(
         state.party?.id?.let(WatchPartySessionCoordinator::enterLobby)
     }
 
-    fun prepareSource(party: WatchPartyState, purpose: PartyStreamLaunchPurpose) {
+    suspend fun prepareSource(party: WatchPartyState, purpose: PartyStreamLaunchPurpose) {
         val target = party.sourceFingerprint.takeIf {
             purpose == PartyStreamLaunchPurpose.RESOLVE_PLAYBACK
         }
@@ -86,6 +90,12 @@ internal fun WatchPartyLobbyDestination(
         }
 
         val content = party.content
+        // The party wire carries identity, not presentation - no logo, no background, no episode
+        // thumbnail - so a party launch reached the loading screen with nothing to draw and fell
+        // back to plain title text while ordinary playback showed the centred logo. Hydrated from
+        // the same metadata cache ordinary playback reads, on this client, rather than widening
+        // the backend contract to ship artwork URLs through it.
+        val artwork = hydratePartyLaunchArtwork(content)
         val launchId = StreamLaunchStore.put(
             StreamLaunch(
                 profileId = playbackProfileId,
@@ -94,7 +104,10 @@ internal fun WatchPartyLobbyDestination(
                 parentMetaId = content.contentId,
                 parentMetaType = content.contentType,
                 title = content.title,
-                poster = content.poster,
+                logo = artwork.logo,
+                poster = artwork.poster,
+                background = artwork.background,
+                episodeThumbnail = artwork.episodeThumbnail,
                 seasonNumber = content.season,
                 episodeNumber = content.episode,
                 episodeTitle = content.episodeTitle,
@@ -126,7 +139,10 @@ internal fun WatchPartyLobbyDestination(
         onOpenContent = { contentType, contentId, title ->
             navController.navigate(DetailRoute(type = contentType, id = contentId, title = title))
         },
-        onChooseSource = ::prepareSource,
+        // Preparing a source now reads metadata before it builds the launch, so it suspends. The
+        // screen's callback is not suspending and should not become one - this is a navigation
+        // that happens to need a cache read first, not an operation the lobby waits on.
+        onChooseSource = { party, purpose -> scope.launch { prepareSource(party, purpose) } },
         modifier = Modifier.fillMaxSize(),
     )
 }
