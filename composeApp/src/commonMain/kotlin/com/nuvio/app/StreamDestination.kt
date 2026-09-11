@@ -92,6 +92,7 @@ import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.p2pSentinelUrl
 import com.nuvio.app.features.streams.StreamLaunch
 import com.nuvio.app.features.streams.StreamLaunchStore
+import com.nuvio.app.features.streams.PartyStreamLaunchContext
 import com.nuvio.app.features.streams.PartyStreamLaunchPurpose
 import com.nuvio.app.features.streams.StreamsRepository
 import com.nuvio.app.features.streams.StreamsScreen
@@ -200,6 +201,22 @@ internal fun StreamDestination(
         it.purpose == PartyStreamLaunchPurpose.RESOLVE_PLAYBACK && it.targetFingerprint != null
     }
     val isPartyResolution = partyResolutionContext != null
+
+    /**
+     * The host choosing what the party will watch - the other half of the party's source story.
+     *
+     * [isPartyResolution] is a guest realizing an authority that already exists; this is the one
+     * member who gets asked a question. Which question is **not** this route's to invent: the
+     * host's `PlaybackMode` decides it, through `PlaybackModeRouter` like every other play, so
+     * Streamlined hosts get their quality step and Instant hosts get asked nothing at all.
+     *
+     * The *answer*, though, is party-shaped rather than playback-shaped. However the source is
+     * chosen, this route stages the descriptor and returns to the lobby; it never opens a player
+     * and never resolves a debrid link, because staging is a credential-free choice.
+     */
+    val partySourceSelection = launch.partyContext?.takeIf {
+        it.purpose == PartyStreamLaunchPurpose.SELECT_SOURCE
+    }
     /**
      * The exact authority this route is realizing for, or null when it is ordinary browsing.
      *
@@ -299,6 +316,40 @@ internal fun StreamDestination(
         StreamsRepository.selectFilter(null)
         val message = reason ?: noAutomaticSourceMessage
         if (message.isNotBlank()) NuvioToastController.show(message)
+    }
+
+    /**
+     * The host's party source choice, staged and handed back to the lobby.
+     *
+     * Every way the host can arrive at a source ends here - the Classic list, the Streamlined
+     * quality step, Instant deciding alone - so all three stage the same thing in the same way.
+     * It was written once for the list and then only the list could reach it, which is how
+     * "Choose a source" came to mean Classic's release list no matter what the host had chosen
+     * their playback mode to be.
+     *
+     * ⚠ **Source preparation is a credential-free choice, never a playback attempt.** The
+     * original descriptor is staged before any debrid resolution or URL/header access, and this
+     * transient source route then returns to the durable lobby. Nothing here opens a player.
+     *
+     * Answers false when the party moved underneath the choice or the stream describes nothing a
+     * guest could match, so the caller can put the list back rather than fail silently.
+     */
+    fun stagePartyHostSource(
+        selection: PartyStreamLaunchContext,
+        descriptor: PartySourceDescriptorV2?,
+        label: String?,
+    ): Boolean {
+        val currentParty = WatchPartyRepository.uiState.value.party
+        val selectionIsCurrent = currentParty?.id == selection.partyId &&
+            currentParty.sourceGeneration == selection.sourceGeneration
+        if (descriptor == null || !selectionIsCurrent) {
+            NuvioToastController.show(hostSourceUnavailableMessage)
+            return false
+        }
+        WatchPartyRepository.stageHostSource(descriptor, label)
+        StreamsRepository.cancelLoading()
+        navController.popBackStack(route)
+        return true
     }
 
     /**
@@ -488,6 +539,11 @@ internal fun StreamDestination(
         // manual prevents Classic's legacy auto-play policy from seeding an ordinary ranked
         // source before that matcher has seen the complete catalogue.
         isPartyResolution ||
+        // A Classic host choosing the party's source reads the release list, the same as a
+        // Classic host choosing an ordinary play. `streamAutoPlayMode` is a Classic-only setting
+        // and this keeps it out of the party's candidates, which is what the launch's hardcoded
+        // `manualSelection = true` used to do - before it also overrode Streamlined and Instant.
+        partySourceSelection != null ||
         playerSettings.playbackMode != PlaybackMode.CLASSIC
 
     fun openP2pStream(
@@ -1010,6 +1066,23 @@ internal fun StreamDestination(
             playbackCandidates.firstOrNull { it.stream === selectedStream }?.facts
                 ?: SourceFactsExtractor.extract(selectedStream),
         )
+        // ⚠ **A host choosing the party's source stops here, before the debrid resolve below.**
+        // Streamlined's quality step and Instant's automatic pick both arrive as an armed
+        // candidate on this chain, exactly as an ordinary play would, and an ordinary play would
+        // now mint a link and open the player. The host is not playing anything yet - they are
+        // answering "what will we watch" - so the descriptor is staged and the lobby takes over.
+        // Classic never reaches this line for a party selection, because `streamManualSelection`
+        // keeps the legacy auto-play policy off the party's candidates and the host picks from
+        // the list.
+        if (partySourceSelection != null) {
+            autoPlayHandled = true
+            if (!stagePartyHostSource(partySourceSelection, safePartySource, selectedStream.streamLabel)) {
+                // The automatic pick describes nothing a guest could match. Hand the host the
+                // list rather than leaving the overlay up over a choice that cannot be made.
+                giveUpToSourceList(path = "party_source_not_describable")
+            }
+            return@LaunchedEffect
+        }
         val stream = if (DirectDebridPlaybackResolver.shouldResolveToPlayableStream(selectedStream)) {
             streamLog.i {
                 "debrid resolving: attempt=$autoPickAttempt candidate=${sourceFailureLabel(selectedStream)}"
@@ -1234,24 +1307,8 @@ internal fun StreamDestination(
         val streamFacts = playbackCandidates.firstOrNull { it.stream === stream }?.facts
             ?: SourceFactsExtractor.extract(stream)
         val retainedPartySource = safePartySource ?: stream.toPartySourceDescriptor(streamFacts)
-        val partySelection = launch.partyContext?.takeIf {
-            it.purpose == PartyStreamLaunchPurpose.SELECT_SOURCE
-        }
-        if (partySelection != null) {
-            val currentParty = WatchPartyRepository.uiState.value.party
-            val selectionIsCurrent = currentParty?.id == partySelection.partyId &&
-                currentParty.sourceGeneration == partySelection.sourceGeneration
-            if (retainedPartySource == null || !selectionIsCurrent) {
-                NuvioToastController.show(hostSourceUnavailableMessage)
-                return
-            }
-
-            // Source preparation is a credential-free choice, never a playback attempt. The
-            // original descriptor is staged before any debrid resolution or URL/header access,
-            // then this transient source route returns to the durable lobby.
-            WatchPartyRepository.stageHostSource(retainedPartySource, stream.streamLabel)
-            StreamsRepository.cancelLoading()
-            navController.popBackStack(route)
+        if (partySourceSelection != null) {
+            stagePartyHostSource(partySourceSelection, retainedPartySource, stream.streamLabel)
             return
         }
         if (willOpenInternally) {

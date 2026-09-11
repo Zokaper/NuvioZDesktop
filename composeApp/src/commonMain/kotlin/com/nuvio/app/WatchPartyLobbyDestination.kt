@@ -99,7 +99,15 @@ internal fun WatchPartyLobbyDestination(
                 episodeNumber = content.episode,
                 episodeTitle = content.episodeTitle,
                 resumePositionMs = WatchPartyRepository.authoritativePositionMs(party),
-                manualSelection = purpose == PartyStreamLaunchPurpose.SELECT_SOURCE,
+                // ⚠ **Not `purpose == SELECT_SOURCE`.** That read as "the host asked for the
+                // source list", and `manualSelection` is the first thing `PlaybackModeRouter`
+                // tests, so it overrode the host's playback mode outright: a Streamlined or
+                // Instant host pressed "Choose a source" and got Classic's release list. The
+                // host's mode is the product authority for *which question to ask*, and the
+                // router already answers that correctly once nothing short-circuits it.
+                // `StreamDestination` is what keeps the *answer* party-shaped, staging the
+                // descriptor instead of opening a player whichever way the source was chosen.
+                manualSelection = false,
                 partyContext = PartyStreamLaunchContext(
                     partyId = party.id,
                     isHost = party.hostProfileId == state.activeProfileId,
