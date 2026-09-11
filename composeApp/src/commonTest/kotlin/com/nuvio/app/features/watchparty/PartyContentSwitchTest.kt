@@ -148,6 +148,25 @@ class PartyContentSwitchTest {
         )
     }
 
+    @Test fun aGuestPromotedToHostCanStillAdvanceTheEpisodeItAdopted() {
+        // ⚠ Regression. The adopt path briefly latched `publishedContentGeneration` to the
+        // generation it was adopting - which looks careful (this client did not publish that
+        // content) and is wrong: the latch then equals `party.contentGeneration` for as long as the
+        // party stays on the episode, and this reads it as "already published". A guest promoted to
+        // host could never move the party again.
+        //
+        // Nothing needs to latch. Re-announcing the episode the party is already on is refused by
+        // the videoId test, which is the check that actually means it.
+        assertFalse(
+            shouldPublishPartyContentChange(party(), "host", "tt2:2:9", publishedContentGeneration = null),
+            "re-announcing the current episode is refused on its own merits",
+        )
+        assertTrue(
+            shouldPublishPartyContentChange(party(), "host", "tt2:2:10", publishedContentGeneration = null),
+            "and the newly promoted host can still advance",
+        )
+    }
+
     @Test fun nothingIsPublishedWithoutATargetOrAParty() {
         assertFalse(shouldPublishPartyContentChange(party(), "host", null, null))
         assertFalse(shouldPublishPartyContentChange(party(), "host", "", null))

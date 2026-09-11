@@ -806,11 +806,15 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
                 val winner = decision.candidates.firstOrNull() ?: return@LaunchedEffect
                 partyContentHandoffInFlight = false
                 partyHandledContentGeneration = adopt.contentGeneration
-                // The host published this content, so this client must not publish it back. The
-                // latch is set to the generation being adopted rather than left null, which is what
-                // stops a guest promoted to host mid-transition from re-announcing the episode it
-                // has only just finished adopting.
-                partyPublishedContentGeneration = adopt.contentGeneration
+                // ⚠ **The publish latch is deliberately *not* touched here.** Setting it to the
+                // generation being adopted looks like the careful thing to do - this client did not
+                // publish this content, so it should not publish it back - but it would then equal
+                // `party.contentGeneration` for as long as the party stayed on this episode, and
+                // `shouldPublishPartyContentChange` reads that as "already published". A guest
+                // promoted to host would be unable to advance the party at all.
+                //
+                // Nothing is needed: re-announcing the episode the party is already on is refused
+                // by the `content.videoId` test, which is the check that actually means it.
                 WatchPartySessionCoordinator.reportReadiness(
                     SourceResolutionState.resolving,
                     sourceGeneration = adopt.sourceGeneration,
