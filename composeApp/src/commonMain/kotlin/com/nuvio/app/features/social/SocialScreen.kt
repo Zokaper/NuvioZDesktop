@@ -84,8 +84,6 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.NuvioAsyncImage
 import com.nuvio.app.core.ui.NuvioTokens
-import com.nuvio.app.features.home.components.TitlePresentation
-import com.nuvio.app.features.home.components.TitlePresentationCard
 import com.nuvio.app.features.profiles.parseHexColor
 import com.nuvio.app.features.watchprogress.ContinueWatchingPreferencesRepository
 import kotlinx.coroutines.flow.Flow
@@ -226,6 +224,13 @@ fun SocialScreen(
             // layout, since this screen is shared with mobile.
             val wideDashboard = maxWidth >= 1040.dp
 
+            // Desktop width used as width, rather than as one very long column. The Social tab was
+            // a vertical poster wall: one card per row at any size, so a 2560px window showed the
+            // same single file a phone does. The cards are compact and fixed-width now, so the
+            // question is simply how many fit.
+            val feedWidth = if (wideDashboard) maxWidth - SocialFriendsRailWidth else maxWidth
+            val socialColumns = socialGridColumns(feedWidth)
+
             Column(Modifier.fillMaxSize().widthIn(max = 1440.dp)) {
                 SocialIdentityHeader(
                     me = state.me,
@@ -354,14 +359,13 @@ fun SocialScreen(
                                         }
                                     }
                                 } else {
-                                    items(
-                                        state.watchingNow,
+                                    socialGridItems(
+                                        items = state.watchingNow,
+                                        columns = socialColumns,
                                         key = { "watching:${it.profile.profileId}:${it.videoId}" },
-                                    ) { watching ->
-                                        SocialPresenceCard(
+                                    ) { watching, cardModifier ->
+                                        SocialWatchingNowCard(
                                             item = watching,
-                                            style = titlePreferences.style,
-                                            useEpisodeThumbnails = titlePreferences.useEpisodeThumbnails,
                                             watchPartyEnabled = state.capabilities.watchPartyEnabled,
                                             onOpen = {
                                                 onOpenContent(
@@ -371,6 +375,7 @@ fun SocialScreen(
                                                 )
                                             },
                                             onStartParty = { onStartParty(watching) },
+                                            modifier = cardModifier,
                                         )
                                     }
                                 }
@@ -388,12 +393,15 @@ fun SocialScreen(
                                         }
                                     }
                                 } else {
-                                    items(state.activity, key = { "activity:${it.runId}" }) { run ->
-                                        SocialRecentRow(
+                                    socialGridItems(
+                                        items = state.activity,
+                                        columns = socialColumns,
+                                        key = { "activity:${it.runId}" },
+                                    ) { run, cardModifier ->
+                                        SocialActivityCard(
                                             run = run,
-                                            style = titlePreferences.style,
-                                            useEpisodeThumbnails = titlePreferences.useEpisodeThumbnails,
                                             onOpen = { onOpenContent(run.contentType, run.contentId, run.title) },
+                                            modifier = cardModifier,
                                         )
                                     }
                                 }
@@ -724,101 +732,7 @@ private fun LazyListScope.socialInbox(
     }
 }
 
-/**
- * A friend, mid-episode.
- *
- * This is the tab's headline and it used to be the same 76x48 landscape chip as everything else -
- * which also cropped a 2:3 poster into a letterbox and mangled the art on every card.
- */
-@Composable
-private fun SocialPresenceCard(
-    item: WatchingNowItem,
-    style: com.nuvio.app.features.watchprogress.ContinueWatchingSectionStyle,
-    useEpisodeThumbnails: Boolean,
-    watchPartyEnabled: Boolean,
-    onOpen: () -> Unit,
-    onStartParty: () -> Unit,
-) {
-    val playing = item.state == SocialPlaybackState.playing
-    TitlePresentationCard(
-        item = TitlePresentation(
-            title = item.title,
-            poster = item.poster,
-            background = item.background,
-            episodeThumbnail = item.episodeThumbnail,
-            season = item.season,
-            episode = item.episode,
-            episodeTitle = item.episodeTitle,
-            progress = item.progressFraction,
-        ),
-        style = style,
-        useEpisodeThumbnails = useEpisodeThumbnails,
-        onClick = onOpen,
-        leading = {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SocialAvatar(item.profile.displayName, item.profile.avatarUrl, item.profile.avatarColorHex, 22.dp)
-                Text(item.profile.displayName, style = MaterialTheme.typography.labelLarge, maxLines = 1)
-            }
-        },
-        trailing = {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SocialLiveBadge(playing)
-                if (watchPartyEnabled) {
-                    TextButton(
-                        onClick = onStartParty,
-                        enabled = item.effectiveJoinPolicy != WatchJoinPolicy.disabled,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                    ) {
-                        Icon(Icons.Rounded.Groups, null, Modifier.size(16.dp))
-                        Spacer(Modifier.width(5.dp))
-                        Text(when (item.effectiveJoinPolicy) {
-                            WatchJoinPolicy.direct -> "Join"
-                            WatchJoinPolicy.approval -> "Ask to join"
-                            WatchJoinPolicy.disabled -> "Not joinable"
-                        })
-                    }
-                }
-            }
-        },
-    )
-}
 
-@Composable
-private fun SocialRecentRow(
-    run: RecentActivityRun,
-    style: com.nuvio.app.features.watchprogress.ContinueWatchingSectionStyle,
-    useEpisodeThumbnails: Boolean,
-    onOpen: () -> Unit,
-) {
-    TitlePresentationCard(
-        item = TitlePresentation(
-            title = run.title,
-            poster = run.poster,
-            background = run.background,
-            episodeThumbnail = run.episodeThumbnail,
-            season = run.season,
-            episode = run.episode,
-            episodeTitle = run.episodeTitle,
-        ),
-        style = style,
-        useEpisodeThumbnails = useEpisodeThumbnails,
-        onClick = onOpen,
-        leading = {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                SocialAvatar(run.profile.displayName, run.profile.avatarUrl, run.profile.avatarColorHex, 18.dp)
-                Text(
-                    buildString {
-                        append(run.profile.displayName)
-                        if (run.eventCount > 1) append(" · ${run.eventCount} episodes")
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-            }
-        },
-    )
-}
 
 /**
  * Search, roster and privacy in one place.
@@ -1005,7 +919,7 @@ private fun SocialFriendsPanel(
 }
 
 @Composable
-private fun SocialLiveBadge(playing: Boolean) {
+internal fun SocialLiveBadge(playing: Boolean) {
     val color = if (playing) SocialLiveColor else MaterialTheme.colorScheme.onSurfaceVariant
     Surface(shape = RoundedCornerShape(NuvioTokens.Radius.chip), color = color.copy(alpha = 0.16f)) {
         Row(
@@ -1213,16 +1127,26 @@ internal fun SocialAvatar(name: String, avatarUrl: String?, colorHex: String?, s
             .border(1.dp, MaterialTheme.colorScheme.onBackground.copy(alpha = 0.14f), CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        if (!avatarUrl.isNullOrBlank()) {
+        // ⚠ **A blank URL was the only case that fell back.** A non-blank one that failed to load -
+        // a deleted avatar, an expired signed URL, a friend's host being down, or simply being
+        // offline - drew nothing at all, leaving an empty coloured circle with no initial and no
+        // way to tell one friend from another. Keyed on the URL so a later, working avatar is
+        // attempted rather than being permanently written off by one earlier failure. This is the
+        // same `onError` latch the detail hero uses for a logo that will not load.
+        var avatarLoadError by remember(avatarUrl) { mutableStateOf(false) }
+        if (!avatarUrl.isNullOrBlank() && !avatarLoadError) {
             NuvioAsyncImage(
                 model = avatarUrl,
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
+                onError = { avatarLoadError = true },
             )
         } else {
             Text(
-                name.trim().take(1).uppercase(),
+                // A blank name would `take(1)` to nothing and leave the same empty circle this
+                // fallback exists to prevent.
+                name.trim().take(1).uppercase().ifBlank { "?" },
                 fontSize = (size.value * 0.42f).sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White,

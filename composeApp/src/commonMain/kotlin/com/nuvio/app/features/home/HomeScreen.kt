@@ -967,8 +967,7 @@ fun HomeScreen(
                         watchingNow = socialUiState.watchingNow,
                         activity = socialUiState.activity,
                         sectionPadding = homeSectionPadding,
-                        style = continueWatchingPreferences.style,
-                        useEpisodeThumbnails = continueWatchingPreferences.useEpisodeThumbnails,
+                        watchPartyEnabled = socialUiState.capabilities.watchPartyEnabled,
                     ) { type, id, title ->
                         onPosterClick?.invoke(MetaPreview(id = id, type = type, name = title, poster = null))
                     }
@@ -1103,8 +1102,7 @@ fun HomeScreen(
                         watchingNow = socialUiState.watchingNow,
                         activity = socialUiState.activity,
                         sectionPadding = homeSectionPadding,
-                        style = continueWatchingPreferences.style,
-                        useEpisodeThumbnails = continueWatchingPreferences.useEpisodeThumbnails,
+                        watchPartyEnabled = socialUiState.capabilities.watchPartyEnabled,
                     ) { type, id, title ->
                         onPosterClick?.invoke(MetaPreview(id = id, type = type, name = title, poster = null))
                     }
