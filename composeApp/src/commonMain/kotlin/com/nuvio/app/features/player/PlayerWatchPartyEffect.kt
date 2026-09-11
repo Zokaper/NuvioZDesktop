@@ -72,6 +72,12 @@ import nuvio.composeapp.generated.resources.watch_party_cannot_share_source
 import nuvio.composeapp.generated.resources.watch_party_promote_failed
 import nuvio.composeapp.generated.resources.watch_party_promote_presence_stale
 import org.jetbrains.compose.resources.getString
+import com.nuvio.app.features.watchparty.PartyContent
+import com.nuvio.app.features.watchparty.PartyContentHandoff
+import com.nuvio.app.features.watchparty.PartySourceDescriptorV2
+import com.nuvio.app.features.watchparty.decidePartyContentHandoff
+import com.nuvio.app.features.watchparty.shouldPublishPartyContentChange
+import com.nuvio.app.features.details.MetaVideo
 
 /**
  * The decision half of the Watch Together trace; `WatchParty` carries the transport half.
@@ -713,6 +719,103 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
                     partyHoldingForBarrier = false
                 }
                 controller.pause()
+            }
+        }
+    }
+
+    // The party moved to a different episode, and this player adopts it without going anywhere.
+    //
+    // ⚠ **Read from the whole party, not from `matchingParty`.** The moment the host advances,
+    // `matchesPlayback` is false for everyone still on the previous episode - that is what it is
+    // for - so the effects keyed on it correctly disengage and this one, keyed on the party's own
+    // content, is what brings them back. Everything else is the source handoff's shape exactly:
+    // the same catalogue, the same tiering, the same `decidePartyRealization`, the same readiness
+    // reports, the same barrier. The only differences are that the sources loaded are the *new*
+    // episode's and the swap carries the episode with it.
+    val contentHandoff = decidePartyContentHandoff(
+        party = partyUi.party,
+        localContentId = parentMetaId,
+        localVideoId = playbackSession.videoId,
+        handledContentGeneration = partyHandledContentGeneration,
+    )
+    val partyEpisodeCatalogue by PlayerStreamsRepository.sourceState.collectAsStateWithLifecycle()
+    LaunchedEffect(contentHandoff) {
+        val adopt = contentHandoff as? PartyContentHandoff.Adopt ?: return@LaunchedEffect
+        if (adopt.target == null) {
+            // The host has moved the party but not yet chosen a release for it. Nothing to realize;
+            // say so and wait to be told again on the next generation.
+            partyLog.i { "content handoff waiting for host source generation=${adopt.contentGeneration}" }
+            WatchPartySessionCoordinator.reportReadiness(
+                SourceResolutionState.waiting_for_host,
+                sourceGeneration = adopt.sourceGeneration,
+            )
+            return@LaunchedEffect
+        }
+        partyContentHandoffInFlight = true
+        partyLog.i {
+            "content handoff begin contentGeneration=${adopt.contentGeneration} " +
+                "sourceGeneration=${adopt.sourceGeneration} videoId=${adopt.content.videoId}"
+        }
+        WatchPartySessionCoordinator.reportReadiness(
+            SourceResolutionState.fetching,
+            sourceGeneration = adopt.sourceGeneration,
+        )
+        PlayerStreamsRepository.loadEpisodeStreams(
+            type = contentType ?: parentMetaType,
+            videoId = adopt.content.videoId,
+            season = adopt.content.season,
+            episode = adopt.content.episode,
+        )
+    }
+
+    LaunchedEffect(contentHandoff, partyEpisodeCatalogue) {
+        val adopt = contentHandoff as? PartyContentHandoff.Adopt ?: return@LaunchedEffect
+        val target = adopt.target ?: return@LaunchedEffect
+        if (!partyContentHandoffInFlight) return@LaunchedEffect
+        val candidates = partyEpisodeCatalogue.groups.flatMapIndexed { addonOrder, group ->
+            group.streams.map { stream -> PlaybackSourceCandidate(stream = stream, addonOrder = addonOrder) }
+        }
+        val decision = decidePartyRealization(
+            catalogueSettled = !partyEpisodeCatalogue.isAnyLoading &&
+                (candidates.isNotEmpty() || partyEpisodeCatalogue.emptyStateReason != null),
+            tiered = tierPartyPlaybackSources(
+                host = target,
+                candidates = candidates,
+                normalOrder = emptyList(),
+                selection = PlaybackSelectionContext(
+                    isEpisode = adopt.content.season != null && adopt.content.episode != null,
+                    allowTorrentSources = true,
+                ),
+            ),
+        )
+        when (decision) {
+            PartyRealizationDecision.Wait -> return@LaunchedEffect
+            PartyRealizationDecision.FallbackRequired -> {
+                // The previous episode keeps playing. A member who cannot realize the party's new
+                // episode is out of sync, not stranded, and the generation is never rolled back.
+                partyContentHandoffInFlight = false
+                partyHandledContentGeneration = adopt.contentGeneration
+                partyLog.w { "content handoff unavailable generation=${adopt.contentGeneration}" }
+                WatchPartySessionCoordinator.reportReadiness(
+                    SourceResolutionState.choosing_fallback,
+                    sourceGeneration = adopt.sourceGeneration,
+                )
+            }
+            is PartyRealizationDecision.Resolve -> {
+                val winner = decision.candidates.firstOrNull() ?: return@LaunchedEffect
+                partyContentHandoffInFlight = false
+                partyHandledContentGeneration = adopt.contentGeneration
+                // The host published this content, so this client must not publish it back. The
+                // latch is set to the generation being adopted rather than left null, which is what
+                // stops a guest promoted to host mid-transition from re-announcing the episode it
+                // has only just finished adopting.
+                partyPublishedContentGeneration = adopt.contentGeneration
+                WatchPartySessionCoordinator.reportReadiness(
+                    SourceResolutionState.resolving,
+                    sourceGeneration = adopt.sourceGeneration,
+                )
+                partyLog.i { "content handoff adopt generation=${adopt.contentGeneration}" }
+                switchToEpisodeStream(winner.stream, adopt.content.toPartyEpisodeVideo(playerMetaVideos))
             }
         }
     }
@@ -1442,3 +1545,90 @@ internal fun WatchPartyPlayerStatus.bannerText(): String? = when {
     syncDegraded -> "Live sync lost · following the party every few seconds"
     else -> null
 }
+
+/**
+ * The host moving the party to a different episode, published once per advance.
+ *
+ * ⚠ **This is the convergence point §11 asks for.** Next episode, autoplay-next and the episode
+ * picker all end at the same local apply, so hooking the publish there is what makes manual and
+ * automatic advances literally the same content-change path rather than two that agree by
+ * inspection. There is no second resolver, no second matcher and no second barrier.
+ *
+ * A no-op for everyone but the host, and for a host who is already on this content: the server
+ * refuses a non-host with `host_required`, and republishing the current content would burn a
+ * generation for a change nobody made and reset every member to `fetching` for it.
+ *
+ * [descriptor] is null when the host switched to something a guest cannot obtain - a local
+ * download. The party is still moved, because leaving it on the previous episode while the host
+ * watches the next one is a worse answer than the state the backend already models for this:
+ * `waiting_for_host_source`, with the members told `waiting_for_host` until the host picks a
+ * shareable release.
+ */
+internal fun PlayerScreenRuntime.publishPartyEpisodeChange(
+    episode: MetaVideo,
+    descriptor: PartySourceDescriptorV2?,
+) {
+    val party = WatchPartyRepository.uiState.value.party
+    val profileId = WatchPartyRepository.uiState.value.activeProfileId
+    if (
+        !shouldPublishPartyContentChange(
+            party = party,
+            profileId = profileId,
+            nextVideoId = episode.id,
+            publishedContentGeneration = partyPublishedContentGeneration,
+        )
+    ) {
+        return
+    }
+    val current = party ?: return
+    // Latched before the call, not after. The apply this runs from can be re-entered by a debrid
+    // re-resolution of the same pick, and two advances for one episode change would reset every
+    // member twice.
+    partyPublishedContentGeneration = current.contentGeneration
+    scope.launch {
+        WatchPartyRepository.changeContent(
+            content = PartyContent(
+                contentId = parentMetaId,
+                contentType = parentMetaType,
+                videoId = episode.id,
+                title = title,
+                poster = poster,
+                season = episode.season,
+                episode = episode.episode,
+                episodeTitle = episode.title,
+            ),
+            fingerprint = descriptor,
+        ).onFailure { error ->
+            // `stale_party_generation` (40001) is the optimistic-concurrency answer: somebody else
+            // advanced the party first and theirs is the accepted advance. Releasing the latch lets
+            // this client publish again if it is still the host of a party that has since moved on,
+            // without ever competing for the generation it just lost.
+            partyPublishedContentGeneration = null
+            partyLog.w(error) { "content change refused generation=${current.contentGeneration} videoId=${episode.id}" }
+        }
+    }
+}
+
+/**
+ * The party's current content as the episode object the in-route switch needs.
+ *
+ * Prefers this client's own metadata, matched by the video id the party agreed on and then by
+ * season and episode number - the same two-step `partyLaunchArtwork` uses, and for the same reason:
+ * two clients can carry differently-numbered ids for the same episode. That entry carries the
+ * overview and thumbnail this client's addons resolved, which is what keeps the transition looking
+ * like an ordinary next episode.
+ *
+ * Falls back to what the party carried. A member whose metadata has not loaded, or whose addons do
+ * not list this episode at all, still changes episode correctly - with a thinner card - rather than
+ * being left behind on the previous one, which is the only outcome that would actually break the
+ * party.
+ */
+private fun PartyContent.toPartyEpisodeVideo(known: List<MetaVideo>): MetaVideo =
+    known.firstOrNull { it.id == videoId }
+        ?: season?.let { s -> episode?.let { e -> known.firstOrNull { it.season == s && it.episode == e } } }
+        ?: MetaVideo(
+            id = videoId,
+            title = episodeTitle.orEmpty(),
+            season = season,
+            episode = episode,
+        )

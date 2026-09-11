@@ -372,6 +372,27 @@ internal class PlayerScreenRuntime(
      */
     var partyPublishedSourceGeneration by mutableStateOf<Int?>(null)
 
+    /**
+     * The party content generation this player has already acted on.
+     *
+     * The content sibling of [partyHandledSourceGeneration], and separate from it on purpose:
+     * `party_change_content_v2` advances *both* counters, so a client tracking one for both would
+     * either re-adopt a source it already has or miss an episode change that happened to reuse a
+     * descriptor. Not cleared by a failed adoption, for the same reason that one is not.
+     */
+    var partyHandledContentGeneration by mutableStateOf<Int?>(null)
+
+    /** True while this player is realizing the party's new episode with the old one still playing. */
+    var partyContentHandoffInFlight by mutableStateOf(false)
+
+    /**
+     * The party content generation this host has already published an episode change for.
+     *
+     * Every way of changing episode - Next episode, autoplay-next, the episode picker - converges
+     * on one apply, so this is what keeps one advance to one publish across all three.
+     */
+    var partyPublishedContentGeneration by mutableStateOf<Int?>(null)
+
     /** The party generation whose shared position has already replaced this profile's resume point. */
     var partyStartPositionAppliedKey by mutableStateOf<String?>(null)
 

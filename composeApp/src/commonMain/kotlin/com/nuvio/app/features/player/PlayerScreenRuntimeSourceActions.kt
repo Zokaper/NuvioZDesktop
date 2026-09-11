@@ -26,6 +26,7 @@ import nuvio.composeapp.generated.resources.playback_source_failed_advancing
 import nuvio.composeapp.generated.resources.playback_source_failed_advancing_unnamed
 import org.jetbrains.compose.resources.getString
 import kotlinx.coroutines.launch
+import com.nuvio.app.features.watchparty.ownsNextEpisodeChoice
 
 internal fun PlayerScreenRuntime.resolveDebridForPlayer(
     stream: StreamItem,
@@ -516,9 +517,37 @@ internal fun PlayerScreenRuntime.switchToDownloadedEpisode(downloadItem: Downloa
     activeInitialProgressFraction = epResumeFraction
     shouldPlay = true
     controlsVisible = true
+    // A downloaded episode has no descriptor a guest could match, so the party moves to the new
+    // episode with no source and waits for the host to pick a shareable one. Leaving it on the
+    // previous episode while the host watches this one would be the worse answer.
+    publishPartyEpisodeChange(episode, descriptor = null)
 }
 
+/**
+ * Whether this player decides its own next episode, or follows a party that decides for it.
+ *
+ * ⚠ **The countdown is host-only, and this is the whole of that rule.** A guest running its own
+ * autoplay-next would advance one client while the party stayed where it was, and two members
+ * choosing different episodes is precisely what one authoritative `content_generation` exists to
+ * prevent. A guest gets the party's own loading and barrier feedback instead of a countdown it
+ * cannot honour.
+ *
+ * Read against the party's *content*: a member watching something else with a party open in the
+ * background is having an ordinary evening and keeps their Next episode button.
+ */
+internal val PlayerScreenRuntime.ownsNextEpisode: Boolean
+    get() {
+        val partyUi = WatchPartyRepository.uiState.value
+        return ownsNextEpisodeChoice(
+            party = partyUi.party,
+            profileId = partyUi.activeProfileId,
+            localContentId = parentMetaId,
+            localVideoId = playbackSession.videoId,
+        )
+    }
+
 internal fun PlayerScreenRuntime.playNextEpisode() {
+    if (!ownsNextEpisode) return
     resolveNextEpisodeVideo()?.let { episode ->
         startNextEpisodeResolution(episode, PlayerNextEpisodeOrigin.AUTOMATIC)
     }
@@ -531,6 +560,7 @@ internal fun PlayerScreenRuntime.playNextEpisode() {
  * source rules made the button appear inert and could bypass the active playback mode.
  */
 internal fun PlayerScreenRuntime.playNextEpisodeFromControls() {
+    if (!ownsNextEpisode) return
     val nextVideo = resolveNextEpisodeVideo() ?: return
     val existing = nextEpisodeTransition
     if (existing.targetVideoId == nextVideo.id && existing.isActive) {
@@ -907,5 +937,8 @@ private fun PlayerScreenRuntime.applyEpisodeStreamMetadata(
     activeInitialProgressFraction = resume.fraction
     shouldPlay = true
     controlsVisible = true
+    // Every way of changing episode converges here, so this is where a host moves the party.
+    // A no-op for a guest and for a host already on this content.
+    publishPartyEpisodeChange(episode, activePartySourceDescriptor)
 }
 

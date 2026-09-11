@@ -989,6 +989,12 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
             if (!nextEpisodeTransition.isActive) showNextEpisodeCard = false
             return@LaunchedEffect
         }
+        // A guest does not choose the episode, so it must not be shown a countdown it cannot
+        // honour. The party's own loading and barrier feedback carries the transition instead.
+        if (!ownsNextEpisode) {
+            if (!nextEpisodeTransition.isActive) showNextEpisodeCard = false
+            return@LaunchedEffect
+        }
         if (PlayerNextEpisodeTransitionPolicy.isPromptSuppressed(nextEpisodeDismissedForVideoId, activeVideoId)) {
             if (!nextEpisodeTransition.isActive) showNextEpisodeCard = false
             return@LaunchedEffect
@@ -1015,6 +1021,8 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
         if (
             playbackSnapshot.isEnded &&
             nextEpisodeInfo != null &&
+            // Same rule at the end of the episode: the host advances the party, guests follow.
+            ownsNextEpisode &&
             !PlayerNextEpisodeTransitionPolicy.isPromptSuppressed(nextEpisodeDismissedForVideoId, activeVideoId) &&
             !showNextEpisodeCard &&
             !nextEpisodeTransition.isActive

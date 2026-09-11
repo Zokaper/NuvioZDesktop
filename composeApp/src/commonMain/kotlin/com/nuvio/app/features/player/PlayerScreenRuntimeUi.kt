@@ -539,7 +539,9 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             (activeParty != null || (args.onStartWatchTogether != null && activePartySourceDescriptor != null)),
         showSources = activeVideoId != null,
         showEpisodes = isSeries,
-        showNextEpisode = nextEpisodeInfo?.hasAired == true,
+        // Hidden for a guest: the host advances the party's episode, and a control that is
+        // refused when pressed is worse than one that is not offered.
+        showNextEpisode = nextEpisodeInfo?.hasAired == true && ownsNextEpisode,
         showExternalPlayer = args.onOpenInExternalPlayer != null,
         durationMs = playbackSnapshot.durationMs,
         positionMs = displayedPositionMs,
