@@ -544,6 +544,11 @@ button:disabled {
    part of the top chrome, and at 104px it sat high and left the bottom two thirds of the frame
    empty. The max-height keeps it clear of the header and the scrub bar at any window size; when it
    does hit that cap it stays centred and scrolls inside itself. */
+/* The panel is a column with a fixed head and foot and one scrolling middle.
+   It used to scroll as a whole with `max-height: calc(100% - 220px)`, which has two faults: the
+   header and the action row scrolled away from a list they belong to, and on a window shorter than
+   220px of chrome the height went *negative* and the panel collapsed to nothing. Bounded from
+   below as well as above now, so a short window gives a shorter panel rather than no panel. */
 .party-panel {
   position: absolute;
   right: var(--hp);
@@ -551,9 +556,10 @@ button:disabled {
   transform: translateY(-50%);
   z-index: 8;
   display: none;
+  flex-direction: column;
   width: min(340px, calc(100% - (var(--hp) * 2)));
-  max-height: calc(100% - 220px);
-  overflow-y: auto;
+  max-height: min(calc(100% - 96px), 640px);
+  min-height: 0;
   padding: 18px;
   border: 1px solid var(--theme-border-default);
   border-radius: 20px;
@@ -562,14 +568,66 @@ button:disabled {
   backdrop-filter: blur(18px);
 }
 
-.party-panel.visible { display: block; }
+.party-panel.visible { display: flex; }
 
-.party-panel-actions,
+/* `min-height: 0` is what actually lets this shrink inside the flex column - without it a long
+   member list pushes the action row out of the panel rather than scrolling. */
+.party-panel-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.party-panel-actions {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--theme-border-default);
+}
+
+.party-panel-actions-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* The two that end something, held apart from the two that configure something. */
+.party-panel-actions-session { justify-content: flex-end; }
+
 .social-notification-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 14px;
+}
+
+/* Narrow: a 340px panel floating over a 500px-wide video covers most of the picture, so below this
+   it becomes a bottom sheet spanning the width, which is also where a hand reaches on a small
+   window. Short: the panel stops being centred and simply uses what vertical room exists. */
+@media (max-width: 680px) {
+  .party-panel {
+    right: var(--hp);
+    left: var(--hp);
+    top: auto;
+    bottom: calc(var(--hp) + 64px);
+    transform: none;
+    width: auto;
+    max-height: min(calc(100% - 140px), 460px);
+    border-radius: 18px;
+  }
+}
+
+@media (max-height: 560px) {
+  .party-panel {
+    top: var(--hp);
+    bottom: var(--hp);
+    transform: none;
+    max-height: none;
+  }
 }
 
 .party-panel-actions button,
@@ -585,7 +643,11 @@ button:disabled {
 
 .party-panel-actions button:hover,
 .social-notification-actions button:hover { background: var(--theme-selected-surface); }
-.party-panel-actions button.danger { color: #ef7a90; }
+.party-panel-actions button.danger {
+  color: #ef7a90;
+  border-color: rgba(239, 122, 144, .35);
+}
+.party-panel-actions button.danger:hover { background: rgba(239, 122, 144, .14); }
 
 .social-notification,
 .party-ended-choice {
@@ -658,6 +720,9 @@ button:disabled {
 .party-room-content strong { font-size: 15px; }
 .party-room-error { color: #ef7a90 !important; }
 .party-room-invites { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--theme-border-default); }
+/* Was flush against the health line above it, so the list of people read as a continuation of the
+   sync status rather than as the panel's actual subject. */
+.party-member-list { padding-top: 4px; border-top: 1px solid var(--theme-border-default); }
 .party-room-section-title { margin-bottom: 7px; color: var(--theme-text-primary); font-weight: 700; }
 #partyInviteTargets { display: flex; flex-wrap: wrap; gap: 7px; }
 #partyInviteTargets button { padding: 5px 9px; border: 1px solid var(--theme-border-default); border-radius: 9px; background: var(--theme-surface-card); color: var(--theme-text-primary); cursor: pointer; }
