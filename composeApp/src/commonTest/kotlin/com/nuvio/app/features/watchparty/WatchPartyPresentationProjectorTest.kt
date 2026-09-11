@@ -100,4 +100,93 @@ class WatchPartyPresentationProjectorTest {
         )
         assertEquals("Paused", projected.members.getValue("guest").label)
     }
+
+    // A member's readiness row is durable and generation-stamped; their telemetry is not. These
+    // four say which one wins, and the generation is the only thing that decides it - the same
+    // `fetching` means "behind" in one and "genuinely resolving right now" in the other.
+
+    private fun resolvingGuest(sourceGeneration: Int, location: WatchPartyClientLocation) =
+        member("guest").copy(
+            readyState = SourceResolutionState.fetching,
+            sourceGeneration = sourceGeneration,
+            clientLocation = location,
+        )
+
+    private fun projectGuest(
+        guest: WatchPartyParticipant,
+        telemetry: WatchPartyStatus? = null,
+    ) = PartyPresentationProjector.project(
+        party = party().copy(members = listOf(member("host"), guest)),
+        selfProfileId = "observer",
+        health = PartyHealthState(),
+        realtime = WatchPartySyncState(
+            peerTelemetry = telemetry?.let { mapOf("guest" to PartyPeerTelemetry(it, 10_000)) }.orEmpty(),
+        ),
+        partyNowMs = 10_000,
+    ).members.getValue("guest").label
+
+    @Test fun staleReadinessLosesToFreshPlaybackTelemetry() {
+        // The physical complaint: a participant watching uninterrupted, read as "Resolving source"
+        // because the party moved generation and nothing rewrote their row.
+        assertEquals(
+            "Playing",
+            projectGuest(
+                resolvingGuest(sourceGeneration = 1, location = WatchPartyClientLocation.player),
+                telemetry = WatchPartyStatus.playing,
+            ),
+        )
+        assertEquals(
+            "Paused",
+            projectGuest(
+                resolvingGuest(sourceGeneration = 1, location = WatchPartyClientLocation.player),
+                telemetry = WatchPartyStatus.paused,
+            ),
+        )
+    }
+
+    @Test fun currentGenerationResolutionStillShowsEvenOverTelemetry() {
+        // `party_change_content_v2` resets every member to `fetching` on the *new* generation. That
+        // member really is resolving, and a tick still arriving from the episode they are leaving
+        // must not hide it.
+        assertEquals(
+            "Resolving source",
+            projectGuest(
+                resolvingGuest(sourceGeneration = 2, location = WatchPartyClientLocation.player),
+                telemetry = WatchPartyStatus.playing,
+            ),
+        )
+    }
+
+    @Test fun staleReadinessIsKeptWhenNothingBetterIsKnown() {
+        // Staleness alone never drops the label. Without live evidence the readiness row is the
+        // only thing anyone knows about this member, so it is what the list says.
+        assertEquals(
+            "Resolving source",
+            projectGuest(resolvingGuest(sourceGeneration = 1, location = WatchPartyClientLocation.player)),
+        )
+        assertEquals(
+            "Resolving source",
+            projectGuest(
+                resolvingGuest(sourceGeneration = 1, location = WatchPartyClientLocation.lobby),
+                telemetry = WatchPartyStatus.playing,
+            ),
+        )
+    }
+
+    @Test fun departureAndFailureOutrankTelemetryAtAnyGeneration() {
+        val failed = member("guest").copy(
+            readyState = SourceResolutionState.failed,
+            sourceGeneration = 1,
+            clientLocation = WatchPartyClientLocation.player,
+        )
+        assertEquals("Failed", projectGuest(failed, telemetry = WatchPartyStatus.playing))
+
+        val gone = member("guest").copy(
+            readyState = SourceResolutionState.fetching,
+            sourceGeneration = 1,
+            clientLocation = WatchPartyClientLocation.player,
+            connected = false,
+        )
+        assertEquals("Offline", projectGuest(gone, telemetry = WatchPartyStatus.playing))
+    }
 }

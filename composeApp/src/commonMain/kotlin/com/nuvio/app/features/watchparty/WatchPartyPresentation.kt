@@ -42,7 +42,21 @@ data class DerivedMemberStatus(
 fun WatchPartyParticipant.derivedStatus(
     livePlaybackStatus: WatchPartyStatus? = null,
     isSelfResyncing: Boolean = false,
+    partySourceGeneration: Int = sourceGeneration,
 ): DerivedMemberStatus {
+    // ⚠ Readiness is durable and generation-stamped; live telemetry is not. A member carrying
+    // `fetching` from a generation the party has already moved past is not fetching anything - the
+    // row simply has not been written since - and painting them "Resolving source" while they watch
+    // uninterrupted was the complaint. But `party_change_content_v2` *legitimately* resets every
+    // member to `fetching` on the new current generation, so the same word is correct there and
+    // must still show. The generation is what separates the two, and nothing else can.
+    //
+    // Staleness alone is never enough to drop the label: it only yields to positive live evidence -
+    // the member is in the player and fresh telemetry says what they are doing. A stale member with
+    // nothing better to report keeps the readiness label, because then it is the only thing known.
+    val readinessIsCurrent = sourceGeneration >= partySourceGeneration
+    val hasLivePlayerEvidence =
+        clientLocation == WatchPartyClientLocation.player && livePlaybackStatus != null
     if (!connected || readyState == SourceResolutionState.disconnected) {
         return if (readyState == SourceResolutionState.left) {
             DerivedMemberStatus("Left", PartyReadyTone.Offline)
@@ -65,10 +79,10 @@ fun WatchPartyParticipant.derivedStatus(
     if (clientLocation == WatchPartyClientLocation.matching) {
         return DerivedMemberStatus("Matching source", PartyReadyTone.Working)
     }
-    if (readyState == SourceResolutionState.fetching ||
+    val isResolvingReadiness = readyState == SourceResolutionState.fetching ||
         readyState == SourceResolutionState.resolving ||
         readyState == SourceResolutionState.choosing_fallback
-    ) {
+    if (isResolvingReadiness && (readinessIsCurrent || !hasLivePlayerEvidence)) {
         return DerivedMemberStatus("Resolving source", PartyReadyTone.Working)
     }
     if (clientLocation == WatchPartyClientLocation.loading) {
@@ -242,6 +256,9 @@ object PartyPresentationProjector {
             val derived = member.derivedStatus(
                 livePlaybackStatus = liveStatus,
                 isSelfResyncing = member.profileId == selfProfileId && selfResyncing,
+                // The party's own generation is the only thing that can tell a member still
+                // resolving the *current* content from one whose readiness row is simply behind.
+                partySourceGeneration = party?.sourceGeneration ?: member.sourceGeneration,
             )
             member.profileId to PartyMemberPresentation(
                 profileId = member.profileId,
