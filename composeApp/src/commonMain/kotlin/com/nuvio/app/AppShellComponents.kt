@@ -70,6 +70,7 @@ import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import com.nuvio.app.core.ui.NuvioNavBarScrollState
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.nuvio
+import com.nuvio.app.core.ui.nuvioBlockPointerEvents
 import com.nuvio.app.features.cloud.CloudLibraryContentType
 import com.nuvio.app.features.cloud.CloudLibraryFile
 import com.nuvio.app.features.cloud.CloudLibraryItem
@@ -269,7 +270,19 @@ internal fun AppTabHost(
                     modifier = Modifier
                         .fillMaxSize()
                         .zIndex(if (isHomeSelected) 1f else 0f)
-                        .alpha(if (isHomeSelected) 1f else 0f),
+                        .alpha(if (isHomeSelected) 1f else 0f)
+                        // ⚠ `alpha` is a *draw* modifier. Home stays composed, stays laid out at
+                        // full size, and stays in the pointer hit path while another tab is up -
+                        // Compose never consults alpha when hit-testing. The overlay above only
+                        // wins where one of *its* nodes takes the pointer, so any region the
+                        // active tab does not cover falls through to a Home poster nobody can
+                        // see. Social is where this showed: it centres its content under
+                        // `widthIn(max = 1440.dp)`, so on a wide desktop window the side gutters
+                        // belong to a plain Box with no pointer handler, and clicking one opened
+                        // a title from Home. The fix belongs here rather than on Social, because
+                        // "the tab you are not looking at is inert" is this host's rule to keep
+                        // and every tab under it inherits it.
+                        .then(if (isHomeSelected) Modifier else Modifier.nuvioBlockPointerEvents()),
                     topChromePadding = state.topChromePadding,
                     animateCollectionGifs = state.tabsRouteActiveState.value && isHomeSelected,
                     scrollToTopRequests = requests.homeScrollToTopRequests,

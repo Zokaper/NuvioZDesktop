@@ -41,6 +41,7 @@ import com.nuvio.app.core.ui.LocalNuvioNavBarScrollState
 import com.nuvio.app.core.ui.NuvioClassicNavigationBar
 import com.nuvio.app.core.ui.NuvioNavigationBar
 import com.nuvio.app.core.ui.PlatformBackHandler
+import com.nuvio.app.core.ui.nuvioBlockPointerEvents
 import com.nuvio.app.core.ui.rememberNuvioNavBarScrollState
 import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.features.social.rememberSocialEnabled
@@ -138,7 +139,12 @@ internal fun MainTabsDestination(
         Scaffold(
             modifier = Modifier
                 .fillMaxSize()
-                .alpha(if (initialHomeReady) 1f else 0f),
+                .alpha(if (initialHomeReady) 1f else 0f)
+                // The same rule as the one `AppTabHost` keeps for a deselected Home, one level up:
+                // `alpha` hides this shell until the first catalog renders, but it never stopped it
+                // being clickable, so a click landing during startup could open a title nobody had
+                // been shown yet.
+                .then(if (initialHomeReady) Modifier else Modifier.nuvioBlockPointerEvents()),
             containerColor = Color.Transparent,
             contentWindowInsets = WindowInsets(0),
             bottomBar = {
