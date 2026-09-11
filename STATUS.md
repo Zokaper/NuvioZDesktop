@@ -40,10 +40,24 @@ Branch `claude/phase-5-onboarding`, commits `c1c104fd` → `3a923a06`. Backend:
   on a *blank* URL; the player panel scrolled as a whole and went to a negative height on a short
   window.
 
-**Verified:** `:composeApp:compileKotlinDesktop`; `scripts/run-pure-suites.sh` all eight groups
-green; backend `scripts/test-db.sh` 11 files / 253 tests green; targeted suites green with new pure
-coverage in `WatchPartyPresentationProjectorTest` (4→8), `PlaybackModeRouterTest` (+2),
-`PartyLaunchArtworkTest` (6), `PartyContentSwitchTest` (12) and the backend's 18 sanitizer cases.
+**Verified at `5cfe33d6`:** `:composeApp:desktopTest` — **BUILD SUCCESSFUL in 17m 30s, 229 classes,
+1,813 tests, 0 failures** (baseline on `1c5ee9ea` was 1,783), all three known flakies passing;
+`scripts/run-pure-suites.sh` all eight groups green; backend `scripts/test-db.sh` 11 files / 253
+tests green. New pure coverage: `WatchPartyPresentationProjectorTest` (4→8),
+`PlaybackModeRouterTest` (+2), `PartyLaunchArtworkTest` (6), `PartyContentSwitchTest` (13),
+`SocialRenderHarness` (1) and the backend's 18 sanitizer cases.
+
+⚠⚠ **A collided Gradle run nearly produced a false green, and it is worth knowing how.**
+`composeApp/build/test-results/` is **not cleared** when a run fails to compile, so a run that died
+on `Daemon compilation failed` — two concurrent invocations, the `AGENTS.md` rule 3 trap — left the
+*previous* run's XML in place, and tallying it reported a complete green suite for code that had
+never been built. **Confirm the run's own `BUILD SUCCESSFUL` line before trusting a test count**, and
+when recovering delete `composeApp/build/test-results/desktopTest/` as well as the classpath
+snapshot.
+
+**Packaged build for the physical matrix**, local only, nothing published or tagged:
+`Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi`, 258,971,424 bytes, SHA-256
+`D8D88B369954A1FA45B5F081C3CE972196231DFA4E04881A36762F8EE5F953C7`.
 
 **Owed, and it is the whole remaining risk:** the physical matrix in the ledger. Nothing in stages
 2 and 4-11 has been looked at by a human.
