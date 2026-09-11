@@ -20,6 +20,7 @@ import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.social_recently_watched
 import nuvio.composeapp.generated.resources.social_watching_now
 import org.jetbrains.compose.resources.stringResource
+import androidx.compose.foundation.layout.height
 
 /**
  * What friends are up to, on Home, **underneath** the user's own Continue Watching.
@@ -56,7 +57,7 @@ fun LazyListScope.homeSocialSections(
                     watchPartyEnabled = watchPartyEnabled,
                     onOpen = { onOpenContent(item.contentType, item.contentId, item.title) },
                     onStartParty = { onStartParty(item) },
-                    modifier = Modifier.width(SocialWatchingNowCardWidth),
+                    modifier = Modifier.width(SocialWatchingNowCardWidth).height(SocialWatchingNowCardHeight),
                 )
             }
         }
@@ -72,7 +73,7 @@ fun LazyListScope.homeSocialSections(
                 SocialActivityCard(
                     run = run,
                     onOpen = { onOpenContent(run.contentType, run.contentId, run.title) },
-                    modifier = Modifier.width(SocialActivityCardWidth),
+                    modifier = Modifier.width(SocialActivityCardWidth).height(SocialActivityCardHeight),
                 )
             }
         }

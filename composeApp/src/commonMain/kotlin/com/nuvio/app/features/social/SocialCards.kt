@@ -39,6 +39,10 @@ import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.NuvioAsyncImage
 import com.nuvio.app.core.ui.NuvioTokens
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.IntrinsicSize
 
 /**
  * Social's own presentation, deliberately **not** Continue Watching's.
@@ -63,6 +67,21 @@ import androidx.compose.foundation.lazy.LazyListScope
 /** Compact by construction: a card this tall cannot compete with a Continue Watching poster. */
 internal val SocialActivityCardWidth = 260.dp
 internal val SocialWatchingNowCardWidth = 300.dp
+
+/**
+ * Minimum heights, so a row of cards is a row rather than a ragged edge.
+ *
+ * Cards used to size to their own content, and the content genuinely differs - a Watching Now card
+ * with a join action is taller than one whose friend is not accepting company, and an activity card
+ * for a movie has no episode line. Three of those side by side landed the artwork at three different
+ * heights. A minimum rather than a fixed height: it evens the common case out and still grows rather
+ * than clipping if a translation runs long.
+ *
+ * These are also the numbers that make "substantially lower than Continue Watching" a fact rather
+ * than an intention.
+ */
+internal val SocialActivityCardHeight = 76.dp
+internal val SocialWatchingNowCardHeight = 124.dp
 
 /** The friends roster beside the feed on a wide window, so the feed's own width excludes it. */
 internal val SocialFriendsRailWidth = 360.dp
@@ -129,6 +148,11 @@ internal fun SocialIdentityLine(
         modifier = Modifier.fillMaxWidth(),
     ) {
         SocialAvatar(profile.displayName, profile.avatarUrl, profile.avatarColorHex, avatarSize)
+        // ⚠ **One weight, not two.** This asked for `weight(1f, fill = false)` and then put a
+        // `Spacer(Modifier.weight(1f))` in front of the trailing badge - so the two split the slack
+        // and the name was left with almost none, ellipsizing to "Se…" and "Bi…" on Home's cards
+        // where every friend looked the same. The name takes the remaining width and the badge sits
+        // after it; the render harness is what caught this.
         Text(
             profile.displayName,
             style = MaterialTheme.typography.labelMedium,
@@ -136,12 +160,9 @@ internal fun SocialIdentityLine(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false),
+            modifier = Modifier.weight(1f),
         )
-        if (trailing != null) {
-            Spacer(Modifier.weight(1f))
-            trailing()
-        }
+        trailing?.invoke()
     }
 }
 
@@ -176,10 +197,15 @@ internal fun SocialActivityCard(
     onOpen: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    SocialCardSurface(onClick = onOpen, modifier = modifier) {
+    SocialCardSurface(
+        onClick = onOpen,
+        modifier = modifier.heightIn(min = SocialActivityCardHeight),
+    ) {
         Row(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            // Top, not centre: with cards evened out to a common height, centring floats the
+            // artwork to a different place on every card in the row.
+            verticalAlignment = Alignment.Top,
         ) {
             SocialCardArtwork(
                 poster = run.poster,
@@ -230,10 +256,14 @@ internal fun SocialWatchingNowCard(
     modifier: Modifier = Modifier,
 ) {
     val playing = item.state == SocialPlaybackState.playing
-    SocialCardSurface(onClick = onOpen, modifier = modifier, accent = true) {
+    SocialCardSurface(
+        onClick = onOpen,
+        modifier = modifier.heightIn(min = SocialWatchingNowCardHeight),
+        accent = true,
+    ) {
         Row(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment = Alignment.Top,
         ) {
             SocialCardArtwork(
                 poster = item.poster,
@@ -315,7 +345,7 @@ private fun SocialCardSurface(
             null
         },
     ) {
-        Box(Modifier.padding(8.dp)) { content() }
+        Box(Modifier.fillMaxHeight().padding(8.dp)) { content() }
     }
 }
 
@@ -339,12 +369,14 @@ internal fun <T> LazyListScope.socialGridItems(
     val rows = items.chunked(columns.coerceAtLeast(1))
     rows.forEach { row ->
         item(key = key(row.first())) {
+            // `IntrinsicSize.Min` measures the row to its tallest card and `fillMaxHeight` brings
+            // the rest up to it, so a card with a join action and one without still make a row.
             Row(
-                Modifier.fillMaxWidth(),
+                Modifier.fillMaxWidth().height(IntrinsicSize.Min),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 row.forEach { entry ->
-                    card(entry, Modifier.weight(1f))
+                    card(entry, Modifier.weight(1f).fillMaxHeight())
                 }
                 repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
             }
