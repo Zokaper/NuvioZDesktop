@@ -95,6 +95,10 @@ import com.nuvio.app.features.social.SocialRepository
 import com.nuvio.app.features.social.SocialPresenceSession
 import com.nuvio.app.features.watchparty.WatchPartySessionCoordinator
 import com.nuvio.app.features.social.rememberSocialEnabled
+import com.nuvio.app.core.ui.NuvioToastController
+import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.watch_party_cannot_share_source
+import org.jetbrains.compose.resources.getString
 
 private val playerControlsLog = Logger.withTag("PlayerControls")
 
@@ -525,7 +529,14 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         // by it. With the layer off there is no party - `shutdownSocialLayer` departs it before
         // the preference flips - so this reads false either way; keeping the original condition
         // means the control never vanishes from *underneath* a party that somehow still exists.
-        showWatchTogether = socialEnabled && (activeParty != null || args.onStartWatchTogether != null),
+        // ⚠ **A party needs a source a guest could also open.** Offering the control over a local
+        // download, a cloud file or anything else with no shareable descriptor gave the user a
+        // button that silently did nothing - `startWatchTogetherFromCurrentPlayback` returned at
+        // its descriptor guard and said so to no one. Those sources are not a bug to fix; a guest
+        // genuinely cannot obtain the host's local file. So the affordance is not offered, and if
+        // the action arrives anyway it now explains itself rather than dropping.
+        showWatchTogether = socialEnabled &&
+            (activeParty != null || (args.onStartWatchTogether != null && activePartySourceDescriptor != null)),
         showSources = activeVideoId != null,
         showEpisodes = isSeries,
         showNextEpisode = nextEpisodeInfo?.hasAired == true,
@@ -1174,8 +1185,23 @@ private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControl
 }
 
 private fun PlayerScreenRuntime.startWatchTogetherFromCurrentPlayback() {
-    val callback = args.onStartWatchTogether ?: return
-    val descriptor = activePartySourceDescriptor ?: return
+    // ⚠ **Both of these used to be bare `?: return`.** The control was offered over sources that
+    // can never host a party, and pressing it did nothing at all - no toast, no log, nothing to
+    // tell the user or anyone reading a log which of the two guards had fired. The affordance is
+    // now gated on the descriptor as well (see `showWatchTogether`), so reaching here without one
+    // means something upstream changed; say so both ways rather than dropping it.
+    val callback = args.onStartWatchTogether
+    val descriptor = activePartySourceDescriptor
+    if (callback == null || descriptor == null) {
+        playerControlsLog.w {
+            "start watch together refused - hasCallback=${callback != null} " +
+                "hasDescriptor=${descriptor != null} videoId=${playbackSession.videoId}"
+        }
+        scope.launch {
+            NuvioToastController.show(getString(Res.string.watch_party_cannot_share_source))
+        }
+        return
+    }
     callback(
         PartyContent(
             contentId = parentMetaId,

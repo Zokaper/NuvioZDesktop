@@ -26,6 +26,7 @@ import com.nuvio.app.features.watchparty.PartyHoldReason
 import com.nuvio.app.features.watchparty.PartyPlaybackGate
 import com.nuvio.app.features.watchparty.PartyPlaybackTelemetry
 import com.nuvio.app.features.watchparty.PartyPresentationProjector
+import com.nuvio.app.features.watchparty.PartyPromotionFailure
 import com.nuvio.app.features.watchparty.PartyTick
 import com.nuvio.app.features.watchparty.SourceResolutionState
 import com.nuvio.app.features.watchparty.PartySourceMatch
@@ -65,6 +66,12 @@ import com.nuvio.app.features.watchparty.shortId
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import com.nuvio.app.core.ui.NuvioToastController
+import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.watch_party_cannot_share_source
+import nuvio.composeapp.generated.resources.watch_party_promote_failed
+import nuvio.composeapp.generated.resources.watch_party_promote_presence_stale
+import org.jetbrains.compose.resources.getString
 
 /**
  * The decision half of the Watch Together trace; `WatchParty` carries the transport half.
@@ -285,6 +292,28 @@ internal fun WatchPartyState.hostDurationMismatch(localDurationMs: Long): Boolea
 
 @Composable
 internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
+    // ⚠ **Promotion runs on the coordinator's own scope, so its refusals have no caller to return
+    // to.** Every one of them used to be a bare `return` or a discarded `Result`, which is how
+    // "Start Watch Together" became a control that sometimes did nothing at all. This is the one
+    // place a player is guaranteed to be composed while a promotion is in flight.
+    LaunchedEffect(Unit) {
+        WatchPartySessionCoordinator.promotionFailures.collect { failure ->
+            NuvioToastController.show(
+                when (failure) {
+                    PartyPromotionFailure.NoPresenceSession ->
+                        getString(Res.string.watch_party_cannot_share_source)
+                    // The only one the user can act on: their presence has not reached the server
+                    // yet. Before `c1c104fd` this was *every* attempt, because the sanitizer was
+                    // rejecting presence publication outside a party and no row was ever written.
+                    PartyPromotionFailure.PresenceStale ->
+                        getString(Res.string.watch_party_promote_presence_stale)
+                    PartyPromotionFailure.Refused ->
+                        getString(Res.string.watch_party_promote_failed)
+                },
+            )
+        }
+    }
+
     val partyUi by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
     val matchingParty = partyUi.party?.takeIf { it.matchesPlayback(parentMetaId, playbackSession.videoId) }
     val generationKey = matchingParty?.generationKey()

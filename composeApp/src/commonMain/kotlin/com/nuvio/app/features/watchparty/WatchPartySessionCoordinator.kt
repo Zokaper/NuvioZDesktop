@@ -10,7 +10,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
+import co.touchlab.kermit.Logger
+
+private val promotionLog = Logger.withTag("WatchPartyPromotion")
 
 private object RepositoryDurablePartyGateway : DurablePartyGateway {
     override val snapshots = WatchPartyRepository.uiState.map { it.party }.distinctUntilChanged()
@@ -51,6 +57,24 @@ private sealed interface PartySessionIntent {
 }
 
 /**
+ * Why promoting the running playback into a party did not happen.
+ *
+ * Exists so the refusal reaches a person. Every one of these was previously a `return` or a
+ * discarded `Result`, which is how "Start Watch Together" came to be a control that sometimes did
+ * nothing and told nobody why.
+ */
+enum class PartyPromotionFailure {
+    /** No presence session for this playback - the source has no descriptor a guest could match. */
+    NoPresenceSession,
+
+    /** The server has no live presence row for this session yet. Waiting a moment fixes it. */
+    PresenceStale,
+
+    /** Anything else the server refused. */
+    Refused,
+}
+
+/**
  * Serialized process owner for party session semantics.
  *
  * It carried a shadow comparison against the legacy repository snapshot while Stage 1 was switching
@@ -65,6 +89,10 @@ object WatchPartySessionCoordinator {
     val state: StateFlow<PartySessionState> = _state.asStateFlow()
     private var presenceSessionId: String? = null
     private var presenceDeviceId: String? = null
+    private val _promotionFailures = MutableSharedFlow<PartyPromotionFailure>(extraBufferCapacity = 4)
+
+    /** Refusals from [promoteCurrentPlayback], so a surface can say what happened. */
+    val promotionFailures: SharedFlow<PartyPromotionFailure> = _promotionFailures.asSharedFlow()
 
     init {
         scope.launch { for (intent in intents) reduce(intent) }
@@ -148,13 +176,42 @@ object WatchPartySessionCoordinator {
                 intent.sourceMatch,
             )
             PartySessionIntent.Promote -> {
-                val session = presenceSessionId ?: return
-                gateway.promotePlaybackPresence(session).onSuccess {
-                    val party = gateway.currentParty() ?: return@onSuccess
-                    val playback = _state.value.playback ?: return@onSuccess
-                    _state.value = reducePartySession(_state.value, PartySessionEvent.PlayerAttached(playback, party.partyGenerationKey()))
-                    gateway.publishLocation(WatchPartyClientLocation.player)
+                // ⚠ **Promotion is built from the presence row, not from the player.** The backend
+                // reads `watch_presence` for this session - within 90 seconds of a heartbeat - and
+                // raises `presence_stale` (P0002) when there is none. So this path could not have
+                // worked at all before `c1c104fd`: presence publication outside a party was being
+                // rejected by the sanitizer on every call, no row was ever written, and every
+                // "Start Watch Together" failed on the server for a reason nothing here reported.
+                //
+                // That silence was the second half of it. `presenceSessionId` is only set by
+                // `registerPlayback`, which needs a shareable descriptor, and a bare `?: return`
+                // here made "no session registered" and "the server refused" indistinguishable
+                // from a promotion that worked.
+                val session = presenceSessionId
+                if (session == null) {
+                    promotionLog.w { "promote refused - no presence session registered for this playback" }
+                    _promotionFailures.tryEmit(PartyPromotionFailure.NoPresenceSession)
+                    return
                 }
+                gateway.promotePlaybackPresence(session)
+                    .onSuccess {
+                        val party = gateway.currentParty() ?: return@onSuccess
+                        val playback = _state.value.playback ?: return@onSuccess
+                        _state.value = reducePartySession(_state.value, PartySessionEvent.PlayerAttached(playback, party.partyGenerationKey()))
+                        gateway.publishLocation(WatchPartyClientLocation.player)
+                    }
+                    .onFailure { error ->
+                        promotionLog.w(error) { "promote failed session=${session.take(8)}" }
+                        _promotionFailures.tryEmit(
+                            // The one failure a user can actually act on: their presence has not
+                            // reached the server yet, and waiting a moment fixes it.
+                            if (error.message?.contains("presence_stale") == true) {
+                                PartyPromotionFailure.PresenceStale
+                            } else {
+                                PartyPromotionFailure.Refused
+                            },
+                        )
+                    }
             }
             PartySessionIntent.Restore -> {
                 _state.value = reducePartySession(_state.value, PartySessionEvent.RestoreStarted)
