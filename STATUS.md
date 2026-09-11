@@ -2,7 +2,53 @@
 
 Last updated: 2026-09-11
 
-## Desktop Social + Watch Together stabilization pass — Stage 0/2, Watching Now root-caused (2026-09-11)
+## Desktop Social + Watch Together stabilization pass — Stages 0-11 code complete (2026-09-11)
+
+⚠ **Code complete, automated green, nothing run on hardware.** Stages 0-11 of the pass are
+implemented; Stage 12 (visual verification) and Stage 14 (the packaged two-client matrix) are
+**NOT STARTED**, and the pass is not closed. Persistent ledger, which now exists:
+workspace-root `PLAN-social-watch-together-stabilization.md`.
+
+Branch `claude/phase-5-onboarding`, commits `c1c104fd` → `3a923a06`. Backend:
+`claude/party-preflight-and-lifecycle`, commit `7d15dde`, **deployed**.
+
+**What was actually wrong, in one line each.**
+
+- **Stage 1, backend.** Both presence sanitizers treated jsonb `'null'` as a value rather than as
+  absent. Hardened and deployed; looking for the second one found a **third**,
+  `sanitize_party_content`, which had never been diagnosed because it raises no chosen label at all.
+- **Stage 2, click-through.** **Social was not the bug.** `AppTabHost` hides Home with `.alpha(0f)`,
+  which is a *draw* modifier - Home stayed full-size and in the pointer hit path. Social is merely
+  the tab that leaves an uncovered region: it centres content under `widthIn(max = 1440.dp)`, so a
+  window wider than that has live Home gutters. Fixed at the tab-ownership layer.
+  ⚠ **Not an onboarding bug**; the wizard was not touched.
+- **Stage 3, status.** Durable readiness outranked live telemetry unconditionally. Only the
+  *generation* separates a stale `fetching` from the one `party_change_content_v2` legitimately sets.
+- **Stage 4, source routing.** The lobby hardcoded `manualSelection`, which is the first thing
+  `PlaybackModeRouter` tests, so every host got Classic's list. No new router input was needed.
+- **Stage 5, artwork.** The party wire carries identity, not presentation. Hydrated locally rather
+  than widened.
+- **Stage 6, promotion.** ⚠ **Could not have worked before `c1c104fd`**: the backend builds the party
+  from `watch_presence`, and no row was ever being written. Four silent failures now report.
+- **Stage 7, next episode.** `changeContent` existed with **zero callers**. Host publish converges on
+  the one local apply; the guest reuses the source handoff's catalogue, matcher, readiness and
+  barrier. Countdown is host-only.
+- **Stage 8, attribution.** ⚠ **The actor data was never wrong** - `1ec3ae6f` fixed it at 13:30 and
+  the note reporting it was written at 15:49. The notice went to a Compose overlay, which desktop
+  cannot draw over the native video surface, so nobody read it.
+- **Stages 9-11, UI.** Social had Continue Watching's literal card metrics; the avatar fell back only
+  on a *blank* URL; the player panel scrolled as a whole and went to a negative height on a short
+  window.
+
+**Verified:** `:composeApp:compileKotlinDesktop`; `scripts/run-pure-suites.sh` all eight groups
+green; backend `scripts/test-db.sh` 11 files / 253 tests green; targeted suites green with new pure
+coverage in `WatchPartyPresentationProjectorTest` (4→8), `PlaybackModeRouterTest` (+2),
+`PartyLaunchArtworkTest` (6), `PartyContentSwitchTest` (12) and the backend's 18 sanitizer cases.
+
+**Owed, and it is the whole remaining risk:** the physical matrix in the ledger. Nothing in stages
+2 and 4-11 has been looked at by a human.
+
+## Stabilization pass — the Stage 0 record (2026-09-11)
 
 Named pre-Phase-6 release gate, **not** a numbered phase; Phases 6–9 are not renumbered. Persistent
 ledger: workspace-root `PLAN-social-watch-together-stabilization.md`. Opened from a two-user friend
@@ -59,11 +105,12 @@ warning is pre-existing and unrelated.
 **Owed on this finding:** one physical run to confirm a row now appears — this needs **one** client
 playing anything for ~30 s, not a two-client party. Then re-check `watch_presence`.
 
-**Recommended, not done, needs authorization:** harden both sanitizers to treat jsonb `'null'` as
-absent (`if p_value is null or jsonb_typeof(p_value) = 'null'`). The client fix closes desktop, but
-**mobile will meet the identical trap in Phase 6** the moment it is repointed at this backend, and
-any future caller that emits explicit nulls hits it again. That is a function change plus a deploy,
-so it is the maintainer's call — the client is already correct without it.
+**Done, authorized and deployed (2026-09-11):** both sanitizers now treat jsonb `'null'` as absent,
+and so does `sanitize_party_content`, which turned out to have the same fault and had never been
+found because it raises no chosen label - it dies on a raw `cannot call jsonb_each on a non-object`.
+Migration `202609110002_json_null_is_an_absent_payload.sql`, function bodies only, deployed to
+`pzbpghmmordvzcfbayoh` and verified against the live database afterwards. The client remains correct
+without it; this is what stops **mobile meeting the identical trap in Phase 6**.
 
 ## Phase 5 Setup / onboarding redesign — code complete, unverified on hardware (2026-09-10)
 
