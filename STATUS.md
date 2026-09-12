@@ -50,6 +50,18 @@ Gate at `190a0c6d`, each invocation alone, `test-results/desktopTest/` deleted f
 `compileKotlinDesktop` clean; `desktopTest` **BUILD SUCCESSFUL, 231 classes, 1,827 tests, 0
 failures**; all eight pure groups green. 1,813 → 1,827 is exactly the 14 cases added.
 
+**Replacement build for physical QA**, from `240f08f7`, tree clean, local only — nothing published,
+tagged or released:
+
+```
+composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi
+258,983,712 bytes
+SHA-256  D1450FBF1AF28CA7D2A66423FBC3882280E50C9ECCA44027AB4C4928CF9F268E
+```
+
+⚠ **Same filename as the superseded build** (`D8D88B36…`, 258,971,424 bytes) because the version did
+not change. Check the hash before testing; the old file would reproduce both fixed defects.
+
 **Next:** the physical matrix continues — presence teardown first, then click-through, promotion,
 source routing, next-episode handoff, artwork, status, attribution, the in-player panel and the
 Phase 4 regressions. None of those are passed; green code is not a physical result.
