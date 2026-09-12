@@ -14,7 +14,6 @@ import com.nuvio.app.features.social.SocialRepository
 import com.nuvio.app.features.watchparty.ActivePlaybackContext
 import com.nuvio.app.features.watchparty.WatchPartySessionCoordinator
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
@@ -110,8 +109,11 @@ internal fun PlayerScreenRuntime.BindSocialPresenceEffect() {
     DisposableEffect(deviceId) {
         onDispose {
             WatchPartySessionCoordinator.unregisterPlayback(attachmentId)
-            SocialPresenceSession.detach(deviceId, sessionId)
-            scope.launch { SocialRepository.clearPresence(deviceId) }
+            // ⚠ **Not `scope.launch` here.** `runtime.scope` is a `rememberCoroutineScope()`, so
+            // the departure that runs this dispose is the same departure that cancels it - the
+            // clear never reached the backend and a friend kept seeing this player's last Paused
+            // publish until the row aged out. `detachAndClear` owns the process-scoped clear.
+            SocialPresenceSession.detachAndClear(deviceId, sessionId)
         }
     }
 }
