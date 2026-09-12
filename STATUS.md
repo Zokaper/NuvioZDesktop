@@ -1,6 +1,60 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-11
+Last updated: 2026-09-12
+
+## Stabilization pass — first hardware run: Watching Now works, two defects found and fixed (2026-09-12)
+
+⚠ **The pass is still open.** One physical run happened; it passed the thing that mattered most and
+failed two others, both now fixed. The rest of the two-client matrix is untouched. Ledger:
+workspace-root `PLAN-social-watch-together-stabilization.md`, Stage 14.
+
+**PASSED, do not reopen.** Watching Now publishes end to end on hardware — A played, B saw the right
+title and episode, Ask First produced **Ask to join**. Presence encoder, backend write, friend
+refresh/realtime and the Social UI are all confirmed. The old "presence never publishes" bug is
+closed.
+
+**Failure A — presence never cleared on leaving playback.** A left the player; B kept seeing A at
+**PAUSED** until the row aged out. `BindSocialPresenceEffect`'s `onDispose` launched the clear on
+`runtime.scope`, which is a `rememberCoroutineScope()` — the departure that runs the dispose is the
+same departure that cancels it, so the RPC was cancelled before it landed and the last state the
+backend held was the Paused publish from before the exit.
+⚠ **This is not a TTL bug even though it presents as one.** Shortening `SocialPresenceStaleMs` would
+have hidden a clear that never ran and started evicting genuinely paused friends. Fixed in
+`3413fb2c`: `SocialPresenceSession.detachAndClear` owns a process-scoped clear that outlives the
+composition, and declines if another session attached meanwhile, because presence is keyed by
+*device* and a late clear would delete a relaunched player's row. Pause, episode handoff and party
+promotion all still keep presence; only leaving detaches.
+
+**Failure B — the Social redesign broke in a real window**, in three ways, all fixed in `190a0c6d`.
+- **Width collapse.** The column count came from `maxWidth - rail` (three columns) and was spent
+  inside a `LazyColumn` capped at `widthIn(max = 600.dp)` — 177dp a card, a ~60dp text column, and
+  `PAUSED` / `Ask to join` set one character per line. Same mistake one layer up:
+  `fillMaxSize().widthIn(max = 1440.dp)` capped nothing, because filling sets the minimum width to
+  the parent's. `SocialFeedMetrics.kt` now derives width, columns, card widths and artwork widths in
+  one place, read by both the screen and the harness.
+- **Recently Watched demoted past legibility.** 260x76 with 92dp of artwork left ~140dp for a title
+  (`The D…`). Now 300x88, Watching Now 344x132 — still well under Continue Watching, because the
+  hierarchy is the height and the small 16:9 still, not a starved title.
+- **Home titles black on a dark card.** `Surface` defaults content colour to `contentColorFor(color)`
+  and `surface.copy(alpha = …)` matches no role, so it fell through to `LocalContentColor.current` —
+  which Social provides and Home does not. The card names its own content colour now.
+
+⚠ **The render harness passed the build hardware failed.** It drew the feed with no rail and no width
+cap — constraints production never applies. **A harness that composes its subject differently from
+production is worse than no harness**, which is the same lesson this repo already learned one layer
+down. It now composes the real constraint stack, derives metrics from its own `BoxWithConstraints`
+(the window size is *not* the width the feed divides — `NuvioTheme` scales density), and carries
+`homeCardsDoNotInheritTheHostContentColour`, which was verified to fail when the fix is removed.
+
+Gate at `190a0c6d`, each invocation alone, `test-results/desktopTest/` deleted first:
+`compileKotlinDesktop` clean; `desktopTest` **BUILD SUCCESSFUL, 231 classes, 1,827 tests, 0
+failures**; all eight pure groups green. 1,813 → 1,827 is exactly the 14 cases added.
+
+**Next:** the physical matrix continues — presence teardown first, then click-through, promotion,
+source routing, next-episode handoff, artwork, status, attribution, the in-player panel and the
+Phase 4 regressions. None of those are passed; green code is not a physical result.
+
+---
 
 ## Desktop Social + Watch Together stabilization pass — Stages 0-11 code complete (2026-09-11)
 
