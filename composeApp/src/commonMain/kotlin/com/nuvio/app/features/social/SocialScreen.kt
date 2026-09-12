@@ -226,12 +226,20 @@ fun SocialScreen(
 
             // Desktop width used as width, rather than as one very long column. The Social tab was
             // a vertical poster wall: one card per row at any size, so a 2560px window showed the
-            // same single file a phone does. The cards are compact and fixed-width now, so the
-            // question is simply how many fit.
-            val feedWidth = if (wideDashboard) maxWidth - SocialFriendsRailWidth else maxWidth
-            val socialColumns = socialGridColumns(feedWidth)
+            // same single file a phone does. The cards are compact and weighted now, so the
+            // question is how many fit and how wide each one then is.
+            // ⚠ One source of truth for the feed's width **and** its column count. These were two
+            // separate numbers and they disagreed: the columns were chosen from the full window
+            // minus the rail, and then spent inside a list capped at 600dp. See [socialFeedMetrics].
+            val railVisible = wideDashboard && state.capabilities.socialEnabled && !state.needsHandleSetup
+            val feed = socialFeedMetrics(maxWidth, railVisible)
 
-            Column(Modifier.fillMaxSize().widthIn(max = 1440.dp)) {
+            // ⚠ `fillMaxSize()` here, and the cap below it never applied: filling sets the minimum
+            // width to the parent's, which `widthIn(max = …)` cannot then go under. So the dashboard
+            // ran edge to edge on a wide monitor while [socialFeedMetrics] divided a capped width,
+            // and the difference came out as dead space between the feed and the rail. Height fills;
+            // width is capped and the parent centres what is left.
+            Column(Modifier.fillMaxHeight().widthIn(max = SocialDashboardMaxWidth)) {
                 SocialIdentityHeader(
                     me = state.me,
                     friendCount = state.friends.size,
@@ -254,8 +262,13 @@ fun SocialScreen(
                     Box(Modifier.weight(1f).fillMaxHeight()) {
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.fillMaxHeight().widthIn(max = 600.dp),
-                        contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 110.dp),
+                        modifier = Modifier.widthIn(max = feed.feedWidth).fillMaxWidth().fillMaxHeight(),
+                        contentPadding = PaddingValues(
+                            start = SocialFeedHorizontalPadding,
+                            end = SocialFeedHorizontalPadding,
+                            top = 16.dp,
+                            bottom = 110.dp,
+                        ),
                         verticalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
                         when {
@@ -361,7 +374,7 @@ fun SocialScreen(
                                 } else {
                                     socialGridItems(
                                         items = state.watchingNow,
-                                        columns = socialColumns,
+                                        columns = feed.watchingNowColumns,
                                         key = { "watching:${it.profile.profileId}:${it.videoId}" },
                                     ) { watching, cardModifier ->
                                         SocialWatchingNowCard(
@@ -376,6 +389,7 @@ fun SocialScreen(
                                             },
                                             onStartParty = { onStartParty(watching) },
                                             modifier = cardModifier,
+                                            artworkWidth = feed.watchingNowArtworkWidth,
                                         )
                                     }
                                 }
@@ -395,13 +409,14 @@ fun SocialScreen(
                                 } else {
                                     socialGridItems(
                                         items = state.activity,
-                                        columns = socialColumns,
+                                        columns = feed.activityColumns,
                                         key = { "activity:${it.runId}" },
                                     ) { run, cardModifier ->
                                         SocialActivityCard(
                                             run = run,
                                             onOpen = { onOpenContent(run.contentType, run.contentId, run.title) },
                                             modifier = cardModifier,
+                                            artworkWidth = feed.activityArtworkWidth,
                                         )
                                     }
                                 }
@@ -459,12 +474,12 @@ fun SocialScreen(
                     }
                     }
 
-                    if (wideDashboard && state.capabilities.socialEnabled && !state.needsHandleSetup) {
+                    if (railVisible) {
                         // Its own scroll, so the feed stays lazy: folding the roster into the feed's
                         // LazyColumn would have meant rendering every paged activity row eagerly to
                         // get two columns.
                         Column(
-                            Modifier.width(360.dp)
+                            Modifier.width(SocialFriendsRailWidth)
                                 .fillMaxSize()
                                 .verticalScroll(rememberScrollState())
                                 .padding(start = 4.dp, end = 24.dp, top = 4.dp, bottom = 110.dp),
@@ -934,6 +949,10 @@ internal fun SocialLiveBadge(playing: Boolean) {
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 0.6.sp,
                 color = color,
+                // A one-word label has no business wrapping; when the card collapsed this one
+                // still did, letter by letter. It clips now, which is visible and survivable.
+                maxLines = 1,
+                softWrap = false,
             )
         }
     }

@@ -64,9 +64,18 @@ import androidx.compose.foundation.layout.IntrinsicSize
  * different jobs and are allowed to look like it.
  */
 
-/** Compact by construction: a card this tall cannot compete with a Continue Watching poster. */
-internal val SocialActivityCardWidth = 260.dp
-internal val SocialWatchingNowCardWidth = 300.dp
+/**
+ * Home's shelf metrics. Compact by construction: a card this tall cannot compete with a Continue
+ * Watching poster.
+ *
+ * ⚠ These went the other way once. Recently Watched at 260x76 with 92dp of artwork left about
+ * 140dp for the title, which is where `The D…` came from - the redesign was right to demote the
+ * shelf and wrong about how far. The hierarchy is held by the *height* and by the artwork being a
+ * small 16:9 still rather than a poster; a card can be legible without being a Continue Watching
+ * card. The Social feed's own cards are wider again - see [SocialFeedMetrics].
+ */
+internal val SocialActivityCardWidth = 300.dp
+internal val SocialWatchingNowCardWidth = 344.dp
 
 /**
  * Minimum heights, so a row of cards is a row rather than a ragged edge.
@@ -80,21 +89,17 @@ internal val SocialWatchingNowCardWidth = 300.dp
  * These are also the numbers that make "substantially lower than Continue Watching" a fact rather
  * than an intention.
  */
-internal val SocialActivityCardHeight = 76.dp
-internal val SocialWatchingNowCardHeight = 124.dp
+internal val SocialActivityCardHeight = 88.dp
+internal val SocialWatchingNowCardHeight = 132.dp
+
+/** Artwork widths. Home's shelf is compact; the Social feed passes its own, larger, values. */
+internal val SocialActivityArtworkWidth = 104.dp
+internal val SocialWatchingNowArtworkWidth = 116.dp
+internal val SocialActivityArtworkWidthWide = 124.dp
+internal val SocialWatchingNowArtworkWidthWide = 160.dp
 
 /** The friends roster beside the feed on a wide window, so the feed's own width excludes it. */
 internal val SocialFriendsRailWidth = 360.dp
-
-/**
- * How many activity cards fit across, at this width.
- *
- * Capped at three: past that the cards start reading as a catalogue grid again, which is the thing
- * this redesign exists to undo. Never below one, so a narrow window collapses to a single column
- * rather than to none.
- */
-internal fun socialGridColumns(available: Dp): Int =
-    ((available - 24.dp) / (SocialActivityCardWidth + 12.dp)).toInt().coerceIn(1, 3)
 
 /** Small 16:9 still. Episode thumbnail, then background, then poster - never a cropped 2:3. */
 @Composable
@@ -196,6 +201,7 @@ internal fun SocialActivityCard(
     run: RecentActivityRun,
     onOpen: () -> Unit,
     modifier: Modifier = Modifier,
+    artworkWidth: Dp = SocialActivityArtworkWidth,
 ) {
     SocialCardSurface(
         onClick = onOpen,
@@ -211,7 +217,7 @@ internal fun SocialActivityCard(
                 poster = run.poster,
                 background = run.background,
                 episodeThumbnail = run.episodeThumbnail,
-                width = 92.dp,
+                width = artworkWidth,
             )
             Column(
                 Modifier.weight(1f),
@@ -254,6 +260,7 @@ internal fun SocialWatchingNowCard(
     onOpen: () -> Unit,
     onStartParty: () -> Unit,
     modifier: Modifier = Modifier,
+    artworkWidth: Dp = SocialWatchingNowArtworkWidth,
 ) {
     val playing = item.state == SocialPlaybackState.playing
     SocialCardSurface(
@@ -269,7 +276,7 @@ internal fun SocialWatchingNowCard(
                 poster = item.poster,
                 background = item.background,
                 episodeThumbnail = item.episodeThumbnail,
-                width = 104.dp,
+                width = artworkWidth,
             )
             Column(
                 Modifier.weight(1f),
@@ -318,6 +325,14 @@ internal fun SocialWatchingNowCard(
                                 WatchJoinPolicy.disabled -> ""
                             },
                             style = MaterialTheme.typography.labelMedium,
+                            // ⚠ A guard, not a layout. When the card was measured at 180dp this
+                            // label came out one character per line - a vertical `A s k t o j o i n`
+                            // beside a card taller than the window. The width bug is fixed in
+                            // [socialFeedMetrics]; this makes the *next* constraint mistake
+                            // ellipsize where it can be seen, rather than shred the card.
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
@@ -339,6 +354,15 @@ private fun SocialCardSurface(
         modifier = modifier,
         shape = RoundedCornerShape(NuvioTokens.Radius.compactCard),
         color = MaterialTheme.colorScheme.surface.copy(alpha = if (accent) 0.85f else 0.55f),
+        // ⚠ **Name it.** Material's `Surface` defaults its content colour to
+        // `contentColorFor(color)`, and `surface.copy(alpha = …)` matches no colour-scheme role, so
+        // that lookup returns unspecified and falls through to `LocalContentColor.current`. The
+        // Social screen happens to provide `onBackground` at its root, so these cards read white
+        // there; Home provides nothing, `LocalContentColor` is its black default, and every card
+        // title on Home rendered black on a dark card - invisible, while the identity and metadata
+        // lines beside it were fine because they name their own colour. The card owns its content
+        // colour rather than inheriting whichever screen hosts it.
+        contentColor = MaterialTheme.colorScheme.onSurface,
         border = if (accent) {
             BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f))
         } else {
@@ -373,7 +397,8 @@ internal fun <T> LazyListScope.socialGridItems(
             // the rest up to it, so a card with a join action and one without still make a row.
             Row(
                 Modifier.fillMaxWidth().height(IntrinsicSize.Min),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                // The same gap [socialFeedMetrics] divides the width by; they have to agree.
+                horizontalArrangement = Arrangement.spacedBy(SocialGridGap),
             ) {
                 row.forEach { entry ->
                     card(entry, Modifier.weight(1f).fillMaxHeight())
