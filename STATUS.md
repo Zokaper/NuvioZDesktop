@@ -2,6 +2,47 @@
 
 Last updated: 2026-09-15
 
+## Social + Watch Together UX pass — Stage 2 deployed, Stage 3: Recently Watched + Watching Now UI (2026-09-15)
+
+⚠ **Rendered, not hardware-verified.** Branch `claude/social-wt-ux-pass`; plan and ledger in workspace-root
+`PLAN-social-watch-together-ux-pass.md`.
+
+**Stage 2 (backend `5eab132`, deployed with approval to `pzbpghmmordvzcfbayoh`):**
+`social_join_request_status`, `social_cancel_join_request`, a `cancelled` request status, invalidation
+triggers on `watch_join_requests` for both sides, and `expires_at` on `approval_required`. pgTAP 12 files /
+286 green locally; objects, grants and triggers checked on production afterwards. Nothing on desktop
+calls the new RPCs yet (Stage 4); the only live effect is that a host hears about a new request at
+once instead of on its ~20s heartbeat.
+
+**Stage 3:**
+
+| surface | change |
+| --- | --- |
+| Friends' activity (Home) | `FriendActivityRow`: no surface at rest, 44x66 mini-poster (poster → background → monogram), avatar stack, names · relative time, title, `S2 E4–E9 · 6 episodes`. Grouped by title via `groupFriendActivity`, keyed by `contentId`, ≤12, **See all** opens the Social tab. Row 260/280/300dp by window; two lines under 720dp. Heading `titleSmall` |
+| Recently Watched (Social) | Today / Yesterday / This week / Earlier overlines (local days via new `socialUtcOffsetMs` expect/actual), 1-3 columns, **automatic paging** near the end with an inline spinner |
+| Watching Now | identity first (28dp avatar + play-state dot, `Playing`/`Paused`), progress bar on the artwork, tonal button from `watchingNowJoinAffordance` (Requested ring → Cancel on hover), stacked artwork under a 340dp card. Same-title cards adjacent (`orderWatchingNowForDisplay`), never merged; keyed per session. Empty state is one muted line with the corrected copy |
+
+Two §11 items diagnosed in `SocialRenderHarness` before touching them:
+
+- **§11.13 Home shelf's first card cut off - root cause found and fixed.** `LazyRow` anchors to the first
+  visible key, so an item arriving in front of an unscrolled shelf landed scrolled 216px off the left edge
+  (`aShelfAtTheStartStaysAtTheStartWhenSomethingNewArrivesInFront` failed with exactly that, then passed).
+  `SocialHomeShelf` now keeps an unscrolled shelf at its start; a scrolled one is left alone.
+- **§11.11 friends rail clipping at 2000px - not reproduced.** The harness now renders the real
+  `SocialFriendsPanel` in the real rail modifiers (it was an empty box); at 1920 and 2560 nothing clips.
+  No fix made. If it recurs, capture the window's exact size and UI scale.
+
+Harness fixtures per the plan: one friend + movie, a binge split across runs, three friends on one title,
+two friends on one episode, broken avatar/artwork URLs, long names and titles; rendered at 420x900,
+1280x820, 1920x1080, 2560x1440 and 3840x2160. The harness also provides the screen's `LocalContentColor`
+now (friend names rendered black without it - a harness defect, not an app one). ⚠ Broken-URL fallbacks
+cannot show in a frame-0 render (Coil has not errored yet); judge them in the app.
+
+⚠ The iOS `actual` for `socialUtcOffsetMs` is written but not compiled here.
+
+Gate: social + home `desktopTest` packages BUILD SUCCESSFUL (152 tests); pure suites all eight groups green
+(217 / 107 / 61 / 17 / 29 / 115 / **56** / 3).
+
 ## Social + Watch Together UX pass — Stage 1: pure models (2026-09-15)
 
 Branch `claude/social-wt-ux-pass` (off `claude/phase-5-onboarding`). Plan and ledger: workspace-root

@@ -197,6 +197,7 @@ internal data class AppTabActions(
     val onJoinParty: ((String) -> Unit)? = null,
     val onJoinInvitedParty: ((String) -> Unit)? = null,
     val onStartPartyOnContent: ((WatchingNowItem) -> Unit)? = null,
+    val onOpenSocialTab: (() -> Unit)? = null,
     val onSocialNotificationAction: ((SocialNotification, SocialNotificationAction) -> Unit)? = null,
     val onSwitchProfile: (() -> Unit)? = null,
     val onSettingsPageClick: ((pageName: String, title: String) -> Unit)? = null,
@@ -296,6 +297,7 @@ internal fun AppTabHost(
                     onFolderClick = actions.onFolderClick,
                     onFirstCatalogRendered = actions.onInitialHomeContentRendered,
                     onJoinWatchingNow = actions.onStartPartyOnContent,
+                    onSeeAllFriendsActivity = actions.onOpenSocialTab,
                 )
             }
         }

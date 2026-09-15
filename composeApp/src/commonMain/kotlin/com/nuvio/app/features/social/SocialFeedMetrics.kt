@@ -32,8 +32,8 @@ internal val SocialGridGap = 10.dp
 /**
  * The width below which a card's own labels start to break, measured from the two that broke.
  *
- * Watching Now carries an identity line with a live badge, a title, an episode line, a progress bar
- * and a join action, so it needs materially more room than an activity entry - and it is the live,
+ * Watching Now carries an identity block, a title, an episode line and a join action, so it needs
+ * materially more room than a Friends' activity row - and it is the live,
  * actionable surface, which is the other reason it gets the bigger share.
  */
 internal val SocialWatchingNowMinCardWidth = 340.dp
@@ -62,8 +62,10 @@ internal data class SocialFeedMetrics(
      * hierarchy. Wide art belongs to the multi-column case.
      */
     val watchingNowArtworkWidth: Dp,
-    val activityArtworkWidth: Dp,
-)
+) {
+    /** Below [SocialWatchingNowStackedBelow] the card puts its artwork above the text. */
+    val watchingNowStacked: Boolean get() = watchingNowCardWidth < SocialWatchingNowStackedBelow
+}
 
 internal fun socialColumnsFor(contentWidth: Dp, minCardWidth: Dp, maxColumns: Int): Int =
     ((contentWidth + SocialGridGap) / (minCardWidth + SocialGridGap)).toInt().coerceIn(1, maxColumns)
@@ -90,11 +92,6 @@ internal fun socialFeedMetrics(windowWidth: Dp, railVisible: Boolean): SocialFee
             SocialWatchingNowArtworkWidthWide
         } else {
             SocialWatchingNowArtworkWidth
-        },
-        activityArtworkWidth = if (activityColumns > 1) {
-            SocialActivityArtworkWidthWide
-        } else {
-            SocialActivityArtworkWidth
         },
     )
 }

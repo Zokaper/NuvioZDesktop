@@ -1601,6 +1601,11 @@ internal fun MainAppContent(
                                     }
                                 },
                                 onSocialNotificationAction = ::handleSocialNotificationAction,
+                                onOpenSocialTab = if (socialEnabled) {
+                                    { activateTab(AppScreenTab.Social) }
+                                } else {
+                                    null
+                                },
                                 onSwitchProfile = onSwitchProfile,
                                 onSettingsPageClick = if (useNativeNavigation && !isTabletLayout) {
                                     { pageName, title ->

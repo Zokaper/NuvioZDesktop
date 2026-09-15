@@ -339,6 +339,15 @@ class WatchingNowJoinAffordanceTest {
         assertEquals(WatchingNowJoinAffordance.AskToJoin, watchingNowJoinAffordance(item(WatchJoinPolicy.approval), declined, null))
     }
 
+    @Test fun sameTitleCardsSitTogetherButAreNeverMerged() {
+        val a1 = item(WatchJoinPolicy.direct, session = "a", who = "ahmed")
+        val b = item(WatchJoinPolicy.direct, session = "b", who = "seraph").copy(contentId = "tt9", videoId = "tt9")
+        val a2 = item(WatchJoinPolicy.direct, session = "c", who = "debug")
+        val ordered = orderWatchingNowForDisplay(listOf(a1, b, a2))
+        assertEquals(listOf("a", "c", "b"), ordered.map { it.sessionId })
+        assertEquals(3, ordered.size)
+    }
+
     @Test fun aFriendAlreadyInYourPartyIsNotAJoinTarget() {
         assertEquals(
             WatchingNowJoinAffordance.InYourParty,

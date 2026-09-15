@@ -70,10 +70,8 @@ class SocialFeedMetricsTest {
         // One column is the phone path, where a card is the whole screen and the desktop still
         // would take a third of it back for the artwork.
         val phone = socialFeedMetrics(420.dp, railVisible = false)
-        assertEquals(SocialActivityArtworkWidth, phone.activityArtworkWidth)
         assertEquals(SocialWatchingNowArtworkWidth, phone.watchingNowArtworkWidth)
         val desktop = socialFeedMetrics(1440.dp, railVisible = true)
-        assertEquals(SocialActivityArtworkWidthWide, desktop.activityArtworkWidth)
         assertEquals(SocialWatchingNowArtworkWidthWide, desktop.watchingNowArtworkWidth)
     }
 
@@ -87,14 +85,20 @@ class SocialFeedMetricsTest {
     }
 
     @Test
-    fun homeShelfCardsStayReadableAndStaySubordinate() {
-        // Recently Watched was demoted too far: 260dp with 92dp of artwork left "The D…". The guard
-        // is the width left over for the title, and the height, which is what holds the hierarchy.
-        val cardPaddingAndGap = 26.dp
-        val activityText = SocialActivityCardWidth - SocialActivityArtworkWidth - cardPaddingAndGap
+    fun homeShelfRowsStayReadableAndStaySubordinate() {
+        // Recently Watched was once demoted too far: 260dp with 92dp of artwork left "The D…". The
+        // guard is the width left for the title at the narrowest row, and the height, which is what
+        // holds the hierarchy under Continue Watching.
+        val posterGapAndEnd = FriendActivityPosterWidth + 10.dp + 8.dp
+        listOf(400.dp, 1280.dp, 2560.dp).forEach { window ->
+            val text = friendActivityRowWidth(window) - posterGapAndEnd
+            assertTrue(text >= 190.dp, "activity text column at $window is $text")
+        }
+        val cardPaddingAndGap = 32.dp
         val watchingText = SocialWatchingNowCardWidth - SocialWatchingNowArtworkWidth - cardPaddingAndGap
-        assertTrue(activityText >= 160.dp, "activity title column is $activityText")
         assertTrue(watchingText >= 190.dp, "watching now text column is $watchingText")
-        assertTrue(SocialActivityCardHeight < SocialWatchingNowCardHeight)
+        assertTrue(FriendActivityRowHeight < SocialWatchingNowCardHeight)
+        assertTrue(!socialFeedMetrics(1440.dp, railVisible = true).watchingNowStacked)
+        assertTrue(socialFeedMetrics(360.dp, railVisible = false).watchingNowStacked)
     }
 }

@@ -1,5 +1,9 @@
 package com.nuvio.app.features.social
 
+import com.nuvio.app.features.watchparty.currentEpochMs
+import com.nuvio.app.features.watchparty.WatchPartyStatus
+import com.nuvio.app.features.watchparty.WatchPartyRepository
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -53,7 +57,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -111,12 +114,12 @@ import nuvio.composeapp.generated.resources.social_watching_now
 import org.jetbrains.compose.resources.stringResource
 
 /** Live presence, which is the reason to open this tab; fixed rather than themed, as in the lobby. */
-private val SocialLiveColor = Color(0xFF6FD08C)
+internal val SocialLiveColor = Color(0xFF6FD08C)
 
 /** How a one-line message under the search field should read. */
-private enum class SocialFeedbackTone { Neutral, Positive, Negative }
+internal enum class SocialFeedbackTone { Neutral, Positive, Negative }
 
-private data class SocialFeedback(val message: String, val tone: SocialFeedbackTone)
+internal data class SocialFeedback(val message: String, val tone: SocialFeedbackTone)
 
 @Composable
 fun SocialScreen(
@@ -126,6 +129,8 @@ fun SocialScreen(
     onJoinParty: (inviteCode: String) -> Unit = {},
     onJoinInvitedParty: (partyId: String) -> Unit = {},
     onStartParty: (WatchingNowItem) -> Unit = {},
+    onCancelJoinRequest: () -> Unit = {},
+    outgoingRequest: OutgoingJoinRequestState = OutgoingJoinRequestState.Idle,
     onNotificationAction: (SocialNotification, SocialNotificationAction) -> Unit = { _, _ -> },
 ) {
     val state by SocialRepository.uiState.collectAsStateWithLifecycle()
@@ -207,6 +212,31 @@ fun SocialScreen(
         shareWatching = state.me?.shareWatchingNow ?: true
         shareRecent = state.me?.shareRecentlyWatched ?: true
         defaultJoinPolicy = state.me?.defaultJoinPolicy ?: WatchJoinPolicy.approval
+    }
+
+    val partyUi by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
+    val heldParty = partyUi.party?.takeIf { it.status != WatchPartyStatus.ended }
+
+    // Grouped over every page loaded so far, so a later page folds into rows already on screen.
+    val activityGroups = remember(state.activity) { groupFriendActivity(state.activity) }
+    val activityNowMs = remember(state.activity) { currentEpochMs() }
+    val activityBuckets = remember(activityGroups, activityNowMs) {
+        bucketFriendActivity(activityGroups, activityNowMs, socialUtcOffsetMs(activityNowMs))
+    }
+
+    // "Load more" was a button at the bottom of a list people scroll with a wheel. The next page is
+    // asked for as the list nears its end instead.
+    val nearEnd by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()?.index
+            last != null && info.totalItemsCount > 0 && last >= info.totalItemsCount - 4
+        }
+    }
+    LaunchedEffect(nearEnd, state.nextCursor, state.isLoadingMore) {
+        if (nearEnd && state.nextCursor != null && !state.isLoadingMore) {
+            SocialRepository.refresh(append = true)
+        }
     }
 
     LaunchedEffect(scrollToTopRequests) {
@@ -362,24 +392,22 @@ fun SocialScreen(
                                 }
                                 if (state.watchingNow.isEmpty()) {
                                     item {
-                                        if (state.isLoading) {
-                                            SocialSkeletonCard()
-                                        } else {
-                                            SocialEmptyState(
-                                                "Nobody is watching right now",
-                                                "When a friend starts something, it shows up here — and you can start a party on it.",
-                                            )
-                                        }
+                                        if (state.isLoading) SocialSkeletonCard() else WatchingNowEmptyLine()
                                     }
                                 } else {
                                     socialGridItems(
-                                        items = state.watchingNow,
+                                        items = orderWatchingNowForDisplay(state.watchingNow),
                                         columns = feed.watchingNowColumns,
-                                        key = { "watching:${it.profile.profileId}:${it.videoId}" },
+                                        // Per session, not per title: two friends on one episode are two cards.
+                                        key = { "watching:${it.profile.profileId}:${it.sessionId}:${it.videoId}" },
                                     ) { watching, cardModifier ->
                                         SocialWatchingNowCard(
                                             item = watching,
-                                            watchPartyEnabled = state.capabilities.watchPartyEnabled,
+                                            affordance = if (state.capabilities.watchPartyEnabled) {
+                                                watchingNowJoinAffordance(watching, outgoingRequest, heldParty)
+                                            } else {
+                                                WatchingNowJoinAffordance.None
+                                            },
                                             onOpen = {
                                                 onOpenContent(
                                                     watching.contentType,
@@ -387,9 +415,11 @@ fun SocialScreen(
                                                     watching.title,
                                                 )
                                             },
-                                            onStartParty = { onStartParty(watching) },
+                                            onJoin = { onStartParty(watching) },
+                                            onCancelRequest = onCancelJoinRequest,
                                             modifier = cardModifier,
                                             artworkWidth = feed.watchingNowArtworkWidth,
+                                            stacked = feed.watchingNowStacked,
                                         )
                                     }
                                 }
@@ -398,7 +428,7 @@ fun SocialScreen(
                                 item {
                                     SocialSectionHeader(stringResource(Res.string.social_recently_watched))
                                 }
-                                if (state.activity.isEmpty()) {
+                                if (activityGroups.isEmpty()) {
                                     item {
                                         if (state.isLoading) {
                                             SocialSkeletonCard()
@@ -407,26 +437,37 @@ fun SocialScreen(
                                         }
                                     }
                                 } else {
-                                    socialGridItems(
-                                        items = state.activity,
-                                        columns = feed.activityColumns,
-                                        key = { "activity:${it.runId}" },
-                                    ) { run, cardModifier ->
-                                        SocialActivityCard(
-                                            run = run,
-                                            onOpen = { onOpenContent(run.contentType, run.contentId, run.title) },
-                                            modifier = cardModifier,
-                                            artworkWidth = feed.activityArtworkWidth,
-                                        )
+                                    activityBuckets.forEach { (bucket, groups) ->
+                                        item(key = "activity-bucket:${bucket.name}") {
+                                            Text(
+                                                bucket.label.uppercase(),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.SemiBold,
+                                                letterSpacing = 0.8.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(top = 4.dp),
+                                            )
+                                        }
+                                        socialGridItems(
+                                            items = groups,
+                                            columns = feed.activityColumns,
+                                            key = { "activity:${it.contentId}" },
+                                        ) { group, cellModifier ->
+                                            FriendActivityRow(
+                                                group = group,
+                                                nowMs = activityNowMs,
+                                                onOpen = { onOpenContent(group.contentType, group.contentId, group.title) },
+                                                modifier = cellModifier.height(FriendActivityRowHeight),
+                                            )
+                                        }
                                     }
                                 }
-                                if (state.nextCursor != null) {
-                                    item {
-                                        OutlinedButton(
-                                            onClick = { scope.launch { SocialRepository.refresh(append = true) } },
-                                            enabled = !state.isLoadingMore,
-                                        ) {
-                                            Text(if (state.isLoadingMore) "Loading…" else "Load more")
+                                // Paging is automatic (see the effect on `listState`); this is only the
+                                // inline sign that more is on its way.
+                                if (state.isLoadingMore) {
+                                    item(key = "activity-loading-more") {
+                                        Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                                         }
                                     }
                                 }
@@ -758,7 +799,7 @@ private fun LazyListScope.socialInbox(
  * already said better.
  */
 @Composable
-private fun SocialFriendsPanel(
+internal fun SocialFriendsPanel(
     state: SocialUiState,
     search: String,
     onSearchChange: (String) -> Unit,

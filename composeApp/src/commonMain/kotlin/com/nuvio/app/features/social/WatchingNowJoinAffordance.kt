@@ -65,3 +65,16 @@ fun watchingNowJoinAffordance(
         WatchJoinPolicy.disabled -> WatchingNowJoinAffordance.None
     }
 }
+
+/**
+ * Watching Now's display order: the server's order, except that cards on the same title and episode
+ * sit next to each other, so two friends on one episode are easy to spot.
+ *
+ * ⚠ Adjacent, never merged. Each card is one person's session and carries its own action; sharing
+ * `contentId` + `videoId` says nothing about whether those people are in the same party.
+ */
+fun orderWatchingNowForDisplay(items: List<WatchingNowItem>): List<WatchingNowItem> {
+    val byTitle = LinkedHashMap<Pair<String, String>, MutableList<WatchingNowItem>>()
+    items.forEach { byTitle.getOrPut(it.contentId to it.videoId) { mutableListOf() } += it }
+    return byTitle.values.flatten()
+}
