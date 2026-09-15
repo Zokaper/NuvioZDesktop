@@ -2,6 +2,23 @@
 
 Last updated: 2026-09-15
 
+## Stabilization pass — Direct Join role flip and Next-episode mode routing (2026-09-15)
+
+⚠ **Not hardware-verified.** Two defects from repeated testing of the Stage 16 build; full record and
+re-run cells 17a/17b in workspace-root `PLAN-social-watch-together-stabilization.md`, Stage 17.
+
+| defect | root cause | fix |
+| --- | --- | --- |
+| Guest pressing Direct Join ended up host | Read from production: the host promoted a *different* presence session 23 s after the guest's join built party `e7d7fc48`, before its heartbeat had adopted that party. `party_promote_presence_internal` created a second party, `watch_party_single_membership` departed the host from the first, and host succession gave it to the guest (`authority_epoch` 2). Separately, `social_join_watching` answers `already_joined` with *any* live membership, which the client opened unchecked. | `decidePartyPromotionPreflight`: promotion probes `party_get_active` and adopts the party built from this playback, refuses over any other live party, never displaces. `joinWatchingNow`: opens only a party the target is in, departs an unheld stray membership once and retries once, ignores duplicate presses. |
+| Next episode auto-selected in every mode | `c28493cc` sent desktop Streamlined's in-player Next episode to `AUTO_PICK` because the Compose sheet can't draw over the native player | Router is mode-only again (Classic list / Streamlined quality / Instant auto). Desktop draws Streamlined's quality rows in the native episode list (`PlayerEpisodeQualityChooser.kt`), same options and selector as the sheet. Autoplay-next countdown unchanged. |
+
+No backend change. Recommended server hardening (needs deploy authorization): refuse rather than
+displace in `party_promote_presence_internal`; scope `already_joined` to the receiver's party.
+
+Gate, results dir deleted first, run alone: `desktopTest` **BUILD SUCCESSFUL in 12m 34s - 236
+classes, 1,875 tests, 0 failures, 0 errors** (1,864 → 1,875 is exactly +8 join/promotion, +4 chooser,
+−1 router); pure suites all eight groups green (217 / 107 / 61 / 17 / 29 / 99 / 3 / 3). No MSI built.
+
 ## Stabilization pass — second hardware run: six defects fixed in code, re-run owed (2026-09-15)
 
 ⚠ **Nothing here is hardware-verified.** A second two-client run passed most of the matrix and failed

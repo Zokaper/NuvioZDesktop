@@ -596,7 +596,7 @@ internal fun PlayerScreenRuntime.playEpisodeFromPicker(episode: MetaVideo) {
         )
     ) return
 
-    when (playerEpisodeModeRoute(playerSettingsUiState.playbackMode, isDesktop = isDesktop)) {
+    when (playerEpisodeModeRoute(playerSettingsUiState.playbackMode)) {
         PlayerEpisodeModeRoute.SOURCE_LIST -> openEpisodeSourceList(episode)
         PlayerEpisodeModeRoute.QUALITY_SHEET -> openEpisodeQualitySheet(episode)
         PlayerEpisodeModeRoute.AUTO_PICK ->
@@ -806,10 +806,49 @@ private fun PlayerScreenRuntime.openEpisodeQualitySheet(episode: MetaVideo) {
         season = episode.season,
         episode = episode.episode,
     )
+    if (isDesktop) {
+        // The Compose sheet would sit under the native video surface. The native controls layer
+        // draws the same rows in its episode list - see `PlayerEpisodeQualityChooser.kt`.
+        episodeQualitySheetEpisode = null
+        episodeStreamsPanelState = EpisodeStreamsPanelState(
+            showStreams = true,
+            selectedEpisode = episode,
+            qualityChooser = true,
+        )
+        showEpisodesPanel = true
+        controlsVisible = false
+        return
+    }
     episodeStreamsPanelState = EpisodeStreamsPanelState(selectedEpisode = episode)
     episodeQualitySheetEpisode = episode
     showEpisodesPanel = false
     controlsVisible = false
+}
+
+/**
+ * A row chosen in the native Streamlined chooser, resolved the way the Compose sheet's
+ * `onOptionSelected` resolves one. Returns the stream to start, or null when the list was opened
+ * instead (or the row no longer exists).
+ */
+internal fun PlayerScreenRuntime.resolveEpisodeQualityChoice(index: Int): StreamItem? {
+    val episode = episodeStreamsPanelState.selectedEpisode ?: return null
+    val context = streamlinedEpisodeSelectionContext(playerSettingsUiState, episode)
+    val choice = episodeQualityChoices(episodeStreamsRepoState, context).getOrNull(index) ?: return null
+    return when (val pick = decideEpisodeQualityPick(choice, context)) {
+        is EpisodeQualityPick.Play -> {
+            // The rest of the row, so a source that dies advances within the chosen quality.
+            nextEpisodeFallbacks = pick.fallbacks.take(com.nuvio.app.features.playback.PlaybackProgress.MAX_ATTEMPTS - 1)
+            pick.stream
+        }
+        EpisodeQualityPick.ShowSourceList -> {
+            openEpisodeSourceList(
+                episode,
+                automaticSelectionFailure = PlayerNextEpisodeFailureReason.NO_SAFE_CANDIDATE
+                    .takeIf { choice is EpisodeQualityChoice.Option },
+            )
+            null
+        }
+    }
 }
 
 internal fun PlayerScreenRuntime.openSourcesPanel() {

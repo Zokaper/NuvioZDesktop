@@ -11,40 +11,27 @@ class PlayerEpisodeModeRouterTest {
     }
 
     @Test
-    fun streamlinedOpensTheQualitySheet() {
+    fun streamlinedAsksItsQualityQuestion() {
+        // ⚠ Regression, hardware 2026-09-15. `c28493cc` routed desktop Streamlined to AUTO_PICK
+        // because the Compose sheet cannot be drawn over the native player, and Next episode then
+        // auto-selected in Streamlined exactly as it does in Instant. Desktop draws the Streamlined
+        // rows natively now; the route is the mode's, on every platform.
         assertEquals(PlayerEpisodeModeRoute.QUALITY_SHEET, playerEpisodeModeRoute(PlaybackMode.STREAMLINED))
-    }
-
-    @Test
-    fun streamlinedDesktopPicksWithinItsPreferencesInsteadOfShowingClassicsList() {
-        // ⚠ Regression, hardware Bug 3 (2026-09-15). This asserted SOURCE_LIST: the quality sheet
-        // cannot be drawn over the native player, so desktop Streamlined fell back to Classic's
-        // release list - and a Streamlined Watch Together host pressing Next episode was handed the
-        // ordinary chooser. The unreachable sheet is answered from the Streamlined preferences
-        // instead, through the same selector autoplay-next uses.
-        assertEquals(
-            PlayerEpisodeModeRoute.AUTO_PICK,
-            playerEpisodeModeRoute(PlaybackMode.STREAMLINED, isDesktop = true),
-        )
-    }
-
-    @Test
-    fun onlyClassicEverOpensTheSourceListOnDesktop() {
-        PlaybackMode.entries.forEach { mode ->
-            val route = playerEpisodeModeRoute(mode, isDesktop = true)
-            assertEquals(
-                mode == PlaybackMode.CLASSIC,
-                route == PlayerEpisodeModeRoute.SOURCE_LIST,
-                "mode=$mode route=$route",
-            )
-            // Nothing on desktop may ask for a sheet the native surface would hide.
-            assertEquals(false, route == PlayerEpisodeModeRoute.QUALITY_SHEET, "mode=$mode")
-        }
     }
 
     @Test
     fun instantAutoPicks() {
         assertEquals(PlayerEpisodeModeRoute.AUTO_PICK, playerEpisodeModeRoute(PlaybackMode.INSTANT))
-        assertEquals(PlayerEpisodeModeRoute.AUTO_PICK, playerEpisodeModeRoute(PlaybackMode.INSTANT, isDesktop = true))
+    }
+
+    @Test
+    fun onlyInstantSelectsWithoutAsking() {
+        PlaybackMode.entries.forEach { mode ->
+            assertEquals(
+                mode == PlaybackMode.INSTANT,
+                playerEpisodeModeRoute(mode) == PlayerEpisodeModeRoute.AUTO_PICK,
+                "mode=$mode",
+            )
+        }
     }
 }

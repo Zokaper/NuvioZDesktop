@@ -595,6 +595,26 @@ object WatchPartyRepository {
         Unit
     }
 
+    /**
+     * Leaves a party this client does **not** hold - a membership the server has and the client never
+     * adopted. Local state is untouched, because none of it describes that party. Refuses the held
+     * party outright: that one is left through [leave], which also tears down what the client built
+     * for it. See `joinWatchingNow`.
+     */
+    suspend fun departStrayMembership(partyId: String): Result<Unit> = runCatching {
+        check(_uiState.value.party?.id != partyId) { "Refusing to depart the held party as a stray" }
+        val profile = _uiState.value.activeProfileId ?: throw IllegalStateException("No active profile")
+        log.i { "depart stray membership party=${partyId.shortId()} profile=${profile.shortId()}" }
+        withTimeout(WatchPartyChannelCloseTimeoutMs) {
+            ZSupabaseProvider.client.postgrest.rpc("party_depart_v2", buildJsonObject {
+                put("p_party_id", partyId); put("p_profile_id", profile)
+                put("p_mode", "leave_transfer")
+                put("p_contract_version", PartySourceContractVersion)
+            })
+        }
+        Unit
+    }
+
     suspend fun end(): Result<Unit> = depart(PartyDepartureMode.END_PARTY)
 
     suspend fun leave(): Result<Unit> = depart(PartyDepartureMode.LEAVE_AND_TRANSFER)

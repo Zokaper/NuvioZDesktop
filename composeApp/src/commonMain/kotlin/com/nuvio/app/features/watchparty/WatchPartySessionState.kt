@@ -162,6 +162,58 @@ fun shouldAdoptDiscoveredParty(
         discovered.status != WatchPartyStatus.ended &&
         discovered.hostProfileId == selfProfileId
 
+/** What "Start Watch Together" may do, once the server has said which party this profile is in. */
+sealed interface PartyPromotionPreflight {
+    /** No live membership anywhere: promoting creates the party and displaces nothing. */
+    data object Promote : PartyPromotionPreflight
+
+    /** The server already built a party from this playback. Attach to it; never build a second one. */
+    data class Adopt(val party: WatchPartyState) : PartyPromotionPreflight
+
+    /** A different live party holds this profile. Promoting would silently depart it. */
+    data object AlreadyInAnotherParty : PartyPromotionPreflight
+
+    /** The server could not be asked, so it cannot be shown that promoting is harmless. */
+    data object Unverified : PartyPromotionPreflight
+}
+
+/**
+ * ⚠ **Hardware, 2026-09-15: a guest's Direct Join ended with the guest hosting.** Read back from
+ * production: the guest's `social_join_watching` built party `e7d7fc48` from the host's presence
+ * with the guest as participant; 23 s later the host's own `party_promote_presence` - for a
+ * *different* presence session - created a second party. `watch_party_single_membership` then
+ * departed the host from the first one with `party_depart_member`, whose host succession promoted
+ * the only other live member. `authority_epoch` 2 on `e7d7fc48` and the host's `left_at` equal to the
+ * second party's `created_at` are the evidence.
+ *
+ * The host could press "Start Watch Together" at all because it had not observed the party a direct
+ * join made from its playback - that is delivered on the next presence heartbeat, up to ~20 s later
+ * (see `WatchingNowJoin.kt`) - and `party_promote_presence_internal` only reuses a party whose
+ * `origin_presence_session_id` matches, so a player whose session had turned over got a new party
+ * instead of the existing one. Nothing on the client asked the server first.
+ *
+ * So promotion now asks `party_get_active` before it writes, and a promotion is only ever allowed to
+ * *create* when the profile holds no live membership. `party_get_active` also closes a party every
+ * member has abandoned, so a genuinely orphaned membership reads as none rather than blocking forever.
+ */
+fun decidePartyPromotionPreflight(
+    probe: Result<WatchPartyState?>,
+    selfProfileId: String?,
+    playback: ActivePlaybackContext?,
+    presenceSessionId: String?,
+): PartyPromotionPreflight {
+    val active = probe.getOrElse { return PartyPromotionPreflight.Unverified }
+        ?.takeIf { it.status != WatchPartyStatus.ended }
+        ?: return PartyPromotionPreflight.Promote
+    if (selfProfileId == null || active.hostProfileId != selfProfileId) {
+        return PartyPromotionPreflight.AlreadyInAnotherParty
+    }
+    val builtFromThisPlayback =
+        (presenceSessionId != null && active.originPresenceSessionId == presenceSessionId) ||
+            (playback != null && active.matchesPlayback(playback.contentId, playback.videoId))
+    return if (builtFromThisPlayback) PartyPromotionPreflight.Adopt(active) else PartyPromotionPreflight.AlreadyInAnotherParty
+}
+
 fun PartyGenerationKey.accepts(other: PartyGenerationKey): Boolean =
     partyId==other.partyId && contentGeneration==other.contentGeneration &&
         sourceGeneration==other.sourceGeneration && authorityEpoch==other.authorityEpoch

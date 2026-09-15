@@ -7,6 +7,7 @@ import com.nuvio.app.features.watchparty.WatchPartyState
 import com.nuvio.app.features.watchparty.WatchPartyStatus
 import com.nuvio.app.features.watchparty.currentEpochMs
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
 
 /**
  * Joining a friend from Watching Now, end to end.
@@ -45,9 +46,29 @@ sealed interface WatchingNowJoinStep {
 
     /** Nothing more will happen; say why. */
     data class Notice(val message: String) : WatchingNowJoinStep
+
+    /**
+     * The server answered with a party that is not the target's - a membership this client does not
+     * hold and did not know about. Leave it, then ask again. Never opened.
+     */
+    data class ReleaseStrayMembership(val party: WatchPartyState) : WatchingNowJoinStep
 }
 
-fun decideWatchingNowJoin(result: Result<SocialActionResult>): WatchingNowJoinStep {
+/**
+ * ⚠ **A join aimed at a friend may only ever open that friend's party.**
+ *
+ * `social_join_watching` checks whether the requester is already a member of *any* live party
+ * before it looks at the target, and answers `already_joined` with that party. Opened unchecked, a
+ * requester still holding a stray membership - a party a friend's direct join built from their own
+ * earlier playback before their client adopted it, or one whose departure never reached the server -
+ * would go to that party's lobby, as its host, instead of joining the friend they pressed Join on.
+ * The only party this may open is one [targetProfileId] is actually in.
+ */
+fun decideWatchingNowJoin(
+    result: Result<SocialActionResult>,
+    targetProfileId: String,
+    heldLivePartyId: String? = null,
+): WatchingNowJoinStep {
     val action = result.getOrElse { failure ->
         return WatchingNowJoinStep.Notice(
             failure.message?.let(::joinFailureMessage) ?: "Couldn't join. Check your connection and try again.",
@@ -55,15 +76,68 @@ fun decideWatchingNowJoin(result: Result<SocialActionResult>): WatchingNowJoinSt
     }
     val party = action.party?.takeIf { it.status != WatchPartyStatus.ended }
     return when (action.outcome) {
-        "joined", "already_joined", "accepted" ->
-            party?.let(WatchingNowJoinStep::OpenParty)
-                ?: WatchingNowJoinStep.Notice("Couldn't open the party. Try again.")
+        "joined", "already_joined", "accepted" -> when {
+            party == null -> WatchingNowJoinStep.Notice("Couldn't open the party. Try again.")
+            party.includesProfile(targetProfileId) -> WatchingNowJoinStep.OpenParty(party)
+            // A party this client is really in is the user's to leave, not this button's.
+            party.id == heldLivePartyId ->
+                WatchingNowJoinStep.Notice("You're already in a Watch Together party. Leave it to join this one.")
+            else -> WatchingNowJoinStep.ReleaseStrayMembership(party)
+        }
         "approval_required" -> WatchingNowJoinStep.AwaitApproval
         "disabled" -> WatchingNowJoinStep.Notice("This playback is not open to joining")
         "stale" -> WatchingNowJoinStep.Notice("This playback is no longer available")
         "full" -> WatchingNowJoinStep.Notice("This party is full")
         "unsupported_contract" -> WatchingNowJoinStep.Notice("Watch Together needs an update to join this playback")
         else -> WatchingNowJoinStep.Notice("Couldn't join. Try again.")
+    }
+}
+
+private fun WatchPartyState.includesProfile(profileId: String): Boolean =
+    hostProfileId == profileId || members.any { it.profileId == profileId }
+
+private val joinInFlight = Mutex()
+
+/**
+ * The whole of a Join press: the RPC, the ownership check, and at most one recovery.
+ *
+ * Returns null for a press that arrived while another was still running - a double click must not
+ * send two joins and push two lobbies. A stray membership is departed once and the join asked again;
+ * a second stray answer, or a departure the server refused, fails cleanly instead of looping. Nothing
+ * here ever creates a party: the only writes are the join itself and leaving a party the target is
+ * not in.
+ */
+suspend fun joinWatchingNow(
+    item: WatchingNowItem,
+    heldLivePartyId: () -> String?,
+    join: suspend (WatchingNowItem) -> Result<SocialActionResult> = SocialRepository::joinWatching,
+    departStray: suspend (partyId: String) -> Result<Unit> = WatchPartyRepository::departStrayMembership,
+): WatchingNowJoinStep? {
+    if (!joinInFlight.tryLock()) {
+        joinLog.i { "join ignored - another join is still in flight" }
+        return null
+    }
+    try {
+        val target = item.profile.profileId
+        var released = false
+        while (true) {
+            val result = join(item)
+            result.exceptionOrNull()?.let { failure -> joinLog.w(failure) { "join watching failed" } }
+            val step = decideWatchingNowJoin(result, target, heldLivePartyId())
+            if (step !is WatchingNowJoinStep.ReleaseStrayMembership) return step
+            if (released) {
+                joinLog.w { "join answered with a non-target party again party=${step.party.id.take(8)} - giving up" }
+                return WatchingNowJoinStep.Notice("Couldn't join. Try again.")
+            }
+            joinLog.i { "join answered with a stray membership party=${step.party.id.take(8)} - leaving it and retrying once" }
+            released = true
+            departStray(step.party.id).onFailure { failure ->
+                joinLog.w(failure) { "could not leave stray party=${step.party.id.take(8)}" }
+                return WatchingNowJoinStep.Notice("Couldn't join. Try again.")
+            }
+        }
+    } finally {
+        joinInFlight.unlock()
     }
 }
 

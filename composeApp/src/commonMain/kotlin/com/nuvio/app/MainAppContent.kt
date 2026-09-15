@@ -205,9 +205,8 @@ import com.nuvio.app.features.player.PlayerExitDiagnostics
 import com.nuvio.app.features.player.dispatchNavigationBack
 import com.nuvio.app.features.social.WatchingNowJoinStep
 import com.nuvio.app.features.social.awaitJoinApproval
-import com.nuvio.app.features.social.decideWatchingNowJoin
-
-private val socialJoinLog = co.touchlab.kermit.Logger.withTag("SocialJoin")
+import com.nuvio.app.features.social.joinWatchingNow
+import com.nuvio.app.features.watchparty.WatchPartyStatus
 
 @OptIn(ExperimentalSharedTransitionApi::class, ExperimentalComposeUiApi::class)
 @Composable
@@ -1567,11 +1566,17 @@ internal fun MainAppContent(
                                         // Every outcome says something - see `WatchingNowJoin.kt`. The
                                         // failure branch used to be absent, which made a refused join
                                         // indistinguishable from a button that does nothing.
-                                        val result = SocialRepository.joinWatching(watching)
-                                        result.exceptionOrNull()?.let { failure ->
-                                            socialJoinLog.w(failure) { "join watching failed" }
-                                        }
-                                        when (val step = decideWatchingNowJoin(result)) {
+                                        // `joinWatchingNow` only ever opens the target's own party
+                                        // and ignores a second press while one is in flight.
+                                        val step = joinWatchingNow(
+                                            item = watching,
+                                            heldLivePartyId = {
+                                                WatchPartyRepository.uiState.value.party
+                                                    ?.takeIf { it.status != WatchPartyStatus.ended }
+                                                    ?.id
+                                            },
+                                        ) ?: return@launch
+                                        when (step) {
                                             is WatchingNowJoinStep.OpenParty -> {
                                                 joinApprovalWatch?.cancel()
                                                 WatchPartySessionCoordinator.installAuthorizedParty(step.party)
@@ -1590,6 +1595,8 @@ internal fun MainAppContent(
                                                 }
                                             }
                                             is WatchingNowJoinStep.Notice -> NuvioToastController.show(step.message)
+                                            // Resolved inside `joinWatchingNow`; never escapes it.
+                                            is WatchingNowJoinStep.ReleaseStrayMembership -> Unit
                                         }
                                     }
                                 },

@@ -2750,6 +2750,7 @@
     <string name="watch_party_host_source_unavailable">The host source is unavailable. Choose an alternate source.</string>
     <string name="watch_party_cannot_share_source">This source can't be shared with a party. Play it from an addon or debrid source to watch together.</string>
     <string name="watch_party_promote_failed">Couldn't start Watch Together. Try again in a moment.</string>
+    <string name="watch_party_promote_already_in_party">You're already in a Watch Together party. Leave it before starting another.</string>
     <string name="watch_party_promote_presence_stale">Couldn't start Watch Together yet - let playback run for a few seconds and try again.</string>
     <string name="watch_party_recent_status">Recently watched</string>
 </resources>

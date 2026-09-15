@@ -69,6 +69,7 @@ import kotlin.math.abs
 import com.nuvio.app.core.ui.NuvioToastController
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.watch_party_cannot_share_source
+import nuvio.composeapp.generated.resources.watch_party_promote_already_in_party
 import nuvio.composeapp.generated.resources.watch_party_promote_failed
 import nuvio.composeapp.generated.resources.watch_party_promote_presence_stale
 import org.jetbrains.compose.resources.getString
@@ -315,6 +316,8 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
                     // rejecting presence publication outside a party and no row was ever written.
                     PartyPromotionFailure.PresenceStale ->
                         getString(Res.string.watch_party_promote_presence_stale)
+                    PartyPromotionFailure.AlreadyInAnotherParty ->
+                        getString(Res.string.watch_party_promote_already_in_party)
                     PartyPromotionFailure.Refused ->
                         getString(Res.string.watch_party_promote_failed)
                 },

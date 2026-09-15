@@ -309,11 +309,19 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     val sourceItems = buildPlayerControlSourceItems()
     val episodeItems = buildPlayerControlEpisodeItems()
     val episodeSeasons = buildPlayerControlSeasonItems(episodeItems)
-    val episodeStreamFilters = buildPlayerControlEpisodeStreamFilters(
-        allLabel = allFilterLabel,
-        selectedFilter = null,
-    )
-    val episodeStreamItems = buildPlayerControlEpisodeStreamItems()
+    val episodeStreamFilters = if (episodeStreamsPanelState.qualityChooser) {
+        emptyList()
+    } else {
+        buildPlayerControlEpisodeStreamFilters(
+            allLabel = allFilterLabel,
+            selectedFilter = null,
+        )
+    }
+    val episodeStreamItems = if (episodeStreamsPanelState.qualityChooser) {
+        buildPlayerControlEpisodeQualityItems()
+    } else {
+        buildPlayerControlEpisodeStreamItems()
+    }
     val playerControlAddonSubtitles = buildPlayerControlAddonSubtitleItems()
     val playerControlSubtitleSelection = buildPlayerControlSubtitleSelection()
     val playerControlAutoSyncCues = buildPlayerControlSubtitleCueItems()
@@ -337,7 +345,10 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             stringResource(Res.string.player_next_episode_choose_source)
         null -> ""
     }
-    val selectedEpisodeLabel = if (automaticSelectionFailureLabel.isNotBlank()) {
+    val qualityChooserLabel = stringResource(Res.string.playback_quality_title)
+    val selectedEpisodeLabel = if (episodeStreamsPanelState.qualityChooser) {
+        listOf(qualityChooserLabel, selectedEpisodeCodeAndTitle).filter { it.isNotBlank() }.joinToString(" • ")
+    } else if (automaticSelectionFailureLabel.isNotBlank()) {
         listOf(
             automaticSelectionFailureLabel,
             selectedEpisodeCodeAndTitle,
@@ -1329,7 +1340,11 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
         }
         "selectEpisodeStream" -> {
             val episode = episodeStreamsPanelState.selectedEpisode ?: return true
-            val stream = episodeStreamsRepoState.groups.flatMap { it.streams }.getOrNull(value.toInt()) ?: return true
+            val stream = if (episodeStreamsPanelState.qualityChooser) {
+                resolveEpisodeQualityChoice(value.toInt()) ?: return true
+            } else {
+                episodeStreamsRepoState.groups.flatMap { it.streams }.getOrNull(value.toInt()) ?: return true
+            }
             if (requestP2pConsentForPlayerControls(stream = stream, episode = episode)) return true
             switchToEpisodeStream(stream, episode)
             playerControlsCloseModalsToken += 1
@@ -1340,7 +1355,10 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
             PlayerStreamsRepository.clearEpisodeStreams()
         }
         "reloadEpisodeStreams" -> {
+            val chooser = episodeStreamsPanelState.qualityChooser
             episodeStreamsPanelState.selectedEpisode?.let { requestEpisodeStreamsForPlayerControls(it, forceRefresh = true) }
+            // A reload refetches the catalogue; it does not change which question is being asked.
+            if (chooser) episodeStreamsPanelState = episodeStreamsPanelState.copy(qualityChooser = true)
         }
         "submitIntroSegment" -> {
             submitIntroSegmentType = when (value.toInt()) {
@@ -1846,6 +1864,46 @@ private fun PlayerScreenRuntime.buildPlayerControlEpisodeStreamItems(): List<Pla
             formattedSize = if (showFileSizeBadges) formatStreamVideoSize(stream.behaviorHints.videoSize) else "",
             badgePlacement = badgePlacement,
         )
+    }
+}
+
+/**
+ * Streamlined's quality rows for the native episode list, indexed exactly as
+ * [resolveEpisodeQualityChoice] reads them back. See `PlayerEpisodeQualityChooser.kt`.
+ */
+@Composable
+private fun PlayerScreenRuntime.buildPlayerControlEpisodeQualityItems(): List<PlayerControlSourceItem> {
+    val episode = episodeStreamsPanelState.selectedEpisode ?: return emptyList()
+    val context = streamlinedEpisodeSelectionContext(playerSettingsUiState, episode)
+    return episodeQualityChoices(episodeStreamsRepoState, context).mapIndexed { index, choice ->
+        when (choice) {
+            is EpisodeQualityChoice.Option -> {
+                val option = choice.option
+                val needs = option.requiredMbps?.let { mbps ->
+                    val rounded = kotlin.math.ceil(mbps).toInt()
+                    if (option.isEstimateApproximate) {
+                        stringResource(Res.string.playback_quality_needs_estimated, rounded)
+                    } else {
+                        stringResource(Res.string.playback_quality_needs, rounded)
+                    }
+                }.orEmpty()
+                PlayerControlSourceItem(
+                    index = index,
+                    label = com.nuvio.app.features.playback.playbackQualityOptionLabel(option),
+                    subtitle = needs,
+                    formattedSize = formatStreamVideoSize(option.representativeSizeBytes),
+                    // Kept open by the page and closed from here once a stream actually starts: a
+                    // row with no safe source swaps this panel to the release list instead, and
+                    // closing it would hide the answer to the row just pressed.
+                    keepOpen = true,
+                )
+            }
+            EpisodeQualityChoice.ChooseManually -> PlayerControlSourceItem(
+                index = index,
+                label = stringResource(Res.string.playback_quality_manual),
+                keepOpen = true,
+            )
+        }
     }
 }
 

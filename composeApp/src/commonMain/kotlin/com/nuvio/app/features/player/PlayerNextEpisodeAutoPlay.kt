@@ -11,7 +11,6 @@ import com.nuvio.app.features.player.skip.NextEpisodeInfo
 import com.nuvio.app.features.playback.PlaybackMode
 import com.nuvio.app.features.playback.PlaybackProgress
 import com.nuvio.app.features.playback.PlaybackQualityOptions
-import com.nuvio.app.features.playback.PlaybackSelectionContext
 import com.nuvio.app.features.playback.PlaybackSelectionResult
 import com.nuvio.app.features.playback.PlaybackSourceCandidate
 import com.nuvio.app.features.playback.PlaybackSourceSelector
@@ -185,22 +184,10 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
             onFallbacksChanged(emptyList())
             // The episode's own runtime, so a derived option's bitrate is honest here too.
             // This context used to omit it and always assumed the 45-minute fallback.
-            val selectionContext = PlaybackSelectionContext(
-                runtimeMinutes = nextVideo.runtime,
-                isEpisode = true,
-                allowTorrentSources = settings.playbackAllowTorrentAutopick,
-                // The same preferences the first episode was picked with. Applying them only
-                // at the stream route would mean a user's codec or HDR choice held until the
-                // next episode auto-played and then quietly stopped.
-                preferredAudioLanguage = settings.rankableAudioLanguage,
-                secondaryAudioLanguage = settings.rankableSecondaryAudioLanguage,
-                languageStrictness = settings.playbackLanguageStrictness,
-                qualityCeilingMbps = settings.playbackQualityCeilingMbps.takeIf { it > 0 }?.toDouble(),
-                codecPreference = settings.playbackCodecPreference,
-                dynamicRangePolicy = settings.playbackDynamicRangePolicy,
-                audioPreference = settings.playbackAudioPreference,
-                displayMaxHeight = com.nuvio.app.platformDisplayMaxHeight(),
-            )
+            // The same preferences the first episode was picked with. Applying them only at the
+            // stream route would mean a user's codec or HDR choice held until the next episode
+            // auto-played and then quietly stopped. Shared with the in-player Streamlined chooser.
+            val selectionContext = streamlinedEpisodeSelectionContext(settings, nextVideo)
             val candidates = streams.mapIndexed { index, stream ->
                 PlaybackSourceCandidate(
                     stream = stream,

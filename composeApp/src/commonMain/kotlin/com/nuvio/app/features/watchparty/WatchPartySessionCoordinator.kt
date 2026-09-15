@@ -73,6 +73,9 @@ enum class PartyPromotionFailure {
     /** The server has no live presence row for this session yet. Waiting a moment fixes it. */
     PresenceStale,
 
+    /** This profile is already in a different live party; promoting would silently leave it. */
+    AlreadyInAnotherParty,
+
     /** Anything else the server refused. */
     Refused,
 }
@@ -210,6 +213,38 @@ object WatchPartySessionCoordinator {
                     _promotionFailures.tryEmit(PartyPromotionFailure.NoPresenceSession)
                     return
                 }
+                if (liveParty() != null) {
+                    promotionLog.w { "promote refused - a live party is already held" }
+                    _promotionFailures.tryEmit(PartyPromotionFailure.AlreadyInAnotherParty)
+                    return
+                }
+                // ⚠ Ask before writing. See `decidePartyPromotionPreflight`: a promotion that runs
+                // while the server already holds this profile in a party is not a no-op, it is a
+                // departure - and a departing host hands the party to whoever else is in it.
+                when (
+                    val preflight = decidePartyPromotionPreflight(
+                        probe = gateway.fetchActiveParty(),
+                        selfProfileId = gateway.activeProfileId(),
+                        playback = _state.value.playback,
+                        presenceSessionId = session,
+                    )
+                ) {
+                    PartyPromotionPreflight.Promote -> Unit
+                    is PartyPromotionPreflight.Adopt -> {
+                        if (liveParty() == null) adoptPartyBuiltFromThisPlayback(preflight.party)
+                        return
+                    }
+                    PartyPromotionPreflight.AlreadyInAnotherParty -> {
+                        promotionLog.w { "promote refused - this profile is already in another live party" }
+                        _promotionFailures.tryEmit(PartyPromotionFailure.AlreadyInAnotherParty)
+                        return
+                    }
+                    PartyPromotionPreflight.Unverified -> {
+                        promotionLog.w { "promote refused - could not confirm this profile holds no party" }
+                        _promotionFailures.tryEmit(PartyPromotionFailure.Refused)
+                        return
+                    }
+                }
                 gateway.promotePlaybackPresence(session)
                     .onSuccess {
                         val party = gateway.currentParty() ?: return@onSuccess
@@ -244,19 +279,7 @@ object WatchPartySessionCoordinator {
                     // attach the guest's own unrelated playback to somebody else's party.
                     if (!shouldAdoptDiscoveredParty(live, gateway.activeProfileId(), liveParty())) return@onSuccess
                     if (liveParty() != null) return@onSuccess
-                    gateway.installAuthorizedParty(live)
-                    val generation = live.partyGenerationKey()
-                    promotionLog.i {
-                        "adopted a party built from this playback party=${live.id.shortId()} " +
-                            "host=${live.hostProfileId == gateway.activeProfileId()} attached=${_state.value.playback != null}"
-                    }
-                    _state.value = reducePartySession(_state.value, PartySessionEvent.Restored(generation))
-                    // The same in-place attachment a successful promotion makes: the player keeps
-                    // playing and simply becomes the party's.
-                    _state.value.playback?.let { playback ->
-                        _state.value = reducePartySession(_state.value, PartySessionEvent.PlayerAttached(playback, generation))
-                        gateway.publishLocation(WatchPartyClientLocation.player)
-                    }
+                    adoptPartyBuiltFromThisPlayback(live)
                 }
             }
             PartySessionIntent.Restore -> {
@@ -278,6 +301,22 @@ object WatchPartySessionCoordinator {
             is PartySessionIntent.PartyEnded -> _state.value = reducePartySession(_state.value, PartySessionEvent.Ended(intent.viewerWasHost))
             PartySessionIntent.ContinueAfterEnd -> _state.value = PartySessionState(playback = _state.value.playback)
             is PartySessionIntent.Snapshot -> observeSnapshot(intent.value)
+        }
+    }
+
+    private suspend fun adoptPartyBuiltFromThisPlayback(live: WatchPartyState) {
+        gateway.installAuthorizedParty(live)
+        val generation = live.partyGenerationKey()
+        promotionLog.i {
+            "adopted a party built from this playback party=${live.id.shortId()} " +
+                "host=${live.hostProfileId == gateway.activeProfileId()} attached=${_state.value.playback != null}"
+        }
+        _state.value = reducePartySession(_state.value, PartySessionEvent.Restored(generation))
+        // The same in-place attachment a successful promotion makes: the player keeps
+        // playing and simply becomes the party's.
+        _state.value.playback?.let { playback ->
+            _state.value = reducePartySession(_state.value, PartySessionEvent.PlayerAttached(playback, generation))
+            gateway.publishLocation(WatchPartyClientLocation.player)
         }
     }
 

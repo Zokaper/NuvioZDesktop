@@ -2036,6 +2036,8 @@ private fun StringBuilder.appendSourceItemJson(item: PlayerControlSourceItem) {
     append(',')
     appendJsonField("badgePlacement", item.badgePlacement)
     append(',')
+    appendJsonField("keepOpen", item.keepOpen)
+    append(',')
     appendJsonArrayField("badges", item.badges) { badge ->
         append('{')
         appendJsonField("name", badge.name)

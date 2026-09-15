@@ -395,6 +395,8 @@ data class PlayerControlSourceItem(
     val badges: List<PlayerControlSourceBadgeItem> = emptyList(),
     val formattedSize: String = "",
     val badgePlacement: String = "BOTTOM",
+    /** Choosing this row changes the panel's content rather than finishing the choice. */
+    val keepOpen: Boolean = false,
 )
 
 data class PlayerControlEpisodeItem(

@@ -1902,7 +1902,9 @@ const renderEpisodeStreams = () => {
   items.forEach(item => {
     episodeStreamList.appendChild(buildSourceRow(item, selected => {
       send("selectEpisodeStream", Number(selected.index) || 0);
-      window.setTimeout(closePlayerModal, 120);
+      // Streamlined's quality rows: the player closes the panel itself once a stream starts, or
+      // swaps it to the release list when the row has nothing safe to play.
+      if (!selected.keepOpen) window.setTimeout(closePlayerModal, 120);
     }));
   });
 };
