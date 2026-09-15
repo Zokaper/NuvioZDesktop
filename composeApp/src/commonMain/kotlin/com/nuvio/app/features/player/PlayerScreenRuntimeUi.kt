@@ -1,5 +1,7 @@
 package com.nuvio.app.features.player
 
+import com.nuvio.app.features.watchparty.partyPossessive
+import com.nuvio.app.features.watchparty.PartyJoinHandoff
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -142,6 +144,10 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     }
 
     val watchPartyBanner = rememberWatchPartyStatus().bannerText()
+    // The join hand-off ends at the first frame; after that the player speaks for itself.
+    LaunchedEffect(firstFrameReached) {
+        if (firstFrameReached) PartyJoinHandoff.finish()
+    }
     val activeParty = watchPartyUiState.party?.takeIf {
         it.matchesPlayback(parentMetaId, playbackSession.videoId)
     }
@@ -605,7 +611,9 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         openingMessage = if (startingEpisode != null) {
             stringResource(Res.string.player_next_episode_starting)
         } else {
-            p2pInitialLoadingMessage
+            // The last step of an accepted join request's hand-off names whose party this is.
+            PartyJoinHandoff.forParty(activeParty?.id)?.let { "Joining ${partyPossessive(it.hostName)} party" }
+                ?: p2pInitialLoadingMessage
         },
         openingProgress = p2pInitialLoadingProgress,
         // `LocalDensity` here is already `platformDensity x effectiveDesktopUiScale` - see

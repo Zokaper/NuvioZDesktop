@@ -1,5 +1,6 @@
 package com.nuvio.app
 
+import com.nuvio.app.features.social.OutgoingJoinRequestStore
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -262,6 +263,8 @@ internal fun AppTabHost(
 ) {
     val socialEnabled = rememberSocialEnabled()
     val tabStateHolder = rememberSaveableStateHolder()
+    // The one outgoing join request, read by Home's and Social's Watching Now cards alike.
+    val outgoingJoinRequest by OutgoingJoinRequestStore.state.collectAsStateWithLifecycle()
     val isHomeSelected = selectedTab == AppScreenTab.Home
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -298,6 +301,8 @@ internal fun AppTabHost(
                     onFirstCatalogRendered = actions.onInitialHomeContentRendered,
                     onJoinWatchingNow = actions.onStartPartyOnContent,
                     onSeeAllFriendsActivity = actions.onOpenSocialTab,
+                    outgoingJoinRequest = outgoingJoinRequest,
+                    onCancelJoinRequest = { OutgoingJoinRequestStore.cancel() },
                 )
             }
         }
@@ -362,6 +367,8 @@ internal fun AppTabHost(
                                 onJoinParty = actions.onJoinParty ?: {},
                                 onJoinInvitedParty = actions.onJoinInvitedParty ?: {},
                                 onStartParty = actions.onStartPartyOnContent ?: {},
+                                onCancelJoinRequest = { OutgoingJoinRequestStore.cancel() },
+                                outgoingRequest = outgoingJoinRequest,
                                 onNotificationAction = actions.onSocialNotificationAction ?: { _, _ -> },
                             )
                         }

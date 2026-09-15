@@ -276,6 +276,44 @@ class SocialRenderHarness {
     }
 
     /**
+     * The outgoing request dock in each state that reads differently, stacked in one frame, with a
+     * deadline 100s out so the ring and clock read as they would mid-request.
+     */
+    @Test
+    fun renderWatchTogetherDockStates() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        val binding = JoinRequestBinding("me", 1)
+        val target = JoinRequestTarget("seraph", "Seraph", sessionId = "s1")
+        val content = JoinRequestContent("tt5", "tt5:1:2", "The Punisher", season = 1, episode = 2)
+        val far = com.nuvio.app.features.watchparty.currentEpochMs() + 100_000L
+        val states = listOf(
+            OutgoingJoinRequestState.Pending(binding, target, content, "r", far),
+            OutgoingJoinRequestState.Outcome(binding, target, content, OutgoingJoinOutcome.Declined, null),
+            OutgoingJoinRequestState.Outcome(binding, target, content, OutgoingJoinOutcome.Failed, null, "This party is full"),
+            OutgoingJoinRequestState.Joining(binding, target, content, partyFixture()),
+        )
+        listOf(1280 to 820, 420 to 900).forEach { (w, h) ->
+            render("dock-${w}x$h", w, h, failures) {
+                BoxWithConstraints(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                    val width = maxWidth
+                    Column(Modifier.align(Alignment.BottomEnd).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        states.forEach { WatchTogetherDock(it, windowWidth = width) }
+                    }
+                }
+            }
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
+    private fun partyFixture() = com.nuvio.app.features.watchparty.WatchPartyState(
+        id = "p", hostProfileId = "seraph", status = com.nuvio.app.features.watchparty.WatchPartyStatus.playing,
+        controlMode = com.nuvio.app.features.watchparty.WatchPartyControlMode.host_only, contentGeneration = 1,
+        content = com.nuvio.app.features.watchparty.PartyContent("tt5", "series", "tt5:1:2", "The Punisher"),
+        positionMs = 0, durationMs = 0, playbackSpeed = 1f, sequence = 1, stateUpdatedAt = "",
+    )
+
+    /**
      * Diagnostic for "Home's Friends Recently Watched row starts with a card cut off at the left edge"
      * (§11.13). Hypothesis: `LazyRow` anchors its scroll to the first visible item's *key*, so when a
      * newer item arrives at the front of an unscrolled shelf the old first item stays put and the new

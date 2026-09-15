@@ -129,6 +129,9 @@ fun HomeScreen(
     onFirstCatalogRendered: (() -> Unit)? = null,
     onJoinWatchingNow: ((com.nuvio.app.features.social.WatchingNowItem) -> Unit)? = null,
     onSeeAllFriendsActivity: (() -> Unit)? = null,
+    outgoingJoinRequest: com.nuvio.app.features.social.OutgoingJoinRequestState =
+        com.nuvio.app.features.social.OutgoingJoinRequestState.Idle,
+    onCancelJoinRequest: () -> Unit = {},
 ) {
     LaunchedEffect(Unit) {
         withContext(Dispatchers.Default) {
@@ -974,6 +977,8 @@ fun HomeScreen(
                         watchPartyEnabled = socialUiState.capabilities.watchPartyEnabled && onJoinWatchingNow != null,
                         onStartParty = { item -> onJoinWatchingNow?.invoke(item) },
                         onSeeAllActivity = onSeeAllFriendsActivity,
+                        outgoingRequest = outgoingJoinRequest,
+                        onCancelJoinRequest = onCancelJoinRequest,
                     ) { type, id, title ->
                         onPosterClick?.invoke(MetaPreview(id = id, type = type, name = title, poster = null))
                     }
@@ -1113,6 +1118,8 @@ fun HomeScreen(
                         watchPartyEnabled = socialUiState.capabilities.watchPartyEnabled && onJoinWatchingNow != null,
                         onStartParty = { item -> onJoinWatchingNow?.invoke(item) },
                         onSeeAllActivity = onSeeAllFriendsActivity,
+                        outgoingRequest = outgoingJoinRequest,
+                        onCancelJoinRequest = onCancelJoinRequest,
                     ) { type, id, title ->
                         onPosterClick?.invoke(MetaPreview(id = id, type = type, name = title, poster = null))
                     }

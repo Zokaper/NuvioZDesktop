@@ -158,6 +158,7 @@ fun WatchPartyLobbyScreen(
     val state by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
     val syncState by WatchPartySync.state.collectAsStateWithLifecycle()
     val socialState by SocialRepository.uiState.collectAsStateWithLifecycle()
+    val joinHandoff by PartyJoinHandoff.current.collectAsStateWithLifecycle()
     val addonsState by AddonRepository.uiState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
@@ -230,6 +231,7 @@ fun WatchPartyLobbyScreen(
                         onBack = onBack,
                         errorMessage = state.errorMessage,
                         isWorking = state.isWorking,
+                        handoff = joinHandoff,
                     )
                     return@BoxWithConstraints
                 }
@@ -324,6 +326,7 @@ fun WatchPartyLobbyScreen(
                                 verticalArrangement = Arrangement.spacedBy(16.dp),
                             ) {
                                 PartyLobbyHeader(requestDeparture)
+                                joinHandoff?.takeIf { it.partyId == party.id }?.let { PartyJoinHero(it) }
                                 state.errorMessage?.let { message ->
                                     PartyNotice(message, MaterialTheme.colorScheme.error)
                                 }
@@ -379,6 +382,7 @@ fun WatchPartyLobbyScreen(
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                 ) {
                     item { PartyLobbyHeader(requestDeparture) }
+                    joinHandoff?.takeIf { it.partyId == party.id }?.let { info -> item { PartyJoinHero(info) } }
 
                     state.errorMessage?.let { message ->
                         item { PartyNotice(message, MaterialTheme.colorScheme.error) }
@@ -491,13 +495,19 @@ private fun PartyLobbyHeader(onBack: () -> Unit) {
 
 /** Before there is a party to lay out - the same in either pane arrangement. */
 @Composable
-private fun PartyLobbyOpening(onBack: () -> Unit, errorMessage: String?, isWorking: Boolean) {
+private fun PartyLobbyOpening(
+    onBack: () -> Unit,
+    errorMessage: String?,
+    isWorking: Boolean,
+    handoff: PartyJoinHandoffInfo? = null,
+) {
     Column(
         Modifier.fillMaxSize().widthIn(max = 640.dp)
             .padding(start = 40.dp, end = 40.dp, top = 20.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         PartyLobbyHeader(onBack)
+        handoff?.let { PartyJoinHero(it) }
         errorMessage?.let { PartyNotice(it, MaterialTheme.colorScheme.error) }
         PartyPanel {
             if (isWorking) {
@@ -1420,6 +1430,39 @@ private fun PartyNotice(message: String, accent: Color) {
             style = MaterialTheme.typography.bodySmall,
             color = accent,
         )
+    }
+}
+
+/**
+ * "Joining Seraph", with the title's art, at the top of the lobby an accepted join request opened.
+ *
+ * An accepted guest used to arrive in a lobby that then started playback by itself, with nothing
+ * saying whose party it was. This names the person and the title for the whole of the hand-off; the
+ * loading screen the lobby launches carries the same sentence.
+ */
+@Composable
+private fun PartyJoinHero(info: PartyJoinHandoffInfo) {
+    PartyPanel {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            if (!info.artwork.isNullOrBlank()) {
+                NuvioAsyncImage(
+                    model = info.artwork,
+                    contentDescription = null,
+                    modifier = Modifier.width(96.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)),
+                    contentScale = ContentScale.Crop,
+                )
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Joining ${info.hostName}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    info.title,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
 

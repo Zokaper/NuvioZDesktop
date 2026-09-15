@@ -62,6 +62,14 @@ suspend fun shutdownSocialLayer() {
         }
     }
 
+    // An outgoing join request is settled while the party identity still exists: its cancel goes out
+    // as this profile, and an accepted-race answer departs the party it produced. Awaited, so the
+    // departure is not racing `setActiveProfile(null)` below.
+    OutgoingJoinRequestStore.onIdentityBoundary(
+        SocialRepository.uiState.value.activeProfileId,
+        serverCleanup = true,
+    )
+
     // Forget the profile. Clears `PartySourceRealizer`, drops the sync authority, resets the
     // party UI state - and calls `leave()` itself if the step above somehow left a party held.
     WatchPartyRepository.setActiveProfile(null)

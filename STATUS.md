@@ -2,6 +2,46 @@
 
 Last updated: 2026-09-15
 
+## Social + Watch Together UX pass — Stage 4: outgoing join request store, boundaries, dock (2026-09-15)
+
+⚠ **Compiled, tested and rendered - not hardware-verified.** Needs the two-client run in the plan's §10
+("Ask to join end to end" and "Identity boundaries while a request is pending").
+
+`OutgoingJoinRequestStore` (new, process-scoped) replaces `joinApprovalWatch` + `awaitJoinApproval`
+(deleted). It serializes events into Stage 1's `reduceOutgoingJoinRequest` and executes the effects.
+`liveToken` moves at every boundary *before* the boundary is queued, and every async result is checked
+against it when produced and again when reduced, so nothing that races a boundary can navigate.
+
+| piece | where |
+| --- | --- |
+| Send | Home and Social Join / Ask to join → `store.ask(item)` → `joinWatchingNow`; `AwaitApproval` now carries `request_id` + `expires_at` |
+| Delivery | `social:<me>` invalidation with `reason = join_request` → immediate status read; 3s poll floor; `social_join_request_status` / `social_cancel_join_request` via `SocialRepository` |
+| Outcomes | Declined / Expired / TargetStopped (settled online Watching Now only) / Superseded / Failed |
+| Accept | browsing: 3s countdown → `lobbyRequests` → shell installs the party and navigates; in own player (`BindSocialPresenceEffect` → `setInOwnPlayer`): waits for Join / Not now; Not now departs |
+| Hand-off | `PartyJoinHandoff`: lobby hero "Joining Seraph" (opening state and both lobby layouts), loading screen "Joining Seraph's party", cleared at first frame |
+| Dock | `WatchTogetherDock` above `PlaybackLoadingHost`, bottom-right, 340dp; 44dp avatar + ring bubble under 720dp, expands on hover; hidden over Stream/Player routes (the player mirror is Stage 6-7) |
+
+**Identity boundaries.** `SocialRepository.activate` awaits `onIdentityBoundary(previous)` first, before
+presence clear and `closeRealtime()`; `shutdownSocialLayer` awaits it before
+`WatchPartyRepository.setActiveProfile(null)`; the Watch Party capability going false triggers it;
+`LocalAccountDataCleaner.wipe` calls `onAccountWipe()`. The cancel goes out **as the previous profile**
+(`cancelJoinRequestAs`, deliberately not through `socialCall`), bounded to 5s; `already_accepted` departs
+via `WatchPartyRepository.departMembershipAs(profile, party)`.
+
+**Sign-out ordering, checked:** `AuthRepository.signOut` revokes the official session, then wipes, then
+the profile goes null. Nothing invalidates the Z token on that path, so the boundary cancel can still
+authenticate while that token is unexpired; if it cannot, the request expires server-side within two
+minutes. Abandoned request ids are persisted per profile (`SocialStorage.*AbandonedJoinRequests`, all three
+platforms) and `reconcileAbandoned` runs after `restore()` on activation: accepted → leave that party,
+pending → cancel, older than 10 minutes → forget.
+
+Deviation: the wipe path attempts the server cancel best-effort rather than local-only - it costs nothing
+when the network is gone, and it is the only chance to cancel on sign-out.
+
+Gate: `compileTestKotlinDesktop` BUILD SUCCESSFUL; social + watchparty + presence + party-room
+`desktopTest` BUILD SUCCESSFUL (319); `SocialRenderHarness` (dock states at 1280 and 420) green; pure
+suites all eight groups green. ⚠ iOS `SocialStorage` / `socialUtcOffsetMs` actuals not compiled here.
+
 ## Social + Watch Together UX pass — Stage 2 deployed, Stage 3: Recently Watched + Watching Now UI (2026-09-15)
 
 ⚠ **Rendered, not hardware-verified.** Branch `claude/social-wt-ux-pass`; plan and ledger in workspace-root

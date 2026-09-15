@@ -615,6 +615,28 @@ object WatchPartyRepository {
         Unit
     }
 
+    /**
+     * Leave [partyId] **as [profileId]**, without touching the held party state.
+     *
+     * For an accepted join request abandoned at an identity boundary: by the time the departure runs
+     * the repository may already hold the next profile, so neither the active profile nor the held
+     * party is the right thing to consult. Never used for the party this client holds.
+     */
+    suspend fun departMembershipAs(profileId: String, partyId: String): Result<Unit> = runCatching {
+        check(_uiState.value.party?.id != partyId || _uiState.value.activeProfileId != profileId) {
+            "Refusing to depart the held party as a stray"
+        }
+        log.i { "depart abandoned membership party=${partyId.shortId()} profile=${profileId.shortId()}" }
+        withTimeout(WatchPartyChannelCloseTimeoutMs) {
+            ZSupabaseProvider.client.postgrest.rpc("party_depart_v2", buildJsonObject {
+                put("p_party_id", partyId); put("p_profile_id", profileId)
+                put("p_mode", "leave_transfer")
+                put("p_contract_version", PartySourceContractVersion)
+            })
+        }
+        Unit
+    }
+
     suspend fun end(): Result<Unit> = depart(PartyDepartureMode.END_PARTY)
 
     suspend fun leave(): Result<Unit> = depart(PartyDepartureMode.LEAVE_AND_TRANSFER)

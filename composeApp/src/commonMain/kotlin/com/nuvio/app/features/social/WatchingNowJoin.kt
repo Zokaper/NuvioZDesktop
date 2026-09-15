@@ -1,12 +1,9 @@
 package com.nuvio.app.features.social
 
 import co.touchlab.kermit.Logger
-import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.features.watchparty.WatchPartyRepository
 import com.nuvio.app.features.watchparty.WatchPartyState
 import com.nuvio.app.features.watchparty.WatchPartyStatus
-import com.nuvio.app.features.watchparty.currentEpochMs
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 
 /**
@@ -41,8 +38,11 @@ sealed interface WatchingNowJoinStep {
     /** The server made this member part of a party: open its lobby, which starts playback. */
     data class OpenParty(val party: WatchPartyState) : WatchingNowJoinStep
 
-    /** A request is waiting on the host. Watch for this member being added. */
-    data object AwaitApproval : WatchingNowJoinStep
+    /**
+     * A request is waiting on the host. [requestId] and [expiresAtMs] are what the outgoing request
+     * store follows; either can be missing from an older backend.
+     */
+    data class AwaitApproval(val requestId: String?, val expiresAtMs: Long?) : WatchingNowJoinStep
 
     /** Nothing more will happen; say why. */
     data class Notice(val message: String) : WatchingNowJoinStep
@@ -84,7 +84,10 @@ fun decideWatchingNowJoin(
                 WatchingNowJoinStep.Notice("You're already in a Watch Together party. Leave it to join this one.")
             else -> WatchingNowJoinStep.ReleaseStrayMembership(party)
         }
-        "approval_required" -> WatchingNowJoinStep.AwaitApproval
+        "approval_required" -> WatchingNowJoinStep.AwaitApproval(
+            requestId = action.requestId,
+            expiresAtMs = action.expiresAt?.let(::parseSocialTimestampMs),
+        )
         "disabled" -> WatchingNowJoinStep.Notice("This playback is not open to joining")
         "stale" -> WatchingNowJoinStep.Notice("This playback is no longer available")
         "full" -> WatchingNowJoinStep.Notice("This party is full")
@@ -184,45 +187,6 @@ fun decideJoinApprovalPoll(
     val active = probe.getOrNull()?.takeIf { it.status != WatchPartyStatus.ended }
     if (active != null) return JoinApprovalPoll.Joined(active)
     return if (elapsedMs >= timeoutMs) JoinApprovalPoll.GaveUp else JoinApprovalPoll.Continue
-}
-
-/**
- * The guest's wait for a join request to be accepted.
- *
- * Nothing on the backend tells a requester it was let in (see the file header), so the guest asks
- * `party_get_active` - scoped to its own profile - until it is a member, the request has expired, or
- * it has ended up in a party some other way. Run on the caller's scope, so [onJoined] navigates on
- * the thread that owns navigation.
- */
-suspend fun awaitJoinApproval(onJoined: (WatchPartyState) -> Unit) {
-    val startedAt = currentEpochMs()
-    while (true) {
-        delay(WatchingNowApprovalPollMs)
-        val held = WatchPartyRepository.uiState.value.party?.takeIf { it.status != WatchPartyStatus.ended }
-        when (
-            val poll = decideJoinApprovalPoll(
-                elapsedMs = currentEpochMs() - startedAt,
-                heldLivePartyId = held?.id,
-                probe = WatchPartyRepository.fetchActive(),
-            )
-        ) {
-            JoinApprovalPoll.Continue -> Unit
-            is JoinApprovalPoll.Joined -> {
-                joinLog.i { "join request accepted party=${poll.party.id.take(8)}" }
-                onJoined(poll.party)
-                return
-            }
-            JoinApprovalPoll.Superseded -> {
-                joinLog.i { "join request wait superseded by party=${held?.id?.take(8)}" }
-                return
-            }
-            JoinApprovalPoll.GaveUp -> {
-                joinLog.i { "join request not accepted within ${WatchingNowApprovalWatchMs}ms" }
-                NuvioToastController.show("Your join request wasn't accepted")
-                return
-            }
-        }
-    }
 }
 
 private val joinLog = Logger.withTag("SocialJoin")

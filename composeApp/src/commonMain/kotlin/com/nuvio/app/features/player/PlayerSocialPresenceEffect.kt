@@ -1,5 +1,6 @@
 package com.nuvio.app.features.player
 
+import com.nuvio.app.features.social.OutgoingJoinRequestStore
 import co.touchlab.kermit.Logger
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -129,7 +130,11 @@ internal fun PlayerScreenRuntime.BindSocialPresenceEffect() {
         }
     }
     DisposableEffect(deviceId) {
+        // An accepted join request waits for an explicit Join / Not now while the viewer is in their
+        // own player, instead of counting down and pulling them out of the film.
+        OutgoingJoinRequestStore.setInOwnPlayer(true)
         onDispose {
+            OutgoingJoinRequestStore.setInOwnPlayer(false)
             WatchPartySessionCoordinator.unregisterPlayback(attachmentId)
             // ⚠ **Not `scope.launch` here.** `runtime.scope` is a `rememberCoroutineScope()`, so
             // the departure that runs this dispose is the same departure that cancels it - the

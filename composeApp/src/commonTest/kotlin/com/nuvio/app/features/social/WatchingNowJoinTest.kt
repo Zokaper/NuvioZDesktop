@@ -70,8 +70,11 @@ class WatchingNowJoinTest {
 
     @Test fun askingToJoinWaitsForTheHostInsteadOfStoppingAtAToast() {
         assertEquals(
-            WatchingNowJoinStep.AwaitApproval,
-            decideWatchingNowJoin(Result.success(SocialActionResult("approval_required", requestId = "r1")), "host"),
+            WatchingNowJoinStep.AwaitApproval(requestId = "r1", expiresAtMs = 1_789_459_320_000L),
+            decideWatchingNowJoin(
+                Result.success(SocialActionResult("approval_required", requestId = "r1", expiresAt = "2026-09-15T08:02:00+00:00")),
+                "host",
+            ),
         )
     }
 

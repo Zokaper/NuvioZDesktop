@@ -1,5 +1,12 @@
 package com.nuvio.app
 
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.BoxWithConstraints
+import com.nuvio.app.features.watchparty.PartyJoinHandoffInfo
+import com.nuvio.app.features.watchparty.PartyJoinHandoff
+import com.nuvio.app.features.social.WatchTogetherDock
+import com.nuvio.app.features.social.OutgoingJoinRequestStore
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.ExperimentalSharedTransitionApi
@@ -204,7 +211,6 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import com.nuvio.app.features.player.PlayerExitDiagnostics
 import com.nuvio.app.features.player.dispatchNavigationBack
 import com.nuvio.app.features.social.WatchingNowJoinStep
-import com.nuvio.app.features.social.awaitJoinApproval
 import com.nuvio.app.features.social.joinWatchingNow
 import com.nuvio.app.features.watchparty.WatchPartyStatus
 
@@ -282,9 +288,6 @@ internal fun MainAppContent(
         var registeredPartyLobbySystemBack by remember {
             mutableStateOf<Pair<AppRoute, () -> Unit>?>(null)
         }
-        // A guest's wait for a Watching Now join request to be accepted. One at a time: asking again
-        // replaces the previous wait rather than stacking two lobbies behind one answer.
-        var joinApprovalWatch by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
         val liquidGlassNativeTabBarEnabled by remember {
             ThemeSettingsRepository.liquidGlassNativeTabBarEnabled
         }.collectAsStateWithLifecycle()
@@ -684,10 +687,35 @@ internal fun MainAppContent(
         ?.takeIf { socialEnabled }
     LaunchedEffect(ownsAppRuntime, activeSocialProfileId) {
         if (!ownsAppRuntime) return@LaunchedEffect
+        OutgoingJoinRequestStore.start()
         SocialRepository.activate(activeSocialProfileId)
         WatchPartyRepository.setActiveProfile(activeSocialProfileId)
         if (activeSocialProfileId != null) {
             WatchPartySessionCoordinator.restore()
+            // A request this device abandoned at a boundary may have been accepted after it; settle
+            // those before the viewer is left in a party they walked away from.
+            OutgoingJoinRequestStore.reconcileAbandoned(activeSocialProfileId)
+        }
+    }
+
+    // The outgoing request store decides *when* a lobby opens; navigation is the shell's. Every hand-off
+    // is re-checked against the store's current identity, so an answer that raced a boundary never
+    // navigates.
+    LaunchedEffect(ownsAppRuntime) {
+        if (!ownsAppRuntime) return@LaunchedEffect
+        OutgoingJoinRequestStore.lobbyRequests.collect { request ->
+            if (!OutgoingJoinRequestStore.isCurrent(request.binding)) return@collect
+            PartyJoinHandoff.begin(
+                PartyJoinHandoffInfo(
+                    partyId = request.party.id,
+                    hostName = request.target.displayName,
+                    title = request.content.title,
+                    artwork = request.content.background ?: request.content.poster,
+                ),
+            )
+            WatchPartySessionCoordinator.installAuthorizedParty(request.party)
+            navController.navigate(WatchPartyLobbyRoute(partyId = request.party.id))
+            OutgoingJoinRequestStore.lobbyOpened(request.binding)
         }
     }
 
@@ -1561,45 +1589,10 @@ internal fun MainAppContent(
                                         }
                                     }
                                 },
-                                onStartPartyOnContent = { watching ->
-                                    coroutineScope.launch {
-                                        // Every outcome says something - see `WatchingNowJoin.kt`. The
-                                        // failure branch used to be absent, which made a refused join
-                                        // indistinguishable from a button that does nothing.
-                                        // `joinWatchingNow` only ever opens the target's own party
-                                        // and ignores a second press while one is in flight.
-                                        val step = joinWatchingNow(
-                                            item = watching,
-                                            heldLivePartyId = {
-                                                WatchPartyRepository.uiState.value.party
-                                                    ?.takeIf { it.status != WatchPartyStatus.ended }
-                                                    ?.id
-                                            },
-                                        ) ?: return@launch
-                                        when (step) {
-                                            is WatchingNowJoinStep.OpenParty -> {
-                                                joinApprovalWatch?.cancel()
-                                                WatchPartySessionCoordinator.installAuthorizedParty(step.party)
-                                                navController.navigate(WatchPartyLobbyRoute(partyId = step.party.id))
-                                            }
-                                            WatchingNowJoinStep.AwaitApproval -> {
-                                                NuvioToastController.show("Join request sent")
-                                                joinApprovalWatch?.cancel()
-                                                joinApprovalWatch = coroutineScope.launch {
-                                                    awaitJoinApproval(
-                                                        onJoined = { party ->
-                                                            WatchPartySessionCoordinator.installAuthorizedParty(party)
-                                                            navController.navigate(WatchPartyLobbyRoute(partyId = party.id))
-                                                        },
-                                                    )
-                                                }
-                                            }
-                                            is WatchingNowJoinStep.Notice -> NuvioToastController.show(step.message)
-                                            // Resolved inside `joinWatchingNow`; never escapes it.
-                                            is WatchingNowJoinStep.ReleaseStrayMembership -> Unit
-                                        }
-                                    }
-                                },
+                                // The whole of a Join press now lives in `OutgoingJoinRequestStore`: the
+                                // send, the wait, cancel, the outcome and the lobby hand-off. It owns the
+                                // request's lifetime, so a tab change or a player no longer loses it.
+                                onStartPartyOnContent = { watching -> OutgoingJoinRequestStore.ask(watching) },
                                 onSocialNotificationAction = ::handleSocialNotificationAction,
                                 onOpenSocialTab = if (socialEnabled) {
                                     { activateTab(AppScreenTab.Social) }
@@ -2413,6 +2406,19 @@ internal fun MainAppContent(
             // Below the toast host on purpose: a toast over this surface is legitimate and is
             // sometimes the only thing that can report a background failure.
             PlaybackLoadingHost(modifier = Modifier.zIndex(18f))
+
+            // Between the loading surface and the toasts. Hidden over the player, which Compose cannot
+            // draw across on desktop; the player mirrors the request in its own controls instead.
+            if (currentRoute !is PlayerRoute && currentRoute !is StreamRoute) {
+                val outgoingJoin by OutgoingJoinRequestStore.state.collectAsStateWithLifecycle()
+                BoxWithConstraints(Modifier.fillMaxSize().zIndex(19f), contentAlignment = Alignment.BottomEnd) {
+                    WatchTogetherDock(
+                        state = outgoingJoin,
+                        windowWidth = maxWidth,
+                        modifier = Modifier.padding(end = 20.dp, bottom = 24.dp),
+                    )
+                }
+            }
 
             NuvioToastHost(
                 modifier = Modifier

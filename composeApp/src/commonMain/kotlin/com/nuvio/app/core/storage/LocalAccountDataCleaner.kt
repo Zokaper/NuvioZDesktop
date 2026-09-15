@@ -1,5 +1,6 @@
 package com.nuvio.app.core.storage
 
+import com.nuvio.app.features.social.OutgoingJoinRequestStore
 import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.core.sync.SyncManager
 import com.nuvio.app.core.sync.ProfileSettingsSync
@@ -69,6 +70,8 @@ internal object LocalAccountDataCleaner {
         ContinueWatchingPreferencesRepository.clearLocalState()
         EpisodeReleaseNotificationsRepository.clearLocalState()
         SocialFeaturePreferencesRepository.clearLocalState()
+        // Local clear now; the server cancel is best effort, since the session may already be gone.
+        OutgoingJoinRequestStore.onAccountWipe()
         CollectionMobileSettingsRepository.clearLocalState()
         CollectionRepository.clearLocalState()
         ThemeSettingsRepository.clearLocalState()

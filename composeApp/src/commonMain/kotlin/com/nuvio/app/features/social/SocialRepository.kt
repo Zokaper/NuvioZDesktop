@@ -30,6 +30,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 import com.nuvio.app.features.watchparty.PartySourceContractVersion
@@ -75,6 +77,11 @@ object SocialRepository {
         val previousProfileId = activeProfileId
         activeProfileId = profileId
         scope.launch {
+            // ⚠ **First, before anything the request depends on is torn down.** An outgoing join
+            // request belongs to the previous profile: its cancel has to go out as that profile,
+            // over the token and channel that are still that profile's, and no answer to it may
+            // reach the next one. See `OutgoingJoinRequestStore.onIdentityBoundary`.
+            OutgoingJoinRequestStore.onIdentityBoundary(previousProfileId, serverCleanup = true)
             if (previousProfileId != null) {
                 publishedPresenceDeviceIds.toList().forEach { deviceId ->
                     runCatching {
@@ -239,6 +246,27 @@ object SocialRepository {
         }).decodeAs<SocialActionResult>().also { refresh(false) }
     }
 
+    /** The requester's own view of a join request. Scoped server-side to the caller. */
+    suspend fun joinRequestStatus(requestId: String): Result<JoinRequestStatusResult> = socialCall {
+        ZSupabaseProvider.client.postgrest.rpc("social_join_request_status", buildJsonObject {
+            put("p_profile_id", requireActiveProfile()); put("p_request_id", requestId)
+        }).decodeAs<JoinRequestStatusResult>()
+    }
+
+    /**
+     * Cancel a join request **as [profileId]**, which may no longer be the active profile.
+     *
+     * Deliberately not through [socialCall]: at an identity boundary the active profile has already
+     * moved on, and re-exchanging a session for it would authenticate the cancel as the wrong person.
+     * This goes out on whatever token the client holds at that instant - the previous profile's, when
+     * it is called first thing in [activate] - the same way the presence clear below it does.
+     */
+    suspend fun cancelJoinRequestAs(profileId: String, requestId: String): Result<JoinCancelResult> = runCatching {
+        ZSupabaseProvider.client.postgrest.rpc("social_cancel_join_request", buildJsonObject {
+            put("p_profile_id", profileId); put("p_request_id", requestId)
+        }).decodeAs<JoinCancelResult>()
+    }
+
     suspend fun notificationAction(id:String,action:SocialNotificationAction): Result<SocialActionResult> = socialCall {
         ZSupabaseProvider.client.postgrest.rpc("social_notification_action",buildJsonObject {
             put("p_profile_id",requireActiveProfile());put("p_notification_id",id);put("p_action",action.name.lowercase())
@@ -327,7 +355,14 @@ object SocialRepository {
         runCatching {
             ZSupabaseProvider.client.realtime.setAuth()
             val channel = ZSupabaseProvider.client.channel("social:$profileId") { isPrivate = true }
-            realtimeCollector = channel.broadcastFlow<JsonObject>("invalidate").onEach { refresh(false) }.launchIn(scope)
+            realtimeCollector = channel.broadcastFlow<JsonObject>("invalidate").onEach { payload ->
+                // A join request changed on either side: the requester reads its status now rather
+                // than on the next poll.
+                if (payload["reason"]?.jsonPrimitive?.contentOrNull == "join_request") {
+                    OutgoingJoinRequestStore.onJoinRequestInvalidated()
+                }
+                refresh(false)
+            }.launchIn(scope)
             realtimeChannel = channel
             // A topic the server refuses is retried in the background and never reports itself
             // subscribed, so an unbounded wait here is not a wait - it is a coroutine parked for the
@@ -392,7 +427,24 @@ object SocialRepository {
 data class SocialActionResult(
     val outcome:String,
     @SerialName("request_id") val requestId:String?=null,
+    @SerialName("expires_at") val expiresAt:String?=null,
     val party:WatchPartyState?=null,
+)
+
+@Serializable
+data class JoinRequestStatusResult(
+    val status: String,
+    @SerialName("expires_at") val expiresAt: String? = null,
+    @SerialName("party_id") val partyId: String? = null,
+    val party: WatchPartyState? = null,
+)
+
+@Serializable
+data class JoinCancelResult(
+    val outcome: String,
+    val status: String? = null,
+    @SerialName("party_id") val partyId: String? = null,
+    val party: WatchPartyState? = null,
 )
 
 @Serializable
