@@ -255,6 +255,40 @@ class OutgoingJoinRequestTest {
         val late = reduceOutgoingJoinRequest(cleared, OutgoingJoinEvent.SendAnswered(a1, JoinSendAnswer.OpenParty(party()), 9, false))
         assertEquals(OutgoingJoinRequestState.Idle, late.state)
         assertTrue(!late.navigates())
+        // Dropped from the state, never from the server: the membership it made is released as its owner.
+        assertEquals(
+            listOf(OutgoingJoinEffect.ReleaseOrphanedSend("profileA", JoinSendAnswer.OpenParty(party()))),
+            late.effects,
+        )
+    }
+
+    @Test fun cancellingWhileSendingMarksTheSendAbandonedSoItsAnswerIsUndone() {
+        val sending = reduceOutgoingJoinRequest(OutgoingJoinRequestState.Idle, OutgoingJoinEvent.Send(a1, target, content)).state
+        val cancelled = reduceOutgoingJoinRequest(sending, OutgoingJoinEvent.CancelPressed(a1))
+        assertEquals(OutgoingJoinRequestState.Idle, cancelled.state)
+        assertTrue(OutgoingJoinEffect.AbandonSend(a1) in cancelled.effects)
+        // An Ask that lands after the cancel is a live request on the server, cancelled as its owner.
+        val late = reduceOutgoingJoinRequest(
+            cancelled.state,
+            OutgoingJoinEvent.SendAnswered(a1, JoinSendAnswer.ApprovalRequired("req9", 99L), 9, false),
+        )
+        assertEquals(OutgoingJoinRequestState.Idle, late.state)
+        assertEquals(
+            listOf(OutgoingJoinEffect.ReleaseOrphanedSend("profileA", JoinSendAnswer.ApprovalRequired("req9", 99L))),
+            late.effects,
+        )
+    }
+
+    @Test fun aReplacedSendsAnswerIsReleasedAndNeverAppliedToTheNewRequest() {
+        val a2 = JoinRequestBinding("profileA", 2)
+        val replaced = reduce(
+            OutgoingJoinRequestState.Idle,
+            OutgoingJoinEvent.Send(a1, target, content),
+            OutgoingJoinEvent.Send(a2, target.copy(profileId = "debug", sessionId = "s2"), content),
+        )
+        val late = reduceOutgoingJoinRequest(replaced.state, OutgoingJoinEvent.SendAnswered(a1, JoinSendAnswer.OpenParty(party()), 9, false))
+        assertEquals(a2, assertIs<OutgoingJoinRequestState.Sending>(late.state).binding)
+        assertTrue(late.effects.single() is OutgoingJoinEffect.ReleaseOrphanedSend)
     }
 
     @Test fun aWipeWithNoNetworkClearsLocallyOnly() {

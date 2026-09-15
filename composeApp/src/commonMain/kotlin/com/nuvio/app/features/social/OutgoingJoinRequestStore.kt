@@ -1,5 +1,7 @@
 package com.nuvio.app.features.social
 
+import kotlinx.atomicfu.locks.SynchronizedObject
+import kotlinx.atomicfu.locks.synchronized
 import co.touchlab.kermit.Logger
 import com.nuvio.app.features.watchparty.WatchPartyRepository
 import com.nuvio.app.features.watchparty.WatchPartySessionCoordinator
@@ -78,6 +80,11 @@ object OutgoingJoinRequestStore {
     @Volatile private var lastReadAtMs: Long? = null
     private var statusJob: Job? = null
     private var sendJob: Job? = null
+
+    /** Tokens of sends cancelled while on the wire; their answers are released, not applied. */
+    private val abandonedSendTokens = mutableSetOf<Long>()
+    private val sendLock = SynchronizedObject()
+    private val playerCountLock = SynchronizedObject()
 
     /** The item a request was started from, for "Ask again" / "Try again". */
     @Volatile private var lastItem: WatchingNowItem? = null
@@ -163,11 +170,23 @@ object OutgoingJoinRequestStore {
     fun notNow() = currentBinding()?.let { enqueue(OutgoingJoinEvent.NotNowPressed(it)) }
     fun dismiss() = currentBinding()?.let { enqueue(OutgoingJoinEvent.Dismissed(it)) }
 
-    /** The viewer entered or left their own player; an accepted request then waits for a choice. */
+    private var ownPlayerCount = 0
+
+    /**
+     * The viewer entered or left their own player; an accepted request then waits for a choice.
+     *
+     * Counted, not a flag: a player replacing another composes its enter before the old one's dispose
+     * runs, and a flag then read "not in a player" for the whole of the new film - the exact case an
+     * accepted request must not count down and pull the viewer out of.
+     */
     fun setInOwnPlayer(value: Boolean) {
-        if (inOwnPlayer == value) return
-        inOwnPlayer = value
-        currentBinding()?.let { enqueue(OutgoingJoinEvent.PlayerPresenceChanged(it, value)) }
+        val next = synchronized(playerCountLock) {
+            ownPlayerCount = (ownPlayerCount + if (value) 1 else -1).coerceAtLeast(0)
+            ownPlayerCount > 0
+        }
+        if (inOwnPlayer == next) return
+        inOwnPlayer = next
+        currentBinding()?.let { enqueue(OutgoingJoinEvent.PlayerPresenceChanged(it, next)) }
     }
 
     fun isCurrent(binding: JoinRequestBinding): Boolean =
@@ -195,7 +214,8 @@ object OutgoingJoinRequestStore {
     suspend fun onIdentityBoundary(previousProfileId: String?, serverCleanup: Boolean) {
         liveToken += 1
         statusJob?.cancel()
-        sendJob?.cancel()
+        // Not the send: cancelling the coroutine does not cancel the request the server is already
+        // acting on. It finishes, sees the moved token and releases its own answer as its owner.
         start()
         val done = CompletableDeferred<Unit>()
         events.send(Envelope(OutgoingJoinEvent.IdentityBoundary(previousProfileId, serverCleanup), done))
@@ -211,7 +231,6 @@ object OutgoingJoinRequestStore {
         val owner = (_state.value as? OutgoingJoinRequestState.Bound)?.binding?.ownerProfileId
         liveToken += 1
         statusJob?.cancel()
-        sendJob?.cancel()
         start()
         events.trySend(Envelope(OutgoingJoinEvent.IdentityBoundary(owner, serverCleanup = true)))
     }
@@ -235,14 +254,16 @@ object OutgoingJoinRequestStore {
                 remaining += entry
                 return@forEach
             }
-            when (status.status) {
+            // A cleanup that fails keeps its entry: this list is the only record the request exists.
+            val settled = when (status.status) {
                 "accepted" -> status.party?.takeIf { it.status != WatchPartyStatus.ended }?.let { party ->
                     log.i { "reconcile: leaving party=${party.id.take(8)} from abandoned request=${entry.requestId.take(8)}" }
                     departAs(profileId, party.id)
-                }
-                "pending" -> SocialRepository.cancelJoinRequestAs(profileId, entry.requestId)
-                else -> Unit
+                } ?: true
+                "pending" -> SocialRepository.cancelJoinRequestAs(profileId, entry.requestId).isSuccess
+                else -> true
             }
+            if (!settled) remaining += entry
         }
         saveAbandoned(profileId, remaining)
     }
@@ -283,8 +304,14 @@ object OutgoingJoinRequestStore {
     private fun execute(effect: OutgoingJoinEffect): Job? = when (effect) {
         is OutgoingJoinEffect.SendJoin -> {
             val item = lastItem?.takeIf { it.sessionId == effect.target.sessionId && it.profile.profileId == effect.target.profileId }
-            sendJob?.cancel()
-            sendJob = scope.launch { send(effect.binding, item) }
+            // ⚠ **Not `cancel()`.** Cancelling the previous send does not stop the server acting on it,
+            // and it still held `joinInFlight`, so the new send's `tryLock` failed with "A join is
+            // already in progress". Waiting lets the old one land and release its own answer first.
+            val previous = sendJob
+            sendJob = scope.launch {
+                previous?.join()
+                send(effect.binding, item)
+            }
             null
         }
         is OutgoingJoinEffect.CancelOnServer -> scope.launch {
@@ -325,6 +352,11 @@ object OutgoingJoinRequestStore {
             log.i { "stale ${effect.event} ignored" }
             null
         }
+        is OutgoingJoinEffect.AbandonSend -> {
+            synchronized(sendLock) { abandonedSendTokens += effect.binding.token }
+            null
+        }
+        is OutgoingJoinEffect.ReleaseOrphanedSend -> scope.launch { releaseOrphanedSend(effect.ownerProfileId, effect.answer) }
     }
 
     private suspend fun send(binding: JoinRequestBinding, item: WatchingNowItem?) {
@@ -338,10 +370,8 @@ object OutgoingJoinRequestStore {
                 WatchPartyRepository.uiState.value.party?.takeIf { it.status != WatchPartyStatus.ended }?.id
             },
         )
-        if (binding.token != liveToken) {
-            log.i { "join answer arrived after a boundary - dropped" }
-            return
-        }
+        val orphaned = synchronized(sendLock) { abandonedSendTokens.remove(binding.token) } ||
+            binding.token != liveToken
         val event = when (step) {
             null -> OutgoingJoinEvent.SendFailed(binding, "A join is already in progress")
             is WatchingNowJoinStep.OpenParty ->
@@ -357,7 +387,45 @@ object OutgoingJoinRequestStore {
             // Resolved inside `joinWatchingNow`; never escapes it.
             is WatchingNowJoinStep.ReleaseStrayMembership -> OutgoingJoinEvent.SendFailed(binding, "Couldn't join. Try again.")
         }
-        enqueue(event)
+        if (orphaned) {
+            // Cancelled, replaced or past a boundary while on the wire. Released here, in this job, so
+            // a send queued behind it starts only once the server no longer holds this one.
+            log.i { "join answer arrived for an abandoned request - releasing it" }
+            (event as? OutgoingJoinEvent.SendAnswered)?.let { releaseOrphanedSend(binding.ownerProfileId, it.answer) }
+            return
+        }
+        // Answers are exempt from the stale-token drop: one that crosses a boundary between here and
+        // the reducer is still released there (`ReleaseOrphanedSend`).
+        events.trySend(Envelope(event))
+    }
+
+    private suspend fun releaseOrphanedSend(ownerProfileId: String, answer: JoinSendAnswer) {
+        when (answer) {
+            is JoinSendAnswer.ApprovalRequired -> {
+                val requestId = answer.requestId ?: return
+                val result = withTimeoutOrNull(OutgoingJoinBoundaryCleanupTimeoutMs) {
+                    SocialRepository.cancelJoinRequestAs(ownerProfileId, requestId)
+                }?.getOrNull()
+                when {
+                    result == null -> rememberAbandoned(ownerProfileId, requestId)
+                    result.outcome == "already_accepted" -> result.party?.let { departAs(ownerProfileId, it.id) }
+                }
+                log.i { "orphaned request=${requestId.take(8)} released outcome=${result?.outcome ?: "failed"}" }
+            }
+            is JoinSendAnswer.OpenParty -> {
+                val current = _state.value
+                // A request now in flight or opening may be for this very party; joining it again is
+                // idempotent, and the join path already releases a stray membership it does not want.
+                val stillWanted = current is OutgoingJoinRequestState.Sending ||
+                    (current as? OutgoingJoinRequestState.Joining)?.party?.id == answer.party.id ||
+                    (current as? OutgoingJoinRequestState.Accepted)?.party?.id == answer.party.id ||
+                    WatchPartyRepository.uiState.value.party?.id == answer.party.id
+                if (stillWanted) return
+                log.i { "orphaned direct join released party=${answer.party.id.take(8)}" }
+                departAs(ownerProfileId, answer.party.id)
+            }
+            is JoinSendAnswer.Notice -> Unit
+        }
     }
 
     private fun tick() {
@@ -393,13 +461,16 @@ object OutgoingJoinRequestStore {
     }
 
     /** Leave through the coordinator when it is the party held here, directly otherwise. */
-    private suspend fun departAs(profileId: String, partyId: String) {
+    /** True once the departure was accepted (or handed to the coordinator, which owns its retries). */
+    private suspend fun departAs(profileId: String, partyId: String): Boolean {
         val party = WatchPartyRepository.uiState.value
-        if (party.party?.id == partyId && party.activeProfileId == profileId) {
+        return if (party.party?.id == partyId && party.activeProfileId == profileId) {
             WatchPartySessionCoordinator.leave()
+            true
         } else {
             WatchPartyRepository.departMembershipAs(profileId, partyId)
                 .onFailure { log.w(it) { "could not leave party=${partyId.take(8)} as ${profileId.take(8)}" } }
+                .isSuccess
         }
     }
 

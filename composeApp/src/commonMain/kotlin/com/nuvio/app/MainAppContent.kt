@@ -689,6 +689,9 @@ internal fun MainAppContent(
         if (!ownsAppRuntime) return@LaunchedEffect
         OutgoingJoinRequestStore.start()
         SocialRepository.activate(activeSocialProfileId)
+        // The previous profile's join request is cancelled on its own session before the party
+        // layer can exchange one for the next profile.
+        SocialRepository.awaitIdentityBoundary()
         WatchPartyRepository.setActiveProfile(activeSocialProfileId)
         if (activeSocialProfileId != null) {
             WatchPartySessionCoordinator.restore()

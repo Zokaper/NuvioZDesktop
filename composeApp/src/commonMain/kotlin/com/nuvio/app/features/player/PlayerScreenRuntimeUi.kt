@@ -179,6 +179,8 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     LaunchedEffect(activeParty?.id) {
         if (activeParty != null) partyPromotion = PartyPromotionProgress.Idle
         partyEndConfirm = false
+        // "Invited" is about one party; a friend invited to the last one can be invited to this one.
+        partyInvitedProfileIds = emptySet()
     }
     LaunchedEffect(partySessionState.guestPostEndChoice) {
         if (partySessionState.guestPostEndChoice) {
@@ -1399,8 +1401,9 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
             joinPolicyPending = policy
             scope.launch {
                 SocialPresenceSession.setPolicy(policy)
-                    .onFailure { joinPolicyError = "Couldn't change who can join. Try again." }
-                joinPolicyPending = null
+                    .onFailure { if (joinPolicyPending == policy) joinPolicyError = "Couldn't change who can join. Try again." }
+                // Only this press's own pending value: a later press is still in flight.
+                if (joinPolicyPending == policy) joinPolicyPending = null
             }
         }
         "wtSetGuestControl" -> {

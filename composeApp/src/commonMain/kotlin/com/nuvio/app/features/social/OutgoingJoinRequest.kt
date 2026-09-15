@@ -261,6 +261,17 @@ sealed interface OutgoingJoinEffect {
     data class RememberAbandoned(val ownerProfileId: String, val requestId: String) : OutgoingJoinEffect
     data object CancelJobs : OutgoingJoinEffect
     data class LogStale(val event: String) : OutgoingJoinEffect
+
+    /** The send for [binding] was abandoned while still on the wire; its answer must be undone, not dropped. */
+    data class AbandonSend(val binding: JoinRequestBinding) : OutgoingJoinEffect
+
+    /**
+     * A send answered after the request it belonged to was cancelled, replaced or crossed a boundary.
+     *
+     * The server acted on it regardless - a direct join is a membership, an Ask is a live request the
+     * host can still accept - so it is released as its own owner rather than silently discarded.
+     */
+    data class ReleaseOrphanedSend(val ownerProfileId: String, val answer: JoinSendAnswer) : OutgoingJoinEffect
 }
 
 data class OutgoingJoinTransition(
@@ -273,6 +284,15 @@ fun reduceOutgoingJoinRequest(
     event: OutgoingJoinEvent,
 ): OutgoingJoinTransition {
     val same = OutgoingJoinTransition(state)
+    // A send answer for anything but the request now sending is an orphan with server-side effects.
+    if (event is OutgoingJoinEvent.SendAnswered &&
+        (state as? OutgoingJoinRequestState.Sending)?.binding != event.binding
+    ) {
+        return OutgoingJoinTransition(
+            state,
+            listOf(OutgoingJoinEffect.ReleaseOrphanedSend(event.binding.ownerProfileId, event.answer)),
+        )
+    }
     if (event is OutgoingJoinEvent.Bound) {
         val bound = state as? OutgoingJoinRequestState.Bound
         if (bound == null || bound.binding != event.binding) {
@@ -401,10 +421,12 @@ fun reduceOutgoingJoinRequest(
                     ),
                 ),
             )
-            // Nothing has reached the server that could be undone yet; the send's answer is now stale.
+            // ⚠ **The send is still on the wire, and the server will act on it.** Idle at once for the
+            // viewer, but the answer is marked abandoned so it is undone when it lands - a direct join
+            // left, an Ask cancelled - rather than dropped as stale and left for the host to accept.
             is OutgoingJoinRequestState.Sending -> OutgoingJoinTransition(
                 OutgoingJoinRequestState.Idle,
-                listOf(OutgoingJoinEffect.CancelJobs),
+                listOf(OutgoingJoinEffect.CancelJobs, OutgoingJoinEffect.AbandonSend(state.binding)),
             )
             is OutgoingJoinRequestState.Accepted -> notNow(state)
             else -> same

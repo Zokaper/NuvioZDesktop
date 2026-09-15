@@ -1,5 +1,6 @@
 package com.nuvio.app.features.social
 
+import kotlinx.coroutines.CompletableDeferred
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
 import com.nuvio.app.core.network.ZSessionBridge
@@ -72,16 +73,36 @@ object SocialRepository {
     private var activeProfileId: String? = null
     private val publishedPresenceDeviceIds = mutableSetOf<String>()
 
+    private var identityBoundary: Job? = null
+
+    /**
+     * Returns once the identity boundary [activate] started has finished its server cleanup (bounded).
+     *
+     * ⚠ **The shell must await this before the party layer moves.** `WatchPartyRepository.setActiveProfile`
+     * and `restore()` can call `ZSessionBridge.ensureSession(next)`, which swaps the one Z session to
+     * the next profile; a boundary cancel still on its way out then goes as the old `p_profile_id`
+     * on the new profile's token, is refused, and the old request stays open for the host to accept.
+     */
+    suspend fun awaitIdentityBoundary() {
+        identityBoundary?.join()
+    }
+
     fun activate(profileId: String?) {
         if (activeProfileId == profileId) return
         val previousProfileId = activeProfileId
         activeProfileId = profileId
+        val boundary = CompletableDeferred<Unit>()
+        identityBoundary = boundary
         scope.launch {
             // ⚠ **First, before anything the request depends on is torn down.** An outgoing join
             // request belongs to the previous profile: its cancel has to go out as that profile,
             // over the token and channel that are still that profile's, and no answer to it may
             // reach the next one. See `OutgoingJoinRequestStore.onIdentityBoundary`.
-            OutgoingJoinRequestStore.onIdentityBoundary(previousProfileId, serverCleanup = true)
+            try {
+                OutgoingJoinRequestStore.onIdentityBoundary(previousProfileId, serverCleanup = true)
+            } finally {
+                boundary.complete(Unit)
+            }
             if (previousProfileId != null) {
                 publishedPresenceDeviceIds.toList().forEach { deviceId ->
                     runCatching {

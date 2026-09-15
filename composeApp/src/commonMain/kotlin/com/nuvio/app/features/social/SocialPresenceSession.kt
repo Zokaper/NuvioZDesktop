@@ -1,5 +1,7 @@
 package com.nuvio.app.features.social
 
+import kotlinx.atomicfu.locks.SynchronizedObject
+import kotlinx.atomicfu.locks.synchronized
 import co.touchlab.kermit.Logger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -100,13 +102,32 @@ object SocialPresenceSession {
         val deviceId = current.deviceId ?: return Result.failure(IllegalStateException("No active presence"))
         val sessionId = current.sessionId ?: return Result.failure(IllegalStateException("No active presence"))
         if (current.effectivePolicy == policy) return Result.success(policy)
-        _state.value = current.copy(effectivePolicy = policy)
-        return SocialRepository.setPresenceJoinPolicy(deviceId, sessionId, policy).map { policy }.onFailure {
-            presenceSessionLog.w(it) { "join policy change to $policy refused - rolling back" }
-            val now = _state.value
-            if (now.deviceId == deviceId && now.sessionId == sessionId) {
-                _state.value = now.copy(effectivePolicy = current.effectivePolicy)
+        // Overlapping presses (Ask, then Off before Ask answers): only the latest write may roll back,
+        // and it rolls back to what the server last *confirmed*, not to what was shown when it began.
+        val write = synchronized(policyLock) {
+            if (policyConfirmedFor != sessionId) {
+                policyConfirmedFor = sessionId
+                confirmedPolicy = current.effectivePolicy
             }
+            ++policyWriteSeq
         }
+        _state.value = current.copy(effectivePolicy = policy)
+        return SocialRepository.setPresenceJoinPolicy(deviceId, sessionId, policy).map { policy }
+            .onSuccess {
+                synchronized(policyLock) { if (write == policyWriteSeq) confirmedPolicy = policy }
+            }
+            .onFailure {
+                presenceSessionLog.w(it) { "join policy change to $policy refused" }
+                val rollbackTo = synchronized(policyLock) { confirmedPolicy.takeIf { write == policyWriteSeq } }
+                val now = _state.value
+                if (rollbackTo != null && now.deviceId == deviceId && now.sessionId == sessionId) {
+                    _state.value = now.copy(effectivePolicy = rollbackTo)
+                }
+            }
     }
+
+    private val policyLock = SynchronizedObject()
+    private var policyWriteSeq = 0L
+    private var policyConfirmedFor: String? = null
+    private var confirmedPolicy: WatchJoinPolicy = WatchJoinPolicy.approval
 }
