@@ -1,5 +1,14 @@
 package com.nuvio.app.features.player
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import com.nuvio.app.features.watchparty.currentEpochMs
+import com.nuvio.app.features.watchparty.PartyClientPhase
+import com.nuvio.app.features.social.parseSocialTimestampMs
+import com.nuvio.app.features.social.OutgoingJoinRequestStore
+import com.nuvio.app.features.social.OutgoingJoinRequestState
 import com.nuvio.app.features.watchparty.partyPossessive
 import com.nuvio.app.features.watchparty.PartyJoinHandoff
 import androidx.compose.animation.AnimatedVisibility
@@ -163,14 +172,131 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             else -> WatchPartyStatus.paused
         },
     )
+    // ⚠ **The panel no longer closes when the party goes away.** It used to (`activeParty == null`
+    // reset `partyRoomOpen`), which is exactly why there was no "not in a party" state: the room could
+    // only exist around a party. Idle → Starting → Active now happens in place, and an ended party
+    // opens the panel onto its Ended state rather than a centred modal.
     LaunchedEffect(activeParty?.id) {
-        if (activeParty == null) partyRoomOpen = false
+        if (activeParty != null) partyPromotion = PartyPromotionProgress.Idle
+        partyEndConfirm = false
+    }
+    LaunchedEffect(partySessionState.guestPostEndChoice) {
+        if (partySessionState.guestPostEndChoice) {
+            partyRoomOpen = true
+            controlsVisible = true
+        }
+    }
+    // A promotion nothing answers is a failure, not a spinner forever.
+    LaunchedEffect(partyPromotion) {
+        if (partyPromotion is PartyPromotionProgress.Starting) {
+            kotlinx.coroutines.delay(PartyPromotionAnswerTimeoutMs)
+            if (partyPromotion is PartyPromotionProgress.Starting && activeParty == null) {
+                partyPromotion = PartyPromotionProgress.Failed(com.nuvio.app.features.watchparty.PartyPromotionFailure.Refused)
+            }
+        }
     }
     // The repository is already empty when the layer is off, but stating the gate here means a
     // stale emission during the teardown frame cannot flash a friend request over the player.
+    // A request to join *this* playback is the panel's row and the status pill's, not this card's.
     val activeSocialNotification = socialUiState.notifications.firstOrNull {
-        socialEnabled && it.readAt == null && it.availableActions.isNotEmpty()
+        socialEnabled && it.readAt == null && it.availableActions.isNotEmpty() &&
+            it.kind != SocialNotificationKind.WatchingNowJoinRequest
     }
+    val incomingJoinRequest = socialUiState.notifications.firstOrNull {
+        socialEnabled && it.readAt == null && it.kind == SocialNotificationKind.WatchingNowJoinRequest &&
+            SocialNotificationAction.Accept in it.availableActions
+    }
+    val outgoingJoinRequest by OutgoingJoinRequestStore.state.collectAsStateWithLifecycle()
+    // When realtime entered its current state, for the connection chip's grace periods.
+    var realtimeSinceMs by remember { mutableStateOf(currentEpochMs()) }
+    LaunchedEffect(watchPartyUiState.health.realtime) { realtimeSinceMs = currentEpochMs() }
+    val panelNowMs by produceState(currentEpochMs(), activeParty != null, partyRoomOpen) {
+        while (activeParty != null) {
+            value = currentEpochMs()
+            kotlinx.coroutines.delay(1_000)
+        }
+        value = currentEpochMs()
+    }
+    // The last host name seen, so "Seraph ended the party" can still name them after the snapshot is gone.
+    var lastPartyHostName by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(activeParty?.hostProfileId, activeParty?.members) {
+        activeParty?.let { party ->
+            party.members.firstOrNull { it.profileId == party.hostProfileId }
+                ?.displayName(viewerProfileId = null)
+                ?.let { lastPartyHostName = it }
+        }
+    }
+    val watchTogetherPanel = projectWatchTogetherPanel(
+        WatchTogetherPanelInputs(
+            shareable = args.onStartWatchTogether != null && activePartySourceDescriptor != null,
+            playbackContentId = parentMetaId,
+            playbackVideoId = playbackSession.videoId,
+            playbackTitle = listOfNotNull(
+                title,
+                if (activeSeasonNumber != null && activeEpisodeNumber != null) "S${activeSeasonNumber}E$activeEpisodeNumber" else null,
+            ).joinToString(" · "),
+            viewerProfileId = watchPartyUiState.activeProfileId,
+            party = watchPartyUiState.party,
+            health = watchPartyUiState.health,
+            realtimeSinceMs = realtimeSinceMs,
+            nowMs = panelNowMs,
+            members = partyPresentation.members,
+            promotion = partyPromotion,
+            connecting = watchPartyUiState.party == null && partySessionState.phase == PartyClientPhase.Connecting,
+            postEndChoice = partySessionState.guestPostEndChoice,
+            endedByName = lastPartyHostName,
+            joinPolicy = JoinPolicyControl(
+                selected = joinPolicyPending ?: socialPresenceSession.effectivePolicy,
+                saving = joinPolicyPending != null,
+                errorMessage = joinPolicyError,
+            ),
+            incomingRequest = incomingJoinRequest?.let { notification ->
+                IncomingJoinRequestRow(
+                    requestId = notification.id,
+                    profileId = notification.actor.profileId,
+                    name = notification.actor.displayName.ifBlank { notification.actor.handle },
+                    avatarUrl = notification.actor.avatarUrl,
+                    avatarColorHex = notification.actor.avatarColorHex,
+                    expiresAtMs = notification.expiresAt?.let(::parseSocialTimestampMs),
+                )
+            },
+            waitForEveryone = watchPartyUiState.waitForEveryone,
+            errorMessage = partyPanelError ?: watchPartyUiState.errorMessage,
+            sourceMatch = activeParty?.members?.firstOrNull { it.profileId == watchPartyUiState.activeProfileId }?.sourceMatch,
+            releaseName = activeStreamTitle.takeIf { it.isNotBlank() },
+        ),
+    )
+    val watchTogetherBridge = watchTogetherBridgeState(
+        panel = watchTogetherPanel,
+        open = partyRoomOpen && !playerControlsLocked,
+        inviteTargets = socialUiState.friends
+            .filter { friend -> activeParty?.members?.none { it.profileId == friend.profileId } == true }
+            .mapIndexed { index, friend ->
+                WatchTogetherBridgeInvite(
+                    index = index,
+                    name = friend.displayName,
+                    avatarUrl = friend.avatarUrl.orEmpty(),
+                    invited = friend.profileId in partyInvitedProfileIds,
+                )
+            },
+        inviteCode = watchPartyUiState.inviteCode.orEmpty(),
+        endConfirm = partyEndConfirm,
+        outgoing = (outgoingJoinRequest as? OutgoingJoinRequestState.Bound)?.let { request ->
+            val phase = when (request) {
+                is OutgoingJoinRequestState.Pending, is OutgoingJoinRequestState.Cancelling -> "pending"
+                is OutgoingJoinRequestState.Accepted -> "accepted"
+                is OutgoingJoinRequestState.Joining -> "joining"
+                else -> null
+            } ?: return@let null
+            WatchTogetherOutgoingMirror(
+                name = request.target.displayName,
+                avatarUrl = request.target.avatarUrl,
+                colorHex = request.target.avatarColorHex,
+                phase = phase,
+                expiresAtMs = (request as? OutgoingJoinRequestState.Pending)?.expiresAtMs ?: 0L,
+            )
+        },
+    )
     // The end of a party is observed by `WatchPartySessionCoordinator` from the snapshot itself
     // (`observePartySnapshot`), not from here. This effect used to be the only thing that reacted
     // to an ended party, so a guest who was not in the player never learned the party was over - and
@@ -555,8 +681,8 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         // its descriptor guard and said so to no one. Those sources are not a bug to fix; a guest
         // genuinely cannot obtain the host's local file. So the affordance is not offered, and if
         // the action arrives anyway it now explains itself rather than dropping.
-        showWatchTogether = socialEnabled &&
-            (activeParty != null || (args.onStartWatchTogether != null && activePartySourceDescriptor != null)),
+        // Unshareable is a panel state now, not a hidden button: the reason has to be findable.
+        showWatchTogether = socialEnabled && args.onStartWatchTogether != null,
         showSources = activeVideoId != null,
         showEpisodes = isSeries,
         // Hidden for a guest: the host advances the party's episode, and a control that is
@@ -647,59 +773,11 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         openingReleaseName = openingLoadingState.releaseName.orEmpty(),
         partyBannerVisible = watchPartyBanner != null && !playerControlsLocked,
         partyBannerText = watchPartyBanner.orEmpty(),
-        partyRoom = PartyRoomViewState(
-            available = activeParty != null,
-            open = activeParty != null && partyRoomOpen && !playerControlsLocked,
-            contentTitle = activeParty?.content?.title.orEmpty(),
-            contentDetail = activeParty?.content?.let { content ->
-                if (content.season != null && content.episode != null) {
-                    "S${content.season}E${content.episode}" +
-                        content.episodeTitle?.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
-                } else ""
-            }.orEmpty(),
-            sourceLabel = listOf(activeStreamTitle, activeProviderName)
-                .filter { it.isNotBlank() }
-                .joinToString(" · "),
-            healthLabel = partyPresentation.connectionBanner ?: when (partyPresentation.connection) {
-                PartyConnectionState.connected -> "Live sync connected"
-                PartyConnectionState.reconnecting -> "Live sync reconnecting"
-                PartyConnectionState.disconnected -> "Offline local playback"
-            },
-            syncLabel = watchPartyBanner.orEmpty(),
-            controlModeLabel = when (activeParty?.controlMode) {
-                WatchPartyControlMode.host_only -> stringResource(Res.string.watch_party_host_controls)
-                WatchPartyControlMode.collaborative -> stringResource(Res.string.watch_party_collaborative)
-                null -> ""
-            },
-            transportEnabled = partyMayControl,
-            isHost = activeParty?.hostProfileId == watchPartyUiState.activeProfileId,
-            waitForEveryone = watchPartyUiState.waitForEveryone,
-            inviteCode = watchPartyUiState.inviteCode.orEmpty(),
-            errorMessage = watchPartyUiState.errorMessage.orEmpty(),
-            readySummary = activeParty?.let {
-                "${it.readyCount()} of ${it.members.count { member -> member.connected }} ready"
-            }.orEmpty(),
-            members = activeParty?.members.orEmpty().map { member ->
-                val projected = partyPresentation.members.getValue(member.profileId)
-                PlayerPartyMember(
-                    name = member.displayName(watchPartyUiState.activeProfileId),
-                    role = member.role,
-                    status = projected.label,
-                    statusTone = projected.tone.wireName,
-                    avatarUrl = member.profile?.avatarUrl,
-                    connected = projected.connected,
-                )
-            },
-            inviteTargets = socialUiState.friends
-                .filter { friend -> activeParty?.members?.none { it.profileId == friend.profileId } == true }
-                .mapIndexed { index, friend -> PlayerPartyInviteTarget(index, friend.displayName, friend.avatarUrl) },
-        ),
-        presenceJoinPolicyVisible = activeParty == null && socialPresenceSession.sessionId != null,
-        presenceJoinPolicyLabel = when (socialPresenceSession.effectivePolicy) {
-            com.nuvio.app.features.social.WatchJoinPolicy.direct -> "Join: Direct"
-            com.nuvio.app.features.social.WatchJoinPolicy.approval -> "Join: Ask first"
-            com.nuvio.app.features.social.WatchJoinPolicy.disabled -> "Join: Off"
-        },
+        watchTogether = watchTogetherBridge,
+        partyTransportLocked = activeParty != null && !partyMayControl,
+        partyHostName = activeParty?.let { party ->
+            party.members.firstOrNull { it.profileId == party.hostProfileId }?.displayName(viewerProfileId = null)
+        }.orEmpty(),
         socialNotificationVisible = activeSocialNotification != null && !playerControlsLocked,
         socialNotificationActor = activeSocialNotification?.actor?.displayName.orEmpty(),
         socialNotificationMessage = when (activeSocialNotification?.kind) {
@@ -715,7 +793,6 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         socialNotificationActions = activeSocialNotification?.availableActions.orEmpty()
             .map { it.name.lowercase() }
             .sorted(),
-        partyEndedChoiceVisible = partySessionState.guestPostEndChoice && !playerControlsLocked,
         skipPromptVisible = nativeSkipInterval != null && !playerControlsLocked,
         skipPromptLabel = skipPromptLabel(nativeSkipInterval?.type),
         skipPromptStartMs = ((nativeSkipInterval?.startTime ?: 0.0) * 1000).toLong().coerceAtLeast(0L),
@@ -1180,14 +1257,11 @@ private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControl
         PlayerControlsAction.SubmitIntro -> {
             submitIntroStatusMessage = null
         }
+        // ⚠ **Only opens the panel.** Pressing this with no party used to promote the playback on the
+        // spot. Starting a party is the panel's Start a party button and nothing else.
         PlayerControlsAction.WatchTogether -> {
-            val party = WatchPartyRepository.uiState.value.party
-            if (party?.matchesPlayback(parentMetaId, playbackSession.videoId) == true) {
-                partyRoomOpen = !partyRoomOpen
-                controlsVisible = true
-            } else {
-                startWatchTogetherFromCurrentPlayback()
-            }
+            partyRoomOpen = !partyRoomOpen
+            controlsVisible = true
         }
         PlayerControlsAction.LockToggle -> {
             if (playerControlsLocked) unlockPlayerControls() else lockPlayerControls()
@@ -1279,36 +1353,96 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
         "reloadSources" -> {
             prepareSourcesForPlayerControls(forceRefresh = true)
         }
-        "partyRoomClose" -> partyRoomOpen = false
-        "presenceJoinPolicyCycle" -> scope.launch { SocialPresenceSession.cyclePolicy() }
-        "partyLeave" -> WatchPartySessionCoordinator.leave()
-        "partyEnd" -> WatchPartySessionCoordinator.end()
-        "partyToggleWait" -> WatchPartyRepository.setWaitForEveryone(!WatchPartyRepository.uiState.value.waitForEveryone)
-        "partyInvite" -> {
+        "partyRoomClose" -> {
+            partyRoomOpen = false
+            partyEndConfirm = false
+        }
+        "wtStartParty", "wtRetry" -> {
+            partyPanelError = null
+            partyPromotion = PartyPromotionProgress.Starting
+            startWatchTogetherFromCurrentPlayback()
+        }
+        "wtOpenExisting" -> {
+            val party = WatchPartyRepository.uiState.value.party?.takeIf { it.status != WatchPartyStatus.ended } ?: return true
+            partyPromotion = PartyPromotionProgress.Idle
+            args.onPartyLobbyRequested?.invoke(party.id)
+            requestBack()
+        }
+        "wtLeaveElsewhere" -> {
+            partyPromotion = PartyPromotionProgress.Idle
+            WatchPartySessionCoordinator.leave()
+        }
+        "wtSetJoinPolicy" -> {
+            val policy = joinPolicyForSegment(value.toInt()) ?: return true
+            joinPolicyError = null
+            joinPolicyPending = policy
+            scope.launch {
+                SocialPresenceSession.setPolicy(policy)
+                    .onFailure { joinPolicyError = "Couldn't change who can join. Try again." }
+                joinPolicyPending = null
+            }
+        }
+        "wtSetGuestControl" -> {
+            val party = WatchPartyRepository.uiState.value.party ?: return true
+            if (party.hostProfileId != WatchPartyRepository.uiState.value.activeProfileId) return true
+            val mode = if (value >= 0.5) WatchPartyControlMode.collaborative else WatchPartyControlMode.host_only
+            if (mode == party.controlMode) return true
+            scope.launch {
+                WatchPartyRepository.setControlMode(mode).onFailure {
+                    partyPanelError = "Couldn't change who controls playback"
+                }
+            }
+        }
+        "wtSetWaitForEveryone" -> WatchPartyRepository.setWaitForEveryone(value >= 0.5)
+        "wtInviteFriend", "partyInvite" -> {
             val party = WatchPartyRepository.uiState.value.party ?: return true
             val targets = SocialRepository.uiState.value.friends
                 .filter { friend -> party.members.none { it.profileId == friend.profileId } }
             val target = targets.getOrNull(value.toInt()) ?: return true
+            if (target.profileId in partyInvitedProfileIds) return true
+            partyInvitedProfileIds = partyInvitedProfileIds + target.profileId
             scope.launch {
                 WatchPartyRepository.invite(target.profileId).onFailure { failure ->
-                    playerNotificationMessage = failure.message ?: "Invitation could not be sent"
-                    playerNotificationToken += 1
+                    partyInvitedProfileIds = partyInvitedProfileIds - target.profileId
+                    partyPanelError = failure.message ?: "Couldn't invite ${target.displayName}"
                 }
             }
         }
-        "partyToggleControlMode" -> {
-            val party = WatchPartyRepository.uiState.value.party ?: return true
-            if (party.hostProfileId != WatchPartyRepository.uiState.value.activeProfileId) return true
-            val mode = if (party.controlMode == WatchPartyControlMode.host_only) {
-                WatchPartyControlMode.collaborative
-            } else {
-                WatchPartyControlMode.host_only
-            }
-            scope.launch { WatchPartyRepository.setControlMode(mode) }
+        // The page copies the code itself; this only records that it happened.
+        "wtCopyInviteCode" -> playerControlsLog.d { "invite code copied" }
+        "wtAcceptRequest", "wtDeclineRequest" -> {
+            val notification = SocialRepository.uiState.value.notifications.firstOrNull {
+                it.readAt == null && it.kind == SocialNotificationKind.WatchingNowJoinRequest &&
+                    SocialNotificationAction.Accept in it.availableActions
+            } ?: return true
+            handleSocialNotificationAction(
+                if (type == "wtAcceptRequest") SocialNotificationAction.Accept else SocialNotificationAction.Decline,
+                notificationId = notification.id,
+            )
         }
-        "partyEndContinue" -> WatchPartySessionCoordinator.continueAfterPartyEnd()
+        "wtCancelOutgoing" -> OutgoingJoinRequestStore.cancel()
+        "wtJoinAccepted" -> OutgoingJoinRequestStore.joinNow()
+        "wtDismissAccepted" -> OutgoingJoinRequestStore.notNow()
+        "wtDismissError" -> {
+            partyPanelError = null
+            WatchPartyRepository.clearError()
+        }
+        "wtEndConfirm" -> partyEndConfirm = value >= 0.5
+        "partyLeave" -> {
+            partyEndConfirm = false
+            WatchPartySessionCoordinator.leave()
+        }
+        "partyEnd" -> {
+            partyEndConfirm = false
+            WatchPartySessionCoordinator.end()
+        }
+        "partyEndContinue" -> {
+            WatchPartySessionCoordinator.continueAfterPartyEnd()
+            partyRoomOpen = false
+        }
         "partyEndExit" -> {
             WatchPartySessionCoordinator.continueAfterPartyEnd()
+            partyRoomOpen = false
             requestBack()
         }
         "socialNotificationDismiss" -> {
@@ -1515,9 +1649,12 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
     return true
 }
 
-private fun PlayerScreenRuntime.handleSocialNotificationAction(action: SocialNotificationAction) {
+private fun PlayerScreenRuntime.handleSocialNotificationAction(
+    action: SocialNotificationAction,
+    notificationId: String? = null,
+) {
     val notification = SocialRepository.uiState.value.notifications.firstOrNull {
-        it.readAt == null && action in it.availableActions
+        it.readAt == null && action in it.availableActions && (notificationId == null || it.id == notificationId)
     } ?: return
     scope.launch {
         SocialRepository.notificationAction(notification.id, action)
@@ -2487,3 +2624,6 @@ private fun PlayerScreenRuntime.RenderPlayerModals(displayedPositionMs: Long) {
         )
     }
 }
+
+/** How long Starting a party may wait for the coordinator to answer before the panel calls it failed. */
+private const val PartyPromotionAnswerTimeoutMs = 20_000L

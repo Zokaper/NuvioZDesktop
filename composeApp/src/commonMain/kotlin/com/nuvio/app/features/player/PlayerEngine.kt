@@ -99,48 +99,6 @@ enum class PlayerControlsAction {
     DoubleTapSeekForward,
 }
 
-data class PlayerPartyMember(
-    val name: String,
-    val role: String,
-    val status: String,
-    /**
-     * How [status] should read: `ready`, `working`, `failed` or `offline`.
-     *
-     * The controls layer used to get the label alone, so it could print a member's state but not
-     * colour it - and a list where "ready" and "no source found" look identical answers the only
-     * question anybody asks of it by making them read every row.
-     */
-    val statusTone: String = "working",
-    val avatarUrl: String? = null,
-    val connected: Boolean = true,
-)
-
-data class PlayerPartyInviteTarget(
-    val index: Int,
-    val name: String,
-    val avatarUrl: String? = null,
-)
-
-/** Complete, render-only state for the native active-player Party Room. */
-data class PartyRoomViewState(
-    val available: Boolean = false,
-    val open: Boolean = false,
-    val contentTitle: String = "",
-    val contentDetail: String = "",
-    val sourceLabel: String = "",
-    val healthLabel: String = "",
-    val syncLabel: String = "",
-    val controlModeLabel: String = "",
-    val readySummary: String = "",
-    val transportEnabled: Boolean = true,
-    val isHost: Boolean = false,
-    val waitForEveryone: Boolean = true,
-    val inviteCode: String = "",
-    val errorMessage: String = "",
-    val members: List<PlayerPartyMember> = emptyList(),
-    val inviteTargets: List<PlayerPartyInviteTarget> = emptyList(),
-)
-
 data class PlayerOpeningFact(val label: String, val value: String)
 
 data class PlayerControlsState(
@@ -290,14 +248,19 @@ data class PlayerControlsState(
      */
     val partyBannerVisible: Boolean = false,
     val partyBannerText: String = "",
-    val partyRoom: PartyRoomViewState = PartyRoomViewState(),
-    val presenceJoinPolicyVisible: Boolean = false,
-    val presenceJoinPolicyLabel: String = "",
+    /** The Watch Together panel, header badge and in-player request mirror. See `WatchTogetherBridge.kt`. */
+    val watchTogether: WatchTogetherBridgeState = WatchTogetherBridgeState(),
+    /**
+     * A guest under host-only controls. Kept flat and apart from [watchTogether] because a dozen
+     * transport entry points on the page ask it before anything moves.
+     */
+    val partyTransportLocked: Boolean = false,
+    /** Who holds the controls, for "Only Seraph can pause or seek". */
+    val partyHostName: String = "",
     val socialNotificationVisible: Boolean = false,
     val socialNotificationActor: String = "",
     val socialNotificationMessage: String = "",
     val socialNotificationActions: List<String> = emptyList(),
-    val partyEndedChoiceVisible: Boolean = false,
     val skipPromptVisible: Boolean = false,
     val skipPromptLabel: String = "Skip",
     val skipPromptStartMs: Long = 0L,

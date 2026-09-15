@@ -315,10 +315,12 @@ kotlinc -nowarn -cp "$CP_BUILD:$CP_JSON:$CP_COROUTINES" -Xplugin="$WORK/serializ
   "$M/features/social/OutgoingJoinRequest.kt" \
   "$M/features/social/WatchingNowJoinAffordance.kt" \
   "$M/features/player/WatchTogetherPanelState.kt" \
+  "$M/features/player/WatchTogetherBridge.kt" \
   "$T/features/social/SocialNotificationsTest.kt" \
   "$T/features/social/FriendActivityGroupingTest.kt" \
   "$T/features/social/OutgoingJoinRequestTest.kt" \
   "$T/features/player/WatchTogetherPanelStateTest.kt" \
+  "$T/features/player/WatchTogetherBridgeTest.kt" \
   2>&1 | grep -v "^warning:" | grep -v "Picked up JAVA" || true
 
 java -cp "$WORK/out-social:$CP_RUN:$CP_JSON:$CP_COROUTINES" org.junit.runner.JUnitCore \
@@ -326,7 +328,8 @@ java -cp "$WORK/out-social:$CP_RUN:$CP_JSON:$CP_COROUTINES" org.junit.runner.JUn
   com.nuvio.app.features.social.FriendActivityGroupingTest \
   com.nuvio.app.features.social.OutgoingJoinRequestTest \
   com.nuvio.app.features.social.WatchingNowJoinAffordanceTest \
-  com.nuvio.app.features.player.WatchTogetherPanelStateTest 2>&1 | grep -v "Picked up JAVA_TOOL"
+  com.nuvio.app.features.player.WatchTogetherPanelStateTest \
+  com.nuvio.app.features.player.WatchTogetherBridgeTest 2>&1 | grep -v "Picked up JAVA_TOOL"
 
 # --- Group 8: shared Continue Watching/social title artwork selection -------------------------
 # The style enum is a neighbour stub because its shipped file reaches the full watch-progress

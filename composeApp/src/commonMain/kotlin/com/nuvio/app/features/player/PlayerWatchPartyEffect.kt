@@ -307,21 +307,8 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
     // place a player is guaranteed to be composed while a promotion is in flight.
     LaunchedEffect(Unit) {
         WatchPartySessionCoordinator.promotionFailures.collect { failure ->
-            NuvioToastController.show(
-                when (failure) {
-                    PartyPromotionFailure.NoPresenceSession ->
-                        getString(Res.string.watch_party_cannot_share_source)
-                    // The only one the user can act on: their presence has not reached the server
-                    // yet. Before `c1c104fd` this was *every* attempt, because the sanitizer was
-                    // rejecting presence publication outside a party and no row was ever written.
-                    PartyPromotionFailure.PresenceStale ->
-                        getString(Res.string.watch_party_promote_presence_stale)
-                    PartyPromotionFailure.AlreadyInAnotherParty ->
-                        getString(Res.string.watch_party_promote_already_in_party)
-                    PartyPromotionFailure.Refused ->
-                        getString(Res.string.watch_party_promote_failed)
-                },
-            )
+            // Inline in the panel's StartFailed state, with Try again, rather than a toast.
+            partyPromotion = PartyPromotionProgress.Failed(failure)
         }
     }
 

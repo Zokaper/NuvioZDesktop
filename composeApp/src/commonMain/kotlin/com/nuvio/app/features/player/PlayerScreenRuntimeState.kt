@@ -146,6 +146,17 @@ internal class PlayerScreenRuntime(
     var playerControlsLocked by mutableStateOf(false)
     /** Player-owned presentation state; opening the room never changes route or party identity. */
     var partyRoomOpen by mutableStateOf(false)
+    /** Starting a party from this playback, for the panel's Starting / StartFailed states. */
+    var partyPromotion by mutableStateOf<PartyPromotionProgress>(PartyPromotionProgress.Idle)
+    /** A join-policy change sent and not yet confirmed; the panel shows it optimistically. */
+    var joinPolicyPending by mutableStateOf<com.nuvio.app.features.social.WatchJoinPolicy?>(null)
+    var joinPolicyError by mutableStateOf<String?>(null)
+    /** "End for everyone?" asked inline. */
+    var partyEndConfirm by mutableStateOf(false)
+    /** One inline, dismissible error row under the panel header, replacing party toasts. */
+    var partyPanelError by mutableStateOf<String?>(null)
+    /** Friends invited from this panel, so a second press says Invited instead of sending again. */
+    var partyInvitedProfileIds by mutableStateOf<Set<String>>(emptySet())
     var activeSourceUrl by mutableStateOf(sourceUrl)
     var activeSourceAudioUrl by mutableStateOf(sourceAudioUrl)
     var activeSourceHeaders by mutableStateOf(sanitizePlaybackHeaders(sourceHeaders))

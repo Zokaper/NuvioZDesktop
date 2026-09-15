@@ -87,17 +87,26 @@ object SocialPresenceSession {
         }
     }
 
-    suspend fun cyclePolicy(): Result<WatchJoinPolicy> {
+    /**
+     * Set this session's join policy to [policy], optimistically.
+     *
+     * Replaces `cyclePolicy`, which one click moved Direct → Ask → Off with no way to land where you
+     * meant and no word when the write failed - a person could make themselves unjoinable without
+     * knowing. The state moves at once; a refused write rolls it back and the failure is returned so
+     * the panel can say so.
+     */
+    suspend fun setPolicy(policy: WatchJoinPolicy): Result<WatchJoinPolicy> {
         val current = _state.value
         val deviceId = current.deviceId ?: return Result.failure(IllegalStateException("No active presence"))
         val sessionId = current.sessionId ?: return Result.failure(IllegalStateException("No active presence"))
-        val next = when (current.effectivePolicy) {
-            WatchJoinPolicy.direct -> WatchJoinPolicy.approval
-            WatchJoinPolicy.approval -> WatchJoinPolicy.disabled
-            WatchJoinPolicy.disabled -> WatchJoinPolicy.direct
-        }
-        return SocialRepository.setPresenceJoinPolicy(deviceId, sessionId, next).map { next }.onSuccess {
-            _state.value = current.copy(effectivePolicy = next)
+        if (current.effectivePolicy == policy) return Result.success(policy)
+        _state.value = current.copy(effectivePolicy = policy)
+        return SocialRepository.setPresenceJoinPolicy(deviceId, sessionId, policy).map { policy }.onFailure {
+            presenceSessionLog.w(it) { "join policy change to $policy refused - rolling back" }
+            val now = _state.value
+            if (now.deviceId == deviceId && now.sessionId == sessionId) {
+                _state.value = now.copy(effectivePolicy = current.effectivePolicy)
+            }
         }
     }
 }

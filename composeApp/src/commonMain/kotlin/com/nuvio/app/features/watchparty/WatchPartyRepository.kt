@@ -300,6 +300,11 @@ object WatchPartyRepository {
         )
     }
 
+    /** The panel's error row was dismissed. */
+    fun clearError() {
+        _uiState.value = _uiState.value.copy(errorMessage = null)
+    }
+
     fun setWaitForEveryone(enabled: Boolean) {
         if (_uiState.value.waitForEveryone == enabled) return
         log.i { "waitForEveryone=$enabled party=${_uiState.value.party?.id.shortId()}" }

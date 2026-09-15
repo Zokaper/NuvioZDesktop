@@ -18,9 +18,9 @@ import com.nuvio.app.features.player.PlayerControlsState
 import com.nuvio.app.features.player.PlayerEngineController
 import com.nuvio.app.features.player.PlayerExitDiagnostics
 import com.nuvio.app.features.player.PlayerPlaybackSnapshot
-import com.nuvio.app.features.player.PlayerPartyMember
-import com.nuvio.app.features.player.PlayerPartyInviteTarget
-import com.nuvio.app.features.player.PartyRoomViewState
+import com.nuvio.app.features.player.WatchTogetherBridgeInvite
+import com.nuvio.app.features.player.WatchTogetherBridgePerson
+import com.nuvio.app.features.player.WatchTogetherBridgeState
 import com.nuvio.app.features.player.PlayerOpeningFact
 import com.nuvio.app.features.player.PlayerResizeMode
 import com.nuvio.app.features.player.SUBTITLE_DELAY_MAX_MS
@@ -1724,11 +1724,11 @@ internal fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
         append(',')
         appendJsonField("partyBannerText", partyBannerText)
         append(',')
-        appendPartyRoomJson(partyRoom)
+        appendWatchTogetherJson(watchTogether)
         append(',')
-        appendJsonField("presenceJoinPolicyVisible", presenceJoinPolicyVisible)
+        appendJsonField("partyTransportLocked", partyTransportLocked)
         append(',')
-        appendJsonField("presenceJoinPolicyLabel", presenceJoinPolicyLabel)
+        appendJsonField("partyHostName", partyHostName)
         append(',')
         appendJsonField("socialNotificationVisible", socialNotificationVisible)
         append(',')
@@ -1737,8 +1737,6 @@ internal fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
         appendJsonField("socialNotificationMessage", socialNotificationMessage)
         append(',')
         appendJsonArrayField("socialNotificationActions", socialNotificationActions) { append(it.toJsonString()) }
-        append(',')
-        appendJsonField("partyEndedChoiceVisible", partyEndedChoiceVisible)
         append(',')
         appendJsonField("skipPromptVisible", skipPromptVisible)
         append(',')
@@ -1950,65 +1948,67 @@ private fun StringBuilder.appendOpeningFactJson(item: PlayerOpeningFact) {
     append('}')
 }
 
-private fun StringBuilder.appendPartyMemberJson(item: PlayerPartyMember) {
+private fun StringBuilder.appendWatchTogetherPersonJson(item: WatchTogetherBridgePerson) {
     append('{')
-    appendJsonField("name", item.name)
-    append(',')
-    appendJsonField("role", item.role)
-    append(',')
-    appendJsonField("status", item.status)
-    append(',')
-    appendJsonField("statusTone", item.statusTone)
-    append(',')
-    appendJsonField("avatarUrl", item.avatarUrl.orEmpty())
-    append(',')
-    appendJsonField("connected", item.connected)
+    appendJsonField("name", item.name); append(',')
+    appendJsonField("avatarUrl", item.avatarUrl); append(',')
+    appendJsonField("colorHex", item.colorHex); append(',')
+    appendJsonField("isHost", item.isHost); append(',')
+    appendJsonField("isSelf", item.isSelf); append(',')
+    appendJsonField("status", item.status); append(',')
+    appendJsonField("tone", item.tone)
     append('}')
 }
 
-private fun StringBuilder.appendPartyInviteTargetJson(item: PlayerPartyInviteTarget) {
+private fun StringBuilder.appendWatchTogetherInviteJson(item: WatchTogetherBridgeInvite) {
     append('{')
-    appendJsonField("index", item.index)
-    append(',')
-    appendJsonField("name", item.name)
-    append(',')
-    appendJsonField("avatarUrl", item.avatarUrl.orEmpty())
+    appendJsonField("index", item.index); append(',')
+    appendJsonField("name", item.name); append(',')
+    appendJsonField("avatarUrl", item.avatarUrl); append(',')
+    appendJsonField("invited", item.invited)
     append('}')
 }
 
-private fun StringBuilder.appendPartyRoomJson(room: PartyRoomViewState) {
-    append("\"partyRoom\":{")
-    appendJsonField("available", room.available)
-    append(',')
-    appendJsonField("open", room.open)
-    append(',')
-    appendJsonField("contentTitle", room.contentTitle)
-    append(',')
-    appendJsonField("contentDetail", room.contentDetail)
-    append(',')
-    appendJsonField("sourceLabel", room.sourceLabel)
-    append(',')
-    appendJsonField("healthLabel", room.healthLabel)
-    append(',')
-    appendJsonField("syncLabel", room.syncLabel)
-    append(',')
-    appendJsonField("controlModeLabel", room.controlModeLabel)
-    append(',')
-    appendJsonField("readySummary", room.readySummary)
-    append(',')
-    appendJsonField("transportEnabled", room.transportEnabled)
-    append(',')
-    appendJsonField("isHost", room.isHost)
-    append(',')
-    appendJsonField("waitForEveryone", room.waitForEveryone)
-    append(',')
-    appendJsonField("inviteCode", room.inviteCode)
-    append(',')
-    appendJsonField("errorMessage", room.errorMessage)
-    append(',')
-    appendJsonArrayField("members", room.members) { appendPartyMemberJson(it) }
-    append(',')
-    appendJsonArrayField("inviteTargets", room.inviteTargets) { appendPartyInviteTargetJson(it) }
+private fun StringBuilder.appendWatchTogetherJson(wt: WatchTogetherBridgeState) {
+    append("\"watchTogether\":{")
+    appendJsonField("open", wt.open); append(',')
+    appendJsonField("state", wt.stateName); append(',')
+    appendJsonField("badge", wt.badge); append(',')
+    appendJsonField("memberCount", wt.memberCount); append(',')
+    appendJsonField("buttonLabel", wt.buttonLabel); append(',')
+    appendJsonField("title", wt.title); append(',')
+    appendJsonField("subline", wt.subline); append(',')
+    appendJsonField("message", wt.message); append(',')
+    appendJsonField("offersOpenExisting", wt.offersOpenExisting); append(',')
+    appendJsonField("isHost", wt.isHost); append(',')
+    appendJsonField("connection", wt.connection); append(',')
+    appendJsonField("connectionLabel", wt.connectionLabel); append(',')
+    appendJsonField("connectionTooltip", wt.connectionTooltip); append(',')
+    appendJsonArrayField("people", wt.people) { appendWatchTogetherPersonJson(it) }; append(',')
+    appendJsonField("incomingVisible", wt.incomingVisible); append(',')
+    appendJsonField("incomingName", wt.incomingName); append(',')
+    appendJsonField("incomingAvatarUrl", wt.incomingAvatarUrl); append(',')
+    appendJsonField("incomingColorHex", wt.incomingColorHex); append(',')
+    appendJsonField("incomingExpiresAtMs", wt.incomingExpiresAtMs); append(',')
+    appendJsonField("guestsControl", wt.guestsControl); append(',')
+    appendJsonField("pauseWhenBuffers", wt.pauseWhenBuffers); append(',')
+    appendJsonField("joinPolicyVisible", wt.joinPolicyVisible); append(',')
+    appendJsonField("joinPolicy", wt.joinPolicy); append(',')
+    appendJsonField("joinPolicyExplanation", wt.joinPolicyExplanation); append(',')
+    appendJsonField("joinPolicySaving", wt.joinPolicySaving); append(',')
+    appendJsonField("joinPolicyError", wt.joinPolicyError); append(',')
+    appendJsonField("leaveHelper", wt.leaveHelper); append(',')
+    appendJsonField("errorMessage", wt.errorMessage); append(',')
+    appendJsonField("syncDetails", wt.syncDetails); append(',')
+    appendJsonArrayField("inviteTargets", wt.inviteTargets) { appendWatchTogetherInviteJson(it) }; append(',')
+    appendJsonField("inviteCode", wt.inviteCode); append(',')
+    appendJsonField("endConfirm", wt.endConfirm); append(',')
+    appendJsonField("outgoingVisible", wt.outgoingVisible); append(',')
+    appendJsonField("outgoingPhase", wt.outgoingPhase); append(',')
+    appendJsonField("outgoingName", wt.outgoingName); append(',')
+    appendJsonField("outgoingAvatarUrl", wt.outgoingAvatarUrl); append(',')
+    appendJsonField("outgoingColorHex", wt.outgoingColorHex); append(',')
+    appendJsonField("outgoingExpiresAtMs", wt.outgoingExpiresAtMs)
     append('}')
 }
 

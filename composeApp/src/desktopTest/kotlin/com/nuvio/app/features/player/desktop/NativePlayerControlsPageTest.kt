@@ -62,28 +62,57 @@ class NativePlayerControlsPageTest {
     }
 
     @Test
-    fun partyAndNotificationActionsAreWiredThroughTheNativePage() {
+    fun watchTogetherPanelAndNotificationActionsAreWiredThroughTheNativePage() {
         val html = resourceText("/player-ui/controls.html")
         val script = resourceText("/player-ui/controls.js")
 
         listOf(
             "partyRoomClose",
-            "partyToggleControlMode",
-            "partyToggleWait",
+            "wtStartParty",
+            "wtRetry",
+            "wtOpenExisting",
+            "wtLeaveElsewhere",
+            "wtAcceptRequest",
+            "wtDeclineRequest",
+            "wtCancelOutgoing",
+            "wtJoinAccepted",
+            "wtDismissAccepted",
+            "wtDismissError",
+            "wtCopyInviteCode",
             "partyLeave",
             "partyEnd",
             "partyEndContinue",
             "partyEndExit",
             "socialNotificationDismiss",
-            "presenceJoinPolicyCycle",
         ).forEach { command ->
             assertTrue(html.contains("data-command=\"$command\""), "missing native command $command")
         }
+        // Commands carrying a value are delegated from the panel.
+        listOf("wtSetJoinPolicy", "wtEndConfirm").forEach { command ->
+            assertTrue(html.contains("data-wt-command=\"$command\""), "missing valued command $command")
+        }
+        listOf("wtSetGuestControl", "wtSetWaitForEveryone", "wtInviteFriend").forEach { command ->
+            assertTrue(script.contains("\"$command\""), "missing dynamic panel command $command")
+        }
+        // Gone: the header policy pill, the old action buttons, and the centred end-of-party modal.
+        listOf("presenceJoinPolicyCycle", "partyToggleControlMode", "partyToggleWait", "partyEndedChoice").forEach { removed ->
+            assertFalse(html.contains(removed), "$removed should be gone from the page")
+            assertFalse(script.contains(removed), "$removed should be gone from the script")
+        }
         assertFalse(html.contains("data-command=\"partyLobby\""), "active playback must not navigate to the lobby")
-        assertTrue(script.contains("partyInvite"), "dynamic party invitations must reach Kotlin")
         listOf("socialNotificationAccept", "socialNotificationDecline", "socialNotificationJoin").forEach { command ->
             assertTrue(script.contains(command), "missing dynamic notification command $command")
         }
+    }
+
+    @Test
+    fun theHeaderButtonOnlyOpensThePanelAndTheLockNamesTheHost() {
+        val html = resourceText("/player-ui/controls.html")
+        val script = resourceText("/player-ui/controls.js")
+        assertTrue(html.contains("id=\"watchTogetherBadge\""))
+        assertTrue(script.contains("state.partyTransportLocked"))
+        assertTrue(script.contains("can pause or seek"))
+        assertFalse(script.contains("The host controls playback"))
     }
 
     private fun resourceText(path: String): String =

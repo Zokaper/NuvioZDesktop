@@ -128,8 +128,9 @@
     <div class="content">
       <header class="header">
         <nav class="header-actions" aria-label="Player actions">
-          <button class="header-button" id="watchTogetherButton" data-command="watchTogether" aria-label="Watch Together"><svg><use href="#icon-people"></use></svg></button>
-          <button class="header-button presence-policy-button" id="presenceJoinPolicyButton" data-command="presenceJoinPolicyCycle" aria-label="Session join policy"><span id="presenceJoinPolicyLabel">Join: Ask first</span></button>
+          <!-- The people icon and a badge that names the party's state. Who can join lives in the
+               panel now; the header pill cycled through Off in one click and said nothing when it failed. -->
+          <button class="header-button wt-button" id="watchTogetherButton" data-command="watchTogether" aria-label="Watch Together"><svg><use href="#icon-people"></use></svg><span class="wt-badge" id="watchTogetherBadge" data-badge="none" aria-hidden="true"></span></button>
           <button class="header-button" id="submitIntroButton" data-command="submitIntro" aria-label="Submit intro"><svg><use href="#icon-flag"></use></svg></button>
           <button class="header-button" id="videoSettingsButton" data-command="videoSettings" aria-label="Video settings"><svg><use href="#icon-build"></use></svg></button>
           <button class="header-button" id="fullscreenButton" data-command="toggleFullscreen" aria-label="Enter fullscreen"><svg><use id="fullscreenIcon" href="#icon-fullscreen"></use></svg></button>
@@ -147,40 +148,118 @@
         <span class="party-banner-text" id="partyBannerText"></span>
       </section>
 
-      <aside class="party-panel" id="partyPanel" aria-label="Watch Together participants" aria-hidden="true">
-        <div class="party-panel-header">
-          <div><strong>Party Room</strong><span id="partyControlMode"></span></div>
-          <button type="button" class="party-room-close" data-command="partyRoomClose" aria-label="Close Party Room">&times;</button>
+      <!-- One panel for every Watch Together state, including "not in a party". It used to exist only
+           around a live party, which is why the header button had to create one to show anything. -->
+      <aside class="party-panel" id="partyPanel" aria-label="Watch Together" aria-hidden="true" data-state="idle">
+        <div class="wt-head">
+          <div class="wt-head-title">
+            <strong>Watch Together</strong>
+            <span class="wt-chip" id="wtConnectionChip" data-connection="live" hidden></span>
+          </div>
+          <button type="button" class="party-room-close" data-command="partyRoomClose" aria-label="Close Watch Together">&times;</button>
         </div>
-        <!-- Only this middle scrolls. The whole panel used to, so on a short window the header
-             and the action row went off the top and bottom of a box that was itself being clipped
-             to a negative height. -->
+        <div class="wt-error" id="wtError" role="alert" hidden>
+          <span id="wtErrorText"></span>
+          <button type="button" data-command="wtDismissError" aria-label="Dismiss error">&times;</button>
+        </div>
+        <!-- Only this middle scrolls; the head and foot stay put on a short window. -->
         <div class="party-panel-scroll">
-          <div class="party-room-content">
-            <strong id="partyContentTitle"></strong><span id="partyContentDetail"></span><span id="partySourceLabel"></span>
+          <div class="wt-summary" id="wtSummary">
+            <strong id="wtTitle"></strong>
+            <span id="wtSubline"></span>
           </div>
-          <div class="party-room-health">
-            <span id="partyHealthLabel"></span><span id="partySyncLabel"></span>
-            <span id="partyErrorMessage" class="party-room-error"></span>
+          <p class="wt-message" id="wtMessage"></p>
+
+          <div class="wt-request" id="wtIncoming" hidden>
+            <span class="party-member-avatar" id="wtIncomingAvatar"></span>
+            <span class="wt-request-copy"><strong id="wtIncomingName"></strong><span>wants to join</span></span>
+            <span class="wt-request-actions">
+              <button type="button" data-command="wtDeclineRequest">Decline</button>
+              <button type="button" class="primary" data-command="wtAcceptRequest">Let in</button>
+            </span>
           </div>
-          <div class="party-member-list" id="partyMemberList"></div>
-          <div class="party-room-invites" id="partyInviteSection">
-            <div class="party-room-section-title">Invite friends</div>
-            <div id="partyInviteTargets"></div><div id="partyInviteCode"></div>
+
+          <div class="wt-request wt-outgoing" id="wtOutgoing" hidden>
+            <span class="party-member-avatar" id="wtOutgoingAvatar"></span>
+            <span class="wt-request-copy"><strong id="wtOutgoingHeadline"></strong><span id="wtOutgoingDetail"></span></span>
+            <span class="wt-request-actions">
+              <button type="button" id="wtCancelOutgoingButton" data-command="wtCancelOutgoing">Cancel</button>
+              <button type="button" id="wtDismissAcceptedButton" data-command="wtDismissAccepted">Not now</button>
+              <button type="button" class="primary" id="wtJoinAcceptedButton" data-command="wtJoinAccepted">Join</button>
+            </span>
           </div>
+
+          <section class="wt-section" id="wtStartSection">
+            <button type="button" class="primary wt-wide" id="wtStartButton" data-command="wtStartParty">Start a party</button>
+          </section>
+          <section class="wt-section wt-row" id="wtFailedSection">
+            <button type="button" class="primary" data-command="wtRetry">Try again</button>
+            <button type="button" id="wtOpenExistingButton" data-command="wtOpenExisting">Open it</button>
+          </section>
+          <section class="wt-section wt-row" id="wtElsewhereSection">
+            <button type="button" class="primary" data-command="wtOpenExisting">Go to party</button>
+            <button type="button" data-command="wtLeaveElsewhere">Leave it</button>
+          </section>
+          <section class="wt-section wt-row" id="wtEndedSection">
+            <button type="button" class="primary" data-command="partyEndContinue">Keep watching</button>
+            <button type="button" data-command="partyEndExit">Exit player</button>
+          </section>
+
+          <section class="wt-section" id="wtPeopleSection">
+            <div class="wt-section-title">People</div>
+            <div class="party-member-list" id="partyMemberList"></div>
+            <button type="button" class="wt-disclosure" id="wtInviteToggle" aria-expanded="false">+ Invite friends</button>
+            <div class="wt-invite" id="wtInvitePanel" hidden>
+              <div id="wtInviteList"></div>
+              <div class="wt-invite-code" id="wtInviteCodeRow" hidden>
+                <span>Code <strong id="wtInviteCode"></strong></span>
+                <button type="button" id="wtCopyInviteCodeButton" data-command="wtCopyInviteCode">Copy</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="wt-section" id="wtSettingsSection">
+            <div class="wt-section-title">Party settings</div>
+            <div class="wt-setting">
+              <span>Guests can pause &amp; seek</span>
+              <button type="button" class="wt-switch" id="wtGuestControlSwitch" role="switch" aria-checked="false" aria-label="Guests can pause and seek"></button>
+            </div>
+            <div class="wt-setting">
+              <span>Pause when someone buffers</span>
+              <button type="button" class="wt-switch" id="wtWaitSwitch" role="switch" aria-checked="true" aria-label="Pause when someone buffers"></button>
+            </div>
+          </section>
+
+          <section class="wt-section" id="wtPolicySection">
+            <div class="wt-setting wt-setting-stack">
+              <span>Who can join</span>
+              <div class="wt-segments" id="wtPolicySegments" role="radiogroup" aria-label="Who can join">
+                <button type="button" role="radio" data-wt-command="wtSetJoinPolicy" data-wt-value="0">Direct</button>
+                <button type="button" role="radio" data-wt-command="wtSetJoinPolicy" data-wt-value="1">Ask</button>
+                <button type="button" role="radio" data-wt-command="wtSetJoinPolicy" data-wt-value="2">Off</button>
+              </div>
+            </div>
+            <p class="wt-hint" id="wtPolicyExplanation"></p>
+            <p class="wt-hint wt-hint-error" id="wtPolicyError" hidden></p>
+          </section>
+
+          <details class="wt-details" id="wtSyncDetails">
+            <summary>Sync details</summary>
+            <span id="wtSyncDetailsText"></span>
+          </details>
         </div>
-        <!-- Two groups, because these are two kinds of action. Host controls change how the party
-             behaves; session actions end this viewer's part in it, or everyone's. They were one
-             flat wrapping row of four equal buttons, so "End party" sat inline beside "Change
-             controls" with nothing to say one is destructive and the other is a toggle. -->
-        <div class="party-panel-actions">
-          <div class="party-panel-actions-group">
-            <button type="button" id="partyControlModeButton" data-command="partyToggleControlMode">Change controls</button>
-            <button type="button" id="partyWaitButton" data-command="partyToggleWait">Wait for everyone</button>
+        <div class="party-panel-actions" id="wtFooter">
+          <div class="wt-footer-leave">
+            <button type="button" data-command="partyLeave">Leave party</button>
+            <span class="wt-hint" id="wtLeaveHelper"></span>
           </div>
-          <div class="party-panel-actions-group party-panel-actions-session">
-            <button type="button" data-command="partyLeave">Leave</button>
-            <button type="button" id="partyEndButton" class="danger" data-command="partyEnd">End party</button>
+          <div class="wt-footer-end" id="wtEndGroup">
+            <button type="button" class="danger" id="wtEndButton" data-wt-command="wtEndConfirm" data-wt-value="1">End for all</button>
+            <span class="wt-end-confirm" id="wtEndConfirmGroup" hidden>
+              <span>End for everyone?</span>
+              <button type="button" class="danger" data-command="partyEnd">Yes</button>
+              <button type="button" data-wt-command="wtEndConfirm" data-wt-value="0">Cancel</button>
+            </span>
           </div>
         </div>
       </aside>
@@ -190,15 +269,6 @@
         <strong id="socialNotificationActor"></strong>
         <span id="socialNotificationMessage"></span>
         <div class="social-notification-actions" id="socialNotificationActions"></div>
-      </aside>
-
-      <aside class="party-ended-choice" id="partyEndedChoice" aria-live="assertive" aria-hidden="true">
-        <strong>The host ended Watch Together</strong>
-        <span>You can keep watching this source normally or exit the player.</span>
-        <div class="social-notification-actions">
-          <button type="button" data-command="partyEndContinue">Continue watching</button>
-          <button type="button" data-command="partyEndExit">Exit player</button>
-        </div>
       </aside>
 
       <section class="center-status" id="bufferingStatus" aria-label="Buffering" aria-hidden="true">

@@ -42,8 +42,7 @@ const nextEpisodeLabel = document.getElementById("nextEpisodeLabel");
 const submitIntroButton = document.getElementById("submitIntroButton");
 const videoSettingsButton = document.getElementById("videoSettingsButton");
 const watchTogetherButton = document.getElementById("watchTogetherButton");
-const presenceJoinPolicyButton = document.getElementById("presenceJoinPolicyButton");
-const presenceJoinPolicyLabel = document.getElementById("presenceJoinPolicyLabel");
+const watchTogetherBadge = document.getElementById("watchTogetherBadge");
 const backButton = document.getElementById("backButton");
 const openingOverlay = document.getElementById("openingOverlay");
 const openingArtwork = document.getElementById("openingArtwork");
@@ -64,25 +63,55 @@ const openingManualButton = document.getElementById("openingManualButton");
 const partyBanner = document.getElementById("partyBanner");
 const partyBannerText = document.getElementById("partyBannerText");
 const partyPanel = document.getElementById("partyPanel");
-const partyControlMode = document.getElementById("partyControlMode");
 const partyMemberList = document.getElementById("partyMemberList");
-const partyControlModeButton = document.getElementById("partyControlModeButton");
-const partyWaitButton = document.getElementById("partyWaitButton");
-const partyEndButton = document.getElementById("partyEndButton");
-const partyContentTitle = document.getElementById("partyContentTitle");
-const partyContentDetail = document.getElementById("partyContentDetail");
-const partySourceLabel = document.getElementById("partySourceLabel");
-const partyHealthLabel = document.getElementById("partyHealthLabel");
-const partySyncLabel = document.getElementById("partySyncLabel");
-const partyErrorMessage = document.getElementById("partyErrorMessage");
-const partyInviteSection = document.getElementById("partyInviteSection");
-const partyInviteTargets = document.getElementById("partyInviteTargets");
-const partyInviteCode = document.getElementById("partyInviteCode");
+const wtConnectionChip = document.getElementById("wtConnectionChip");
+const wtError = document.getElementById("wtError");
+const wtErrorText = document.getElementById("wtErrorText");
+const wtSummary = document.getElementById("wtSummary");
+const wtTitle = document.getElementById("wtTitle");
+const wtSubline = document.getElementById("wtSubline");
+const wtMessage = document.getElementById("wtMessage");
+const wtIncoming = document.getElementById("wtIncoming");
+const wtIncomingAvatar = document.getElementById("wtIncomingAvatar");
+const wtIncomingName = document.getElementById("wtIncomingName");
+const wtOutgoing = document.getElementById("wtOutgoing");
+const wtOutgoingAvatar = document.getElementById("wtOutgoingAvatar");
+const wtOutgoingHeadline = document.getElementById("wtOutgoingHeadline");
+const wtOutgoingDetail = document.getElementById("wtOutgoingDetail");
+const wtCancelOutgoingButton = document.getElementById("wtCancelOutgoingButton");
+const wtDismissAcceptedButton = document.getElementById("wtDismissAcceptedButton");
+const wtJoinAcceptedButton = document.getElementById("wtJoinAcceptedButton");
+const wtStartSection = document.getElementById("wtStartSection");
+const wtStartButton = document.getElementById("wtStartButton");
+const wtFailedSection = document.getElementById("wtFailedSection");
+const wtOpenExistingButton = document.getElementById("wtOpenExistingButton");
+const wtElsewhereSection = document.getElementById("wtElsewhereSection");
+const wtEndedSection = document.getElementById("wtEndedSection");
+const wtPeopleSection = document.getElementById("wtPeopleSection");
+const wtInviteToggle = document.getElementById("wtInviteToggle");
+const wtInvitePanel = document.getElementById("wtInvitePanel");
+const wtInviteList = document.getElementById("wtInviteList");
+const wtInviteCodeRow = document.getElementById("wtInviteCodeRow");
+const wtInviteCode = document.getElementById("wtInviteCode");
+const wtCopyInviteCodeButton = document.getElementById("wtCopyInviteCodeButton");
+const wtSettingsSection = document.getElementById("wtSettingsSection");
+const wtGuestControlSwitch = document.getElementById("wtGuestControlSwitch");
+const wtWaitSwitch = document.getElementById("wtWaitSwitch");
+const wtPolicySection = document.getElementById("wtPolicySection");
+const wtPolicySegments = document.getElementById("wtPolicySegments");
+const wtPolicyExplanation = document.getElementById("wtPolicyExplanation");
+const wtPolicyError = document.getElementById("wtPolicyError");
+const wtSyncDetails = document.getElementById("wtSyncDetails");
+const wtSyncDetailsText = document.getElementById("wtSyncDetailsText");
+const wtFooter = document.getElementById("wtFooter");
+const wtLeaveHelper = document.getElementById("wtLeaveHelper");
+const wtEndGroup = document.getElementById("wtEndGroup");
+const wtEndButton = document.getElementById("wtEndButton");
+const wtEndConfirmGroup = document.getElementById("wtEndConfirmGroup");
 const socialNotification = document.getElementById("socialNotification");
 const socialNotificationActor = document.getElementById("socialNotificationActor");
 const socialNotificationMessage = document.getElementById("socialNotificationMessage");
 const socialNotificationActions = document.getElementById("socialNotificationActions");
-const partyEndedChoice = document.getElementById("partyEndedChoice");
 const openingProgressTrack = document.getElementById("openingProgressTrack");
 const openingProgressBar = document.getElementById("openingProgressBar");
 const parentalGuide = document.getElementById("parentalGuide");
@@ -320,17 +349,16 @@ let state = {
   openingReleaseName: "",
   partyBannerVisible: false,
   partyBannerText: "",
-  partyRoom: {
-    available: false, open: false, contentTitle: "", contentDetail: "", sourceLabel: "",
-    healthLabel: "", syncLabel: "", controlModeLabel: "", readySummary: "",
-    transportEnabled: true, isHost: false, waitForEveryone: true, inviteCode: "",
-    errorMessage: "", members: [], inviteTargets: [],
+  watchTogether: {
+    open: false, state: "idle", badge: "none", memberCount: 0, buttonLabel: "Watch Together",
+    people: [], inviteTargets: [], joinPolicy: 1,
   },
+  partyTransportLocked: false,
+  partyHostName: "",
   socialNotificationVisible: false,
   socialNotificationActor: "",
   socialNotificationMessage: "",
   socialNotificationActions: [],
-  partyEndedChoiceVisible: false,
   skipPromptVisible: false,
   skipPromptLabel: "Skip",
   skipPromptStartMs: 0,
@@ -346,8 +374,6 @@ let state = {
   showSubmitIntro: false,
   showVideoSettings: false,
   showWatchTogether: false,
-  presenceJoinPolicyVisible: false,
-  presenceJoinPolicyLabel: "",
   showSources: false,
   showEpisodes: false,
   showNextEpisode: false,
@@ -602,8 +628,7 @@ const showCommandToast = command => {
  * True for a guest under host-only controls, false for everyone else and for anybody not in a
  * party at all - `available` is what keeps ordinary playback untouched by this.
  */
-const isPartyTransportLocked = () =>
-  Boolean(state.partyRoom && state.partyRoom.available && !state.partyRoom.transportEnabled);
+const isPartyTransportLocked = () => Boolean(state.partyTransportLocked);
 
 /**
  * Refuses a playback control this member is not allowed to use, and says so.
@@ -636,7 +661,9 @@ const partyTransportCommands = new Set([
 
 const refusePartyTransport = () => {
   if (!isPartyTransportLocked()) return false;
-  showPlayerToast("The host controls playback");
+  // Named: "the host" was a role, and the viewer wants to know who to ask.
+  const host = String(state.partyHostName || "").trim();
+  showPlayerToast(host ? `Only ${host} can pause or seek` : "Only the host can pause or seek");
   return true;
 };
 
@@ -2115,77 +2142,206 @@ const renderPartyBanner = suppress => {
 
 const PARTY_STATUS_TONES = ["ready", "working", "failed", "offline", "paused", "buffering", "reconnecting"];
 
+let wtInviteExpanded = false;
+
+const fillAvatar = (element, name, avatarUrl, colorHex) => {
+  element.replaceChildren();
+  const initial = String(name || "?").trim().slice(0, 1).toUpperCase() || "?";
+  if (colorHex) element.style.background = colorHex;
+  const url = String(avatarUrl || "").trim();
+  if (url) {
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = "";
+    img.decoding = "async";
+    // A picture that fails must not leave an empty circle where a letter would do.
+    img.addEventListener("error", () => { img.remove(); element.textContent = initial; }, { once: true });
+    element.append(img);
+  } else {
+    element.textContent = initial;
+  }
+};
+
+const formatClock = ms => {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+};
+
+/**
+ * The Watch Together panel, drawn from `state.watchTogether` and nothing else.
+ *
+ * Every decision - which state, which words, who is host - is made in Kotlin
+ * (`WatchTogetherPanelState.kt`, `WatchTogetherBridge.kt`). This only shows and hides sections, so
+ * the fixture gallery can exercise every state without a party.
+ */
 const renderPartyPanel = suppress => {
-  const room = state.partyRoom || {};
-  const show = Boolean(!suppress && room.available && room.open && Array.isArray(room.members));
+  const wt = state.watchTogether || {};
+  const kind = String(wt.state || "idle");
+  const show = Boolean(!suppress && wt.open);
   partyPanel.classList.toggle("visible", show);
   partyPanel.setAttribute("aria-hidden", show ? "false" : "true");
-  // The header used to carry only the control mode. Mid-film the number that matters is how many
-  // people actually have a stream open, so that leads and the mode follows it.
-  const summary = String(room.readySummary || "").trim();
-  const mode = String(room.controlModeLabel || "").trim();
-  partyControlMode.textContent = summary && mode ? `${summary} · ${mode}` : (summary || mode);
-  setText(partyContentTitle, room.contentTitle);
-  setText(partyContentDetail, room.contentDetail);
-  setText(partySourceLabel, room.sourceLabel);
-  setText(partyHealthLabel, room.healthLabel);
-  setText(partySyncLabel, room.syncLabel);
-  setText(partyErrorMessage, room.errorMessage);
+  partyPanel.dataset.state = kind;
+  const active = kind === "active";
+
+  wtConnectionChip.hidden = !active;
+  wtConnectionChip.dataset.connection = wt.connection || "live";
+  wtConnectionChip.textContent = wt.connectionLabel || "";
+  wtConnectionChip.title = wt.connectionTooltip || "";
+
+  const error = String(wt.errorMessage || "").trim();
+  wtError.hidden = !error;
+  wtErrorText.textContent = error;
+
+  setText(wtTitle, wt.title);
+  setText(wtSubline, active ? wt.subline : "");
+  wtSummary.hidden = !wt.title;
+  setText(wtMessage, active ? "" : wt.message);
+
+  wtIncoming.hidden = !wt.incomingVisible;
+  if (wt.incomingVisible) {
+    fillAvatar(wtIncomingAvatar, wt.incomingName, wt.incomingAvatarUrl, wt.incomingColorHex);
+    wtIncomingName.textContent = wt.incomingName || "";
+  }
+
+  wtOutgoing.hidden = !wt.outgoingVisible;
+  if (wt.outgoingVisible) {
+    const name = wt.outgoingName || "your friend";
+    fillAvatar(wtOutgoingAvatar, name, wt.outgoingAvatarUrl, wt.outgoingColorHex);
+    const phase = wt.outgoingPhase;
+    wtOutgoingHeadline.textContent = phase === "accepted" ? `${name} let you in`
+      : phase === "joining" ? `Joining ${name}…` : `Asking ${name} to join…`;
+    const remaining = Number(wt.outgoingExpiresAtMs) - Date.now();
+    wtOutgoingDetail.textContent = phase === "pending" && remaining > 0 ? formatClock(remaining) : "";
+    wtCancelOutgoingButton.hidden = phase !== "pending";
+    wtJoinAcceptedButton.hidden = phase !== "accepted";
+    wtDismissAcceptedButton.hidden = phase !== "accepted";
+  }
+
+  wtStartSection.hidden = !(kind === "idle" || kind === "starting");
+  wtStartButton.disabled = kind === "starting";
+  wtStartButton.textContent = kind === "starting" ? "Starting party…" : "Start a party";
+  wtFailedSection.hidden = kind !== "startFailed";
+  wtOpenExistingButton.hidden = !wt.offersOpenExisting;
+  wtElsewhereSection.hidden = kind !== "activeElsewhere";
+  wtEndedSection.hidden = kind !== "ended";
+
+  wtPeopleSection.hidden = !active;
   partyMemberList.replaceChildren();
-  partyControlModeButton.hidden = !room.isHost;
-  partyWaitButton.hidden = !room.isHost;
-  partyWaitButton.textContent = room.waitForEveryone ? "Wait for everyone: On" : "Wait for everyone: Off";
-  partyEndButton.hidden = !room.isHost;
-  (room.members || []).forEach(member => {
+  if (active) {
+    (wt.people || []).forEach(person => {
+      const row = document.createElement("div");
+      const tone = PARTY_STATUS_TONES.includes(person.tone) ? person.tone : "working";
+      row.className = `party-member${tone === "offline" ? " offline" : ""}`;
+      const avatar = document.createElement("span");
+      avatar.className = "party-member-avatar";
+      fillAvatar(avatar, person.name, person.avatarUrl, "");
+      const copy = document.createElement("span");
+      copy.className = "party-member-copy";
+      const name = document.createElement("div");
+      name.className = "party-member-name";
+      name.textContent = person.name || "Guest";
+      if (person.isHost) {
+        const host = document.createElement("span");
+        host.className = "wt-host";
+        host.textContent = "Host";
+        name.append(host);
+      }
+      const status = document.createElement("div");
+      status.className = `party-member-status ${tone}`;
+      status.textContent = person.status || "";
+      copy.append(name, status);
+      row.append(avatar, copy);
+      partyMemberList.append(row);
+    });
+  }
+  const invites = wt.inviteTargets || [];
+  const inviteCode = String(wt.inviteCode || "").trim();
+  const canInvite = active && wt.isHost && (invites.length > 0 || Boolean(inviteCode));
+  wtInviteToggle.hidden = !canInvite;
+  wtInviteToggle.setAttribute("aria-expanded", wtInviteExpanded ? "true" : "false");
+  wtInvitePanel.hidden = !(canInvite && wtInviteExpanded);
+  wtInviteList.replaceChildren();
+  invites.forEach(target => {
     const row = document.createElement("div");
-    row.className = `party-member${member.connected ? "" : " offline"}`;
+    row.className = "wt-invite-row";
     const avatar = document.createElement("span");
     avatar.className = "party-member-avatar";
-    const avatarUrl = String(member.avatarUrl || "").trim();
-    if (avatarUrl) {
-      // Sent across the bridge since the panel shipped and drawn by nothing, so every avatar here
-      // was a monogram even when the profile had a picture.
-      const img = document.createElement("img");
-      img.src = avatarUrl;
-      img.alt = "";
-      img.decoding = "async";
-      // A profile picture that 404s must not leave an empty circle where a letter would do.
-      img.addEventListener("error", () => {
-        img.remove();
-        avatar.textContent = String(member.name || "?").trim().slice(0, 1).toUpperCase();
-      }, { once: true });
-      avatar.append(img);
-    } else {
-      avatar.textContent = String(member.name || "?").trim().slice(0, 1).toUpperCase();
-    }
-    const copy = document.createElement("span");
-    copy.className = "party-member-copy";
-    const name = document.createElement("div");
-    name.className = "party-member-name";
-    name.textContent = `${member.name || "Guest"}${member.role === "host" ? " · Host" : ""}`;
-    const status = document.createElement("div");
-    const tone = PARTY_STATUS_TONES.includes(member.statusTone) ? member.statusTone : "working";
-    status.className = `party-member-status ${member.connected ? tone : "offline"}`;
-    status.textContent = member.connected ? (member.status || "connected") : "disconnected";
-    copy.append(name, status);
-    row.append(avatar, copy);
-    partyMemberList.append(row);
-  });
-  partyInviteTargets.replaceChildren();
-  (room.inviteTargets || []).forEach(target => {
+    fillAvatar(avatar, target.name, target.avatarUrl, "");
+    const name = document.createElement("span");
+    name.textContent = target.name || "Friend";
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = `Invite ${target.name || "friend"}`;
-    button.addEventListener("click", event => {
-      event.stopPropagation();
-      send("partyInvite", Number(target.index));
-    });
-    partyInviteTargets.append(button);
+    button.textContent = target.invited ? "Invited ✓" : "Invite";
+    button.disabled = Boolean(target.invited);
+    button.dataset.wtCommand = "wtInviteFriend";
+    button.dataset.wtValue = String(Number(target.index) || 0);
+    row.append(avatar, name, button);
+    wtInviteList.append(row);
   });
-  const inviteCode = String(room.inviteCode || "").trim();
-  partyInviteCode.textContent = inviteCode ? `Invite code: ${inviteCode}` : "";
-  partyInviteSection.hidden = !(room.isHost && ((room.inviteTargets || []).length || inviteCode));
+  wtInviteCodeRow.hidden = !inviteCode;
+  wtInviteCode.textContent = inviteCode;
+
+  wtSettingsSection.hidden = !(active && wt.isHost);
+  wtGuestControlSwitch.setAttribute("aria-checked", wt.guestsControl ? "true" : "false");
+  wtGuestControlSwitch.dataset.wtCommand = "wtSetGuestControl";
+  wtGuestControlSwitch.dataset.wtValue = wt.guestsControl ? "0" : "1";
+  wtWaitSwitch.setAttribute("aria-checked", wt.pauseWhenBuffers ? "true" : "false");
+  wtWaitSwitch.dataset.wtCommand = "wtSetWaitForEveryone";
+  wtWaitSwitch.dataset.wtValue = wt.pauseWhenBuffers ? "0" : "1";
+
+  wtPolicySection.hidden = !wt.joinPolicyVisible;
+  wtPolicySegments.classList.toggle("saving", Boolean(wt.joinPolicySaving));
+  wtPolicySegments.querySelectorAll("button").forEach(button => {
+    button.setAttribute("aria-checked", Number(button.dataset.wtValue) === Number(wt.joinPolicy) ? "true" : "false");
+  });
+  setText(wtPolicyExplanation, wt.joinPolicyExplanation);
+  setText(wtPolicyError, wt.joinPolicyError);
+
+  const details = String(wt.syncDetails || "").trim();
+  wtSyncDetails.hidden = !(active && details);
+  wtSyncDetailsText.textContent = details;
+
+  wtFooter.hidden = !active;
+  setText(wtLeaveHelper, wt.leaveHelper);
+  wtEndGroup.hidden = !(active && wt.isHost);
+  wtEndButton.hidden = Boolean(wt.endConfirm);
+  wtEndConfirmGroup.hidden = !wt.endConfirm;
 };
+
+const renderWatchTogetherButton = () => {
+  const wt = state.watchTogether || {};
+  const badge = String(wt.badge || "none");
+  watchTogetherBadge.dataset.badge = badge;
+  watchTogetherBadge.textContent = badge === "active" && Number(wt.memberCount) > 0 ? String(wt.memberCount) : "";
+  watchTogetherButton.setAttribute("aria-label", wt.buttonLabel || state.watchTogetherLabel || "Watch Together");
+};
+
+// Buttons drawn per state carry `data-wt-command` and a value; they are delegated here rather than
+// wired one by one, because the panel redraws them on every update.
+partyPanel.addEventListener("click", event => {
+  event.stopPropagation();
+  const target = event.target.closest("[data-wt-command]");
+  if (target && !target.disabled) {
+    noteChromeActivity(true);
+    send(target.dataset.wtCommand, Number(target.dataset.wtValue) || 0);
+    return;
+  }
+  if (event.target.closest("#wtInviteToggle")) {
+    wtInviteExpanded = !wtInviteExpanded;
+    renderPartyPanel(false);
+  }
+});
+
+wtCopyInviteCodeButton.addEventListener("click", () => {
+  const code = String(state.watchTogether?.inviteCode || "").trim();
+  if (!code) return;
+  const done = () => showPlayerToast("Invite code copied");
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(code).then(done).catch(() => {});
+  } else {
+    done();
+  }
+});
 
 const renderSocialNotification = suppress => {
   const show = Boolean(!suppress && state.socialNotificationVisible);
@@ -2211,12 +2367,6 @@ const renderSocialNotification = suppress => {
     });
     socialNotificationActions.append(button);
   });
-};
-
-const renderPartyEndedChoice = suppress => {
-  const show = Boolean(!suppress && state.partyEndedChoiceVisible);
-  partyEndedChoice.classList.toggle("visible", show);
-  partyEndedChoice.setAttribute("aria-hidden", show ? "false" : "true");
 };
 
 const renderPlaybackError = () => {
@@ -2486,8 +2636,8 @@ const renderChrome = () => {
   renderPartyBanner(showOpening || showError || Boolean(activeModal));
   renderPartyPanel(showOpening || showError || Boolean(activeModal));
   renderSocialNotification(showOpening || showError || Boolean(activeModal));
-  renderPartyEndedChoice(showOpening || showError || Boolean(activeModal));
-  const partyTransportLocked = Boolean(state.partyRoom?.available && !state.partyRoom?.transportEnabled);
+  renderWatchTogetherButton();
+  const partyTransportLocked = isPartyTransportLocked();
   root.classList.toggle("party-transport-locked", partyTransportLocked);
   [toggle, seek, ...document.querySelectorAll('[data-command="seekBack"], [data-command="seekForward"], [data-command="speed"], [data-command="nextEpisode"]')]
     .filter(Boolean)
@@ -2519,9 +2669,6 @@ const renderChrome = () => {
   setVisible(submitIntroButton, Boolean(state.showSubmitIntro));
   setVisible(videoSettingsButton, Boolean(state.showVideoSettings));
   setVisible(watchTogetherButton, Boolean(state.showWatchTogether));
-  setVisible(presenceJoinPolicyButton, Boolean(state.presenceJoinPolicyVisible));
-  presenceJoinPolicyLabel.textContent = state.presenceJoinPolicyLabel || "Join: Ask first";
-  presenceJoinPolicyButton.setAttribute("aria-label", `Session policy, ${presenceJoinPolicyLabel.textContent}. Activate to change.`);
   setVisible(sourcesButton, Boolean(state.showSources));
   setVisible(episodesButton, Boolean(state.showEpisodes));
   setVisible(nextEpisodeButton, Boolean(state.showNextEpisode));
@@ -2548,7 +2695,6 @@ const renderChrome = () => {
   backButton.setAttribute("aria-label", state.closeLabel || "Close player");
   submitIntroButton.setAttribute("aria-label", state.submitIntroLabel || "Submit Intro");
   videoSettingsButton.setAttribute("aria-label", state.videoSettingsLabel || "Video settings");
-  watchTogetherButton.setAttribute("aria-label", state.watchTogetherLabel || "Watch Together");
   setProgress(positionMs, durationMs);
   if (showError) {
     skipPrompt.classList.remove("visible", "show-progress");
