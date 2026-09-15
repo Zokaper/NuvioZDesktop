@@ -2,6 +2,86 @@
 
 Last updated: 2026-09-15
 
+## Social + Watch Together UX pass — Stage 8: full gate, review, debug MSI (2026-09-15)
+
+⚠ **Automated gate green; nothing in stages 3-7 has been exercised on hardware.** The two-client checklist
+is in `PLAN-social-watch-together-ux-pass.md` §10.
+
+- `compileKotlinDesktop` green. Full `desktopTest` was run with `test-results/desktopTest/` deleted first:
+  **1,957 tests, 0 failures, BUILD SUCCESSFUL**, on the final code (`7be7a056`).
+- `scripts/run-pure-suites.sh`: all eight groups green.
+- Backend `scripts/test-db.sh` on `claude/join-request-lifecycle`: 12 files / 286 tests PASS.
+- `/code-review high` over `claude/phase-5-onboarding...claude/social-wt-ux-pass` returned 7 findings, all
+  confirmed against the code and fixed in `7be7a056`:
+  1. Cancel while Sending dropped the send's answer; the server still made the membership or request.
+     Now `AbandonSend` + `ReleaseOrphanedSend` leave or cancel it as its owner.
+  2. A replacing send cancelled the previous one and then failed `joinInFlight`. It now waits for the
+     previous send, which releases its own orphaned answer.
+  3. The boundary cancel could go out on the next profile's Z token. The shell now awaits
+     `SocialRepository.awaitIdentityBoundary()` before `WatchPartyRepository.setActiveProfile` / `restore`.
+  4. `reconcileAbandoned` forgot entries whose cleanup failed.
+  5. Overlapping `setPolicy` writes rolled back to the wrong policy.
+  6. `setInOwnPlayer` was a flag; a player replacing another left it false. It is now a count.
+  7. `partyInvitedProfileIds` survived across parties.
+  New reducer tests cover 1 and 2.
+- Debug MSI: `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi`
+  (259,512,095 bytes; SHA-256 `f573def7509839c4976342153582973b2c8821ac78f89136e0ab939b59834578`), built
+  with `-Pnuvio.desktop.debugTools=true` (confirmed in `packageMsi.args.txt`) on the JBR SDK.
+- Still open: the teardown-test race (see Stages 5-6); iOS actuals never compiled; §11.11 friends-rail clip
+  not reproducible in the harness; the gallery's header shows a button under the top-right close glyph,
+  so check that against the real window chrome in the MSI.
+
+## Social + Watch Together UX pass — Stage 7: party status pill (2026-09-15)
+
+⚠ **Compiled, tested and rendered - not hardware-verified.** Every status row needs the two-client run
+in the plan's §10.
+
+`watchPartyBanner` / `bannerText()` / `WatchPartyPlayerStatus` are gone. `rememberPartyStatusLine`
+(`player/PlayerPartyStatus.kt`) gathers `PartyPlaybackStatusInputs` from the existing signals and runs
+Stage 1's `projectPartyPlaybackStatus` through `debouncePartyStatus` on a 250ms clock. The clock keeps
+running while a line is shown or pending, so a line whose condition vanished with the party still clears.
+`PlayerControlsState.partyStatus` (`PartyStatusBridgeState`) replaces `partyBannerVisible/Text`. The
+commands and labels are chosen in Kotlin (`partyStatusBridgeState`), so the page can only send commands
+the runtime answers.
+
+| piece | where |
+| --- | --- |
+| Episode handoff | while the party no longer matches this playback, the party this player last followed stays the status party as long as `PartySourceRealizer` is still working for it |
+| Stall hold | host: `partyAutoPausedForGuests`; guests: `WatchPartySyncState.tickHold` (the newest non-playing tick's `hold`); self in the list → "Everyone's waiting while you buffer" |
+| Tick `hold` | `WatchPartySync.publishTick(hold = …)` from both host publish sites |
+| Paused by | `announcePartyActor` no longer toasts `pause`; it records `partyLastPauseActor` (someone else only), which a `play` or a generation change clears. It is shown only 500ms after the command, while the party is paused, and when no tick `hold` is present |
+| Actions | `wtChooseSource` → `openSourcesPanel()`; `wtStartAnyway` → the same force start as pressing play; `wtDontWait` → `stopWaitingForStalledGuests()`: turns the switch off, **releases the current hold** (otherwise nothing would ever resume it), and the switch comes back on at the next generation; Let in / Decline / Cancel reuse the Stage 5 commands |
+| Page | `.party-banner` pill: tone dot (waiting pulses, warning amber, error red), up to two avatars, text, a secondary and a primary button. Only the buttons take the pointer. When the chrome hides, the pill compacts to 85% and the buttons go; any pointer movement brings the chrome and the buttons back. The secondary button is hidden under 680px |
+
+Gallery: `PlayerUiGallery` writes `status-*` pages (14 rows, each also in a `-compact` variant) from the real
+projector. Screenshotted: incoming at 1280 and 600, incoming compact, source-not-found, and waiting-sources
+at 1280 and 600×500.
+
+Gate: `compileKotlinDesktop` green; pure suites green (group 7 now 61 tests and compiles
+`PartyPlaybackStatus.kt`); `NativePlayerControlsJsonTest` / `NativePlayerControlsPageTest` /
+`PlayerUiGallery` green.
+
+## Social + Watch Together UX pass — Stages 5-6: panel state bridge + native panel (2026-09-15)
+
+⚠ **Compiled, tested and rendered - not hardware-verified.** Commit `e9b44565` covers both stages and is
+still labelled WIP; it has not been split.
+
+- `WatchTogetherBridgeState` + `watchTogetherBridgeState(panel, …)` replace `PartyRoomViewState`,
+  `PlayerPartyMember` and `PlayerPartyInviteTarget`. The header action only toggles `partyRoomOpen`;
+  the panel does not close when a party goes away; it auto-opens on `guestPostEndChoice`. There is a 20s
+  promotion timeout, and promotion failures go to the panel's StartFailed state instead of a toast.
+- Join policy: `SocialPresenceSession.setPolicy(policy)` (optimistic, rollback) replaces `cyclePolicy`;
+  the header pill is removed.
+- `controls.html/css/js` panel rewritten for every state. `data-wt-command` buttons are delegated on
+  `#partyPanel`. The lock toast reads "Only X can pause or seek".
+- Gate: pure suites green; social + watchparty + player `desktopTest` 491/491.
+- `NativePlayerControllerTeardownTest.failedOrdinaryDisposeBlocksTerminalNavigation` is **not a Stage 5-6
+  regression**. It failed 2 of 4 runs with the class run alone, and neither that test nor the
+  release/dispose code changed in these stages (the controller diff is JSON only). Cause: the test's fake
+  dispose counts its latch down *before* throwing, so `releaseBeforeNavigation` can run before
+  `recordTerminalDisposeFailure` sets `terminalReleaseFailure`. Release then takes the worker path and
+  reports success. This is a latent race in the release path, left for a separately approved fix.
+
 ## Social + Watch Together UX pass — Stage 4: outgoing join request store, boundaries, dock (2026-09-15)
 
 ⚠ **Compiled, tested and rendered - not hardware-verified.** Needs the two-client run in the plan's §10
