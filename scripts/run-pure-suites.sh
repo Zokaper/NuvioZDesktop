@@ -270,7 +270,9 @@ kotlinc -nowarn -cp "$CP_BUILD:$CP_JSON:$CP_COROUTINES" -Xplugin="$WORK/serializ
   "$M/features/watchparty/WatchPartyTimeline.kt" \
   "$M/features/watchparty/WatchPartyBarrier.kt" \
   "$M/features/watchparty/WatchPartySyncProtocol.kt" \
+  "$M/features/watchparty/PartyPlaybackStatus.kt" \
   "$T/features/watchparty/WatchPartyModelsTest.kt" \
+  "$T/features/watchparty/PartyPlaybackStatusTest.kt" \
   "$T/features/watchparty/PartySourceDescriptorV2Test.kt" \
   "$T/features/watchparty/WatchPartySessionStateTest.kt" \
   "$T/features/watchparty/WatchPartyPlaybackLifecycleTest.kt" \
@@ -286,21 +288,45 @@ java -cp "$WORK/out-watchparty:$CP_RUN:$CP_JSON:$CP_COROUTINES" org.junit.runner
   com.nuvio.app.features.watchparty.WatchPartyTimelineTest \
   com.nuvio.app.features.watchparty.WatchPartyBarrierTest \
   com.nuvio.app.features.watchparty.WatchPartyPendingSeekTest \
-  com.nuvio.app.features.watchparty.WatchPartySyncProtocolTest 2>&1 | grep -v "Picked up JAVA_TOOL"
+  com.nuvio.app.features.watchparty.WatchPartySyncProtocolTest \
+  com.nuvio.app.features.watchparty.PartyPlaybackStatusTest 2>&1 | grep -v "Picked up JAVA_TOOL"
 
-# --- Group 7: the unified social notification reducer ---------------------------------------
+# --- Group 7: social reducers and projections -------------------------------------------------
+# The notification reducer, Recently Watched grouping, the outgoing join-request lifecycle with its
+# identity-boundary rules, the Watching Now join affordance and the in-player Watch Together panel
+# state. The panel reads party presentation and health, hence the party timing files and coroutines.
 rm -rf "$WORK/out-social"
-kotlinc -nowarn -cp "$CP_BUILD:$CP_JSON" -Xplugin="$WORK/serialization-plugin-${KOTLIN_VERSION}.jar" \
+kotlinc -nowarn -cp "$CP_BUILD:$CP_JSON:$CP_COROUTINES" -Xplugin="$WORK/serialization-plugin-${KOTLIN_VERSION}.jar" \
   -d "$WORK/out-social" \
   "$M/features/watchparty/WatchPartyModels.kt" \
   "$M/features/watchparty/PartySourceDescriptorV2.kt" \
+  "$M/features/watchparty/PartySessionContracts.kt" \
+  "$M/features/watchparty/WatchPartySyncRules.kt" \
+  "$M/features/watchparty/WatchPartySessionState.kt" \
+  "$M/features/watchparty/WatchPartyPlaybackLifecycle.kt" \
+  "$M/features/watchparty/WatchPartyClock.kt" \
+  "$M/features/watchparty/WatchPartyTimeline.kt" \
+  "$M/features/watchparty/WatchPartyBarrier.kt" \
+  "$M/features/watchparty/WatchPartySyncProtocol.kt" \
+  "$M/features/watchparty/WatchPartyPresentation.kt" \
   "$M/features/social/SocialModels.kt" \
   "$M/features/social/SocialNotifications.kt" \
+  "$M/features/social/FriendActivityGrouping.kt" \
+  "$M/features/social/OutgoingJoinRequest.kt" \
+  "$M/features/social/WatchingNowJoinAffordance.kt" \
+  "$M/features/player/WatchTogetherPanelState.kt" \
   "$T/features/social/SocialNotificationsTest.kt" \
+  "$T/features/social/FriendActivityGroupingTest.kt" \
+  "$T/features/social/OutgoingJoinRequestTest.kt" \
+  "$T/features/player/WatchTogetherPanelStateTest.kt" \
   2>&1 | grep -v "^warning:" | grep -v "Picked up JAVA" || true
 
-java -cp "$WORK/out-social:$CP_RUN:$CP_JSON" org.junit.runner.JUnitCore \
-  com.nuvio.app.features.social.SocialNotificationsTest 2>&1 | grep -v "Picked up JAVA_TOOL"
+java -cp "$WORK/out-social:$CP_RUN:$CP_JSON:$CP_COROUTINES" org.junit.runner.JUnitCore \
+  com.nuvio.app.features.social.SocialNotificationsTest \
+  com.nuvio.app.features.social.FriendActivityGroupingTest \
+  com.nuvio.app.features.social.OutgoingJoinRequestTest \
+  com.nuvio.app.features.social.WatchingNowJoinAffordanceTest \
+  com.nuvio.app.features.player.WatchTogetherPanelStateTest 2>&1 | grep -v "Picked up JAVA_TOOL"
 
 # --- Group 8: shared Continue Watching/social title artwork selection -------------------------
 # The style enum is a neighbour stub because its shipped file reaches the full watch-progress

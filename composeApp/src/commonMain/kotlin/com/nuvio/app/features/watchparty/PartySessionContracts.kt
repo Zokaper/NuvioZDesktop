@@ -206,3 +206,24 @@ interface PartyRealtimeTransport {
     val state: StateFlow<WatchPartySyncState>
     fun updateAuthority(context: PartyAuthorityContext?)
 }
+
+/**
+ * Why promoting the running playback into a party did not happen.
+ *
+ * Exists so the refusal reaches a person. Every one of these was previously a `return` or a
+ * discarded `Result`, which is how "Start Watch Together" came to be a control that sometimes did
+ * nothing and told nobody why.
+ */
+enum class PartyPromotionFailure {
+    /** No presence session for this playback - the source has no descriptor a guest could match. */
+    NoPresenceSession,
+
+    /** The server has no live presence row for this session yet. Waiting a moment fixes it. */
+    PresenceStale,
+
+    /** This profile is already in a different live party; promoting would silently leave it. */
+    AlreadyInAnotherParty,
+
+    /** Anything else the server refused. */
+    Refused,
+}

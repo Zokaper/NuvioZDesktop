@@ -1,6 +1,8 @@
 package com.nuvio.app.features.watchparty
 
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
@@ -173,6 +175,10 @@ fun encodePartySyncMessage(message: PartySyncMessage): JsonObject = buildJsonObj
             put("at", message.tick.capturedAtPartyMs)
             put("spd", message.tick.playbackSpeed)
             put("dur", message.tick.durationMs)
+            // Only while a hold is on, so an ordinary tick is byte-for-byte what older builds send.
+            if (message.tick.hold.isNotEmpty()) {
+                put("hold", JsonArray(message.tick.hold.map(::JsonPrimitive)))
+            }
         }
         is PartyCommandMessage -> {
             put("t", TypeCommand)
@@ -243,6 +249,11 @@ fun decodePartySyncMessage(payload: JsonObject): PartySyncMessage? {
                 capturedAtPartyMs = long("at") ?: return null,
                 playbackSpeed = float("spd") ?: return null,
                 durationMs = long("dur") ?: 0L,
+                // Absent from older builds and from every tick outside a hold. A malformed value is
+                // treated as no hold rather than dropping the tick: the position is still good.
+                hold = (payload["hold"] as? JsonArray)
+                    ?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+                    .orEmpty(),
                 sourceGeneration = sourceGeneration,
                 authorityEpoch = authorityEpoch,
             ),

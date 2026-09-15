@@ -2,6 +2,31 @@
 
 Last updated: 2026-09-15
 
+## Social + Watch Together UX pass — Stage 1: pure models (2026-09-15)
+
+Branch `claude/social-wt-ux-pass` (off `claude/phase-5-onboarding`). Plan and ledger: workspace-root
+`PLAN-social-watch-together-ux-pass.md`. **Nothing user-visible yet** — every file here is pure and is
+wired in by later stages.
+
+| file | what |
+| --- | --- |
+| `social/FriendActivityGrouping.kt` | `groupFriendActivity` (runs merged by `contentId`), names / context labels, relative time, local-day buckets, an import-free PostgREST timestamp parser |
+| `social/OutgoingJoinRequest.kt` | `reduceOutgoingJoinRequest` returning effects, `decideJoinRequestPoll`, `boundaryCancelFollowUp`. Every async event carries a `JoinRequestBinding(ownerProfileId, token)`; a mismatch is dropped |
+| `social/WatchingNowJoinAffordance.kt` | Join / Ask to join / Requested / Joining… / In your party / none |
+| `watchparty/PartyPlaybackStatus.kt` | `projectPartyPlaybackStatus` (the §5 priority table) + `debouncePartyStatus` (700ms appear, 1200ms minimum, same identity in place) |
+| `player/WatchTogetherPanelState.kt` | `projectWatchTogetherPanel`, connection chip, `partyLeaveSuccessor` (mirrors `party_live_successor`) |
+| `PartyTick.hold` | optional `"hold"` array on the tick, sent only during a hold; protocol stays 2 |
+
+Deviations from the plan, all to keep these files executable by the pure suites: the store will live in
+its own `OutgoingJoinRequestStore.kt` (the plan put it beside the reducer); `PartyPromotionFailure`
+moved to `PartySessionContracts.kt`, and `WatchPartyParticipant.displayName` / `WatchPartyState.effectiveStage`
+moved to `WatchPartyPresentation.kt` (same package, no call site changed). The status projector checks
+Offline before Reconnecting when both hold.
+
+Gate: `compileKotlinDesktop` + targeted `desktopTest` (9 classes, 105 tests, BUILD SUCCESSFUL); pure
+suites all eight groups green (217 / 107 / 61 / 17 / 29 / **115** / **55** / 3). Full `desktopTest` is
+owed at Stage 8.
+
 ## Stabilization pass — Direct Join role flip and Next-episode mode routing (2026-09-15)
 
 ⚠ **Not hardware-verified.** Two defects from repeated testing of the Stage 16 build; full record and

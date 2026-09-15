@@ -125,6 +125,14 @@ data class PartyTick(
     val durationMs: Long,
     val sourceGeneration: Int = 0,
     val authorityEpoch: Long = 0L,
+    /**
+     * Members a host stall-guard hold is waiting on, while one is in force.
+     *
+     * The hold itself goes out as an ordinary `pause`, so without this a guest can only read it as a
+     * person pausing - "Seraph paused" for something nobody pressed. Peer plane only, optional on the
+     * wire, and ignored by builds that predate it; the protocol version does not move.
+     */
+    val hold: List<String> = emptyList(),
 ) {
     /**
      * Where the party is at [partyNowMs].

@@ -31,20 +31,3 @@ fun comparePartyAddonSignatures(
         extra = (participantSet - hostSet).sortedWith(compareBy(PartyAddonSignature::id, PartyAddonSignature::version)),
     )
 }
-
-fun WatchPartyState.effectiveStage(): WatchPartyStage = when {
-    status == WatchPartyStatus.playing || status == WatchPartyStatus.paused -> WatchPartyStage.playing
-    stage != WatchPartyStage.lobby || status == WatchPartyStatus.lobby -> stage
-    sourceFingerprint == null -> WatchPartyStage.waiting_for_host_source
-    members.filter { it.connected }.all {
-        it.readyState == SourceResolutionState.source_ready || it.readyState == SourceResolutionState.ready
-    } -> WatchPartyStage.ready_to_launch
-    else -> WatchPartyStage.resolving_sources
-}
-
-fun WatchPartyParticipant.displayName(viewerProfileId: String?): String = when {
-    profileId == viewerProfileId -> "You"
-    !profile?.displayName.isNullOrBlank() -> profile?.displayName.orEmpty()
-    !profile?.handle.isNullOrBlank() -> "@${profile?.handle}"
-    else -> profileId.take(8)
-}
