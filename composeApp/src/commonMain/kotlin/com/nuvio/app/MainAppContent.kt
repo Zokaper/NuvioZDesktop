@@ -203,6 +203,11 @@ import com.nuvio.app.core.ui.PresenceSnapshot
 import androidx.compose.ui.ExperimentalComposeUiApi
 import com.nuvio.app.features.player.PlayerExitDiagnostics
 import com.nuvio.app.features.player.dispatchNavigationBack
+import com.nuvio.app.features.social.WatchingNowJoinStep
+import com.nuvio.app.features.social.awaitJoinApproval
+import com.nuvio.app.features.social.decideWatchingNowJoin
+
+private val socialJoinLog = co.touchlab.kermit.Logger.withTag("SocialJoin")
 
 @OptIn(ExperimentalSharedTransitionApi::class, ExperimentalComposeUiApi::class)
 @Composable
@@ -274,6 +279,13 @@ internal fun MainAppContent(
         var registeredPlayerSystemBack by remember {
             mutableStateOf<Pair<PlayerRoute, () -> Unit>?>(null)
         }
+        // The Watch Together lobby's own answer to a system back. See `dispatchNavigationBack`.
+        var registeredPartyLobbySystemBack by remember {
+            mutableStateOf<Pair<AppRoute, () -> Unit>?>(null)
+        }
+        // A guest's wait for a Watching Now join request to be accepted. One at a time: asking again
+        // replaces the previous wait rather than stacking two lobbies behind one answer.
+        var joinApprovalWatch by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
         val liquidGlassNativeTabBarEnabled by remember {
             ThemeSettingsRepository.liquidGlassNativeTabBarEnabled
         }.collectAsStateWithLifecycle()
@@ -1407,6 +1419,10 @@ internal fun MainAppContent(
                                 ?.takeIf { (route, _) -> route == routeAtRequest }
                                 ?.second,
                             pop = { navController.popBackStack() },
+                            isPartyLobbyRoute = routeAtRequest is WatchPartyLobbyRoute,
+                            partyLobbyBack = registeredPartyLobbySystemBack
+                                ?.takeIf { (route, _) -> route == routeAtRequest }
+                                ?.second,
                         )
                     },
                     entryDecorators = listOf(
@@ -1548,21 +1564,33 @@ internal fun MainAppContent(
                                 },
                                 onStartPartyOnContent = { watching ->
                                     coroutineScope.launch {
-                                        SocialRepository.joinWatching(watching)
-                                            .onSuccess { result ->
-                                                result.party?.let { party ->
-                                                    WatchPartySessionCoordinator.installAuthorizedParty(party)
-                                                    navController.navigate(
-                                                        WatchPartyLobbyRoute(partyId = party.id),
+                                        // Every outcome says something - see `WatchingNowJoin.kt`. The
+                                        // failure branch used to be absent, which made a refused join
+                                        // indistinguishable from a button that does nothing.
+                                        val result = SocialRepository.joinWatching(watching)
+                                        result.exceptionOrNull()?.let { failure ->
+                                            socialJoinLog.w(failure) { "join watching failed" }
+                                        }
+                                        when (val step = decideWatchingNowJoin(result)) {
+                                            is WatchingNowJoinStep.OpenParty -> {
+                                                joinApprovalWatch?.cancel()
+                                                WatchPartySessionCoordinator.installAuthorizedParty(step.party)
+                                                navController.navigate(WatchPartyLobbyRoute(partyId = step.party.id))
+                                            }
+                                            WatchingNowJoinStep.AwaitApproval -> {
+                                                NuvioToastController.show("Join request sent")
+                                                joinApprovalWatch?.cancel()
+                                                joinApprovalWatch = coroutineScope.launch {
+                                                    awaitJoinApproval(
+                                                        onJoined = { party ->
+                                                            WatchPartySessionCoordinator.installAuthorizedParty(party)
+                                                            navController.navigate(WatchPartyLobbyRoute(partyId = party.id))
+                                                        },
                                                     )
-                                                } ?: when (result.outcome) {
-                                                    "approval_required" -> NuvioToastController.show("Join request sent")
-                                                    "disabled" -> NuvioToastController.show("This playback is not open to joining")
-                                                    "stale" -> NuvioToastController.show("This playback is no longer available")
-                                                    "full" -> NuvioToastController.show("This party is full")
-                                                    else -> Unit
                                                 }
                                             }
+                                            is WatchingNowJoinStep.Notice -> NuvioToastController.show(step.message)
+                                        }
                                     }
                                 },
                                 onSocialNotificationAction = ::handleSocialNotificationAction,
@@ -1717,6 +1745,15 @@ internal fun MainAppContent(
                         route = route,
                         navController = navController,
                         playbackProfileId = activePlaybackProfileId,
+                        onSystemBackHandlerChanged = { lobbyRoute, handler ->
+                            if (handler == null) {
+                                if (registeredPartyLobbySystemBack?.first == lobbyRoute) {
+                                    registeredPartyLobbySystemBack = null
+                                }
+                            } else {
+                                registeredPartyLobbySystemBack = lobbyRoute to handler
+                            }
+                        },
                     )
                 }
                 entry<StreamRoute>(

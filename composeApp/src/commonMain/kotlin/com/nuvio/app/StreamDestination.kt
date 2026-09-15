@@ -102,6 +102,7 @@ import com.nuvio.app.features.watchparty.PartyRealizationDecision
 import com.nuvio.app.features.watchparty.decidePartyRealization
 import com.nuvio.app.features.watchparty.PartySourceRealizer
 import com.nuvio.app.features.watchparty.WatchPartyRepository
+import com.nuvio.app.features.watchparty.partyLaunchStillLive
 import com.nuvio.app.features.watchparty.tierPartyPlaybackSources
 import com.nuvio.app.features.updater.formatFileSize
 import com.nuvio.app.navigation.*
@@ -353,6 +354,36 @@ internal fun StreamDestination(
     }
 
     /**
+     * Whether this route was opened for a party that is no longer running.
+     *
+     * ⚠ **A terminal party must never lead to a resolution.** Hardware Bug 5 (2026-09-15): a guest
+     * sitting here "resolving source" when the host ended the party kept resolving, because nothing
+     * on this route ever looked at the party again after it was opened. Read at the two hand-offs to
+     * the player as well as by the effect below, so a frame in which both happen cannot open a
+     * player for a dead party.
+     */
+    val partyLaunchId = launch.partyContext?.partyId
+    fun partyLaunchEnded(): Boolean =
+        partyLaunchId != null && !partyLaunchStillLive(partyLaunchId, WatchPartyRepository.uiState.value.party)
+
+    if (partyLaunchId != null) {
+        val partyUiForLaunch by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
+        val launchPartyLive = partyLaunchStillLive(partyLaunchId, partyUiForLaunch.party)
+        LaunchedEffect(launchPartyLive) {
+            if (launchPartyLive) return@LaunchedEffect
+            streamLog.i { "party ended during source preparation party=${partyLaunchId.take(8)} - leaving" }
+            // The realizer was already cleared with the party; this names the abandonment for the
+            // trace and is inert if nothing was in flight.
+            partyRealizationKey?.let { PartySourceRealizer.abandoned(it, "party_ended") }
+            StreamsRepository.abandonAutoPlay()
+            StreamsRepository.cancelLoading()
+            loadingToken?.let(PlaybackLoadingController::close)
+            loadingToken = null
+            onBack()
+        }
+    }
+
+    /**
      * Leaves for the details screen, and uncovers the list if that pop no-ops.
      *
      * The second half is the load-bearing one. `onBack` can silently do nothing -
@@ -553,6 +584,7 @@ internal fun StreamDestination(
         replaceStreamRoute: Boolean,
     ) {
         val infoHash = stream.p2pInfoHash ?: return
+        if (partyLaunchEnded()) return
         val sentinelUrl = p2pSentinelUrl(infoHash, stream.p2pFileIdx)
         val hasFailureChain = replaceStreamRoute &&
             (isPartyResolution || playerSettings.playbackMode != PlaybackMode.CLASSIC)
@@ -1268,6 +1300,7 @@ internal fun StreamDestination(
         }
         if (!hasFailureChain) StreamsRepository.consumeAutoPlay()
         StreamsRepository.cancelLoading()
+        if (partyLaunchEnded()) return@LaunchedEffect
         val launchId = PlayerLaunchStore.put(playerLaunch)
         lastHandedOffFacts = playerLaunch.sourceFacts
         playbackHandedOff = true

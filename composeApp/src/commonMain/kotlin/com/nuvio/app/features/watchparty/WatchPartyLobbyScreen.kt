@@ -76,6 +76,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.ui.NuvioAsyncImage
+import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.details.MetaDetails
@@ -144,6 +145,12 @@ private val EpisodeStillBlur = 12.dp
 @Composable
 fun WatchPartyLobbyScreen(
     onBack: () -> Unit,
+    /**
+     * Whether the leave / end question is on screen. Hoisted so the route can raise it for a system
+     * back (Escape) - see `dispatchNavigationBack` and `WatchPartyLobbyExit.kt`.
+     */
+    showDepartureDialog: Boolean,
+    onShowDepartureDialogChange: (Boolean) -> Unit,
     onOpenContent: (contentType: String, contentId: String, title: String) -> Unit = { _, _, _ -> },
     onChooseSource: (WatchPartyState, PartyStreamLaunchPurpose) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
@@ -153,7 +160,6 @@ fun WatchPartyLobbyScreen(
     val socialState by SocialRepository.uiState.collectAsStateWithLifecycle()
     val addonsState by AddonRepository.uiState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
-    var showDepartureDialog by remember { mutableStateOf(false) }
 
     val addonSignature = remember(addonsState.addons) { watchPartyAddonSignature(addonsState.addons) }
 
@@ -177,6 +183,8 @@ fun WatchPartyLobbyScreen(
      */
     LaunchedEffect(state.party?.partySourceKey()) {
         val party = state.party ?: return@LaunchedEffect
+        // An ended party launches nobody. The route closes itself on it; this frame must not race it.
+        if (party.status == WatchPartyStatus.ended) return@LaunchedEffect
         val key = party.partySourceKey() ?: return@LaunchedEffect
         if (
             party.effectiveStage() !in setOf(
@@ -199,7 +207,7 @@ fun WatchPartyLobbyScreen(
         realtime = syncState,
         partyNowMs = WatchPartySync.partyNowMs(),
     )
-    val requestDeparture = { showDepartureDialog = true }
+    val requestDeparture = { onShowDepartureDialogChange(true) }
 
     // Hosted outside a Surface, so LocalContentColor falls back to black. Without this the whole
     // lobby - the invite code included - is black on a dark background.
@@ -429,16 +437,21 @@ fun WatchPartyLobbyScreen(
         }
     }
 
-    if (party != null && showDepartureDialog) {
+    if (party != null && party.status != WatchPartyStatus.ended && showDepartureDialog) {
         fun depart(mode: PartyDepartureMode) {
-            showDepartureDialog = false
+            onShowDepartureDialogChange(false)
             scope.launch {
+                // ⚠ **Only on success.** This used to leave the lobby whatever the RPC said, and
+                // `depart` deliberately keeps local state when the server refuses so it can be
+                // retried - so a failed departure removed the one screen that could retry it and
+                // left the party running with nothing on screen. The same orphan Escape produced.
                 WatchPartyRepository.depart(mode)
-                onBack()
+                    .onSuccess { onBack() }
+                    .onFailure { NuvioToastController.show("Couldn't leave the party. Check your connection and try again.") }
             }
         }
         AlertDialog(
-            onDismissRequest = { showDepartureDialog = false },
+            onDismissRequest = { onShowDepartureDialogChange(false) },
             title = { Text(if (isHost) "Leave Watch Together?" else "Leave party?") },
             text = {
                 Text(
@@ -456,7 +469,7 @@ fun WatchPartyLobbyScreen(
                     if (isHost) {
                         TextButton(onClick = { depart(PartyDepartureMode.END_PARTY) }) { Text("End party") }
                     }
-                    TextButton(onClick = { showDepartureDialog = false }) { Text("Cancel") }
+                    TextButton(onClick = { onShowDepartureDialogChange(false) }) { Text("Cancel") }
                 }
             },
         )

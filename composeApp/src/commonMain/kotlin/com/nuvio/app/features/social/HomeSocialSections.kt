@@ -41,7 +41,11 @@ fun LazyListScope.homeSocialSections(
     activity: List<RecentActivityRun>,
     sectionPadding: Dp,
     watchPartyEnabled: Boolean = false,
-    onStartParty: (WatchingNowItem) -> Unit = {},
+    // ⚠ **Required, deliberately.** This defaulted to `{}` and Home never passed it, so Home's
+    // Watching Now showed a live "Join" / "Ask to join" button that did nothing at all - no RPC, no
+    // request row, nothing on either client. Hardware Bug 6 (2026-09-15). A button that is drawn must
+    // be wired; there is no default that is correct.
+    onStartParty: (WatchingNowItem) -> Unit,
     onOpenContent: (contentType: String, contentId: String, title: String) -> Unit,
 ) {
     if (watchingNow.isNotEmpty()) {

@@ -43,6 +43,44 @@ class PlayerExitOrderingTest {
     }
 
     @Test
+    fun systemBackOnTheWatchTogetherLobbyGoesThroughTheLobbyNeverAPlainPop() {
+        // ⚠ Regression, hardware Bug 1 (2026-09-15): Escape popped the lobby and orphaned the party.
+        val events = mutableListOf<String>()
+
+        dispatchNavigationBack(
+            isPlayerRoute = false,
+            playerBack = null,
+            pop = { events += "direct-pop" },
+            isPartyLobbyRoute = true,
+            partyLobbyBack = { events += "lobby-back" },
+        )
+        assertEquals(listOf("lobby-back"), events)
+
+        // And like the player, it fails closed during its registration gap.
+        events.clear()
+        dispatchNavigationBack(
+            isPlayerRoute = false,
+            playerBack = null,
+            pop = { events += "direct-pop" },
+            isPartyLobbyRoute = true,
+            partyLobbyBack = null,
+        )
+        assertEquals(emptyList(), events)
+    }
+
+    @Test
+    fun everyOtherRouteStillPopsDirectly() {
+        val events = mutableListOf<String>()
+        dispatchNavigationBack(
+            isPlayerRoute = false,
+            playerBack = { events += "player" },
+            pop = { events += "direct-pop" },
+            partyLobbyBack = { events += "lobby-back" },
+        )
+        assertEquals(listOf("direct-pop"), events)
+    }
+
+    @Test
     fun retainedControllerBarriersBackDuringActiveControllerGap() {
         val events = mutableListOf<String>()
         var complete: (() -> Unit)? = null

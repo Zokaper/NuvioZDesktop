@@ -21,7 +21,9 @@ private val promotionLog = Logger.withTag("WatchPartyPromotion")
 private object RepositoryDurablePartyGateway : DurablePartyGateway {
     override val snapshots = WatchPartyRepository.uiState.map { it.party }.distinctUntilChanged()
     override fun currentParty() = WatchPartyRepository.uiState.value.party
+    override fun activeProfileId() = WatchPartyRepository.uiState.value.activeProfileId
     override suspend fun restoreActiveParty() = WatchPartyRepository.restoreActive()
+    override suspend fun fetchActiveParty() = WatchPartyRepository.fetchActive()
     override fun installAuthorizedParty(snapshot: WatchPartyState) = WatchPartyRepository.installAuthorizedSnapshot(snapshot)
     override suspend fun publishLocation(location: WatchPartyClientLocation) = WatchPartyRepository.setClientLocation(location)
     override suspend fun publishReadiness(
@@ -47,6 +49,7 @@ private sealed interface PartySessionIntent {
         val sourceMatch: PartySourceMatch?,
     ) : PartySessionIntent
     data object Promote : PartySessionIntent
+    data object DiscoverPromotion : PartySessionIntent
     data object Restore : PartySessionIntent
     data class Installed(val snapshot: WatchPartyState) : PartySessionIntent
     data object Leave : PartySessionIntent
@@ -132,6 +135,13 @@ object WatchPartySessionCoordinator {
     ) = enqueue(PartySessionIntent.Readiness(state, durationMs, sourceGeneration, sourceMatch))
     fun reportPlaybackTelemetry(telemetry: PartyPlaybackTelemetry?) = gateway.updatePlaybackTelemetry(telemetry)
     fun promoteCurrentPlayback() = enqueue(PartySessionIntent.Promote)
+
+    /**
+     * Adopts a party someone else built from this client's playback - a friend's direct join, or a
+     * join request accepted on another surface. See `WatchingNowJoin.kt` for why nothing else tells
+     * the host. Quiet when there is none, and never while a live party is already held.
+     */
+    fun discoverPromotedParty() = enqueue(PartySessionIntent.DiscoverPromotion)
     fun restore() = enqueue(PartySessionIntent.Restore)
     fun installAuthorizedParty(snapshot: WatchPartyState) {
         // Preserve the established navigation contract: callers install the authorized snapshot
@@ -153,7 +163,7 @@ object WatchPartySessionCoordinator {
                     _state.value.phase == PartyClientPhase.ActivePlayer
                 presenceSessionId = intent.sessionId
                 presenceDeviceId = intent.deviceId
-                val party = gateway.currentParty()
+                val party = liveParty()
                 _state.value = reducePartySession(_state.value, PartySessionEvent.PlayerAttached(intent.context, party?.partyGenerationKey()))
                 if (party != null && !wasAttached) gateway.publishLocation(WatchPartyClientLocation.player)
             }
@@ -166,15 +176,22 @@ object WatchPartySessionCoordinator {
                 }
             }
             is PartySessionIntent.Lobby -> {
+                if (liveParty()?.id != intent.partyId) return
                 _state.value = reducePartySession(_state.value, PartySessionEvent.LobbyEntered(intent.partyId))
                 gateway.publishLocation(WatchPartyClientLocation.lobby)
             }
-            is PartySessionIntent.Readiness -> gateway.publishReadiness(
-                intent.state,
-                intent.durationMs,
-                intent.sourceGeneration,
-                intent.sourceMatch,
-            )
+            is PartySessionIntent.Readiness -> {
+                // ⚠ An ended party gets no readiness. A report queued by work that was already in
+                // flight when the party ended would otherwise be a write to a party this member has
+                // left - refused, and indistinguishable in the log from a party still preparing.
+                if (liveParty() == null) return
+                gateway.publishReadiness(
+                    intent.state,
+                    intent.durationMs,
+                    intent.sourceGeneration,
+                    intent.sourceMatch,
+                )
+            }
             PartySessionIntent.Promote -> {
                 // ⚠ **Promotion is built from the presence row, not from the player.** The backend
                 // reads `watch_presence` for this session - within 90 seconds of a heartbeat - and
@@ -213,6 +230,35 @@ object WatchPartySessionCoordinator {
                         )
                     }
             }
+            PartySessionIntent.DiscoverPromotion -> {
+                if (liveParty() != null) return
+                // Not `Restore`: that reduces to Connecting before it knows the answer, and the
+                // common answer here - no party - must leave an ordinary player exactly as it was.
+                // And a probe, not an install, because only one answer is this player's to adopt.
+                gateway.fetchActiveParty().onSuccess { party ->
+                    val live = party?.takeIf { it.status != WatchPartyStatus.ended } ?: return@onSuccess
+                    // ⚠ **Host only.** Both server paths build the party from the *host's* presence
+                    // and make the host its host. A guest who is waiting on a request is also a
+                    // member once it is accepted, but that party is not this player's - the guest
+                    // goes to its lobby through the approval watcher instead. Adopting it here would
+                    // attach the guest's own unrelated playback to somebody else's party.
+                    if (!shouldAdoptDiscoveredParty(live, gateway.activeProfileId(), liveParty())) return@onSuccess
+                    if (liveParty() != null) return@onSuccess
+                    gateway.installAuthorizedParty(live)
+                    val generation = live.partyGenerationKey()
+                    promotionLog.i {
+                        "adopted a party built from this playback party=${live.id.shortId()} " +
+                            "host=${live.hostProfileId == gateway.activeProfileId()} attached=${_state.value.playback != null}"
+                    }
+                    _state.value = reducePartySession(_state.value, PartySessionEvent.Restored(generation))
+                    // The same in-place attachment a successful promotion makes: the player keeps
+                    // playing and simply becomes the party's.
+                    _state.value.playback?.let { playback ->
+                        _state.value = reducePartySession(_state.value, PartySessionEvent.PlayerAttached(playback, generation))
+                        gateway.publishLocation(WatchPartyClientLocation.player)
+                    }
+                }
+            }
             PartySessionIntent.Restore -> {
                 _state.value = reducePartySession(_state.value, PartySessionEvent.RestoreStarted)
                 gateway.restoreActiveParty().onSuccess { party ->
@@ -236,12 +282,16 @@ object WatchPartySessionCoordinator {
     }
 
     private fun observeSnapshot(party: WatchPartyState?) {
-        if (party == null) {
-            if (_state.value.membershipRetained) _state.value = reducePartySession(_state.value, PartySessionEvent.NoActiveParty)
-            return
+        val before = _state.value
+        _state.value = observePartySnapshot(before, party, gateway.activeProfileId())
+        if (party?.status == WatchPartyStatus.ended && before.phase != _state.value.phase) {
+            promotionLog.i {
+                "party ended party=${party.id.shortId()} phase=${before.phase}->${_state.value.phase} " +
+                    "postEndChoice=${_state.value.guestPostEndChoice}"
+            }
         }
-        val generation = party.partyGenerationKey()
-        _state.value = if (_state.value.generation == null) reducePartySession(_state.value, PartySessionEvent.Restored(generation))
-        else reducePartySession(_state.value, PartySessionEvent.SnapshotAdvanced(generation))
     }
+
+    /** Durable member writes are only for a party that is still running. */
+    private fun liveParty(): WatchPartyState? = gateway.currentParty()?.takeIf { it.status != WatchPartyStatus.ended }
 }

@@ -1,14 +1,31 @@
 package com.nuvio.app.features.player
 
+/**
+ * Routes a system back - on desktop, **Escape** - to whichever route is on top.
+ *
+ * Two routes own their own exit, and both fail closed while their handler is not registered:
+ *
+ *  - the player, which must release the native surface before anything navigates;
+ *  - the Watch Together lobby, which must never be dismissed out from under a live party.
+ *
+ * ⚠ **The lobby half is hardware Bug 1 (2026-09-15).** Escape reached this function as a plain
+ * `pop()`. The lobby's own back arrow asks to leave or end the party, but the system back skipped
+ * that entirely: the route went, the membership, the poll, the realtime channel and the session
+ * stayed, and nothing on screen was left that could reach them - an orphaned live party. A guest in
+ * that state was later started by a host it could not see; a host left everyone waiting on a lobby
+ * nobody was in. The lobby now answers the system back exactly as it answers its own arrow.
+ */
 internal fun dispatchNavigationBack(
     isPlayerRoute: Boolean,
     playerBack: (() -> Unit)?,
     pop: () -> Unit,
+    isPartyLobbyRoute: Boolean = false,
+    partyLobbyBack: (() -> Unit)? = null,
 ) {
-    if (isPlayerRoute) {
-        playerBack?.invoke()
-    } else {
-        pop()
+    when {
+        isPlayerRoute -> playerBack?.invoke()
+        isPartyLobbyRoute -> partyLobbyBack?.invoke()
+        else -> pop()
     }
 }
 

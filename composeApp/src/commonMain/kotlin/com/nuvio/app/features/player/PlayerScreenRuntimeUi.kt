@@ -165,15 +165,11 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     val activeSocialNotification = socialUiState.notifications.firstOrNull {
         socialEnabled && it.readAt == null && it.availableActions.isNotEmpty()
     }
-    LaunchedEffect(watchPartyUiState.party?.id, watchPartyUiState.party?.status) {
-        val party = watchPartyUiState.party ?: return@LaunchedEffect
-        if (
-            party.status == com.nuvio.app.features.watchparty.WatchPartyStatus.ended &&
-            party.hostProfileId != watchPartyUiState.activeProfileId
-        ) {
-            WatchPartySessionCoordinator.partyEnded(viewerWasHost = false)
-        }
-    }
+    // The end of a party is observed by `WatchPartySessionCoordinator` from the snapshot itself
+    // (`observePartySnapshot`), not from here. This effect used to be the only thing that reacted
+    // to an ended party, so a guest who was not in the player never learned the party was over - and
+    // because it ran on first composition, an ended party still held would raise the end-of-party
+    // choice again over any player opened later.
     // Through the shared rule rather than spelled out again: this value is what disables the
     // controls, and the transport is what refuses the press, so the two disagreeing is a guest with
     // live-looking buttons that do nothing - or dim ones that still move its player.
@@ -357,6 +353,13 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         .takeIf { it.phase == PlayerNextEpisodePhase.STARTING }
         ?.targetVideoId
         ?.let { targetId -> playerMetaVideos.firstOrNull { it.id == targetId } }
+    val openingPresentation = playerOpeningPresentation(
+        showLogo = logo,
+        showTitle = title,
+        background = background,
+        poster = poster,
+        startingEpisode = startingEpisode,
+    )
     // The loading surface is drawn by `PlaybackLoadingHost`, above `NavDisplay`. In the automatic
     // modes the stream route already opened the session and handed it over, and this must not
     // disturb it - re-opening would restart the entrance and the escape clock at exactly the
@@ -368,9 +371,9 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             if (PlaybackLoadingController.activeToken == null) {
                 val token = PlaybackLoadingController.open(
                     step = PlaybackProgressStep.StartingPlayback,
-                    artwork = startingEpisode?.thumbnail ?: background ?: poster,
-                    logo = if (startingEpisode != null) null else logo,
-                    title = startingEpisode?.title ?: title,
+                    artwork = openingPresentation.artwork,
+                    logo = openingPresentation.logo,
+                    title = openingPresentation.title,
                     attempt = args.playbackAttempt,
                     facts = args.sourceFacts,
                 )
@@ -585,9 +588,9 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         notificationMessage = playerNotificationMessage,
         notificationToken = playerNotificationToken,
         showOpeningOverlay = openingOverlayWanted,
-        openingArtwork = startingEpisode?.thumbnail ?: background ?: poster,
-        openingLogo = if (startingEpisode != null) null else logo,
-        openingTitle = startingEpisode?.title ?: title,
+        openingArtwork = openingPresentation.artwork,
+        openingLogo = openingPresentation.logo,
+        openingTitle = openingPresentation.title,
         openingMessage = if (startingEpisode != null) {
             stringResource(Res.string.player_next_episode_starting)
         } else {
@@ -1503,6 +1506,13 @@ private fun PlayerScreenRuntime.handleSocialNotificationAction(action: SocialNot
                     playerNotificationMessage = "This request is no longer available."
                     playerNotificationToken += 1
                 }
+                if (result.outcome == "full") {
+                    playerNotificationMessage = "The party is full."
+                    playerNotificationToken += 1
+                }
+                // An accepted join request made this player the host of a party built from its own
+                // presence. The install above is the whole transition: the player keeps playing and
+                // becomes the party's on its next registration, exactly as a promotion does.
                 if (
                     notification.kind == SocialNotificationKind.PartyInvitation &&
                     action == SocialNotificationAction.Join &&
@@ -2091,6 +2101,13 @@ private fun BoxScope.RenderPlaybackOverlays(
             .takeIf { it.phase == PlayerNextEpisodePhase.STARTING }
             ?.targetVideoId
             ?.let { targetId -> playerMetaVideos.firstOrNull { it.id == targetId } }
+        val openingPresentation = playerOpeningPresentation(
+            showLogo = logo,
+            showTitle = title,
+            background = background,
+            poster = poster,
+            startingEpisode = startingEpisode,
+        )
         val playerClipboardManager = LocalClipboardManager.current
         PlayerPlaybackOverlays(
             playerControlsLocked = playerControlsLocked,
@@ -2109,9 +2126,9 @@ private fun BoxScope.RenderPlaybackOverlays(
             // promoted the host is invisible and JCEF's copy is the only one left. That one is
             // fed by `PlayerControlsState.showOpeningOverlay`, not by this flag.
             showOpeningOverlay = false,
-            backdropArtwork = startingEpisode?.thumbnail ?: background ?: poster,
-            logo = if (startingEpisode != null) null else logo,
-            title = startingEpisode?.title ?: title,
+            backdropArtwork = openingPresentation.artwork,
+            logo = openingPresentation.logo,
+            title = openingPresentation.title,
             onBackWithProgress = { requestBack() },
             p2pInitialLoadingMessage = if (startingEpisode != null) {
                 stringResource(Res.string.player_next_episode_starting)

@@ -190,6 +190,24 @@ object WatchPartyRepository {
         snapshot
     }
 
+    /**
+     * This profile's live party on the server, **without installing it**.
+     *
+     * For the callers that must decide whether the answer is theirs before it becomes the held party:
+     * a host checking for a party built from its playback, a guest waiting for a request to be
+     * accepted. Deliberately not routed through [call], so a background probe never flips the working
+     * flag or overwrites an error the user is reading.
+     */
+    suspend fun fetchActive(): Result<WatchPartyState?> {
+        val profileId = _uiState.value.activeProfileId ?: return Result.success(null)
+        return runCatching {
+            if (!ZSessionBridge.ensureSession(profileId)) error("Nuvio Z session unavailable")
+            ZSupabaseProvider.client.postgrest.rpc("party_get_active", buildJsonObject {
+                put("p_profile_id", profileId); put("p_contract_version", PartySourceContractVersion)
+            }).decodeAs<WatchPartyState?>()
+        }
+    }
+
     suspend fun promotePresence(sessionId:String):Result<Unit> = call {
         val snapshot=ZSupabaseProvider.client.postgrest.rpc("party_promote_presence",buildJsonObject {
             put("p_profile_id",requireProfile());put("p_presence_session_id",sessionId);put("p_contract_version",PartySourceContractVersion)
@@ -247,7 +265,10 @@ object WatchPartyRepository {
             refresh = ::requestRefresh,
             failure = { message -> _uiState.update { it.copy(errorMessage = message) } },
         )
-        refreshRequests.onEach { refresh() }.launchIn(scope)
+        refreshRequests.onEach {
+            val held = _uiState.value.party
+            if (held != null && held.status != WatchPartyStatus.ended) refresh()
+        }.launchIn(scope)
     }
 
     fun setActiveProfile(profileId: String?) {
@@ -615,6 +636,13 @@ object WatchPartyRepository {
             isWorking = false,
             errorMessage = null,
         )
+        if (snapshot.status == WatchPartyStatus.ended) {
+            // Terminal. Nothing about an ended party is worth polling, and a live channel for it is
+            // an authority that no longer exists.
+            stopPolling()
+            WatchPartySync.updateAuthority(null)
+            return
+        }
         WatchPartySync.updateAuthority(snapshot.authorityContext(_uiState.value.activeProfileId))
         // The poll is the floor under this whole feature, so nothing may come before it. Opening the
         // channel used to, and `subscribe(blockUntilSubscribed = true)` never returns for a topic
@@ -622,6 +650,77 @@ object WatchPartyRepository {
         // for the life of the app. The member kept whatever state they joined with, forever: a
         // lobby that never noticed the party had started.
         startPolling()
+    }
+
+    private var membershipProbePartyId: String? = null
+
+    /**
+     * Routes a failed member RPC through [classifyPartyRpcFailure], and concludes the party when the
+     * failure proves this member is no longer in it. See `PartyTermination.kt` for why this is the
+     * only way a guest ever learns the host ended the party.
+     */
+    private fun onMemberRpcFailure(failedPartyId: String?, cause: Throwable) {
+        val held = _uiState.value.party
+        if (classifyPartyRpcFailure(held, failedPartyId, cause.message) != PartyRpcFailureVerdict.ConfirmMembership) return
+        val partyId = held?.id ?: return
+        // One probe per party. The poll and a refresh can both be refused inside the same second.
+        if (membershipProbePartyId == partyId) return
+        membershipProbePartyId = partyId
+        scope.launch {
+            try {
+                confirmMembershipLost(partyId)
+            } finally {
+                if (membershipProbePartyId == partyId) membershipProbePartyId = null
+            }
+        }
+    }
+
+    private suspend fun confirmMembershipLost(partyId: String) {
+        val profileId = _uiState.value.activeProfileId ?: return
+        val probe = fetchActive()
+        // A probe that could not answer proves nothing. The poll keeps running, and the next refusal
+        // asks again - which is the transient outcome, not a guess in either direction.
+        val active = probe.getOrElse { failure ->
+            log.w(failure) { "membership probe failed party=${partyId.shortId()} - keeping the party" }
+            return
+        }
+        if (_uiState.value.party?.id != partyId || _uiState.value.activeProfileId != profileId) return
+        if (!membershipProbeConcludesParty(partyId, active)) {
+            log.i { "membership probe party=${partyId.shortId()} still a member - refusal was transient" }
+            active?.let(::installSnapshot)
+            return
+        }
+        log.i {
+            "membership lost party=${partyId.shortId()} profile=${profileId.shortId()} " +
+                "active=${active?.id.shortId()} - concluding the party locally as ended"
+        }
+        concludeHeldParty()
+    }
+
+    /**
+     * Makes the held party terminal on this client, and stops every piece of work it was driving.
+     *
+     * ⚠ **A terminal party must never cause another resolution.** So the realizer is cleared - any
+     * in-flight realization for it is dropped and its readiness reports stop - the timing plane loses
+     * its authority, the poll stops, and the host's staged pick goes with it. What remains is the
+     * party marked `ended`, which every consumer already reads as "not a party".
+     */
+    private fun concludeHeldParty(ended: WatchPartyState? = null) {
+        val held = ended ?: _uiState.value.party ?: return
+        stopPolling()
+        WatchPartySync.updateAuthority(null)
+        PartySourceRealizer.clear()
+        clockOffsetPartyId = null
+        playbackTelemetry = null
+        _uiState.value = _uiState.value.copy(
+            party = held.concludedLocally(),
+            inviteCode = null,
+            stagedHostSource = null,
+            stagedHostSourceLabel = null,
+            isWorking = false,
+            errorMessage = null,
+        )
+        WatchPartyDiagnostics.durableState(held.id, held.sequence, WatchPartyStatus.ended, applied = true)
     }
 
     /**
@@ -713,6 +812,7 @@ object WatchPartyRepository {
                         lastLoggedPollFailure = reason
                         log.w(cause) { "poll failed party=${partyId.shortId()} profile=${profileId.shortId()}" }
                     }
+                    onMemberRpcFailure(partyId, cause)
                 }
             }
             pollJob = null
@@ -759,7 +859,11 @@ object WatchPartyRepository {
                     outcome.party.status,
                     applied = true,
                 )
-                _uiState.value = _uiState.value.copy(party = outcome.party)
+                if (outcome.party.status == WatchPartyStatus.ended) {
+                    concludeHeldParty(outcome.party)
+                } else {
+                    _uiState.value = _uiState.value.copy(party = outcome.party)
+                }
                 true
             }
         }
@@ -773,7 +877,9 @@ object WatchPartyRepository {
      * refresh, so a burst of them costs one round trip.
      */
     internal fun requestRefresh() {
-        if (_uiState.value.party == null) return
+        val held = _uiState.value.party
+        // An ended party has nothing left to refresh, and a guest is no longer allowed to read it.
+        if (held == null || held.status == WatchPartyStatus.ended) return
         refreshRequests.tryEmit(Unit)
     }
 
@@ -816,6 +922,7 @@ object WatchPartyRepository {
                 // that was working.
                 log.w(it) { "rpc failed party=${_uiState.value.party?.id.shortId()} profile=${profileId.shortId()}" }
                 _uiState.value = _uiState.value.copy(isWorking = false, errorMessage = it.message)
+                onMemberRpcFailure(failedPartyId = null, cause = it)
             }
     }
     private fun requireProfile(): String = requireNotNull(_uiState.value.activeProfileId) { "No active profile" }

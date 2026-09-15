@@ -127,6 +127,7 @@ fun HomeScreen(
     continueWatchingDisintegrationRequest: DisintegrationRequest<String>? = null,
     onFolderClick: ((collectionId: String, folderId: String) -> Unit)? = null,
     onFirstCatalogRendered: (() -> Unit)? = null,
+    onJoinWatchingNow: ((com.nuvio.app.features.social.WatchingNowItem) -> Unit)? = null,
 ) {
     LaunchedEffect(Unit) {
         withContext(Dispatchers.Default) {
@@ -967,7 +968,9 @@ fun HomeScreen(
                         watchingNow = socialUiState.watchingNow,
                         activity = socialUiState.activity,
                         sectionPadding = homeSectionPadding,
-                        watchPartyEnabled = socialUiState.capabilities.watchPartyEnabled,
+                        // Without a handler there is no Join button to draw.
+                        watchPartyEnabled = socialUiState.capabilities.watchPartyEnabled && onJoinWatchingNow != null,
+                        onStartParty = { item -> onJoinWatchingNow?.invoke(item) },
                     ) { type, id, title ->
                         onPosterClick?.invoke(MetaPreview(id = id, type = type, name = title, poster = null))
                     }
@@ -1102,7 +1105,9 @@ fun HomeScreen(
                         watchingNow = socialUiState.watchingNow,
                         activity = socialUiState.activity,
                         sectionPadding = homeSectionPadding,
-                        watchPartyEnabled = socialUiState.capabilities.watchPartyEnabled,
+                        // Without a handler there is no Join button to draw.
+                        watchPartyEnabled = socialUiState.capabilities.watchPartyEnabled && onJoinWatchingNow != null,
+                        onStartParty = { item -> onJoinWatchingNow?.invoke(item) },
                     ) { type, id, title ->
                         onPosterClick?.invoke(MetaPreview(id = id, type = type, name = title, poster = null))
                     }

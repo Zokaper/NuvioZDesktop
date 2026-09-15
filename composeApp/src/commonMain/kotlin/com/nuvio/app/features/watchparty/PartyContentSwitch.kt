@@ -42,17 +42,29 @@ sealed interface PartyContentHandoff {
  * entirely - the member walked out of the party's title and started another one - and pulling them
  * into the party's episode would be hijacking a playback they deliberately started. They are simply
  * not on the party's content, which every other surface already reads correctly.
+ *
+ * ⚠ **[pendingPublishedContentGeneration] is the host's own advance, still in flight.** The host
+ * switches episode locally *before* `party_change_content_v2` answers, so for the length of that
+ * round trip the party still names the previous episode and this function, asked without the latch,
+ * answers "the party is on a different episode of your show - go back to it". Once the in-player
+ * catalogue actually settled (it never did before the 2026-09-15 fix, which is the only reason this
+ * never fired) a fast addon would win that race and drag the host back to the episode it had just
+ * left. While this client has published an advance *from* the party's current generation, the party
+ * is known to be behind it, and there is nothing to adopt. A refusal releases the latch, and the
+ * party is then correctly authoritative again.
  */
 fun decidePartyContentHandoff(
     party: WatchPartyState?,
     localContentId: String,
     localVideoId: String?,
     handledContentGeneration: Int?,
+    pendingPublishedContentGeneration: Int? = null,
 ): PartyContentHandoff {
     if (party == null || party.status == WatchPartyStatus.ended) return PartyContentHandoff.None
     if (party.content.contentId != localContentId) return PartyContentHandoff.None
     if (party.content.videoId == localVideoId) return PartyContentHandoff.None
     if (handledContentGeneration == party.contentGeneration) return PartyContentHandoff.None
+    if (pendingPublishedContentGeneration == party.contentGeneration) return PartyContentHandoff.None
     return PartyContentHandoff.Adopt(
         content = party.content,
         contentGeneration = party.contentGeneration,
@@ -102,9 +114,17 @@ fun shouldPublishPartyContentChange(
  * advances the party and everyone follows, which is what keeps one content generation authoritative.
  * Outside a party, and for the host, this is ordinary playback and answers true.
  *
- * ⚠ Read against the party's **content**, not merely against membership. A member watching
- * something other than the party's title is having an ordinary evening with a party open in the
- * background, and taking their Next episode button away would be wrong.
+ * ⚠ Read against the party's **title**, not merely against membership. A member watching a
+ * different title is having an ordinary evening with a party open in the background, and taking
+ * their Next episode button away would be wrong.
+ *
+ * ⚠⚠ **The title, not the exact episode.** This used to test `matchesPlayback`, which is false for
+ * every guest from the instant the host advances until that guest has adopted the new episode. For
+ * that whole window the guest "owned" its next episode again - so a guest near the end of the
+ * previous episode, or one whose episode ended while the handoff was still matching, raised its own
+ * card and ran its own autoplay-next: a second, independent content decision racing the host's. It
+ * is the same rule [decidePartyContentHandoff] uses to decide the guest *is* being moved, and the
+ * two must agree - a member the handoff is carrying cannot also be choosing for itself.
  */
 fun ownsNextEpisodeChoice(
     party: WatchPartyState?,
@@ -113,6 +133,6 @@ fun ownsNextEpisodeChoice(
     localVideoId: String?,
 ): Boolean {
     if (party == null || party.status == WatchPartyStatus.ended) return true
-    if (!party.matchesPlayback(localContentId, localVideoId)) return true
+    if (party.content.contentId != localContentId) return true
     return party.allowsContentChangeBy(profileId)
 }

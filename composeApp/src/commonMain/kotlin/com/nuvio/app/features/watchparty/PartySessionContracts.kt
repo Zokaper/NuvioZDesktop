@@ -151,7 +151,9 @@ fun reducePartyHealth(state: PartyHealthState, event: PartyHealthEvent): PartyHe
 interface DurablePartyGateway {
     val snapshots: Flow<WatchPartyState?>
     fun currentParty(): WatchPartyState?
+    fun activeProfileId(): String?
     suspend fun restoreActiveParty(): Result<WatchPartyState?>
+    suspend fun fetchActiveParty(): Result<WatchPartyState?>
     fun installAuthorizedParty(snapshot: WatchPartyState)
     suspend fun publishLocation(location: WatchPartyClientLocation): Result<Unit>
     suspend fun publishReadiness(

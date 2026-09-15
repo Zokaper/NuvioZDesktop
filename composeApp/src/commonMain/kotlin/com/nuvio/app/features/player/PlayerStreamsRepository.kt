@@ -44,6 +44,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.concurrent.Volatile
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.getString
 
@@ -66,6 +67,16 @@ object PlayerStreamsRepository {
     val episodeStreamsState: StateFlow<StreamsUiState> = _episodeStreamsState.asStateFlow()
     private var episodeStreamsJob: Job? = null
     private var episodeStreamsRequestKey: String? = null
+
+    /**
+     * The video [episodeStreamsState] currently describes, or null when it describes nothing.
+     *
+     * Set in the same call that resets the state for a new request, so a reader that checks this
+     * before trusting the catalogue can never pair one episode's id with another episode's streams.
+     */
+    @Volatile
+    var episodeStreamsVideoId: String? = null
+        private set
 
     fun loadSources(
         type: String,
@@ -96,6 +107,7 @@ object PlayerStreamsRepository {
         episode: Int? = null,
         forceRefresh: Boolean = false,
     ) {
+        episodeStreamsVideoId = videoId
         fetchStreams(
             panelName = "episodeStreams",
             type = type,
@@ -122,6 +134,7 @@ object PlayerStreamsRepository {
     fun clearEpisodeStreams() {
         episodeStreamsJob?.cancel()
         episodeStreamsRequestKey = null
+        episodeStreamsVideoId = null
         _episodeStreamsState.value = StreamsUiState()
     }
 

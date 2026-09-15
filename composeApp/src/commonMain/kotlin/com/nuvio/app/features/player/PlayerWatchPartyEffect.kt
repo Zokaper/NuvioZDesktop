@@ -78,6 +78,7 @@ import com.nuvio.app.features.watchparty.PartySourceDescriptorV2
 import com.nuvio.app.features.watchparty.decidePartyContentHandoff
 import com.nuvio.app.features.watchparty.shouldPublishPartyContentChange
 import com.nuvio.app.features.details.MetaVideo
+import com.nuvio.app.features.streams.StreamsUiState
 import com.nuvio.app.isDesktop
 
 /**
@@ -738,8 +739,17 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
         localContentId = parentMetaId,
         localVideoId = playbackSession.videoId,
         handledContentGeneration = partyHandledContentGeneration,
+        // The host's own advance, still on its way to the server. See the function.
+        pendingPublishedContentGeneration = partyPublishedContentGeneration,
     )
-    val partyEpisodeCatalogue by PlayerStreamsRepository.sourceState.collectAsStateWithLifecycle()
+    // ⚠⚠ **The episode catalogue, not the sources catalogue.** This read `sourceState` - the
+    // current episode's sources panel - while the effect below loads `loadEpisodeStreams`, which
+    // fills `episodeStreamsState`. The two never met: the catalogue this decision waited on was
+    // either empty and unsettled, so the guest waited forever on the previous episode while the host
+    // held the party for it, or it still held the *previous* episode's sources from an earlier
+    // source handoff, which is the wrong video to match against. That is hardware Bug 2
+    // (2026-09-15): the host advanced, and every guest stayed where it was.
+    val partyEpisodeCatalogue by PlayerStreamsRepository.episodeStreamsState.collectAsStateWithLifecycle()
     LaunchedEffect(contentHandoff) {
         val adopt = contentHandoff as? PartyContentHandoff.Adopt ?: return@LaunchedEffect
         if (adopt.target == null) {
@@ -773,12 +783,19 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
         val adopt = contentHandoff as? PartyContentHandoff.Adopt ?: return@LaunchedEffect
         val target = adopt.target ?: return@LaunchedEffect
         if (!partyContentHandoffInFlight) return@LaunchedEffect
-        val candidates = partyEpisodeCatalogue.groups.flatMapIndexed { addonOrder, group ->
+        // The collected value can be a frame older than the request the effect above just made, so
+        // the catalogue is only trusted once the repository says it describes the adopted episode.
+        val catalogue = partyEpisodeCatalogueFor(
+            targetVideoId = adopt.content.videoId,
+            loadedVideoId = PlayerStreamsRepository.episodeStreamsVideoId,
+            catalogue = PlayerStreamsRepository.episodeStreamsState.value,
+        ) ?: return@LaunchedEffect
+        val candidates = catalogue.groups.flatMapIndexed { addonOrder, group ->
             group.streams.map { stream -> PlaybackSourceCandidate(stream = stream, addonOrder = addonOrder) }
         }
         val decision = decidePartyRealization(
-            catalogueSettled = !partyEpisodeCatalogue.isAnyLoading &&
-                (candidates.isNotEmpty() || partyEpisodeCatalogue.emptyStateReason != null),
+            catalogueSettled = !catalogue.isAnyLoading &&
+                (candidates.isNotEmpty() || catalogue.emptyStateReason != null),
             tiered = tierPartyPlaybackSources(
                 host = target,
                 candidates = candidates,
@@ -1647,6 +1664,19 @@ internal fun PlayerScreenRuntime.publishPartyEpisodeChange(
  * being left behind on the previous one, which is the only outcome that would actually break the
  * party.
  */
+/**
+ * The in-player episode catalogue, but only while it describes [targetVideoId].
+ *
+ * The content handoff has exactly one catalogue it may realize from - the *episode* streams it
+ * requested for the party's new episode - and exactly one way to be wrong about it, which is to read
+ * a catalogue that belongs to some other video. Null means "not yet": keep waiting.
+ */
+internal fun partyEpisodeCatalogueFor(
+    targetVideoId: String,
+    loadedVideoId: String?,
+    catalogue: StreamsUiState,
+): StreamsUiState? = catalogue.takeIf { loadedVideoId == targetVideoId }
+
 private fun PartyContent.toPartyEpisodeVideo(known: List<MetaVideo>): MetaVideo =
     known.firstOrNull { it.id == videoId }
         ?: season?.let { s -> episode?.let { e -> known.firstOrNull { it.season == s && it.episode == e } } }

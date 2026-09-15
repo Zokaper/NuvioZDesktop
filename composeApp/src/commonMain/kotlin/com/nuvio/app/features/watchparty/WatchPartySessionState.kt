@@ -67,10 +67,14 @@ fun reducePartySession(state: PartySessionState, event: PartySessionEvent): Part
         phase=if (event.generation == null) PartyClientPhase.None else PartyClientPhase.ActivePlayer,
         generation=event.generation ?: state.generation,playback=event.playback,
         membershipRetained=event.generation != null || state.membershipRetained,pendingLobbyPartyId=null,
+        // The end-of-party choice belongs to the player that was watching when the party ended. A
+        // different player attaching later has nothing to continue.
+        guestPostEndChoice=state.guestPostEndChoice && state.playback?.attachmentId == event.playback.attachmentId,
     )
     is PartySessionEvent.PlayerAttachmentLost -> if (state.playback?.attachmentId != event.attachmentId) state else state.copy(
         phase=if (state.membershipRetained) PartyClientPhase.Detached else PartyClientPhase.None,
         playback=null,
+        guestPostEndChoice=false,
     )
     is PartySessionEvent.LobbyEntered -> state.copy(
         phase=PartyClientPhase.Lobby,membershipRetained=true,pendingLobbyPartyId=event.partyId,
@@ -94,12 +98,69 @@ fun reducePartySession(state: PartySessionState, event: PartySessionEvent): Part
         )
     }
     is PartySessionEvent.Left -> PartySessionState(playback=state.playback)
-    is PartySessionEvent.Ended -> if (event.viewerWasHost) {
+    is PartySessionEvent.Ended -> if (event.viewerWasHost || state.playback == null) {
+        // Nothing to offer: the host ended it on purpose, or this guest was not watching anything -
+        // a lobby or a source route, which close themselves on the ended party. A choice raised with
+        // no player would sit in state and surface over whichever player opened next.
         PartySessionState(playback=state.playback)
     } else {
         state.copy(phase=PartyClientPhase.Ended,membershipRetained=false,guestPostEndChoice=true)
     }
 }
+
+/**
+ * Folds one durable snapshot into the session, including the one that ends it.
+ *
+ * ⚠ **An ended snapshot used to be read as an ordinary generation advance.** `party_close_ended`
+ * bumps the authority epoch, which is not a source change, so the session stayed exactly where it
+ * was - Lobby, MatchingHostSource, ActivePlayer - for a party that no longer existed, and the only
+ * thing that ever reacted to the end was an effect inside the player. A guest in the lobby or on a
+ * source route never learned. Terminal handling lives here now, beside every other snapshot
+ * transition, so it holds on whichever route the member happens to be on.
+ *
+ * It is reduced once, on the transition: a session that has already concluded (or never held this
+ * party) is left alone, so an ended party still sitting in the repository cannot re-raise the
+ * end-of-party choice over a player opened afterwards.
+ */
+fun observePartySnapshot(
+    state: PartySessionState,
+    party: WatchPartyState?,
+    selfProfileId: String?,
+): PartySessionState {
+    if (party == null) {
+        return if (state.membershipRetained) reducePartySession(state, PartySessionEvent.NoActiveParty) else state
+    }
+    if (party.status == WatchPartyStatus.ended) {
+        val heldThisParty = state.membershipRetained &&
+            (state.generation?.partyId == party.id || state.pendingLobbyPartyId == party.id)
+        if (!heldThisParty) return state
+        return reducePartySession(
+            state,
+            PartySessionEvent.Ended(viewerWasHost = selfProfileId != null && party.hostProfileId == selfProfileId),
+        )
+    }
+    val generation = party.partyGenerationKey()
+    return if (state.generation == null) reducePartySession(state, PartySessionEvent.Restored(generation))
+    else reducePartySession(state, PartySessionEvent.SnapshotAdvanced(generation))
+}
+
+/**
+ * Whether a party found on the server, but not created by this client, is this client's to adopt.
+ *
+ * Only a host's: `social_join_watching` and an accepted join request both build the party from the
+ * host's presence and make the host its host, and neither tells the host. A member who is merely
+ * *in* such a party - a guest whose request was just accepted - reaches it through its own lobby.
+ * Never over a live party already held.
+ */
+fun shouldAdoptDiscoveredParty(
+    discovered: WatchPartyState,
+    selfProfileId: String?,
+    heldLiveParty: WatchPartyState?,
+): Boolean =
+    heldLiveParty == null &&
+        selfProfileId != null &&
+        discovered.status != WatchPartyStatus.ended &&
+        discovered.hostProfileId == selfProfileId
 
 fun PartyGenerationKey.accepts(other: PartyGenerationKey): Boolean =
     partyId==other.partyId && contentGeneration==other.contentGeneration &&

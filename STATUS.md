@@ -1,6 +1,29 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-12
+Last updated: 2026-09-15
+
+## Stabilization pass — second hardware run: six defects fixed in code, re-run owed (2026-09-15)
+
+⚠ **Nothing here is hardware-verified.** A second two-client run passed most of the matrix and failed
+six cells; all six are fixed in code with pure coverage. Full record, root causes and the re-run list
+(16a-16g): workspace-root `PLAN-social-watch-together-stabilization.md`, Stage 16.
+
+| bug | root cause | fix |
+| --- | --- | --- |
+| 1 Escape orphaned a live party | desktop Escape is the system back, which was a plain `pop()`; the departure dialog also popped on a failed RPC | `dispatchNavigationBack` routes the lobby through its own departure question and fails closed; the lobby closes only on an accepted departure or a gone party (`WatchPartyLobbyExit.kt`) |
+| 2 Guests did not follow Next episode | the guest handoff loaded *episode* streams and waited on the *sources* catalogue; mid-transition guests owned their own autoplay-next; the host's in-flight advance could pull it back | `partyEpisodeCatalogueFor`, title-based `ownsNextEpisodeChoice`, `pendingPublishedContentGeneration` |
+| 3 Next episode showed Classic's list to a Streamlined host | desktop Streamlined deliberately mapped to `SOURCE_LIST` because the Compose sheet can't draw over the native player | desktop Streamlined → `AUTO_PICK` within Streamlined preferences, the autoplay-next selector |
+| 4 Next-episode loading screen plain text | three call sites nulled the logo whenever an episode was starting — in every mode, party or not | `playerOpeningPresentation` |
+| 5 End party never reached guests | `party_close_ended` sets `left_at` on every member, so every guest RPC raises `party_membership_required` and the ended snapshot is unreadable; only a player effect reacted to "ended" | membership refusal → `party_get_active` confirmation → local conclusion; `observePartySnapshot` owns the terminal transition on every route; source route aborts |
+| 6 Ask to join / Join did nothing | Home's button unwired (`onStartParty = {}`), failures silent, no signal to an accepted guest, no signal to a promoted host | Home wired (parameter now required); every outcome surfaced; guest polls `party_get_active` for the request's life; host delivers on its presence heartbeat and adopts in place, host only |
+
+No backend change and no deploy. Backend definitions were read from production with
+`pg_get_functiondef` (read-only) and match the migrations. ⚠ Joining latency is bounded by the 20 s
+presence heartbeat; a `watch_join_requests` trigger would remove it but needs a deploy authorization.
+
+Gate, each invocation alone, results dir deleted first: `desktopTest` **BUILD SUCCESSFUL, 235
+classes, 1,864 tests, 0 failures** (+37, exactly the cases added); pure suites all eight groups green.
+**No MSI built yet** — the hardware re-run needs a new one.
 
 ## Stabilization pass — first hardware run: Watching Now works, two defects found and fixed (2026-09-12)
 

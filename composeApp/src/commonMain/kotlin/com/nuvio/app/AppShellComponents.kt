@@ -295,6 +295,7 @@ internal fun AppTabHost(
                     continueWatchingDisintegrationRequest = state.continueWatchingDisintegrationRequest,
                     onFolderClick = actions.onFolderClick,
                     onFirstCatalogRendered = actions.onInitialHomeContentRendered,
+                    onJoinWatchingNow = actions.onStartPartyOnContent,
                 )
             }
         }
