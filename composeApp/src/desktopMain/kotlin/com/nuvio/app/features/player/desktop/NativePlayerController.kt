@@ -18,6 +18,7 @@ import com.nuvio.app.features.player.PlayerControlsState
 import com.nuvio.app.features.player.PlayerEngineController
 import com.nuvio.app.features.player.PlayerExitDiagnostics
 import com.nuvio.app.features.player.PlayerPlaybackSnapshot
+import com.nuvio.app.features.player.PartyStatusBridgeState
 import com.nuvio.app.features.player.WatchTogetherBridgeInvite
 import com.nuvio.app.features.player.WatchTogetherBridgePerson
 import com.nuvio.app.features.player.WatchTogetherBridgeState
@@ -1720,9 +1721,7 @@ internal fun PlayerControlsState.toControlsJson(isFullscreen: Boolean): String =
         append(',')
         appendJsonField("openingReleaseName", openingReleaseName)
         append(',')
-        appendJsonField("partyBannerVisible", partyBannerVisible)
-        append(',')
-        appendJsonField("partyBannerText", partyBannerText)
+        appendPartyStatusJson(partyStatus)
         append(',')
         appendWatchTogetherJson(watchTogether)
         append(',')
@@ -1957,6 +1956,26 @@ private fun StringBuilder.appendWatchTogetherPersonJson(item: WatchTogetherBridg
     appendJsonField("isSelf", item.isSelf); append(',')
     appendJsonField("status", item.status); append(',')
     appendJsonField("tone", item.tone)
+    append('}')
+}
+
+private fun StringBuilder.appendPartyStatusJson(status: PartyStatusBridgeState) {
+    append("\"partyStatus\":{")
+    appendJsonField("visible", status.visible); append(',')
+    appendJsonField("kind", status.kind); append(',')
+    appendJsonField("text", status.text); append(',')
+    appendJsonField("tone", status.tone); append(',')
+    appendJsonField("action", status.action); append(',')
+    appendJsonField("actionLabel", status.actionLabel); append(',')
+    appendJsonField("secondaryAction", status.secondaryAction); append(',')
+    appendJsonField("secondaryActionLabel", status.secondaryActionLabel); append(',')
+    appendJsonArrayField("people", status.people) { person ->
+        append('{')
+        appendJsonField("name", person.name); append(',')
+        appendJsonField("avatarUrl", person.avatarUrl); append(',')
+        appendJsonField("colorHex", person.colorHex)
+        append('}')
+    }
     append('}')
 }
 

@@ -143,9 +143,14 @@
         <div class="parental-guide-list" id="parentalGuideList"></div>
       </section>
 
-      <section class="party-banner" id="partyBanner" role="status" aria-live="polite" aria-hidden="true">
+      <!-- The party status pill: who or what the party is waiting on, and at most one thing to do
+           about it. Only its buttons take the pointer; everything around them reaches the video. -->
+      <section class="party-banner" id="partyBanner" role="status" aria-live="polite" aria-hidden="true" data-tone="neutral">
         <span class="party-banner-dot" aria-hidden="true"></span>
+        <span class="party-banner-avatars" id="partyBannerAvatars" aria-hidden="true"></span>
         <span class="party-banner-text" id="partyBannerText"></span>
+        <button type="button" class="party-banner-action quiet" id="partyBannerSecondary" hidden></button>
+        <button type="button" class="party-banner-action" id="partyBannerAction" hidden></button>
       </section>
 
       <!-- One panel for every Watch Together state, including "not in a party". It used to exist only

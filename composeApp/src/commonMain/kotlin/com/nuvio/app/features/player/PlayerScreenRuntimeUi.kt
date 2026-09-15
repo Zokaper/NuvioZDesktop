@@ -11,6 +11,7 @@ import com.nuvio.app.features.social.OutgoingJoinRequestStore
 import com.nuvio.app.features.social.OutgoingJoinRequestState
 import com.nuvio.app.features.watchparty.partyPossessive
 import com.nuvio.app.features.watchparty.PartyJoinHandoff
+import com.nuvio.app.features.watchparty.PartyStatusPerson
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -152,7 +153,6 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         )
     }
 
-    val watchPartyBanner = rememberWatchPartyStatus().bannerText()
     // The join hand-off ends at the first frame; after that the player speaks for itself.
     LaunchedEffect(firstFrameReached) {
         if (firstFrameReached) PartyJoinHandoff.finish()
@@ -207,6 +207,28 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             SocialNotificationAction.Accept in it.availableActions
     }
     val outgoingJoinRequest by OutgoingJoinRequestStore.state.collectAsStateWithLifecycle()
+    // The one line about the party. Replaces the banner, which covered three conditions and said
+    // nothing through a stall hold, a source handoff, a barrier park or a party that stayed paused.
+    val partyStatusLine = rememberPartyStatusLine(
+        incomingRequester = incomingJoinRequest?.actor?.let { actor ->
+            PartyStatusPerson(
+                profileId = actor.profileId,
+                name = actor.displayName.ifBlank { actor.handle },
+                avatarUrl = actor.avatarUrl,
+                avatarColorHex = actor.avatarColorHex,
+            )
+        },
+        // Lowest priority, and only while still waiting: an accepted request asks Join / Not now in
+        // the panel, never from a pill.
+        outgoingTarget = when (val request = outgoingJoinRequest) {
+            is OutgoingJoinRequestState.Pending -> request.target
+            is OutgoingJoinRequestState.Sending -> request.target
+            else -> null
+        }?.let { target ->
+            PartyStatusPerson(target.profileId, target.displayName, target.avatarUrl, target.avatarColorHex)
+        },
+        panelOpen = partyRoomOpen,
+    )
     // When realtime entered its current state, for the connection chip's grace periods.
     var realtimeSinceMs by remember { mutableStateOf(currentEpochMs()) }
     LaunchedEffect(watchPartyUiState.health.realtime) { realtimeSinceMs = currentEpochMs() }
@@ -771,8 +793,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             .providerLine(openingLoadingState.facts)
             .orEmpty(),
         openingReleaseName = openingLoadingState.releaseName.orEmpty(),
-        partyBannerVisible = watchPartyBanner != null && !playerControlsLocked,
-        partyBannerText = watchPartyBanner.orEmpty(),
+        partyStatus = partyStatusBridgeState(partyStatusLine, suppressed = playerControlsLocked),
         watchTogether = watchTogetherBridge,
         partyTransportLocked = activeParty != null && !partyMayControl,
         partyHostName = activeParty?.let { party ->
@@ -968,7 +989,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             // Desktop draws its chrome in the native controls layer above the video surface, where
             // a Compose overlay would be invisible; there the banner is carried by
             // PlayerControlsState instead.
-            watchPartyBanner = watchPartyBanner.takeUnless { isDesktop },
+            watchPartyBanner = partyStatusLine?.text.takeUnless { isDesktop },
         )
         RenderPlaybackDiagnosticsHud()
         RenderPlayerModals(displayedPositionMs = displayedPositionMs)
@@ -1428,6 +1449,18 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
             WatchPartyRepository.clearError()
         }
         "wtEndConfirm" -> partyEndConfirm = value >= 0.5
+        // The status pill's actions.
+        "wtChooseSource" -> {
+            controlsVisible = true
+            openSourcesPanel()
+        }
+        // Exactly what pressing play does while the start gate holds: the force start.
+        "wtStartAnyway" -> {
+            if (!submitPartyPlayPause(isPlaying = true, positionMs = partyPositionNowMs())) {
+                shouldPlay = true
+            }
+        }
+        "wtDontWait" -> stopWaitingForStalledGuests()
         "partyLeave" -> {
             partyEndConfirm = false
             WatchPartySessionCoordinator.leave()

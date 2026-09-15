@@ -62,6 +62,9 @@ const openingRelease = document.getElementById("openingRelease");
 const openingManualButton = document.getElementById("openingManualButton");
 const partyBanner = document.getElementById("partyBanner");
 const partyBannerText = document.getElementById("partyBannerText");
+const partyBannerAvatars = document.getElementById("partyBannerAvatars");
+const partyBannerAction = document.getElementById("partyBannerAction");
+const partyBannerSecondary = document.getElementById("partyBannerSecondary");
 const partyPanel = document.getElementById("partyPanel");
 const partyMemberList = document.getElementById("partyMemberList");
 const wtConnectionChip = document.getElementById("wtConnectionChip");
@@ -347,8 +350,7 @@ let state = {
   openingManualEscapeLabel: "",
   openingProviderLine: "",
   openingReleaseName: "",
-  partyBannerVisible: false,
-  partyBannerText: "",
+  partyStatus: { visible: false, text: "", tone: "neutral", action: "", actionLabel: "", secondaryAction: "", secondaryActionLabel: "", people: [] },
   watchTogether: {
     open: false, state: "idle", badge: "none", memberCount: 0, buttonLabel: "Watch Together",
     people: [], inviteTargets: [], joinPolicy: 1,
@@ -2132,13 +2134,58 @@ const renderOpeningOverlay = suppress => {
   return showOpening;
 };
 
+const setPartyBannerButton = (button, command, label) => {
+  const text = String(label || "").trim();
+  const show = Boolean(command && text);
+  button.hidden = !show;
+  button.dataset.statusCommand = show ? String(command) : "";
+  button.textContent = text;
+};
+
+/**
+ * The party status pill, drawn from `state.partyStatus`. Which line, which words, which command:
+ * all decided in Kotlin (`PartyPlaybackStatus.kt`, `partyStatusBridgeState`).
+ */
 const renderPartyBanner = suppress => {
-  const messageText = String(state.partyBannerText || "").trim();
-  const show = Boolean(!suppress && state.partyBannerVisible && messageText);
-  partyBannerText.textContent = messageText;
+  const status = state.partyStatus || {};
+  const messageText = String(status.text || "").trim();
+  const show = Boolean(!suppress && status.visible && messageText);
   partyBanner.classList.toggle("visible", show);
   partyBanner.setAttribute("aria-hidden", show ? "false" : "true");
+  if (!show) {
+    setPartyBannerButton(partyBannerAction, "", "");
+    setPartyBannerButton(partyBannerSecondary, "", "");
+    return;
+  }
+  partyBannerText.textContent = messageText;
+  partyBanner.dataset.tone = String(status.tone || "neutral");
+  partyBanner.classList.toggle("compact", !state.controlsVisible);
+  const people = Array.isArray(status.people) ? status.people.slice(0, 2) : [];
+  const peopleKey = people.map(person => `${person.name}|${person.avatarUrl}|${person.colorHex}`).join(",");
+  // Redrawn only when the people change, so an avatar image is not reloaded on every update.
+  if (partyBannerAvatars.dataset.key !== peopleKey) {
+    partyBannerAvatars.dataset.key = peopleKey;
+    partyBannerAvatars.replaceChildren(...people.map(person => {
+      const avatar = document.createElement("span");
+      avatar.className = "party-banner-avatar";
+      fillAvatar(avatar, person.name, person.avatarUrl, person.colorHex);
+      return avatar;
+    }));
+  }
+  partyBannerAvatars.hidden = people.length === 0;
+  setPartyBannerButton(partyBannerAction, status.action, status.actionLabel);
+  setPartyBannerButton(partyBannerSecondary, status.secondaryAction, status.secondaryActionLabel);
+  partyBanner.classList.toggle("has-action", !partyBannerAction.hidden);
 };
+
+// Only the pill's buttons take the pointer (see controls.css), so this sees nothing else.
+partyBanner.addEventListener("click", event => {
+  const target = event.target.closest("[data-status-command]");
+  if (!target || target.hidden || !target.dataset.statusCommand) return;
+  event.stopPropagation();
+  noteChromeActivity(true);
+  send(target.dataset.statusCommand, 0);
+});
 
 const PARTY_STATUS_TONES = ["ready", "working", "failed", "offline", "paused", "buffering", "reconnecting"];
 

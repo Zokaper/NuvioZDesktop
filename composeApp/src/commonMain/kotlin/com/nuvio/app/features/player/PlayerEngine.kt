@@ -242,12 +242,12 @@ data class PlayerControlsState(
     val openingProviderLine: String = "",
     val openingReleaseName: String = "",
     /**
-     * The Watch Together status line, shown whenever the party is holding playback back or has lost
-     * sync. It is deliberately independent of [controlsVisible]: a player that is paused because it
-     * is waiting on somebody else has to say so even when the chrome has faded.
+     * The Watch Together status pill (§5 of the UX pass): who or what the party is waiting on, with at
+     * most one action. Deliberately independent of [controlsVisible]: a player that is paused because
+     * it is waiting on somebody else has to say so even when the chrome has faded - the page compacts
+     * it then rather than hiding it.
      */
-    val partyBannerVisible: Boolean = false,
-    val partyBannerText: String = "",
+    val partyStatus: PartyStatusBridgeState = PartyStatusBridgeState(),
     /** The Watch Together panel, header badge and in-player request mirror. See `WatchTogetherBridge.kt`. */
     val watchTogether: WatchTogetherBridgeState = WatchTogetherBridgeState(),
     /**

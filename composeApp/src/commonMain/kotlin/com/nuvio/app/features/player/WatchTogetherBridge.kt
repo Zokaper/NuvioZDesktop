@@ -1,6 +1,9 @@
 package com.nuvio.app.features.player
 
 import com.nuvio.app.features.social.WatchJoinPolicy
+import com.nuvio.app.features.watchparty.PartyStatusAction
+import com.nuvio.app.features.watchparty.PartyStatusLine
+import com.nuvio.app.features.watchparty.PartyStatusTone
 
 /**
  * What the native controls page receives for Watch Together.
@@ -221,4 +224,68 @@ fun watchTogetherBridgeState(
         else -> "Watch Together"
     }
     return state.copy(badge = badge, buttonLabel = label)
+}
+
+/** Whoever the status pill is about, as the page draws their avatar. */
+data class PartyStatusBridgePerson(
+    val name: String,
+    val avatarUrl: String,
+    val colorHex: String,
+)
+
+/**
+ * The status pill (§5), replacing `partyBannerVisible` / `partyBannerText`.
+ *
+ * Commands and labels are chosen here, not on the page, so the pill's buttons can only ever send
+ * something `handlePlayerControlsEvent` answers.
+ */
+data class PartyStatusBridgeState(
+    val visible: Boolean = false,
+    val kind: String = "",
+    val text: String = "",
+    /** neutral | waiting | warning | error */
+    val tone: String = "neutral",
+    val action: String = "",
+    val actionLabel: String = "",
+    val secondaryAction: String = "",
+    val secondaryActionLabel: String = "",
+    val people: List<PartyStatusBridgePerson> = emptyList(),
+)
+
+fun partyStatusBridgeState(line: PartyStatusLine?, suppressed: Boolean = false): PartyStatusBridgeState {
+    if (line == null || suppressed) return PartyStatusBridgeState()
+    return PartyStatusBridgeState(
+        visible = true,
+        kind = line.kind.name,
+        text = line.text,
+        tone = when (line.tone) {
+            PartyStatusTone.Neutral -> "neutral"
+            PartyStatusTone.Waiting -> "waiting"
+            PartyStatusTone.Warning -> "warning"
+            PartyStatusTone.Error -> "error"
+        },
+        action = line.action?.command().orEmpty(),
+        actionLabel = line.action?.label().orEmpty(),
+        secondaryAction = line.secondaryAction?.command().orEmpty(),
+        secondaryActionLabel = line.secondaryAction?.label().orEmpty(),
+        people = line.people.take(2).map { PartyStatusBridgePerson(it.name, it.avatarUrl.orEmpty(), it.avatarColorHex) },
+    )
+}
+
+fun PartyStatusAction.command(): String = when (this) {
+    PartyStatusAction.ChooseSource -> "wtChooseSource"
+    PartyStatusAction.StartAnyway -> "wtStartAnyway"
+    PartyStatusAction.DontWait -> "wtDontWait"
+    PartyStatusAction.LetIn -> "wtAcceptRequest"
+    PartyStatusAction.Decline -> "wtDeclineRequest"
+    PartyStatusAction.CancelOutgoing -> "wtCancelOutgoing"
+}
+
+private fun PartyStatusAction.label(): String = when (this) {
+    PartyStatusAction.ChooseSource -> "Choose source"
+    PartyStatusAction.StartAnyway -> "Start anyway"
+    PartyStatusAction.DontWait -> "Don't wait"
+    PartyStatusAction.LetIn -> "Let in"
+    PartyStatusAction.Decline -> "Decline"
+    PartyStatusAction.CancelOutgoing -> "Cancel"
 }

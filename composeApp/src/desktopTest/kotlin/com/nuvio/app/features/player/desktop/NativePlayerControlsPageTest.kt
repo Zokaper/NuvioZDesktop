@@ -115,6 +115,27 @@ class NativePlayerControlsPageTest {
         assertFalse(script.contains("The host controls playback"))
     }
 
+    @Test
+    fun thePartyStatusPillOnlyTakesThePointerOnItsButtons() {
+        val html = resourceText("/player-ui/controls.html")
+        val script = resourceText("/player-ui/controls.js")
+        val css = resourceText("/player-ui/controls.css")
+        listOf("partyBanner", "partyBannerAvatars", "partyBannerText", "partyBannerAction", "partyBannerSecondary").forEach { id ->
+            assertTrue(html.contains("id=\"$id\""), "missing status pill element $id")
+        }
+        // Commands come from Kotlin on the payload, never spelled on the page.
+        assertTrue(script.contains("state.partyStatus"))
+        assertTrue(script.contains("dataset.statusCommand"))
+        assertFalse(script.contains("partyBannerVisible"))
+        // Anchored at line start: `.party-banner.compact .party-banner-action {` would match otherwise.
+        val pill = css.substringAfter("\n.party-banner {").substringBefore("}")
+        assertTrue(pill.contains("pointer-events: none"), "the pill itself must let the pointer through")
+        val action = css.substringAfter("\n.party-banner-action {").substringBefore("}")
+        assertTrue(action.contains("pointer-events: auto"), "the pill's buttons must take the pointer")
+        // Compact, not hidden, once the chrome has gone.
+        assertTrue(script.contains("classList.toggle(\"compact\", !state.controlsVisible)"))
+    }
+
     private fun resourceText(path: String): String =
         checkNotNull(javaClass.getResourceAsStream(path)) { "Missing test resource: $path" }
             .bufferedReader()

@@ -505,6 +505,8 @@ internal object WatchPartySync : PartyRealtimeTransport {
         capturedAtPartyMs: Long,
         playbackSpeed: Float,
         durationMs: Long,
+        /** The guests a stall-guard hold is waiting on, so nobody reads the hold as a person pausing. */
+        hold: List<String> = emptyList(),
     ) {
         val context = authority ?: return
         val generation = context.generation
@@ -519,6 +521,7 @@ internal object WatchPartySync : PartyRealtimeTransport {
             durationMs = durationMs,
             sourceGeneration = generation.sourceGeneration,
             authorityEpoch = generation.authorityEpoch,
+            hold = hold,
         )
         tick = next
         _ticks.tryEmit(next)
@@ -897,6 +900,7 @@ internal object WatchPartySync : PartyRealtimeTransport {
             bestRttMs = clock.bestRttMs,
             tickStatus = held?.status,
             tickCapturedAtPartyMs = held?.capturedAtPartyMs,
+            tickHold = held?.hold.orEmpty(),
             holdingProfiles = advanceBufferWatch(),
             peerTelemetry = guestStatus.mapValues { (profileId, status) ->
                 PartyPeerTelemetry(

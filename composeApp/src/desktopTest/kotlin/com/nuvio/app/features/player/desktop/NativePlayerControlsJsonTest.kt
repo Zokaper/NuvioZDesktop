@@ -1,5 +1,7 @@
 package com.nuvio.app.features.player.desktop
 
+import com.nuvio.app.features.player.PartyStatusBridgePerson
+import com.nuvio.app.features.player.PartyStatusBridgeState
 import com.nuvio.app.features.player.PlayerControlsState
 import com.nuvio.app.features.player.WatchTogetherBridgeInvite
 import com.nuvio.app.features.player.WatchTogetherBridgePerson
@@ -53,6 +55,33 @@ class NativePlayerControlsJsonTest {
         assertFalse("presenceJoinPolicyVisible" in payload)
         assertFalse("partyEndedChoiceVisible" in payload)
         assertFalse("partyRoom" in payload)
+    }
+
+    @Test
+    fun thePartyStatusPillReplacesTheBannerFieldsInThePayload() {
+        val payload = Json.parseToJsonElement(
+            PlayerControlsState(
+                partyStatus = PartyStatusBridgeState(
+                    visible = true,
+                    kind = "WaitingForBuffering",
+                    text = "Waiting for Ahmed \"A\" to buffer",
+                    tone = "waiting",
+                    action = "wtDontWait",
+                    actionLabel = "Don't wait",
+                    people = listOf(PartyStatusBridgePerson("Ahmed", "", "#8E24AA")),
+                ),
+            ).toControlsJson(isFullscreen = false),
+        ).jsonObject
+
+        val status = payload.getValue("partyStatus").jsonObject
+        assertEquals(true, status.getValue("visible").jsonPrimitive.boolean)
+        assertEquals("Waiting for Ahmed \"A\" to buffer", status.getValue("text").jsonPrimitive.content)
+        assertEquals("waiting", status.getValue("tone").jsonPrimitive.content)
+        assertEquals("wtDontWait", status.getValue("action").jsonPrimitive.content)
+        assertEquals("", status.getValue("secondaryAction").jsonPrimitive.content)
+        assertEquals("#8E24AA", status.getValue("people").jsonArray.single().jsonObject.getValue("colorHex").jsonPrimitive.content)
+        assertFalse("partyBannerVisible" in payload)
+        assertFalse("partyBannerText" in payload)
     }
 
     @Test

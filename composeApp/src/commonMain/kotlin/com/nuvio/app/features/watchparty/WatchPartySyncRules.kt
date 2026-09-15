@@ -58,6 +58,8 @@ data class WatchPartySyncState(
     val bestRttMs: Long = -1L,
     val tickStatus: WatchPartyStatus? = null,
     val tickCapturedAtPartyMs: Long? = null,
+    /** The newest host tick's stall-hold list: how a guest learns a pause was automatic. */
+    val tickHold: List<String> = emptyList(),
     val holdingProfiles: List<String> = emptyList(),
     val peerTelemetry: Map<String, PartyPeerTelemetry> = emptyMap(),
 )

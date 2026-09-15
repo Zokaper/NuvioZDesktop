@@ -3,7 +3,9 @@ package com.nuvio.app.features.player.desktop
 import com.nuvio.app.features.player.IncomingJoinRequestRow
 import com.nuvio.app.features.player.JoinPolicyControl
 import com.nuvio.app.features.player.PartyConnectionChip
+import com.nuvio.app.features.player.PartyStatusBridgeState
 import com.nuvio.app.features.player.PlayerControlsState
+import com.nuvio.app.features.player.partyStatusBridgeState
 import com.nuvio.app.features.player.WatchTogetherBridgeInvite
 import com.nuvio.app.features.player.WatchTogetherHostSettings
 import com.nuvio.app.features.player.WatchTogetherOutgoingMirror
@@ -13,7 +15,14 @@ import com.nuvio.app.features.player.WatchTogetherRole
 import com.nuvio.app.features.player.watchTogetherBridgeState
 import com.nuvio.app.features.social.WatchJoinPolicy
 import com.nuvio.app.features.watchparty.PartyPromotionFailure
+import com.nuvio.app.features.watchparty.PartyHoldReason
+import com.nuvio.app.features.watchparty.PartyPlaybackGate
+import com.nuvio.app.features.watchparty.PartyPlaybackStatusInputs
 import com.nuvio.app.features.watchparty.PartyReadyTone
+import com.nuvio.app.features.watchparty.PartyRealizationPhase
+import com.nuvio.app.features.watchparty.PartyStatusPerson
+import com.nuvio.app.features.watchparty.PartySyncCapability
+import com.nuvio.app.features.watchparty.projectPartyPlaybackStatus
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertTrue
@@ -106,6 +115,32 @@ class PlayerUiGallery {
         "closed-badge-active" to watchTogetherBridgeState(active(WatchTogetherRole.Host), open = false),
     )
 
+    private val seraph = PartyStatusPerson("seraph", "Seraph", null, "#43A047")
+    private val ahmed = PartyStatusPerson("ahmed", "Ahmed", null, "#8E24AA")
+    private val guest = PartyPlaybackStatusInputs(inParty = true, isHost = false, host = seraph)
+    private val host = PartyPlaybackStatusInputs(inParty = true, isHost = true, host = seraph)
+
+    /** One page per status row (§5), each projected by the real priority table. */
+    private val statusFixtures: List<Pair<String, PartyPlaybackStatusInputs>> = listOf(
+        "status-source-not-found" to guest.copy(realization = PartyRealizationPhase.FallbackRequired, handoffEpisodeLabel = "S1E3"),
+        "status-too-short" to guest.copy(positionUnreachable = true),
+        "status-switching-episode" to guest.copy(realization = PartyRealizationPhase.Matching, realizationChangesEpisode = true),
+        "status-host-choosing" to guest.copy(waitingForHostSource = true),
+        "status-waiting-sources" to host.copy(
+            gate = PartyPlaybackGate(allowPlayback = false, reason = PartyHoldReason.WAITING_FOR_PARTICIPANTS, waitingOn = 3),
+            awaitingSource = listOf(ahmed, seraph, PartyStatusPerson("d", "debug")),
+        ),
+        "status-stall-host" to host.copy(stallHoldOthers = listOf(ahmed)),
+        "status-stall-self" to guest.copy(selfHeld = true),
+        "status-host-buffering" to guest.copy(hostBuffering = true),
+        "status-catching-up" to guest.copy(barrierHoldMs = 2_000),
+        "status-incoming" to host.copy(incomingRequester = ahmed),
+        "status-reconnecting" to guest.copy(realtimeUnhealthyMs = 5_000),
+        "status-offline" to guest.copy(capability = PartySyncCapability.OfflineLocalPlayback),
+        "status-paused-by" to guest.copy(pausedBy = seraph),
+        "status-outgoing" to PartyPlaybackStatusInputs(inParty = false, isHost = false, outgoingRequestTarget = seraph),
+    )
+
     @Test
     fun writeGallery() {
         outputDir.mkdirs()
@@ -113,17 +148,28 @@ class PlayerUiGallery {
             File(outputDir, name).writeText(resourceText("/player-ui/$name"))
         }
         val html = resourceText("/player-ui/controls.html")
-        fixtures.forEach { (name, watchTogether) ->
+        val pages = fixtures.map { (name, watchTogether) -> Triple(name, watchTogether, PartyStatusBridgeState()) } +
+            statusFixtures.flatMap { (name, inputs) ->
+                val line = checkNotNull(projectPartyPlaybackStatus(inputs)) { "$name projected no status" }
+                val panel = watchTogetherBridgeState(active(if (inputs.isHost) WatchTogetherRole.Host else WatchTogetherRole.Guest), open = false)
+                listOf(
+                    Triple(name, panel, partyStatusBridgeState(line)),
+                    // The same line with the chrome hidden: compact, action gone.
+                    Triple("$name-compact", panel, partyStatusBridgeState(line)),
+                )
+            }
+        pages.forEach { (name, watchTogether, partyStatus) ->
             val payload = PlayerControlsState(
                 title = "Mayday",
                 episodeText = "",
-                controlsVisible = true,
+                controlsVisible = !name.endsWith("-compact"),
                 showOpeningOverlay = false,
                 showWatchTogether = true,
                 showSources = true,
                 durationMs = 7_200_000,
                 positionMs = 1_800_000,
                 watchTogether = watchTogether,
+                partyStatus = partyStatus,
             ).toControlsJson(isFullscreen = false)
             val page = html.replace(
                 "<script src=\"controls.js\"></script>",
@@ -136,7 +182,7 @@ class PlayerUiGallery {
             File(outputDir, "$name.html").writeText(page)
         }
         File(outputDir, "index.html").writeText(
-            fixtures.joinToString("\n", "<!doctype html><title>Player UI gallery</title><ul>", "</ul>") { (name, _) ->
+            pages.joinToString("\n", "<!doctype html><title>Player UI gallery</title><ul>", "</ul>") { (name, _, _) ->
                 "<li><a href=\"$name.html\">$name</a></li>"
             },
         )

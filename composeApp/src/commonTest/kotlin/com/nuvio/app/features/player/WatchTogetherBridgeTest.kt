@@ -3,6 +3,11 @@ package com.nuvio.app.features.player
 import com.nuvio.app.features.social.WatchJoinPolicy
 import com.nuvio.app.features.watchparty.PartyPromotionFailure
 import com.nuvio.app.features.watchparty.PartyReadyTone
+import com.nuvio.app.features.watchparty.PartyStatusAction
+import com.nuvio.app.features.watchparty.PartyStatusKind
+import com.nuvio.app.features.watchparty.PartyStatusLine
+import com.nuvio.app.features.watchparty.PartyStatusPerson
+import com.nuvio.app.features.watchparty.PartyStatusTone
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -82,5 +87,30 @@ class WatchTogetherBridgeTest {
     @Test fun policySegmentsRoundTrip() {
         WatchJoinPolicy.entries.forEach { assertEquals(it, joinPolicyForSegment(it.segmentIndex())) }
         assertNull(joinPolicyForSegment(3))
+    }
+
+    @Test fun theStatusPillCarriesOnlyCommandsTheRuntimeAnswers() {
+        val line = PartyStatusLine(
+            PartyStatusKind.IncomingJoinRequest,
+            "Ahmed wants to join",
+            listOf(PartyStatusPerson("a", "Ahmed", null, "#8E24AA"), PartyStatusPerson("b", "B"), PartyStatusPerson("c", "C")),
+            action = PartyStatusAction.LetIn,
+            secondaryAction = PartyStatusAction.Decline,
+            tone = PartyStatusTone.Waiting,
+        )
+        val pill = partyStatusBridgeState(line)
+        assertTrue(pill.visible)
+        assertEquals("waiting", pill.tone)
+        assertEquals("wtAcceptRequest" to "Let in", pill.action to pill.actionLabel)
+        assertEquals("wtDeclineRequest" to "Decline", pill.secondaryAction to pill.secondaryActionLabel)
+        assertEquals(listOf("Ahmed", "B"), pill.people.map { it.name })
+        assertEquals("", pill.people[0].avatarUrl)
+        assertFalse(partyStatusBridgeState(line, suppressed = true).visible)
+        assertFalse(partyStatusBridgeState(null).visible)
+        assertEquals(
+            setOf("wtChooseSource", "wtStartAnyway", "wtDontWait", "wtAcceptRequest", "wtDeclineRequest", "wtCancelOutgoing"),
+            PartyStatusAction.entries.map { it.command() }.toSet(),
+        )
+        assertEquals("", partyStatusBridgeState(line.copy(action = null, secondaryAction = null)).action)
     }
 }

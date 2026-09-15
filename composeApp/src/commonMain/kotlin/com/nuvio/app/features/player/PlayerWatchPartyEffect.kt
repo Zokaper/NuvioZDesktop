@@ -135,7 +135,7 @@ private val partyLog = Logger.withTag("WatchPartyPlayer")
  * longer this stretch's. Omitting the last two is what let a source switch leave every party
  * effect running against the source it replaced.
  */
-private fun WatchPartyState.generationKey(): String =
+internal fun WatchPartyState.generationKey(): String =
     "$id:$contentGeneration:$sourceGeneration:$authorityEpoch"
 
 /**
@@ -231,56 +231,6 @@ private fun PlayerScreenRuntime.resumePartyPlayback() {
 
 /** The same instant, read in the party's terms. */
 private fun partyInstantOf(epochMs: Long): Long = WatchPartySync.partyNowMs() - (currentEpochMs() - epochMs)
-
-internal data class WatchPartyPlayerStatus(
-    val gate: PartyPlaybackGate,
-    val isHost: Boolean,
-    val syncDegraded: Boolean,
-    val hostBuffering: Boolean,
-    val timelinePlaying: Boolean,
-    val positionUnreachable: Boolean,
-)
-
-@Composable
-internal fun PlayerScreenRuntime.rememberWatchPartyStatus(): WatchPartyPlayerStatus {
-    val partyUi by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
-    val syncState by WatchPartySync.state.collectAsStateWithLifecycle()
-    val party = partyUi.party?.takeIf { it.matchesPlayback(parentMetaId, playbackSession.videoId) }
-    val presentation = PartyPresentationProjector.project(
-        party = party,
-        selfProfileId = partyUi.activeProfileId,
-        health = partyUi.health,
-        realtime = syncState,
-        partyNowMs = WatchPartySync.partyNowMs(),
-    )
-    return WatchPartyPlayerStatus(
-        gate = partyPlaybackGate(
-            party = party,
-            viewerProfileId = partyUi.activeProfileId,
-            hostStartReleased = party != null && partyStartReleasedKey == party.generationKey(),
-            hostBufferingReleased = false,
-        ),
-        isHost = party != null && party.hostProfileId == partyUi.activeProfileId,
-        syncDegraded = party != null && presentation.connection != PartyConnectionState.connected,
-        // The timeline says this seconds before the database row does, and "Host is buffering" is
-        // the banner a guest is staring at while it waits.
-        hostBuffering = party != null &&
-            party.hostProfileId != partyUi.activeProfileId &&
-            presentation.freshHostStatus == WatchPartyStatus.buffering,
-        // The gate reads the database row, which is up to five seconds behind. Without this a guest
-        // that the timeline has already started plays on under a banner still telling them to wait
-        // for the host - which is the feature reporting itself broken while it works.
-        timelinePlaying = presentation.freshHostStatus == WatchPartyStatus.playing,
-        // A player standing still while the party watches on has to say why, or it reads as broken.
-        //
-        // Deliberately the refusal and not the duration comparison. Two releases of the same film
-        // routinely differ by more than the compatibility tolerance without it ever mattering -
-        // every position the party visits is inside both of them - and a banner that is up for the
-        // whole film because the credits are a minute longer is a banner people learn to ignore.
-        // The mismatch is logged and on the HUD; it earns the banner when it actually bites.
-        positionUnreachable = party != null && partyPositionUnreachable,
-    )
-}
 
 /**
  * Whether this player's file is a different length from the host's, past what a party can absorb.
@@ -434,6 +384,12 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
                 // Per content generation: a new episode is a new stream, and it deserves the
                 // benefit of the doubt rather than inheriting the previous one's exhausted budget.
                 partyStallHoldBudget = StallHoldBudget()
+                partyLastPauseActor = null
+                // "Don't wait" was an answer about one guest's stream on this episode.
+                if (partyDontWaitGenerationKey == generationKey) {
+                    partyDontWaitGenerationKey = null
+                    WatchPartyRepository.setWaitForEveryone(true)
+                }
             }
         }
     }
@@ -524,6 +480,7 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
                     capturedAtPartyMs = partyInstantOf(sample.atEpochMs),
                     playbackSpeed = snapshot.playbackSpeed,
                     durationMs = snapshot.durationMs,
+                    hold = partyAutoPausedForGuests,
                 )
             }
             delay(
@@ -555,6 +512,7 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
             capturedAtPartyMs = partyInstantOf(sample.atEpochMs),
             playbackSpeed = snapshot.playbackSpeed,
             durationMs = snapshot.durationMs,
+            hold = partyAutoPausedForGuests,
         )
     }
 
@@ -1199,6 +1157,20 @@ private suspend fun PlayerScreenRuntime.followPartyTick(tick: PartyTick, tracker
 private fun PlayerScreenRuntime.announcePartyActor(command: PartyCommand) {
     val ui = WatchPartyRepository.uiState.value
     val party = ui.party?.takeIf { it.matchesPlayback(parentMetaId, playbackSession.videoId) } ?: return
+    // ⚠ **Pause is a condition, not an event.** It used to be a toast like the rest, which was gone
+    // in 900ms and left a party that stayed paused a minute with nothing saying why - and a stall
+    // hold, which goes out as an ordinary `pause`, arrived as "Seraph paused" for something nobody
+    // pressed. Recorded instead for the status pill, which defers it by a tick so a hold can say so.
+    when (command.kind) {
+        PartyCommandKind.pause -> {
+            partyLastPauseActor = command.issuedByProfileId
+                .takeIf { it != ui.activeProfileId }
+                ?.let { PartyPauseAttribution(profileId = it, atEpochMs = currentEpochMs()) }
+            return
+        }
+        PartyCommandKind.play -> partyLastPauseActor = null
+        else -> Unit
+    }
     // A seek's direction is what makes "skipped back" and "skipped ahead" different sentences, and
     // the only honest reading of it is against where this player is standing right now.
     val seekingBackwards = command.kind == PartyCommandKind.seek &&
@@ -1231,6 +1203,30 @@ private fun PlayerScreenRuntime.announcePartyActor(command: PartyCommand) {
     } else {
         showGestureMessage(notice)
     }
+}
+
+/** Who paused the party, and when this player heard about it. */
+internal data class PartyPauseAttribution(val profileId: String, val atEpochMs: Long)
+
+/**
+ * "Don't wait" on the stall-hold pill: the host lets the party play on without the buffering guest.
+ *
+ * Turning the switch off alone would leave the party standing still, because the guard that took the
+ * hold is the only thing that would ever release it and it has just been told to stop looking. So
+ * the hold is released here, the same way the guard would have released it. Scoped to this
+ * generation: the next episode starts with the host's preference back on.
+ */
+internal fun PlayerScreenRuntime.stopWaitingForStalledGuests() {
+    val party = WatchPartyRepository.uiState.value.party
+        ?.takeIf { it.matchesPlayback(parentMetaId, playbackSession.videoId) } ?: return
+    if (party.hostProfileId != WatchPartyRepository.uiState.value.activeProfileId) return
+    partyDontWaitGenerationKey = party.generationKey()
+    WatchPartyRepository.setWaitForEveryone(false)
+    val waited = partyAutoPausedForGuests
+    if (waited.isEmpty()) return
+    partyAutoPausedForGuests = emptyList()
+    partyLog.i { "dont-wait: releasing hold for=${waited.joinToString { it.shortId() }}" }
+    startPartyPlayback(samplePlaybackPosition().positionMs, source = "dont-wait")
 }
 
 /**
@@ -1556,25 +1552,6 @@ internal fun PlayerScreenRuntime.partyDiagnosticsLine(): String? {
         val holds = partyStallHoldBudget.holdsAtMs.size
         if (isHost && holds > 0) append(" holds=$holds")
     }
-}
-
-/** The one line the player shows while a party is holding playback back, or has lost sync. */
-internal fun WatchPartyPlayerStatus.bannerText(): String? = when {
-    // First, because it outranks every other reason this player is not moving: the others resolve
-    // themselves and this one does not until somebody picks a different source.
-    positionUnreachable -> "Your source is shorter than the host's · pick another one to follow along"
-    gate.reason == PartyHoldReason.WAITING_FOR_PARTICIPANTS -> {
-        val people = if (gate.waitingOn == 1) "1 person" else "${gate.waitingOn} people"
-        "Waiting for $people to pick a source · press play to start anyway"
-    }
-    hostBuffering || gate.reason == PartyHoldReason.HOST_BUFFERING -> "Host is buffering"
-    gate.reason == PartyHoldReason.WAITING_FOR_HOST && !timelinePlaying -> "Waiting for the host to start"
-    // Not "playing on your own": the snapshot poll is still running underneath, so a party without
-    // its channel is following along a few seconds at a time rather than not following at all.
-    // Saying the stronger thing sent testers looking for a broken party when what had actually
-    // broken was one socket.
-    syncDegraded -> "Live sync lost · following the party every few seconds"
-    else -> null
 }
 
 /**

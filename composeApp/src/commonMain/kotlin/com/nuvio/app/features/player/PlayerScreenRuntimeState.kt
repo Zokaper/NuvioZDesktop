@@ -476,6 +476,17 @@ internal class PlayerScreenRuntime(
      */
     var partyAutoPausedForGuests: List<String> = emptyList()
 
+    /**
+     * The last accepted `pause` still in force, when somebody else issued it.
+     *
+     * Pause is a condition, not an event: a 900ms toast left a party that stayed paused with nothing
+     * on screen saying why. The status pill's "Paused by" row reads this; a `play` clears it.
+     */
+    var partyLastPauseActor by mutableStateOf<PartyPauseAttribution?>(null)
+
+    /** The generation the host pressed "Don't wait" in; the stall guard comes back on for the next one. */
+    var partyDontWaitGenerationKey: String? = null
+
     var lastSyncedSettingsResizeMode: PlayerResizeMode? = null
     var lastResetPlaybackIdentity: String? = null
     var lastResetVideoIdentity: String? = null

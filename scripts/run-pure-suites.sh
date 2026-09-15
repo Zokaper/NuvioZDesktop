@@ -309,6 +309,7 @@ kotlinc -nowarn -cp "$CP_BUILD:$CP_JSON:$CP_COROUTINES" -Xplugin="$WORK/serializ
   "$M/features/watchparty/WatchPartyBarrier.kt" \
   "$M/features/watchparty/WatchPartySyncProtocol.kt" \
   "$M/features/watchparty/WatchPartyPresentation.kt" \
+  "$M/features/watchparty/PartyPlaybackStatus.kt" \
   "$M/features/social/SocialModels.kt" \
   "$M/features/social/SocialNotifications.kt" \
   "$M/features/social/FriendActivityGrouping.kt" \

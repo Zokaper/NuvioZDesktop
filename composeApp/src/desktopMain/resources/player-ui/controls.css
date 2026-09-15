@@ -504,40 +504,124 @@ button:disabled {
   top: calc(72px + env(safe-area-inset-top));
   left: 50%;
   transform: translateX(-50%);
+  transform-origin: top center;
   z-index: 7;
   display: none;
   align-items: center;
   gap: 8px;
-  max-width: min(720px, calc(100% - (var(--hp) * 2)));
-  padding: 8px 16px;
+  max-width: min(560px, calc(100% - (var(--hp) * 2)));
+  min-height: 36px;
+  padding: 4px 6px 4px 14px;
   border-radius: 999px;
   border: 1px solid var(--theme-border-default);
-  background: rgba(0, 0, 0, .72);
+  background: rgba(0, 0, 0, .74);
   color: var(--theme-text-primary);
   font-size: 13px;
   font-weight: 600;
   line-height: 1.3;
-  text-align: center;
   pointer-events: none;
+  transition: transform .18s ease, opacity .18s ease, background-color .18s ease;
+}
+
+.party-banner:not(.has-action) { padding-right: 16px; }
+
+@media (min-width: 1440px) {
+  .party-banner { max-width: min(720px, calc(100% - (var(--hp) * 2))); }
 }
 
 .party-banner.visible {
   display: flex;
 }
 
+/* The chrome has gone: smaller and quieter, never gone. A paused film with no explanation is the bug
+   this exists for. The action comes back with the chrome, which any pointer movement restores. */
+.party-banner.compact {
+  transform: translateX(-50%) scale(.85);
+  background: rgba(0, 0, 0, .52);
+  opacity: .9;
+}
+
+.party-banner.compact .party-banner-action { display: none; }
+.party-banner.compact { padding-right: 16px; }
+
 .party-banner-dot {
   flex: 0 0 auto;
   width: 8px;
   height: 8px;
   border-radius: 50%;
+  background: var(--theme-text-muted);
+}
+
+.party-banner[data-tone="waiting"] .party-banner-dot {
   background: var(--theme-accent-strong);
   animation: party-banner-pulse 1.6s ease-in-out infinite;
 }
 
+.party-banner[data-tone="warning"] .party-banner-dot { background: #e0a458; }
+.party-banner[data-tone="warning"] { border-color: rgba(224, 164, 88, .45); }
+.party-banner[data-tone="error"] .party-banner-dot { background: #ef7a90; }
+.party-banner[data-tone="error"] { border-color: rgba(239, 122, 144, .5); }
+
+.party-banner-avatars {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.party-banner-avatars[hidden] { display: none; }
+
+.party-banner-avatar {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  overflow: hidden;
+  border-radius: 50%;
+  border: 1.5px solid rgba(0, 0, 0, .74);
+  background: #1e88e5;
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.party-banner-avatar + .party-banner-avatar { margin-left: -7px; }
+.party-banner-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
 .party-banner-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.party-banner-action {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--theme-accent-strong);
+  color: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.party-banner-action.quiet {
+  background: rgba(255, 255, 255, .1);
+  color: var(--theme-text-primary);
+}
+
+.party-banner-action:hover { filter: brightness(1.12); }
+.party-banner-action:focus-visible { outline: 2px solid var(--theme-selected-ring); outline-offset: 2px; }
+.party-banner-action[hidden] { display: none; }
+
+@media (max-width: 680px) {
+  .party-banner { gap: 6px; font-size: 12.5px; }
+  .party-banner-action { padding: 0 10px; }
+  .party-banner-action.quiet { display: none; }
 }
 
 /* Vertically centred rather than hung from the header: the panel is a companion to the film, not
