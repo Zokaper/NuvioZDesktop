@@ -62,6 +62,10 @@ import com.nuvio.app.features.social.rememberSocialEnabled
  */
 private val startupLog = Logger.withTag("PlaybackStartup")
 
+/** How long a fresh source waits before a duration on the shared snapshot is believed. */
+private const val PROBE_SNAPSHOT_SETTLE_MS = 750L
+private const val PROBE_ARM_POLL_MS = 250L
+
 @Composable
 internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
     // ⚠ **Both, or neither.** Presence is what tells friends what you are watching and the party
@@ -387,7 +391,24 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         // already gated on there being a chain to step, and the abandon machinery is right here
         // rather than duplicated.
         var probePassed = false
+        val probeArmedAt = TimeSource.Monotonic.markNow()
         launch {
+            // ⚠ **Only after the player has opened the file itself.** AIOStreams mints the debrid
+            // link when the URL is first fetched, and the debrid host binds it to the fetching IP.
+            // This probe is OkHttp and the player is mpv: two independent HTTP stacks that can
+            // leave the machine from different addresses (IPv4 against IPv6, or a VPN that routes
+            // by process). Racing mpv to that first fetch is how every automatic pick on one
+            // machine intermittently came back "Wrong IP" while manual picks - which never probe -
+            // never did. A duration means mpv has already fetched and opened the file, so the link
+            // is mpv's. The settle interval keeps a snapshot from the previous source, delivered
+            // after the reset above, from arming it early.
+            while (
+                playbackSnapshot.durationMs <= 0L ||
+                probeArmedAt.elapsedNow().inWholeMilliseconds < PROBE_SNAPSHOT_SETTLE_MS
+            ) {
+                delay(PROBE_ARM_POLL_MS)
+            }
+            startupLog.d { "probe armed: player has opened the source" }
             val outcome = probePlaybackSource(
                 url = activeSourceUrl,
                 headers = activeSourceHeaders,
@@ -398,7 +419,8 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
                     is PlaybackProbeOutcome.NotApplicable -> "skipped=not_http"
                     is PlaybackProbeOutcome.Failed -> "failed=${outcome.reason}"
                     is PlaybackProbeOutcome.Completed ->
-                        "${outcome.result.toLogFields()} verdict=${outcome.result.verdict.logKey()}"
+                        "${outcome.result.toLogFields()} verdict=${outcome.result.verdict.logKey()}" +
+                            (outcome.result.bodyPreview?.let { " body=\"$it\"" } ?: "")
                 }
                 "probe $detail"
             }
@@ -406,8 +428,13 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
             if (verdict is PlaybackProbeVerdict.Pass) {
                 probePassed = true
             }
+            // A dead verdict no longer steps the chain. The probe now runs only once mpv has
+            // opened the file, so mpv has already proved the source answers; a refusal at this
+            // point is a refusal of the probe (a second fetch of an IP-bound link), not of the
+            // source. Dead sources are skipped by mpv's own end-file error instead - see
+            // `NativePlayerController.handleMpvEndFile` - and by the watchdog.
+            if (verdict is PlaybackProbeVerdict.Dead) return@launch
             val rejection = when (verdict) {
-                is PlaybackProbeVerdict.Dead -> Res.string.playback_source_unreachable
                 is PlaybackProbeVerdict.Placeholder -> Res.string.playback_source_not_ready
                 else -> null
             } ?: return@launch

@@ -30,11 +30,15 @@ import com.nuvio.app.features.playback.PlaybackHandover
 import com.nuvio.app.features.player.desktop.DesktopHostOs
 import com.nuvio.app.features.player.desktop.NativePlayerController
 import com.nuvio.app.features.player.desktop.NativePlayerHost
+import com.nuvio.app.features.player.desktop.PrematureEndOfStreamGuard
 import com.nuvio.app.features.player.desktop.desktopFullscreenChanges
+import co.touchlab.kermit.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.withContext
+
+private val endOfStreamLog = Logger.withTag("PlaybackEndOfStream")
 
 @Composable
 actual fun PlatformPlayerSurface(
@@ -229,11 +233,38 @@ private fun NativePlayerSurface(
         }
     }
 
+    val latestSourceUrl = rememberUpdatedState(sourceUrl)
     LaunchedEffect(controller) {
         var hasFirstFrame = false
+        val endGuard = PrematureEndOfStreamGuard()
         while (true) {
-            val snapshot = withContext(Dispatchers.IO) {
+            val rawSnapshot = withContext(Dispatchers.IO) {
                 controller.snapshot()
+            }
+            val snapshot = when (
+                val decision = endGuard.evaluate(latestSourceUrl.value, rawSnapshot, System.currentTimeMillis())
+            ) {
+                PrematureEndOfStreamGuard.Decision.Pass -> rawSnapshot
+                PrematureEndOfStreamGuard.Decision.Suppress -> PrematureEndOfStreamGuard.masked(rawSnapshot)
+                is PrematureEndOfStreamGuard.Decision.Recover -> {
+                    endOfStreamLog.w {
+                        "premature end of stream: position=${decision.positionMs}ms " +
+                            "duration=${decision.durationMs}ms attempt=${decision.attempt} " +
+                            "recovering seekTo=${decision.targetMs}ms resume=${decision.resume}"
+                    }
+                    controller.seekTo(decision.targetMs)
+                    if (decision.resume) controller.play()
+                    PrematureEndOfStreamGuard.masked(rawSnapshot)
+                }
+                is PrematureEndOfStreamGuard.Decision.Fail -> {
+                    endOfStreamLog.e {
+                        "premature end of stream: position=${decision.positionMs}ms " +
+                            "duration=${decision.durationMs}ms recoveries exhausted " +
+                            "attempts=${decision.attempts}; failing source"
+                    }
+                    latestOnError.value("The stream stopped unexpectedly. The connection to the source was lost.")
+                    PrematureEndOfStreamGuard.masked(rawSnapshot)
+                }
             }
             onSnapshot(snapshot)
             val frameReady = PlaybackHandover.hasFirstFrame(
