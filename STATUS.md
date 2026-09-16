@@ -24,7 +24,16 @@ Subtitles never fall back to the title's language.
 
 Gate: `compileKotlinDesktop` green; focused 11 classes / 164 tests green; full `desktopTest` with results
 cleared first **2,016 tests, 0 failures, BUILD SUCCESSFUL**; `run-pure-suites.sh` all 8 groups OK (group 1 now 251).
-Android/iOS storage actuals edited but not compiled.
+Android/iOS storage actuals: **not gateable in this repo** - `:composeApp:compileAndroidMain` fails
+with the same 15 pre-existing errors at `01524bb1` and at this commit (desktop-only Compose APIs in
+`commonMain`, plus `addonHttpClient`), and `compileKotlinIosSimulatorArm64` is SKIPPED on a Windows
+host. No new error comes from this change; the iOS actual mirrors its neighbour and needs macOS.
+
+Debug MSI from this exact commit (`ad6feb22`):
+`composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi`
+(259,569,439 bytes; SHA-256 `16fbc624648666ba0812da9f1001b6bf4d25434ea5b3b55615152db660fdbd85`),
+built with `-Pnuvio.desktop.debugTools=true` (confirmed in `packageReleaseMsi.args.txt`) on the JBR
+SDK. `player_bridge.dll` was deleted first so the `external`/`default` track flags are really in it.
 
 Hardware checklist (debug MSI): 1) Streamlined + preference on, MKV with an English track → built-in
 track selected, log `outcome=confirmed`; 2) a source with no built-in subs → addon subtitle as before;
