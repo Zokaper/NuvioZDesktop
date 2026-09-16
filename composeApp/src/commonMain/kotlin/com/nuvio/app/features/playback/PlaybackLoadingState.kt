@@ -1,5 +1,6 @@
 package com.nuvio.app.features.playback
 
+import com.nuvio.app.core.language.languageMatchesPreference
 import com.nuvio.app.features.downloads.SourceFacts
 
 // The pre-player loading surface's whole vocabulary, with no Compose in it.
@@ -173,6 +174,16 @@ data class PlaybackLoadingState(
     val releaseName: String? get() = facts?.filename?.takeIf { it.isNotBlank() }
 }
 
+/**
+ * A release's own claim to carry subtitles, as the quality panel draws it.
+ *
+ * [code] is a normalized language code, or null when the release only said `MultiSubs`.
+ */
+data class BuiltInSubtitleClaim(
+    val code: String?,
+    val matchesPreference: Boolean,
+)
+
 /** The five slots the loading band always shows, in the order it shows them. */
 enum class PlaybackFactSlot { RESOLUTION, LANGUAGE, DYNAMIC_RANGE, AUDIO, SIZE }
 
@@ -288,6 +299,43 @@ object PlaybackLoadingFacts {
         val rest = codes.size - 1
         val name = languageName(first)
         return if (rest > 0) "$name +$rest" else name
+    }
+
+    /**
+     * What a release claims about subtitles **inside the file**, for the quality panel's chip.
+     *
+     * ⚠ **A claim, not a verified track.** Nothing may look inside a source before mpv opens it
+     * - see `PlayerEmbeddedSubtitlePreference.kt` - so this reads exactly what the release name
+     * says, at the same standard as the `DV` and `Atmos 5.1` chips beside it. The player
+     * confirms it against mpv's track list afterwards, and the chip is never a promise that a
+     * track will be there.
+     *
+     * Null when the release claims nothing, and for a hard-subbed release: burned-in text is not
+     * a track anything can select, which is the same reason it scores nothing in the ranking.
+     *
+     * [BuiltInSubtitleClaim.matchesPreference] is true only for a *named* language the user asked
+     * for, which is what earned the source its ranking hint - `MultiSubs` names nothing and
+     * therefore matches nothing.
+     */
+    fun builtInSubtitleClaim(
+        facts: SourceFacts?,
+        preferredLanguage: String? = null,
+    ): BuiltInSubtitleClaim? {
+        val source = facts ?: return null
+        if (source.isHardSubbed) return null
+        val preferred = preferredLanguage?.trim()?.takeIf { it.isNotEmpty() }
+        val matching = preferred?.let { target ->
+            source.releaseSubtitleLanguages.firstOrNull { languageMatchesPreference(it, target) }
+        }
+        if (matching != null) return BuiltInSubtitleClaim(code = matching, matchesPreference = true)
+        source.releaseSubtitleLanguages.firstOrNull()?.let {
+            return BuiltInSubtitleClaim(code = it, matchesPreference = false)
+        }
+        return if (source.claimsMultiSubtitles) {
+            BuiltInSubtitleClaim(code = null, matchesPreference = false)
+        } else {
+            null
+        }
     }
 
     /**

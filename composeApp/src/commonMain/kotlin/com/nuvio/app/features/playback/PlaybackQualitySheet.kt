@@ -48,6 +48,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.Placeable
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -55,6 +58,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.constrainHeight
+import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nuvio.app.core.ui.NuvioModalBottomSheet
@@ -69,6 +74,8 @@ import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.playback_progress_choosing
 import nuvio.composeapp.generated.resources.playback_quality_best
 import nuvio.composeapp.generated.resources.playback_quality_checking_connection
+import nuvio.composeapp.generated.resources.playback_quality_chip_subs
+import nuvio.composeapp.generated.resources.playback_quality_chip_subs_multi
 import nuvio.composeapp.generated.resources.playback_quality_column_needs
 import nuvio.composeapp.generated.resources.playback_quality_column_size
 import nuvio.composeapp.generated.resources.playback_quality_description
@@ -979,8 +986,11 @@ private const val FIGURE_SEPARATOR = "·"
  * ⚠ **The phone branch keeps [QualitySheetBody] and its card grid**, unedited. It also serves
  * tablets under 768 dp, where there is no width to spend.
  */
+// `internal` rather than private so `PlaybackQualityRenderHarness` can draw it off-screen.
+// This is the desktop/wide branch - the one with the chip row - and nothing outside this file
+// may call it in production; `PlaybackQualitySheet` above is the entry point.
 @Composable
-private fun QualityColumnsBody(
+internal fun QualityColumnsBody(
     options: List<PlaybackQualityOption>,
     isLoading: Boolean,
     isSelecting: Boolean,
@@ -1238,6 +1248,8 @@ private data class QualityFigures(
     val sourceKey: String?,
     val isAiUpscaled: Boolean = false,
     val isTheatricalCapture: Boolean = false,
+    /** The release's own subtitle claim, for the chip. Null when it claims none. */
+    val builtInSubtitles: BuiltInSubtitleClaim? = null,
 )
 
 /**
@@ -1299,6 +1311,14 @@ private fun qualityFigures(
         sourceKey = PlaybackQualityOptions.sourceKey(preview),
         isAiUpscaled = preview?.facts?.isAiUpscaled == true,
         isTheatricalCapture = preview?.facts?.isTheatricalCapture == true,
+        // ⚠ The preference's language, which is non-null only while "Prefer built-in subtitles"
+        // is on. That is what decides whether the chip is *accented*: the accent says "this is
+        // the row your preference favoured", and with the preference off the claim is still
+        // worth showing - plainly - because it is a fact about the release either way.
+        builtInSubtitles = PlaybackLoadingFacts.builtInSubtitleClaim(
+            facts = preview?.facts,
+            preferredLanguage = selectionContext.preferredEmbeddedSubtitleLanguage,
+        ),
     )
 }
 
@@ -1349,16 +1369,23 @@ private fun FeatureChips(
     dynamicRange: String?,
     audio: String?,
     isAiUpscaled: Boolean = false,
+    builtInSubtitles: BuiltInSubtitleClaim? = null,
     modifier: Modifier = Modifier,
 ) {
     val tokens = MaterialTheme.nuvio
     // ⚠ Fixed height whether or not there is anything to draw. A release that names neither
     // fact must leave its neighbours where they are.
-    Row(
-        modifier = modifier.height(CHIP_ROW_HEIGHT),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
-    ) {
+    //
+    // ⚠ **Drops a chip that does not fit rather than clipping it**, which is why this is a
+    // `Layout` and not a `Row`. A `Row` truncates its last child mid-word: at 1100 dp a cell
+    // carrying all four marks - `AI Upscale`, `SDR`, `Atmos 5.1`, `EN subs` - drew the last one
+    // as a bare `EN`, which reads as an English *audio* track rather than as a subtitle claim
+    // cut in half. Found by `PlaybackQualityRenderHarness`; the compiler and the pure suites
+    // cannot see it.
+    //
+    // The children are declared in descending importance, so dropping from the end always sheds
+    // the subtitle claim first and the AI-upscale warning last.
+    ChipRow(modifier = modifier.height(CHIP_ROW_HEIGHT)) {
         if (isAiUpscaled) {
             AiUpscaleChip()
         }
@@ -1374,6 +1401,55 @@ private fun FeatureChips(
             )
         }
         audio?.let { FeatureChip(text = it, color = tokens.colors.textSecondary) }
+        builtInSubtitles?.let { claim ->
+            // Last in the row: it is the newest mark and the least load-bearing of the three.
+            FeatureChip(
+                text = if (claim.code == null) {
+                    stringResource(Res.string.playback_quality_chip_subs_multi)
+                } else {
+                    stringResource(
+                        Res.string.playback_quality_chip_subs,
+                        claim.code.uppercase(),
+                    )
+                },
+                color = if (claim.matchesPreference) {
+                    tokens.colors.accent
+                } else {
+                    tokens.colors.textMuted
+                },
+            )
+        }
+    }
+}
+
+/**
+ * A single line of chips that **omits what will not fit** instead of clipping it.
+ *
+ * Hand-rolled for the same reason the loading band's rail is: `FlowRow` is still experimental in
+ * this Compose version, and wrapping is the wrong answer here anyway - a second line would change
+ * the cell's height and pull the grid out of alignment with the column beside it.
+ */
+@Composable
+private fun ChipRow(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val gap = with(LocalDensity.current) { NuvioTokens.Space.s6.roundToPx() }
+    Layout(content = content, modifier = modifier) { measurables, constraints ->
+        val placeables = measurables.map { it.measure(constraints.copy(minWidth = 0)) }
+        var used = 0
+        val shown = mutableListOf<Placeable>()
+        for (placeable in placeables) {
+            val width = placeable.width + if (shown.isEmpty()) 0 else gap
+            if (used + width > constraints.maxWidth) break
+            shown += placeable
+            used += width
+        }
+        val height = constraints.constrainHeight(shown.maxOfOrNull { it.height } ?: 0)
+        layout(width = constraints.constrainWidth(used), height = height) {
+            var x = 0
+            shown.forEach { placeable ->
+                placeable.place(x, (height - placeable.height) / 2)
+                x += placeable.width + gap
+            }
+        }
     }
 }
 
@@ -1493,6 +1569,7 @@ private fun BestAvailableHero(
                     dynamicRange = figures.dynamicRange,
                     audio = figures.audio,
                     isAiUpscaled = figures.isAiUpscaled,
+                    builtInSubtitles = figures.builtInSubtitles,
                 )
             }
         }
@@ -1614,6 +1691,7 @@ private fun QualityColumnCell(
             dynamicRange = figures.dynamicRange,
             audio = figures.audio,
             isAiUpscaled = figures.isAiUpscaled,
+            builtInSubtitles = figures.builtInSubtitles,
         )
         Row(
             verticalAlignment = Alignment.CenterVertically,
