@@ -2,6 +2,50 @@
 
 Last updated: 2026-09-16
 
+## Playback: Loading screen language summary & Initial preferred audio track selection (2026-09-16)
+
+On branch **`codex/upstream-sync-0.1.23-alpha`**.
+
+### What landed
+
+1. **Honest Loading Screen Language Summary**:
+   - Resolved misleading `Russian +2 / —` summary on multi-audio streams (e.g. `Bugonia...-RUTRACKER.mkv`) where English is present and preferred:
+     - `PlaybackLoadingState`, `PlaybackLoadingFacts.facts`, `languagePairLabel`, and `rememberLanguageNamer` now thread `preferredAudioLanguage`.
+     - Multi-audio streams with user's preferred language present display the preferred language first: e.g. `English +2`.
+     - Multi-audio streams where preferred language is absent or unmatched display neutral count: `Multi · ${codes.size}` (e.g. `Multi · 3`).
+     - Single detected language displays single language honestly: e.g. `Russian`.
+     - Unstated multi-audio continues to display `MULTi / —`.
+   - In `LanguageCodes.kt`:
+     - Added delimiter-aware phrase matching in `containsReleaseToken` so multi-word tokens like `ru audio`, `dual audio`, and `latin spanish` match across release delimiters (`.`, `-`, `_`, space).
+     - Confirmed and pinned tests ensuring release groups like `-RUTRACKER` or `-RUTOR` do not match `ru`, while legitimate evidence (`RU.audio`, `RU-Audio`, `RUS`, `Russian`) matches correctly.
+2. **Deterministic Player Initial Preferred Audio Track Selection**:
+   - In `PlayerLanguagePreferences.kt`, added `resolvePreferredAudioTrackIndex(tracks, preferredLanguages)`:
+     - Outer loop iterates by user preference priority order (primary, then secondary), ensuring primary preferred languages are not bypassed by container track ordering.
+     - Normalizes ISO-639-2 codes from container/mpv (e.g. Matroska `eng` / `rus`) against preference targets (`en` / `ru`).
+     - Falls back to matching against `track.label` if `track.language` is unstated or blank.
+   - In `NativePlayerController.kt`:
+     - Wired `resolvePreferredAudioTrackIndex` into `applyAudioLanguagePreferences`.
+     - Added concise, token-free diagnostic logging: configured preference targets, available track languages/labels, selected track, or why deferred.
+   - In `PlayerScreenRuntimeAudioPreferences.kt`:
+     - Guarded `preferredAudioSelectionApplied`: if `audioTracks` is empty, calls controller but does not mark selection applied, enabling selection when tracks arrive later.
+     - In `refreshAudioTracksIfChanged()`: no longer blocks on `playbackSnapshot.isLoading` when `currentTracks.isNotEmpty()`, selecting preferred audio immediately when demuxer is ready before first frame plays.
+     - Preserves explicit user manual selections at all times.
+3. **Test Coverage & Gates**:
+   - Added `PlayerInitialAudioSelectionTest` (10 unit tests covering ISO-639-2 normalization, preference priority ordering, label fallback, empty-track deferral, and manual override protection).
+   - Expanded `PlaybackLoadingStateTest` (+5 unit tests covering neutral multi counts, preferred-first display, and single language).
+   - Expanded `LanguageCodesTest` (+2 unit tests covering `-RUTRACKER` / `-RUTOR` exclusions and `RU.audio` delimiter variants).
+   - Pure suites: 8/8 green, 676 tests (up from 669).
+   - Full desktop test suite: 2,158 tests, 0 failures, 0 errors, 0 skipped (up from 2,141 baseline).
+
+### Gates
+
+| Gate | Result |
+| --- | --- |
+| `:composeApp:compileKotlinDesktop` | **BUILD SUCCESSFUL** |
+| `:composeApp:compileTestKotlinDesktop` | **BUILD SUCCESSFUL** |
+| `:composeApp:desktopTest` | **BUILD SUCCESSFUL - 2,158 tests, 0 failures, 0 errors, 0 skipped** (up from 2,141 baseline) |
+| `scripts/run-pure-suites.sh` | **8/8 green, 676 tests** (278 / 107 / 70 / 17 / 29 / 115 / 63 / 3) |
+
 ## Setup Wizard: Sources onboarding step & Replay Wizard restoration (2026-09-16)
 
 On branch **`codex/upstream-sync-0.1.23-alpha`**.

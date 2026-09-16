@@ -1,5 +1,8 @@
 package com.nuvio.app.features.playback
 
+import com.nuvio.app.core.language.AudioLanguageOption
+import com.nuvio.app.core.language.languageMatchesPreference
+import com.nuvio.app.core.language.normalizeLanguageCode
 import com.nuvio.app.features.downloads.SourceFacts
 
 // The pre-player loading surface's whole vocabulary, with no Compose in it.
@@ -157,6 +160,11 @@ data class PlaybackLoadingState(
      * names no audio language. Null when the catalogue did not say.
      */
     val contentLanguage: String? = null,
+    /**
+     * The user's preferred audio language target, if known, used to prioritize which language
+     * name is highlighted on multi-audio releases.
+     */
+    val preferredAudioLanguage: String? = null,
 ) {
     /** Above 1, and never past the budget - "Attempt 5 of 3" is unreachable by construction. */
     val displayAttempt: Int get() = attempt.coerceIn(1, maxAttempts)
@@ -216,6 +224,20 @@ object PlaybackLoadingFacts {
         formatSize: (Long) -> String,
         contentLanguage: String? = null,
         languageName: (String) -> String,
+    ): List<PlaybackLoadingFact> = facts(
+        facts = facts,
+        formatSize = formatSize,
+        contentLanguage = contentLanguage,
+        preferredAudioLanguage = null,
+        languageName = languageName,
+    )
+
+    fun facts(
+        facts: SourceFacts?,
+        formatSize: (Long) -> String,
+        contentLanguage: String?,
+        preferredAudioLanguage: String?,
+        languageName: (String) -> String,
     ): List<PlaybackLoadingFact> = listOf(
         PlaybackLoadingFact(
             PlaybackFactSlot.RESOLUTION,
@@ -223,7 +245,7 @@ object PlaybackLoadingFacts {
         ),
         PlaybackLoadingFact(
             PlaybackFactSlot.LANGUAGE,
-            languagePairLabel(facts, contentLanguage, languageName),
+            languagePairLabel(facts, contentLanguage, preferredAudioLanguage, languageName),
         ),
         PlaybackLoadingFact(PlaybackFactSlot.DYNAMIC_RANGE, dynamicRangeSlot(facts)),
         PlaybackLoadingFact(PlaybackFactSlot.AUDIO, audioLabel(facts)),
@@ -263,31 +285,92 @@ object PlaybackLoadingFacts {
         facts: SourceFacts?,
         contentLanguage: String? = null,
         languageName: (String) -> String,
+    ): String? = languagePairLabel(facts, contentLanguage, null, languageName)
+
+    fun languagePairLabel(
+        facts: SourceFacts?,
+        contentLanguage: String?,
+        preferredAudioLanguage: String?,
+        languageName: (String) -> String,
     ): String? {
         val inferred = SourceLanguageInference.infer(facts, contentLanguage)
-        val audio = claimLabel(inferred.audio, languageName)
-        val subtitles = claimLabel(inferred.subtitles, languageName)
+        val audio = audioClaimLabel(inferred.audio, preferredAudioLanguage, contentLanguage, languageName)
+        val subtitles = subtitleClaimLabel(inferred.subtitles, languageName)
         if (audio == null && subtitles == null) return null
         return "${audio ?: UNKNOWN} / ${subtitles ?: UNKNOWN}"
     }
 
     /** Every code [languagePairLabel] may name, for the caller resolving display names. */
-    fun languageCodesToName(facts: SourceFacts?, contentLanguage: String?): Set<String> {
+    fun languageCodesToName(facts: SourceFacts?, contentLanguage: String?): Set<String> =
+        languageCodesToName(facts, contentLanguage, null)
+
+    fun languageCodesToName(
+        facts: SourceFacts?,
+        contentLanguage: String?,
+        preferredAudioLanguage: String?,
+    ): Set<String> {
         val inferred = SourceLanguageInference.infer(facts, contentLanguage)
-        return inferred.audio.codes + inferred.subtitles.codes
+        val preferred = preferredAudioLanguage?.let(::normalizeLanguageCode)
+        return inferred.audio.codes + inferred.subtitles.codes + listOfNotNull(preferred)
     }
 
-    private fun claimLabel(
+    private fun audioClaimLabel(
+        claim: SourceLanguageInference.Claim,
+        preferredAudioLanguage: String?,
+        contentLanguage: String?,
+        languageName: (String) -> String,
+    ): String? = namedLanguages(
+        codes = claim.codes,
+        isMulti = claim.isMulti,
+        preferredLanguage = preferredAudioLanguage,
+        contentLanguage = contentLanguage,
+        languageName = languageName,
+    )
+
+    private fun subtitleClaimLabel(
         claim: SourceLanguageInference.Claim,
         languageName: (String) -> String,
-    ): String? = namedLanguages(claim.codes, languageName) ?: "MULTi".takeIf { claim.isMulti }
+    ): String? = namedLanguages(
+        codes = claim.codes,
+        isMulti = claim.isMulti,
+        preferredLanguage = null,
+        contentLanguage = null,
+        languageName = languageName,
+    )
 
-    /** `English`, `English +2`, or null. One name plus a count - a list would not fit the slot. */
-    private fun namedLanguages(codes: Set<String>, languageName: (String) -> String): String? {
-        val first = codes.firstOrNull() ?: return null
-        val rest = codes.size - 1
-        val name = languageName(first)
-        return if (rest > 0) "$name +$rest" else name
+    /**
+     * Formats language claim label:
+     * - If exactly 1 detected language -> display single language (e.g. Russian).
+     * - Multiple detected languages + preferred present -> display preferred first (e.g. English +2).
+     * - Multiple detected languages + preferred absent/unmatched -> neutral label `Multi · ${codes.size}`.
+     * - Unstated / isMulti with no codes -> `MULTi`.
+     */
+    private fun namedLanguages(
+        codes: Set<String>,
+        isMulti: Boolean,
+        preferredLanguage: String?,
+        contentLanguage: String?,
+        languageName: (String) -> String,
+    ): String? {
+        if (codes.isEmpty()) return "MULTi".takeIf { isMulti }
+        if (codes.size == 1) return languageName(codes.first())
+
+        val target = when (preferredLanguage) {
+            AudioLanguageOption.ORIGINAL -> contentLanguage
+            AudioLanguageOption.DEFAULT, AudioLanguageOption.DEVICE -> null
+            else -> preferredLanguage
+        }?.takeIf { it.isNotBlank() }
+
+        if (target != null) {
+            val matched = codes.firstOrNull { code -> languageMatchesPreference(code, target) }
+            if (matched != null) {
+                val rest = codes.size - 1
+                val name = languageName(matched)
+                return if (rest > 0) "$name +$rest" else name
+            }
+        }
+
+        return "Multi \u00B7 ${codes.size}"
     }
 
     /**

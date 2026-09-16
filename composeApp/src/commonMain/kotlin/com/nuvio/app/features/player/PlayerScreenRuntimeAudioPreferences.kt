@@ -27,6 +27,10 @@ internal data class AppliedAudioPreferences(
 internal fun PlayerScreenRuntime.applyPreferredAudioTrack(targets: List<String>) {
     if (isUserExplicitAudioSelection) return
     val controller = playerController ?: return
+    if (audioTracks.isEmpty()) {
+        controller.applyAudioLanguagePreferences(targets)
+        return
+    }
     val preferences = AppliedAudioPreferences(
         controller = controller,
         languages = targets,
@@ -52,9 +56,10 @@ internal fun PlayerScreenRuntime.restorePersistedAudioPreference(preference: Per
 }
 
 internal fun PlayerScreenRuntime.refreshAudioTracksIfChanged() {
-    if (playbackSnapshot.isLoading) return
     val controller = playerController ?: return
-    if (!preferredAudioSelectionApplied || controller.getAudioTracks() != audioTracks) {
+    val currentTracks = controller.getAudioTracks()
+    if (playbackSnapshot.isLoading && currentTracks.isEmpty()) return
+    if (!preferredAudioSelectionApplied || currentTracks != audioTracks) {
         refreshTracks()
     }
 }

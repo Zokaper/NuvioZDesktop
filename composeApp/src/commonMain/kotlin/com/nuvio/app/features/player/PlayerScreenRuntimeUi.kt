@@ -446,6 +446,8 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         attempt = args.playbackAttempt,
         facts = args.sourceFacts,
         contentLanguage = args.contentLanguage,
+        preferredAudioLanguage = preferredAudioLanguageTargets.firstOrNull()
+            ?: playerSettingsUiState.preferredAudioLanguage,
     )
 
     val episodeText = if (seasonNumber != null && episodeNumber != null && !episodeTitle.isNullOrBlank()) {
@@ -2433,6 +2435,8 @@ private fun BoxScope.RenderPlaybackOverlays(
                 attempt = args.playbackAttempt,
                 facts = args.sourceFacts,
                 contentLanguage = args.contentLanguage,
+                preferredAudioLanguage = preferredAudioLanguageTargets.firstOrNull()
+                    ?: playerSettingsUiState.preferredAudioLanguage,
             ),
             formatSize = ::formatFileSize,
             onCopyErrorDetails = errorMessage?.let { message ->

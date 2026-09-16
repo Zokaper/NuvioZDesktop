@@ -12,6 +12,7 @@ import com.nuvio.app.features.player.PlayerControlSubtitleCueItem
 import com.nuvio.app.features.player.PlayerControlSubtitleLanguageItem
 import com.nuvio.app.features.player.PlayerControlSubtitleOptionItem
 import com.nuvio.app.features.player.AudioTrack
+import com.nuvio.app.features.player.resolvePreferredAudioTrackIndex
 import com.nuvio.app.features.player.ParentalWarning
 import com.nuvio.app.features.player.PlayerControlsAction
 import com.nuvio.app.features.player.PlayerControlsState
@@ -1288,19 +1289,33 @@ internal class NativePlayerController(
             )
         }
 
+    private var lastAudioLanguagePreferences: List<String> = emptyList()
+
     override fun applyAudioLanguagePreferences(languages: List<String>) {
         val preferredLanguages = languages
             .map(String::trim)
             .filter(String::isNotEmpty)
-            .map(String::lowercase)
         if (preferredLanguages.isEmpty()) return
-        val trackIndex = getAudioTracks().indexOfFirst { track ->
-            val language = track.language?.lowercase() ?: return@indexOfFirst false
-            preferredLanguages.any { preferred ->
-                language == preferred || language.startsWith("$preferred-")
+        lastAudioLanguagePreferences = preferredLanguages
+
+        val tracks = getAudioTracks()
+        if (tracks.isEmpty()) {
+            log.d { "applyAudioLanguagePreferences deferred: no audio tracks available yet for preferences=$preferredLanguages" }
+            return
+        }
+
+        val trackIndex = resolvePreferredAudioTrackIndex(tracks, preferredLanguages)
+        if (trackIndex >= 0) {
+            val selectedTrack = tracks[trackIndex]
+            log.d {
+                "applyAudioLanguagePreferences selected track index=$trackIndex (id=${selectedTrack.id}, lang=${selectedTrack.language}, label=${selectedTrack.label}) for preferences=$preferredLanguages among tracks=${tracks.map { "${it.index}:${it.language ?: it.label}" }}"
+            }
+            selectAudioTrack(trackIndex)
+        } else {
+            log.d {
+                "applyAudioLanguagePreferences no matching track for preferences=$preferredLanguages among tracks=${tracks.map { "${it.index}:${it.language ?: it.label}" }}"
             }
         }
-        if (trackIndex >= 0) selectAudioTrack(trackIndex)
     }
 
     override fun selectAudioTrack(index: Int) {

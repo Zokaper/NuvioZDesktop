@@ -139,7 +139,73 @@ class PlaybackLoadingStateTest {
         val facts = SourceFacts(languages = setOf("en", "it", "fr"))
         assertEquals(
             "English +2 / —",
-            PlaybackLoadingFacts.languagePairLabel(facts) { if (it == "en") "English" else it.uppercase() },
+            PlaybackLoadingFacts.languagePairLabel(
+                facts = facts,
+                contentLanguage = null,
+                preferredAudioLanguage = "en",
+            ) { if (it == "en") "English" else it.uppercase() },
+        )
+    }
+
+    @Test
+    fun `multiple languages with unstated preference show neutral multi count`() {
+        val facts = SourceFacts(languages = setOf("ru", "it", "fr"))
+        assertEquals(
+            "Multi · 3 / —",
+            PlaybackLoadingFacts.languagePairLabel(facts) { it.uppercase() },
+        )
+    }
+
+    @Test
+    fun `multiple languages with missing preference show neutral multi count`() {
+        val facts = SourceFacts(languages = setOf("ru", "fr"))
+        assertEquals(
+            "Multi · 2 / —",
+            PlaybackLoadingFacts.languagePairLabel(
+                facts = facts,
+                contentLanguage = null,
+                preferredAudioLanguage = "en",
+            ) { it.uppercase() },
+        )
+    }
+
+    @Test
+    fun `multiple languages with preferred language present shows preferred first even when ordered second`() {
+        // Source has Russian first, English second, Ukrainian third
+        val facts = SourceFacts(languages = linkedSetOf("ru", "en", "uk"))
+        assertEquals(
+            "English +2 / —",
+            PlaybackLoadingFacts.languagePairLabel(
+                facts = facts,
+                contentLanguage = null,
+                preferredAudioLanguage = "en",
+            ) { if (it == "en") "English" else if (it == "ru") "Russian" else it.uppercase() },
+        )
+    }
+
+    @Test
+    fun `single language shows language regardless of preference`() {
+        val facts = SourceFacts(languages = setOf("ru"))
+        assertEquals(
+            "Russian / —",
+            PlaybackLoadingFacts.languagePairLabel(
+                facts = facts,
+                contentLanguage = null,
+                preferredAudioLanguage = "en",
+            ) { if (it == "ru") "Russian" else it.uppercase() },
+        )
+    }
+
+    @Test
+    fun `preferred secondary language highlights correctly`() {
+        val facts = SourceFacts(languages = linkedSetOf("en", "ja"))
+        assertEquals(
+            "Japanese +1 / —",
+            PlaybackLoadingFacts.languagePairLabel(
+                facts = facts,
+                contentLanguage = null,
+                preferredAudioLanguage = "ja",
+            ) { if (it == "ja") "Japanese" else "English" },
         )
     }
 

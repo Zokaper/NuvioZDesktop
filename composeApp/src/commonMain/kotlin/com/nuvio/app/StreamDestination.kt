@@ -86,8 +86,10 @@ import com.nuvio.app.features.playback.playbackChain
 import com.nuvio.app.features.playback.playbackQualityOptionLabel
 import com.nuvio.app.features.playback.qualityLabel
 import com.nuvio.app.features.playback.streamRouteSurface
+import com.nuvio.app.features.player.DeviceLanguagePreferences
 import com.nuvio.app.features.player.ExternalPlaybackOutcome
 import com.nuvio.app.features.player.PlayerLaunch
+import com.nuvio.app.features.player.resolvePreferredAudioLanguageTargets
 import com.nuvio.app.features.player.PlayerLaunchStore
 import com.nuvio.app.features.player.PartyPlayerLaunchKey
 import com.nuvio.app.features.player.PlayerSettingsRepository
@@ -2356,6 +2358,12 @@ internal fun StreamDestination(
             )
         }
         val loadingFacts = if (manualPlaybackStarting) manualCandidateFacts ?: activeCandidateFacts else activeCandidateFacts
+        val preferredAudioLanguageTarget = resolvePreferredAudioLanguageTargets(
+            preferredAudioLanguage = playerSettings.preferredAudioLanguage,
+            secondaryPreferredAudioLanguage = playerSettings.secondaryPreferredAudioLanguage,
+            deviceLanguages = DeviceLanguagePreferences.preferredLanguageCodes(),
+            contentOriginalLanguage = requestedContentLanguage,
+        ).firstOrNull() ?: playerSettings.preferredAudioLanguage
         val loadingState = PlaybackLoadingState(
             step = loadingStep,
             attempt = autoPickAttempt,
@@ -2366,6 +2374,7 @@ internal fun StreamDestination(
             facts = loadingFacts,
             failure = autoPickFailure,
             contentLanguage = requestedContentLanguage,
+            preferredAudioLanguage = preferredAudioLanguageTarget,
         )
 
         LaunchedEffect(showLoadingSurface) {
@@ -2396,6 +2405,7 @@ internal fun StreamDestination(
                         attempt = autoPickAttempt,
                         facts = loadingFacts,
                         contentLanguage = requestedContentLanguage,
+                        preferredAudioLanguage = preferredAudioLanguageTarget,
                     )
                 }
             } else {

@@ -75,6 +75,7 @@ object PlaybackLoadingSessions {
         attempt: Int = 1,
         facts: SourceFacts? = null,
         contentLanguage: String? = null,
+        preferredAudioLanguage: String? = null,
     ): PlaybackLoadingSession = PlaybackLoadingSession(
         token = token,
         state = PlaybackLoadingState(
@@ -82,6 +83,7 @@ object PlaybackLoadingSessions {
             attempt = attempt,
             facts = facts,
             contentLanguage = contentLanguage,
+            preferredAudioLanguage = preferredAudioLanguage,
         ),
         artwork = artwork,
         logo = logo,

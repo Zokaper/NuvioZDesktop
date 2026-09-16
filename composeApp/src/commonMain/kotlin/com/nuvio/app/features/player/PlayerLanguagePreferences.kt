@@ -203,6 +203,35 @@ fun languageMatchesPreference(trackLanguage: String?, targetLanguage: String): B
     com.nuvio.app.core.language.languageMatchesPreference(trackLanguage, targetLanguage)
 
 /**
+ * Resolves the 0-based index of the best matching [AudioTrack] based on the user's priority
+ * ordered [preferredLanguages].
+ *
+ * Checks tracks in preference priority order (primary language first, then secondary),
+ * matching normalized language codes (handling ISO-639-1, ISO-639-2 e.g. "eng", "en", "rus", "ru")
+ * and falling back to track label matching if track language is unstated.
+ *
+ * Returns -1 if no track matches the given preferences.
+ */
+fun resolvePreferredAudioTrackIndex(
+    tracks: List<AudioTrack>,
+    preferredLanguages: List<String>,
+): Int {
+    if (tracks.isEmpty() || preferredLanguages.isEmpty()) return -1
+
+    for (preferred in preferredLanguages) {
+        val trimmed = preferred.trim()
+        if (trimmed.isEmpty()) continue
+        val matchIndex = tracks.indexOfFirst { track ->
+            if (languageMatchesPreference(track.language, trimmed)) return@indexOfFirst true
+            if (track.language.isNullOrBlank() && languageMatchesPreference(track.label, trimmed)) return@indexOfFirst true
+            false
+        }
+        if (matchIndex >= 0) return matchIndex
+    }
+    return -1
+}
+
+/**
  * ⚠ **Built once, because the lookup below is called from composition.**
  *
  * `languageLabelResForCode` used to scan [AvailableLanguageOptions] and normalize *each* of its 79

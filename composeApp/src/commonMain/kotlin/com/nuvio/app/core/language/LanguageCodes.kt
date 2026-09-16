@@ -531,14 +531,44 @@ private val HardSubWords = listOf("hc", "hardsub", "hardsubs", "hardsubbed", "ha
  * A bare `contains` would find `ara` inside `Sahara` and `ita` inside `Capitals`.
  */
 private fun String.containsReleaseToken(token: String): Boolean {
+    if (!token.contains(' ')) {
+        var from = 0
+        while (true) {
+            val at = indexOf(token, from)
+            if (at < 0) return false
+            if (!getOrNull(at - 1).isReleaseWordChar() && !getOrNull(at + token.length).isReleaseWordChar()) {
+                return true
+            }
+            from = at + 1
+        }
+    }
+
+    val parts = token.split(' ')
     var from = 0
     while (true) {
-        val at = indexOf(token, from)
-        if (at < 0) return false
-        if (!getOrNull(at - 1).isReleaseWordChar() && !getOrNull(at + token.length).isReleaseWordChar()) {
-            return true
+        val firstAt = indexOf(parts[0], from)
+        if (firstAt < 0) return false
+        if (!getOrNull(firstAt - 1).isReleaseWordChar()) {
+            var curr = firstAt + parts[0].length
+            var matched = true
+            for (i in 1 until parts.size) {
+                val nextPart = parts[i]
+                var delimCount = 0
+                while (curr < length && !this[curr].isReleaseWordChar()) {
+                    delimCount++
+                    curr++
+                }
+                if (delimCount == 0 || !startsWith(nextPart, curr)) {
+                    matched = false
+                    break
+                }
+                curr += nextPart.length
+            }
+            if (matched && !getOrNull(curr).isReleaseWordChar()) {
+                return true
+            }
         }
-        from = at + 1
+        from = firstAt + 1
     }
 }
 
@@ -631,7 +661,7 @@ private val ReleaseLanguageTokens: List<Pair<String, String>> = buildList {
     put("pt", "por", "portuguese", "portugues")
     // `legendado` is Brazilian *subtitles*; `dublado` is the Brazilian dub.
     put("pt-br", "dublado", "brazilian")
-    put("ru", "rus", "russian")
+    put("ru", "rus", "russian", "ru audio")
     put("uk", "ukr", "ukrainian")
     put("pl", "pol", "polish", "polski", "lektor")
     put("nl", "dut", "nld", "dutch", "nederlands")

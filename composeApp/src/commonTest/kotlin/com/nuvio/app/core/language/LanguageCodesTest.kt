@@ -154,4 +154,26 @@ class LanguageCodesTest {
         assertTrue(languageMatchesPreference("eng", "en"))
         assertFalse(languageMatchesPreference("hi", "en"))
     }
+
+    @Test
+    fun trackerReleaseGroupsDoNotInferRussianFromRutrackerOrRutor() {
+        val rutracker = releaseLanguagesIn(
+            "Bugonia.2025.Hybrid.UHD.EUR.BluRay.Remux.2160p.DV.HDR.HEVC.TrueHD.Atmos.7.1-RUTRACKER.mkv",
+        )
+        assertFalse("ru" in rutracker.codes)
+
+        val rutor = releaseLanguagesIn("Movie.2024.1080p.WEB-DL-RUTOR.mkv")
+        assertFalse("ru" in rutor.codes)
+    }
+
+    @Test
+    fun legitimateRussianReleaseTokensAreRecognizedAcrossDelimiters() {
+        assertEquals(setOf("ru"), releaseLanguagesIn("Movie.2024.1080p.RU.audio.mkv").codes)
+        assertEquals(setOf("ru"), releaseLanguagesIn("Movie.2024.1080p.RU-Audio.mkv").codes)
+        assertEquals(setOf("ru"), releaseLanguagesIn("Movie.2024.1080p.RU_Audio.mkv").codes)
+        assertEquals(setOf("ru"), releaseLanguagesIn("Movie 2024 1080p RU Audio mkv").codes)
+        assertEquals(setOf("ru"), releaseLanguagesIn("Movie.2024.1080p.RUS.mkv").codes)
+        assertEquals(setOf("ru"), releaseLanguagesIn("Movie.2024.1080p.Russian.mkv").codes)
+    }
 }
+
