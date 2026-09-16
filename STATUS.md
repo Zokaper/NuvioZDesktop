@@ -35,9 +35,9 @@ is looking for. The row is now a `Layout` that drops a chip it cannot fit rather
 it - at 1100 dp a four-mark cell drew `EN subs` as a bare `EN`, found by the new
 `PlaybackQualityRenderHarness` (PNGs in `composeApp/build/playback-quality-render/`).
 
-Debug MSI from this exact commit (`a3d5975c`):
+Debug MSI from `64dacbe6`, the last commit that touches code:
 `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi`
-(259,569,439 bytes; SHA-256 `16fbc624648666ba0812da9f1001b6bf4d25434ea5b3b55615152db660fdbd85`),
+(259,577,632 bytes; SHA-256 `2cee289596b9318572b271732523b4622ed83c87852c54b93adcbf8137ff97d3`),
 built with `-Pnuvio.desktop.debugTools=true` (confirmed in `packageReleaseMsi.args.txt`) on the JBR
 SDK. `player_bridge.dll` was deleted first so the `external`/`default` track flags are really in it.
 
