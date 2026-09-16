@@ -2707,12 +2707,20 @@
     <string name="setup_social_identity_signed_out">Sign in to your Nuvio account to set a handle. Social features stay on — you can pick one later from Settings → Social.</string>
     <string name="setup_social_identity_skip">Choose later</string>
 
-    <string name="setup_sources_title">Add a source</string>
-    <string name="setup_sources_subtitle">Nuvio Z has nothing to show until you add one.</string>
+    <string name="setup_sources_title">Set up your sources</string>
+    <string name="setup_sources_subtitle">Choose the addons that provide streams and subtitles.</string>
+    <string name="setup_sources_recommended">RECOMMENDED</string>
+    <string name="setup_sources_aiostreams_title">AIOStreams + TorBox</string>
+    <string name="setup_sources_aiostreams_body">Set up a ready-to-use source provider for Nuvio Z. You'll choose your source and subtitle languages, then enter your TorBox API key securely in AIOStreams.</string>
+    <string name="setup_sources_aiostreams_action">Set up AIOStreams</string>
+    <string name="setup_sources_manual_title">Already configured?</string>
+    <string name="setup_sources_manual_body">Paste any Stremio-compatible addon manifest URL, including the one AIOStreams gives you when setup is complete.</string>
     <string name="setup_sources_body">Nuvio Z doesn't host anything itself — it plays what your own addons provide. Paste an addon manifest URL below to add your first one.</string>
     <string name="setup_sources_url_placeholder">Addon manifest URL</string>
-    <string name="setup_sources_install">Add addon</string>
+    <string name="setup_sources_install">Add source</string>
     <string name="setup_sources_installed">Added %1$s</string>
+    <string name="setup_sources_configured">Sources configured: %1$s</string>
+    <string name="setup_sources_skip_hint">AIOStreams is recommended, not required. You can use another addon or press Next to skip for now.</string>
     <string name="setup_sources_debrid_hint">Using a debrid service? Add it later in Settings → Integrations → Debrid.</string>
 
     <string name="setup_done_title">You're all set</string>
@@ -2747,8 +2755,8 @@
     <string name="settings_social_leave_party_confirm">Leave and turn off</string>
     <string name="settings_social_leave_party_cancel">Cancel</string>
 
-    <string name="settings_run_setup_again">Run setup again</string>
-    <string name="settings_run_setup_again_description">Step through the look and playback choices from the start.</string>
+    <string name="settings_run_setup_again">Replay Setup Wizard</string>
+    <string name="settings_run_setup_again_description">Run setup again to step through the look, sources, and playback choices from the start.</string>
 
     <!-- Nuvio Z social foundation. -->
     <string name="compose_nav_social">Social</string>

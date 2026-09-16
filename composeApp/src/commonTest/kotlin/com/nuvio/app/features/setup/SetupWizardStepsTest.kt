@@ -21,19 +21,16 @@ class SetupWizardStepsTest {
 
     /** Every plan the wizard can actually produce. The property tests below run over all of them. */
     private val everyPlan: List<SetupWizardPlan> = buildList {
-        listOf(true, false).forEach { offerSources ->
-            listOf("CLASSIC", "STREAMLINED", "INSTANT").forEach { mode ->
-                listOf(true, false).forEach { socialEnabled ->
-                    listOf(true, false).forEach { offerIdentity ->
-                        add(
-                            SetupWizardPlan(
-                                offerSources = offerSources,
-                                playbackModeName = mode,
-                                socialEnabled = socialEnabled,
-                                offerSocialIdentity = offerIdentity,
-                            ),
-                        )
-                    }
+        listOf("CLASSIC", "STREAMLINED", "INSTANT").forEach { mode ->
+            listOf(true, false).forEach { socialEnabled ->
+                listOf(true, false).forEach { offerIdentity ->
+                    add(
+                        SetupWizardPlan(
+                            playbackModeName = mode,
+                            socialEnabled = socialEnabled,
+                            offerSocialIdentity = offerIdentity,
+                        ),
+                    )
                 }
             }
         }
@@ -65,17 +62,30 @@ class SetupWizardStepsTest {
     }
 
     @Test
-    fun everyEarlierRevisionMustSeeTheCurrentFlow() {
+    fun revisionsBeforeEightStillSeeTheCurrentFlow() {
         // The reason this constant keeps moving. Revision 1 was the preset fork; revision 2 was
         // the six-step flow behind a translucent panel; revision 3 asked for a Trakt connection
         // that did not work; revision 6 asked four appearance steps and never mentioned social.
         // Each asked a set of questions this build no longer asks.
-        (1..6).forEach { earlier ->
+        (1..7).forEach { earlier ->
             assertTrue(
                 shouldShowSetupWizard(completedRevision = earlier, currentRevision = SETUP_WIZARD_REVISION),
                 "revision $earlier must see revision $SETUP_WIZARD_REVISION",
             )
         }
+    }
+
+    @Test
+    fun revisionNineDoesNotForceRevisionEightUsersThroughOnboardingAgain() {
+        assertEquals(9, SETUP_WIZARD_REVISION)
+        assertFalse(shouldShowSetupWizard(completedRevision = 8))
+    }
+
+    @Test
+    fun freshInstallsAlwaysSeeRevisionNineFlow() {
+        assertEquals(9, SETUP_WIZARD_REVISION)
+        assertTrue(shouldShowSetupWizard(completedRevision = null))
+        assertTrue(shouldShowSetupWizard(completedRevision = 0))
     }
 
     @Test
@@ -156,9 +166,9 @@ class SetupWizardStepsTest {
      * existing profile is ever shown it, which is the failure mode this constant exists for.
      */
     @Test
-    fun theLanguageStepShipsAsRevisionEight() {
-        assertEquals(8, SETUP_WIZARD_REVISION)
-        assertTrue(shouldShowSetupWizard(completedRevision = 7, currentRevision = SETUP_WIZARD_REVISION))
+    fun revisionEightUsersAreNotAutomaticallyReplayedForSources() {
+        assertEquals(9, SETUP_WIZARD_REVISION)
+        assertFalse(shouldShowSetupWizard(completedRevision = 8, currentRevision = SETUP_WIZARD_REVISION))
     }
 
     @Test
@@ -175,7 +185,6 @@ class SetupWizardStepsTest {
     @Test
     fun theFullPlanIsEveryStepInDeclarationOrder() {
         val full = SetupWizardPlan(
-            offerSources = true,
             playbackModeName = "STREAMLINED",
             socialEnabled = true,
             offerSocialIdentity = true,
@@ -215,11 +224,56 @@ class SetupWizardStepsTest {
     }
 
     @Test
+    fun sourcesExistsInAllFreshWizardFlows() {
+        listOf("CLASSIC", "STREAMLINED", "INSTANT").forEach { mode ->
+            listOf(true, false).forEach { social ->
+                val plan = SetupWizardPlan(playbackModeName = mode, socialEnabled = social)
+                assertTrue(setupWizardSteps(plan).contains(SetupStep.Sources), "Mode $mode social $social must include Sources")
+            }
+        }
+    }
+
+    @Test
+    fun classicReachesSources() {
+        val plan = SetupWizardPlan(playbackModeName = "CLASSIC")
+        val steps = setupWizardSteps(plan)
+        assertTrue(steps.contains(SetupStep.Sources))
+        assertEquals(SetupStep.Sources, nextSetupStep(SetupStep.Language, plan))
+        assertEquals(SetupStep.SocialOptIn, nextSetupStep(SetupStep.Sources, plan))
+    }
+
+    @Test
+    fun streamlinedReachesSources() {
+        val plan = SetupWizardPlan(playbackModeName = "STREAMLINED")
+        val steps = setupWizardSteps(plan)
+        assertTrue(steps.contains(SetupStep.Sources))
+        assertEquals(SetupStep.Sources, nextSetupStep(SetupStep.Language, plan))
+        assertEquals(SetupStep.SocialOptIn, nextSetupStep(SetupStep.Sources, plan))
+    }
+
+    @Test
+    fun instantReachesSources() {
+        val plan = SetupWizardPlan(playbackModeName = "INSTANT")
+        val steps = setupWizardSteps(plan)
+        assertTrue(steps.contains(SetupStep.Sources))
+        assertEquals(SetupStep.Sources, nextSetupStep(SetupStep.Language, plan))
+        assertEquals(SetupStep.SocialOptIn, nextSetupStep(SetupStep.Sources, plan))
+    }
+
+    @Test
     fun anOptionalStepWithNothingToOfferIsDroppedNotShown() {
-        val steps = setupWizardSteps(SetupWizardPlan(offerSources = false))
-        assertFalse(steps.contains(SetupStep.Sources))
-        assertEquals(SetupStep.Done, steps.last())
-        assertEquals(SetupStep.Theme, steps[steps.size - 2])
+        val classicPlan = SetupWizardPlan(playbackModeName = "CLASSIC")
+        val classicSteps = setupWizardSteps(classicPlan)
+        assertFalse(classicSteps.contains(SetupStep.PlaybackSetup))
+        assertTrue(classicSteps.contains(SetupStep.Sources))
+
+        val noSocialPlan = SetupWizardPlan(socialEnabled = false)
+        val noSocialSteps = setupWizardSteps(noSocialPlan)
+        assertFalse(noSocialSteps.contains(SetupStep.SocialIdentity))
+        assertTrue(noSocialSteps.contains(SetupStep.Sources))
+
+        assertEquals(SetupStep.Done, classicSteps.last())
+        assertEquals(SetupStep.Theme, classicSteps[classicSteps.size - 2])
     }
 
     @Test
@@ -320,19 +374,19 @@ class SetupWizardStepsTest {
 
     @Test
     fun aDroppedOptionalStepIsSteppedOver() {
-        val plan = SetupWizardPlan(offerSources = false)
-        assertEquals(SetupStep.Language, nextSetupStep(SetupStep.PlaybackMode, plan))
-        assertEquals(SetupStep.Language, previousSetupStep(SetupStep.SocialOptIn, plan))
+        val classic = SetupWizardPlan(playbackModeName = "CLASSIC")
+        assertEquals(SetupStep.Language, nextSetupStep(SetupStep.PlaybackMode, classic))
+        assertEquals(SetupStep.PlaybackMode, previousSetupStep(SetupStep.Language, classic))
+
+        val socialOff = SetupWizardPlan(socialEnabled = false)
+        assertEquals(SetupStep.Look, nextSetupStep(SetupStep.SocialOptIn, socialOff))
+        assertEquals(SetupStep.SocialOptIn, previousSetupStep(SetupStep.Look, socialOff))
     }
 
     @Test
     fun aStepTheRunDroppedStillFindsItsWayForward() {
-        // All three ways a step can leave the plan while the user stands on it. Each would
+        // The ways a step can leave the plan while the user stands on it. Each would
         // strand somebody if `nextSetupStep` answered null for a step outside the plan.
-        val addonInstalled = SetupWizardPlan(offerSources = false)
-        assertEquals(SetupStep.SocialOptIn, nextSetupStep(SetupStep.Sources, addonInstalled))
-        assertEquals(SetupStep.Language, previousSetupStep(SetupStep.Sources, addonInstalled))
-
         val switchedToClassic = SetupWizardPlan(playbackModeName = "CLASSIC")
         assertEquals(SetupStep.Language, nextSetupStep(SetupStep.PlaybackSetup, switchedToClassic))
         assertEquals(SetupStep.PlaybackMode, previousSetupStep(SetupStep.PlaybackSetup, switchedToClassic))
@@ -352,17 +406,25 @@ class SetupWizardStepsTest {
             offerSocialIdentity = true,
         )
         assertEquals(1, setupStepPosition(SetupStep.Welcome, full))
+        assertEquals(2, setupStepPosition(SetupStep.PlaybackMode, full))
+        assertEquals(3, setupStepPosition(SetupStep.PlaybackSetup, full))
+        assertEquals(4, setupStepPosition(SetupStep.Language, full))
+        assertEquals(5, setupStepPosition(SetupStep.Sources, full))
+        assertEquals(6, setupStepPosition(SetupStep.SocialOptIn, full))
+        assertEquals(7, setupStepPosition(SetupStep.SocialIdentity, full))
+        assertEquals(8, setupStepPosition(SetupStep.Look, full))
+        assertEquals(9, setupStepPosition(SetupStep.Theme, full))
         assertEquals(10, setupStepPosition(SetupStep.Done, full))
 
-        // Classic, addons already installed, social off: the three droppable steps all gone.
-        val lean = SetupWizardPlan(offerSources = false, playbackModeName = "CLASSIC")
-        assertEquals(7, setupWizardSteps(lean).size)
-        assertEquals(7, setupStepPosition(SetupStep.Done, lean))
+        // Classic, social off: PlaybackSetup and SocialIdentity dropped. 10 - 2 = 8 steps.
+        val lean = SetupWizardPlan(playbackModeName = "CLASSIC", socialEnabled = false)
+        assertEquals(8, setupWizardSteps(lean).size)
+        assertEquals(4, setupStepPosition(SetupStep.Sources, lean))
+        assertEquals(8, setupStepPosition(SetupStep.Done, lean))
     }
 
     @Test
     fun aStepOutsideThePlanHasNoPosition() {
-        assertNull(setupStepPosition(SetupStep.Sources, SetupWizardPlan(offerSources = false)))
         assertNull(setupStepPosition(SetupStep.PlaybackSetup, SetupWizardPlan(playbackModeName = "CLASSIC")))
         assertNull(setupStepPosition(SetupStep.SocialIdentity, SetupWizardPlan(socialEnabled = false)))
     }

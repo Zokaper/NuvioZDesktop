@@ -1646,6 +1646,7 @@ internal fun MainAppContent(
                                 } else {
                                     null
                                 },
+                                onRunSetupAgainClick = onRunSetupAgainClick,
                                 onCollectionsSettingsClick = { navController.navigate(CollectionsRoute(collectionsTitle)) },
                                 onFolderClick = { collectionId, folderId ->
                                     val folderTitle = CollectionRepository.collections.value
@@ -1868,6 +1869,7 @@ internal fun MainAppContent(
                         onTestUpdateBanner = if (
                             AppFeaturePolicy.inAppUpdaterEnabled && AppUpdaterPlatform.isDebugBuild
                         ) appUpdaterController::showDebugTestUpdate else null,
+                        onRunSetupAgain = onRunSetupAgainClick,
                     )
                 }
                 entry<DownloadsSettingsRoute> { route ->

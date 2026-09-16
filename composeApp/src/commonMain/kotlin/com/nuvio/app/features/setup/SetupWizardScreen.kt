@@ -38,6 +38,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -58,6 +59,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -74,7 +76,6 @@ import com.nuvio.app.core.ui.labelRes
 import com.nuvio.app.core.ui.isBackdropBlurSupported
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.ui.nuvioConsumePointerEvents
-import com.nuvio.app.features.addons.AddAddonResult
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.details.MetaEpisodeCardStyle
 import com.nuvio.app.features.details.MetaScreenBackgroundMode
@@ -163,6 +164,7 @@ fun SetupWizardScreen(
 ) {
     val tokens = MaterialTheme.nuvio
     val scope = rememberCoroutineScope()
+    val uriHandler = LocalUriHandler.current
 
     val playerSettings by remember {
         PlayerSettingsRepository.ensureLoaded()
@@ -221,21 +223,19 @@ fun SetupWizardScreen(
     // been written. A draft would mean the wizard and Settings disagreed about the current value
     // for the length of the flow, which is the drift the shared `PlaybackModeCard` exists to stop.
     val plan = SetupWizardPlan(
-        // `enabled`, not merely present: an installed-but-disabled addon is not a source, so a
-        // profile carrying only those still gets asked.
-        offerSources = addons.addons.none { it.enabled },
         playbackModeName = playerSettings.playbackMode.name,
         socialEnabled = socialPreferences.enabled,
         // Either half can answer: the local cache for anyone who has used social on this machine,
         // the probe for a cache-cold install that still has a backend identity.
         offerSocialIdentity = socialState.me == null && !socialPreferences.hasKnownIdentity,
     )
+    val existingStreamAddonName = addons.addons.firstEnabledStreamAddonName()
 
-    // ⚠ **A step can leave the plan while the user is standing on it, and there are three ways.**
-    // Installing an addon on Sources drops that step; going back and choosing Classic drops
-    // PlaybackSetup; turning social off drops SocialIdentity. `nextSetupStep` already answers for
-    // a step outside the plan - this is what makes the screen act on that answer instead of
-    // leaving the user on a screen the run no longer contains, waiting for a tap.
+    // ⚠ **A step can leave the plan while the user is standing on it, and there are two ways.**
+    // Going back and choosing Classic drops PlaybackSetup; turning social off drops SocialIdentity.
+    // Sources remains in the plan unconditionally. `nextSetupStep` already answers for a step outside
+    // the plan - this is what makes the screen act on that answer instead of leaving the user on
+    // a screen the run no longer contains, waiting for a tap.
     LaunchedEffect(plan) {
         if (setupStepPosition(step, plan) == null) {
             stepName = (nextSetupStep(step, plan) ?: SetupStep.Done).name
@@ -455,7 +455,7 @@ fun SetupWizardScreen(
                     socialHandle = socialHandle,
                     socialHandleBusy = socialHandleBusy,
                     socialHandleMessage = socialHandleMessage,
-                    sourcesReady = !plan.offerSources || addonInstalledName != null,
+                    sourcesReady = existingStreamAddonName != null || addonInstalledName != null,
                     onSocialEnabledChange = ::setSocialEnabled,
                     onSocialHandleChange = {
                         socialHandle = it
@@ -473,6 +473,7 @@ fun SetupWizardScreen(
                     addonBusy = addonBusy,
                     addonError = addonError,
                     addonInstalledName = addonInstalledName,
+                    existingSourceName = existingStreamAddonName,
                     onAddonUrlChange = {
                         addonUrl = it
                         addonError = null
@@ -494,6 +495,9 @@ fun SetupWizardScreen(
                                 addonError = message
                             },
                         )
+                    },
+                    onOpenAioStreams = {
+                        runCatching { uriHandler.openUri(aioStreamsSetupUrl()) }
                     },
                 )
             }
@@ -566,7 +570,7 @@ fun SetupWizardScreen(
                     socialHandle = socialHandle,
                     socialHandleBusy = socialHandleBusy,
                     socialHandleMessage = socialHandleMessage,
-                    sourcesReady = !plan.offerSources || addonInstalledName != null,
+                    sourcesReady = existingStreamAddonName != null || addonInstalledName != null,
                     onSocialEnabledChange = ::setSocialEnabled,
                     onSocialHandleChange = {
                         socialHandle = it
@@ -584,6 +588,7 @@ fun SetupWizardScreen(
                     addonBusy = addonBusy,
                     addonError = addonError,
                     addonInstalledName = addonInstalledName,
+                    existingSourceName = existingStreamAddonName,
                     onAddonUrlChange = {
                         addonUrl = it
                         addonError = null
@@ -605,6 +610,9 @@ fun SetupWizardScreen(
                                 addonError = message
                             },
                         )
+                    },
+                    onOpenAioStreams = {
+                        runCatching { uriHandler.openUri(aioStreamsSetupUrl()) }
                     },
                 )
             }
@@ -1117,8 +1125,10 @@ internal fun SetupStepBody(
     addonBusy: Boolean,
     addonError: String?,
     addonInstalledName: String?,
+    existingSourceName: String?,
     onAddonUrlChange: (String) -> Unit,
     onInstallAddon: () -> Unit,
+    onOpenAioStreams: () -> Unit,
 ) {
     AnimatedContent(
         targetState = step,
@@ -1173,8 +1183,10 @@ internal fun SetupStepBody(
                     busy = addonBusy,
                     error = addonError,
                     installedName = addonInstalledName,
+                    existingSourceName = existingSourceName,
                     onAddonUrlChange = onAddonUrlChange,
                     onInstall = onInstallAddon,
+                    onOpenAioStreams = onOpenAioStreams,
                 )
 
                 SetupStep.SocialOptIn -> {
@@ -1524,48 +1536,112 @@ private fun SetupSourcesBody(
     busy: Boolean,
     error: String?,
     installedName: String?,
+    existingSourceName: String?,
     onAddonUrlChange: (String) -> Unit,
     onInstall: () -> Unit,
+    onOpenAioStreams: () -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
-    SetupParagraph(stringResource(Res.string.setup_sources_body))
-    NuvioInputField(
-        value = addonUrl,
-        onValueChange = onAddonUrlChange,
-        placeholder = stringResource(Res.string.setup_sources_url_placeholder),
-        modifier = Modifier.fillMaxWidth(),
-    )
-    Button(
-        onClick = onInstall,
-        enabled = !busy,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        if (busy) {
-            NuvioLoadingIndicator(
-                color = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.size(18.dp),
+    val configuredName = installedName ?: existingSourceName
+
+    if (configuredName != null) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(tokens.colors.success.copy(alpha = 0.12f))
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Check,
+                contentDescription = null,
+                tint = tokens.colors.success,
+                modifier = Modifier.size(20.dp),
             )
-        } else {
-            Text(text = stringResource(Res.string.setup_sources_install))
+            Text(
+                text = stringResource(Res.string.setup_sources_configured, configuredName),
+                style = MaterialTheme.typography.bodyMedium,
+                color = tokens.colors.textPrimary,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+    }
+
+    Surface(
+        color = tokens.colors.surfaceCard,
+        shape = RoundedCornerShape(18.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, tokens.colors.accent.copy(alpha = 0.55f), RoundedCornerShape(18.dp)),
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = stringResource(Res.string.setup_sources_recommended),
+                style = MaterialTheme.typography.labelLarge,
+                color = tokens.colors.accent,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = stringResource(Res.string.setup_sources_aiostreams_title),
+                style = MaterialTheme.typography.titleLarge,
+                color = tokens.colors.textPrimary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = stringResource(Res.string.setup_sources_aiostreams_body),
+                style = MaterialTheme.typography.bodyMedium,
+                color = tokens.colors.textSecondary,
+            )
+            Button(onClick = onOpenAioStreams) {
+                Text(text = stringResource(Res.string.setup_sources_aiostreams_action))
+                Spacer(modifier = Modifier.size(8.dp))
+                Icon(
+                    imageVector = Icons.Rounded.OpenInNew,
+                    contentDescription = null,
+                    modifier = Modifier.size(17.dp),
+                )
+            }
+        }
+    }
+
+    Text(
+        text = stringResource(Res.string.setup_sources_manual_title),
+        style = MaterialTheme.typography.titleMedium,
+        color = tokens.colors.textPrimary,
+        fontWeight = FontWeight.SemiBold,
+    )
+    SetupParagraph(stringResource(Res.string.setup_sources_manual_body))
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        NuvioInputField(
+            value = addonUrl,
+            onValueChange = onAddonUrlChange,
+            placeholder = stringResource(Res.string.setup_sources_url_placeholder),
+            modifier = Modifier.weight(1f),
+        )
+        Button(onClick = onInstall, enabled = !busy) {
+            if (busy) {
+                NuvioLoadingIndicator(
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(18.dp),
+                )
+            } else {
+                Text(text = stringResource(Res.string.setup_sources_install))
+            }
         }
     }
     if (error != null) {
-        Text(
-            text = error,
-            style = MaterialTheme.typography.bodyMedium,
-            color = tokens.colors.danger,
-        )
-    } else if (installedName != null) {
-        Text(
-            text = stringResource(Res.string.setup_sources_installed, installedName),
-            style = MaterialTheme.typography.bodyMedium,
-            color = tokens.colors.success,
-        )
+        Text(text = error, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.danger)
     }
-    // Debrid is named rather than offered. The wizard gates the app, so it has no nav
-    // controller and cannot reach the settings page - and a button that goes nowhere is worse
-    // than a sentence that says where to look.
-    SetupParagraph(stringResource(Res.string.setup_sources_debrid_hint))
+    SetupParagraph(stringResource(Res.string.setup_sources_skip_hint))
 }
 
 // --- the one thing that can fail ----------------------------------------------------------
@@ -1596,11 +1672,11 @@ private fun installAddon(
     }
     scope.launch {
         setBusy(true)
-        val result = AddonRepository.addAddon(rawUrl)
+        val result = installSetupSource(rawUrl, emptyUrlMessage)
         setBusy(false)
         when (result) {
-            is AddAddonResult.Success -> onInstalled(result.manifest.name)
-            is AddAddonResult.Error -> onFailed(result.message)
+            is SetupSourceInstallResult.Installed -> onInstalled(result.addonName)
+            is SetupSourceInstallResult.Failed -> onFailed(result.message)
         }
     }
 }

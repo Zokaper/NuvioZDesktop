@@ -16,6 +16,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -235,6 +236,7 @@ internal fun AppGate(
     // is: the gating showing lives in this function, and one flag for both is what keeps
     // an on-demand run from being confused with the first-launch one.
     var showSetupWizardOnDemand by remember { mutableStateOf(false) }
+    var setupWizardOnDemandEpoch by remember { mutableStateOf(0) }
     // null while loading, empty when it could not be fetched. Either way the curated
     // sections still render - this screen has to work offline and on builds where the
     // in-app updater is disabled.
@@ -599,7 +601,10 @@ internal fun AppGate(
                     if (renderMainContent) {
                         MainAppContent(
                             onWhatsNewClick = { showWhatsNewOnDemand = true },
-                            onRunSetupAgainClick = { showSetupWizardOnDemand = true },
+                            onRunSetupAgainClick = {
+                                setupWizardOnDemandEpoch++
+                                showSetupWizardOnDemand = true
+                            },
                             initialTab = initialTab,
                             initialRoute = initialRoute,
                             useNativeNavigation = useNativeNavigation,
@@ -731,12 +736,14 @@ internal fun AppGate(
         // replacing it, and it is dismissible. Finishing still records the revision - a user
         // who walks the whole wizard has answered it, however they got there.
         if (showSetupWizardOnDemand && gateScreen == AppGateScreen.Main.name) {
-            SetupWizardScreen(
-                onFinished = { showSetupWizardOnDemand = false },
-                dismissible = true,
-                onDismiss = { showSetupWizardOnDemand = false },
-                modifier = Modifier.fillMaxSize(),
-            )
+            key(setupWizardOnDemandEpoch) {
+                SetupWizardScreen(
+                    onFinished = { showSetupWizardOnDemand = false },
+                    dismissible = true,
+                    onDismiss = { showSetupWizardOnDemand = false },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
     }
 }

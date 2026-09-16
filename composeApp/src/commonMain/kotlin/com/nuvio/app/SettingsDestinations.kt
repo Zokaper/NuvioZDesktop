@@ -46,6 +46,7 @@ internal fun SettingsRootDestination(
     collectionsTitle: String,
     onCheckForUpdates: (() -> Unit)?,
     onTestUpdateBanner: (() -> Unit)?,
+    onRunSetupAgain: (() -> Unit)? = null,
 ) {
     SettingsScreen(
         modifier = Modifier.fillMaxSize(),
@@ -60,6 +61,7 @@ internal fun SettingsRootDestination(
         },
         onCheckForUpdatesClick = onCheckForUpdates,
         onTestUpdateBannerClick = onTestUpdateBanner,
+        onRunSetupAgainClick = onRunSetupAgain,
     )
 }
 

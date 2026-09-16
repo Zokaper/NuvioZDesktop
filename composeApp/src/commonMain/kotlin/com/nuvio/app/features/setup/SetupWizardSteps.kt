@@ -38,7 +38,10 @@ package com.nuvio.app.features.setup
  * launch - see `mergeMonotonicSyncInt` in `core/sync/SyncPreferenceJson.kt`. When testing this,
  * the launch that proves anything is the **second** one.
  */
-const val SETUP_WIZARD_REVISION: Int = 8
+const val SETUP_WIZARD_REVISION: Int = 9
+
+/** Revision 9 adds Sources without automatically replaying onboarding for revision-8 profiles. */
+private const val SETUP_WIZARD_AUTOMATIC_REQUIRED_REVISION: Int = 8
 
 /**
  * Whether the first-launch wizard should gate the app.
@@ -49,7 +52,8 @@ const val SETUP_WIZARD_REVISION: Int = 8
 fun shouldShowSetupWizard(
     completedRevision: Int?,
     currentRevision: Int = SETUP_WIZARD_REVISION,
-): Boolean = (completedRevision ?: 0) < currentRevision
+): Boolean =
+    (completedRevision ?: 0) < minOf(currentRevision, SETUP_WIZARD_AUTOMATIC_REQUIRED_REVISION)
 
 /**
  * Every screen the wizard can show, in the order they are declared.
@@ -190,20 +194,15 @@ fun setupStepForSavedName(name: String?): SetupStep =
 /**
  * What the wizard is willing to ask about this time.
  *
- * An optional step is dropped rather than shown-and-skipped when it has nothing to offer: a
- * re-run from Settings asking a user with five addons to install their first one is noise, and
- * noise in a setup flow reads as the app not knowing what it already has. The same rule now
- * covers a Classic user being shown an empty playback-configuration screen, and a user who
- * already has a handle being asked to choose one.
+ * An optional step is dropped rather than shown-and-skipped when it has nothing to offer.
+ * Sources is deliberately not optional: it recognises an existing stream addon and still offers
+ * the recommended AIOStreams setup, so it remains useful during a manual replay.
  *
  * Revision 3 had a second optional step, Trakt. It is gone rather than defaulted off, because
  * the connection it offered is not working yet - a first-run flow that asks for an account and
  * then cannot use it is worse than not asking.
  */
 data class SetupWizardPlan(
-    /** False when the profile already has at least one enabled source. */
-    val offerSources: Boolean = true,
-
     /**
      * The chosen playback mode's name.
      *
@@ -225,7 +224,6 @@ fun setupWizardSteps(plan: SetupWizardPlan): List<SetupStep> = SetupStep.entries
     when (step) {
         SetupStep.PlaybackSetup ->
             playbackSetupVariant(plan.playbackModeName) != PlaybackSetupVariant.None
-        SetupStep.Sources -> plan.offerSources
         SetupStep.SocialIdentity -> plan.socialEnabled && plan.offerSocialIdentity
         else -> true
     }
@@ -237,10 +235,9 @@ fun setupWizardSteps(plan: SetupWizardPlan): List<SetupStep> = SetupStep.entries
  * A [current] the plan does not contain answers with the first step that follows it in
  * declaration order and is in the plan, rather than with null. A wizard that gates the app and
  * can be entered at a step it cannot leave is the failure this file exists to prevent, and a
- * dropped optional step is a real way to arrive at one. There are three such ways now:
- * installing an addon on the Sources step removes that step from the plan under the user's
- * feet, going back and choosing Classic removes `PlaybackSetup`, and turning social off removes
- * `SocialIdentity`.
+ * dropped optional step is a real way to arrive at one. There are two such ways now:
+ * going back and choosing Classic removes `PlaybackSetup`, and turning social off removes
+ * `SocialIdentity`. Sources remains in the plan unconditionally.
  */
 fun nextSetupStep(current: SetupStep, plan: SetupWizardPlan): SetupStep? {
     val steps = setupWizardSteps(plan)

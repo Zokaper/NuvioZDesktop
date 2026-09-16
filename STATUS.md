@@ -2,6 +2,50 @@
 
 Last updated: 2026-09-16
 
+## Setup Wizard: Sources onboarding step & Replay Wizard restoration (2026-09-16)
+
+On branch **`codex/upstream-sync-0.1.23-alpha`**.
+
+### What landed
+
+1. **Sources Step in Setup Wizard**:
+   - `SetupStep.Sources` is now an unconditional step in all wizard mode flows (Classic, Streamlined, Instant).
+   - Positioned between `Language` and `SocialOptIn` (Step 5 in a full 10-step flow; Step 4 in Classic/social-off 8-step flow).
+   - If stream-capable addons already exist (detected via `List<ManagedAddon>.firstEnabledStreamAddonName()`), a green configured banner displays: `"Sources configured: <Addon Name>"`.
+   - Recommended card features **AIOStreams + TorBox** with a direct launch button (`uriHandler.openUri(aioStreamsSetupUrl())`) directing users to the hosted instance (`https://aiostreamsfortheweebsstable.midnightignite.me`) with the stable raw GitHub template (`nuvio-z-torbox-v1.json`, v1.1.0) pre-configured.
+   - Users choose source and subtitle languages and enter their TorBox API key on AIOStreams; Nuvio Z never collects or stores third-party API keys directly.
+   - Manual manifest installation field provided for existing manifests / post-setup AIOStreams manifests.
+   - Advancing via "Next" or "Back" is unblocked at all times (optional skip).
+2. **Revision 9 Wizard Semantics**:
+   - `SETUP_WIZARD_REVISION = 9`.
+   - `SETUP_WIZARD_AUTOMATIC_REQUIRED_REVISION = 8`.
+   - Fresh installs always receive the full 10-step Revision 9 flow.
+   - Existing users who completed Revision 8 are **not** forced to re-onboard automatically, but can re-run on demand.
+3. **Replay Setup Wizard Restored in Settings**:
+   - Restored missing `onRunSetupAgainClick` plumbing dropped during upstream sync modularization:
+     - Threaded from `AppGate` through `MainAppContent`, `AppTabActions` (`AppShellComponents.kt`), and `SettingsRootDestination` (`SettingsDestinations.kt`) to `SettingsScreen`.
+     - In `AppGate.kt`, introduced `setupWizardOnDemandEpoch` and keyed the on-demand `SetupWizardScreen` with `key(setupWizardOnDemandEpoch)`, ensuring replaying the wizard resets cleanly to the Welcome step.
+     - Indexed in `SettingsSearch` under Look & Feel as "Replay Setup Wizard" with searchable keywords covering look, sources, and playback choices.
+4. **Off-screen Render Harness & Test Coverage**:
+   - `SetupWizardRenderHarness` updated and verified across desktop window sizes (1280x820, 2560x1440, 3840x2160) and modes (Streamlined, Instant, Classic). Off-screen PNGs saved to `composeApp/build/setup-wizard-render/`.
+   - Added `AioStreamsSetupTest` (8 unit tests covering deep-link URL encoding, stream resource filtering, install handling).
+   - Added `SettingsReplayWizardTest` (2 desktop Compose tests verifying search indexing and callback invocation).
+   - Expanded `SetupWizardStepsTest` (+11 tests covering step presence, ordering, and revision 8 vs 9 gating).
+
+### Gates
+
+| Gate | Result |
+| --- | --- |
+| `:composeApp:compileKotlinDesktop` | **BUILD SUCCESSFUL** |
+| `:composeApp:compileTestKotlinDesktop` | **BUILD SUCCESSFUL** |
+| `:composeApp:desktopTest` | **BUILD SUCCESSFUL - 2,141 tests, 0 failures, 0 errors, 0 skipped** (up from 2,124 baseline) |
+| `scripts/run-pure-suites.sh` | **8/8 green, 669 tests** (271 / 107 / 70 / 17 / 29 / 115 / 63 / 3) |
+| `SetupWizardRenderHarness` | **Passed, PNGs rendered cleanly** at 1280x820, 2560x1440, 3840x2160 |
+
+### Deferred QA / Manual Verification
+- External browser launch on Windows hardware: verify `openUri()` opens the user's default browser to the preloaded AIOStreams template page.
+- End-to-end manifest install via AIOStreams generated link into desktop SQLite storage on live device.
+
 ## Desktop upstream sync - NuvioDesktop 0.1.23-alpha (2026-09-16)
 
 The canonical desktop line is now **`codex/upstream-sync-0.1.23-alpha`**, branched from

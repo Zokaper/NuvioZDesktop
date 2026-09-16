@@ -185,9 +185,6 @@ class SetupWizardRenderHarness {
 
         for (run in runs) {
             val plan = SetupWizardPlan(
-                // Sources included so the step count reads at its longest; a run with an addon
-                // installed drops it and the layout is the same either way.
-                offerSources = true,
                 playbackModeName = run.mode.name,
                 socialEnabled = run.socialEnabled,
                 offerSocialIdentity = true,
@@ -269,8 +266,10 @@ class SetupWizardRenderHarness {
                             addonBusy = false,
                             addonError = null,
                             addonInstalledName = null,
+                            existingSourceName = if (step == SetupStep.Sources) "Existing Streams" else null,
                             onAddonUrlChange = {},
                             onInstallAddon = {},
+                            onOpenAioStreams = {},
                         )
                     }
                 }

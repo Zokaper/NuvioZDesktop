@@ -212,6 +212,7 @@ internal data class AppTabActions(
     val onSupportersContributorsSettingsClick: () -> Unit = {},
     val onLicensesAttributionsSettingsClick: () -> Unit = {},
     val onCheckForUpdatesClick: (() -> Unit)? = null,
+    val onRunSetupAgainClick: (() -> Unit)? = null,
     val onTestUpdateBannerClick: (() -> Unit)? = null,
     val onCollectionsSettingsClick: () -> Unit = {},
     val onFolderClick: ((collectionId: String, folderId: String) -> Unit)? = null,
@@ -392,6 +393,7 @@ internal fun AppTabHost(
                                 onSupportersContributorsClick = actions.onSupportersContributorsSettingsClick,
                                 onLicensesAttributionsClick = actions.onLicensesAttributionsSettingsClick,
                                 onCheckForUpdatesClick = actions.onCheckForUpdatesClick,
+                                onRunSetupAgainClick = actions.onRunSetupAgainClick,
                                 onTestUpdateBannerClick = actions.onTestUpdateBannerClick,
                                 onCollectionsClick = actions.onCollectionsSettingsClick,
                             )
