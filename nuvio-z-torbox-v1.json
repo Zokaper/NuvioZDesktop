@@ -1,0 +1,745 @@
+{
+  "metadata": {
+    "id": "zokaper.nuvio-z-recommended",
+    "name": "Nuvio Z Recommended",
+    "description": "Recommended AIOStreams source configuration for Nuvio Z. Requires TorBox. Source and subtitle languages are prioritised in results; playback mode, quality, HDR, audio-track and subtitle-track choices remain Nuvio Z preferences.",
+    "source": "external",
+    "author": "Zokaper",
+    "version": "1.1.0",
+    "category": "Debrid",
+    "services": [
+      "torbox"
+    ],
+    "serviceRequired": true,
+    "setToSaveInstallMenu": true,
+    "inputs": [
+      {
+        "id": "sourceLanguages",
+        "name": "Preferred Source Languages",
+        "description": "Choose the languages you want AIOStreams to prioritise in source results. This does not exclude other languages; Nuvio Z still makes the final automatic playback choice using your Playback preferences.",
+        "type": "multi-select",
+        "required": true,
+        "default": [
+          "English"
+        ],
+        "options": [
+          {
+            "value": "Arabic",
+            "label": "Arabic"
+          },
+          {
+            "value": "Bengali",
+            "label": "Bengali"
+          },
+          {
+            "value": "Bulgarian",
+            "label": "Bulgarian"
+          },
+          {
+            "value": "Chinese",
+            "label": "Chinese"
+          },
+          {
+            "value": "Croatian",
+            "label": "Croatian"
+          },
+          {
+            "value": "Czech",
+            "label": "Czech"
+          },
+          {
+            "value": "Danish",
+            "label": "Danish"
+          },
+          {
+            "value": "Dutch",
+            "label": "Dutch"
+          },
+          {
+            "value": "English",
+            "label": "English"
+          },
+          {
+            "value": "Estonian",
+            "label": "Estonian"
+          },
+          {
+            "value": "Finnish",
+            "label": "Finnish"
+          },
+          {
+            "value": "French",
+            "label": "French"
+          },
+          {
+            "value": "German",
+            "label": "German"
+          },
+          {
+            "value": "Greek",
+            "label": "Greek"
+          },
+          {
+            "value": "Gujarati",
+            "label": "Gujarati"
+          },
+          {
+            "value": "Hebrew",
+            "label": "Hebrew"
+          },
+          {
+            "value": "Hindi",
+            "label": "Hindi"
+          },
+          {
+            "value": "Hungarian",
+            "label": "Hungarian"
+          },
+          {
+            "value": "Indonesian",
+            "label": "Indonesian"
+          },
+          {
+            "value": "Italian",
+            "label": "Italian"
+          },
+          {
+            "value": "Japanese",
+            "label": "Japanese"
+          },
+          {
+            "value": "Kannada",
+            "label": "Kannada"
+          },
+          {
+            "value": "Korean",
+            "label": "Korean"
+          },
+          {
+            "value": "Latino",
+            "label": "Latino"
+          },
+          {
+            "value": "Latvian",
+            "label": "Latvian"
+          },
+          {
+            "value": "Lithuanian",
+            "label": "Lithuanian"
+          },
+          {
+            "value": "Malay",
+            "label": "Malay"
+          },
+          {
+            "value": "Malayalam",
+            "label": "Malayalam"
+          },
+          {
+            "value": "Marathi",
+            "label": "Marathi"
+          },
+          {
+            "value": "Norwegian",
+            "label": "Norwegian"
+          },
+          {
+            "value": "Persian",
+            "label": "Persian"
+          },
+          {
+            "value": "Polish",
+            "label": "Polish"
+          },
+          {
+            "value": "Portuguese",
+            "label": "Portuguese"
+          },
+          {
+            "value": "Punjabi",
+            "label": "Punjabi"
+          },
+          {
+            "value": "Romanian",
+            "label": "Romanian"
+          },
+          {
+            "value": "Russian",
+            "label": "Russian"
+          },
+          {
+            "value": "Serbian",
+            "label": "Serbian"
+          },
+          {
+            "value": "Slovak",
+            "label": "Slovak"
+          },
+          {
+            "value": "Slovenian",
+            "label": "Slovenian"
+          },
+          {
+            "value": "Spanish",
+            "label": "Spanish"
+          },
+          {
+            "value": "Swedish",
+            "label": "Swedish"
+          },
+          {
+            "value": "Tamil",
+            "label": "Tamil"
+          },
+          {
+            "value": "Telugu",
+            "label": "Telugu"
+          },
+          {
+            "value": "Thai",
+            "label": "Thai"
+          },
+          {
+            "value": "Turkish",
+            "label": "Turkish"
+          },
+          {
+            "value": "Ukrainian",
+            "label": "Ukrainian"
+          },
+          {
+            "value": "Vietnamese",
+            "label": "Vietnamese"
+          }
+        ]
+      },
+      {
+        "id": "subtitleLanguages",
+        "name": "Preferred Subtitle Languages",
+        "description": "Choose subtitle languages you want AIOStreams to prioritise when subtitle metadata is available. Nuvio Z still handles final subtitle-track selection.",
+        "type": "multi-select",
+        "required": true,
+        "default": [
+          "English"
+        ],
+        "options": [
+          {
+            "value": "Arabic",
+            "label": "Arabic"
+          },
+          {
+            "value": "Bengali",
+            "label": "Bengali"
+          },
+          {
+            "value": "Bulgarian",
+            "label": "Bulgarian"
+          },
+          {
+            "value": "Chinese",
+            "label": "Chinese"
+          },
+          {
+            "value": "Croatian",
+            "label": "Croatian"
+          },
+          {
+            "value": "Czech",
+            "label": "Czech"
+          },
+          {
+            "value": "Danish",
+            "label": "Danish"
+          },
+          {
+            "value": "Dutch",
+            "label": "Dutch"
+          },
+          {
+            "value": "English",
+            "label": "English"
+          },
+          {
+            "value": "Estonian",
+            "label": "Estonian"
+          },
+          {
+            "value": "Finnish",
+            "label": "Finnish"
+          },
+          {
+            "value": "French",
+            "label": "French"
+          },
+          {
+            "value": "German",
+            "label": "German"
+          },
+          {
+            "value": "Greek",
+            "label": "Greek"
+          },
+          {
+            "value": "Gujarati",
+            "label": "Gujarati"
+          },
+          {
+            "value": "Hebrew",
+            "label": "Hebrew"
+          },
+          {
+            "value": "Hindi",
+            "label": "Hindi"
+          },
+          {
+            "value": "Hungarian",
+            "label": "Hungarian"
+          },
+          {
+            "value": "Indonesian",
+            "label": "Indonesian"
+          },
+          {
+            "value": "Italian",
+            "label": "Italian"
+          },
+          {
+            "value": "Japanese",
+            "label": "Japanese"
+          },
+          {
+            "value": "Kannada",
+            "label": "Kannada"
+          },
+          {
+            "value": "Korean",
+            "label": "Korean"
+          },
+          {
+            "value": "Latino",
+            "label": "Latino"
+          },
+          {
+            "value": "Latvian",
+            "label": "Latvian"
+          },
+          {
+            "value": "Lithuanian",
+            "label": "Lithuanian"
+          },
+          {
+            "value": "Malay",
+            "label": "Malay"
+          },
+          {
+            "value": "Malayalam",
+            "label": "Malayalam"
+          },
+          {
+            "value": "Marathi",
+            "label": "Marathi"
+          },
+          {
+            "value": "Norwegian",
+            "label": "Norwegian"
+          },
+          {
+            "value": "Persian",
+            "label": "Persian"
+          },
+          {
+            "value": "Polish",
+            "label": "Polish"
+          },
+          {
+            "value": "Portuguese",
+            "label": "Portuguese"
+          },
+          {
+            "value": "Punjabi",
+            "label": "Punjabi"
+          },
+          {
+            "value": "Romanian",
+            "label": "Romanian"
+          },
+          {
+            "value": "Russian",
+            "label": "Russian"
+          },
+          {
+            "value": "Serbian",
+            "label": "Serbian"
+          },
+          {
+            "value": "Slovak",
+            "label": "Slovak"
+          },
+          {
+            "value": "Slovenian",
+            "label": "Slovenian"
+          },
+          {
+            "value": "Spanish",
+            "label": "Spanish"
+          },
+          {
+            "value": "Swedish",
+            "label": "Swedish"
+          },
+          {
+            "value": "Tamil",
+            "label": "Tamil"
+          },
+          {
+            "value": "Telugu",
+            "label": "Telugu"
+          },
+          {
+            "value": "Thai",
+            "label": "Thai"
+          },
+          {
+            "value": "Turkish",
+            "label": "Turkish"
+          },
+          {
+            "value": "Ukrainian",
+            "label": "Ukrainian"
+          },
+          {
+            "value": "Vietnamese",
+            "label": "Vietnamese"
+          }
+        ]
+      }
+    ]
+  },
+  "config": {
+    "services": [
+      {
+        "id": "torbox",
+        "enabled": true,
+        "credentials": {
+          "apiKey": "{{services.torbox.apiKey}}"
+        }
+      }
+    ],
+    "presets": [
+      {
+        "type": "seadex",
+        "instanceId": "326",
+        "enabled": true,
+        "options": {
+          "name": "SeaDex",
+          "timeout": 5000,
+          "mediaTypes": [
+            "anime"
+          ]
+        },
+        "category": "Debrid"
+      },
+      {
+        "type": "neko-bt",
+        "instanceId": "072",
+        "enabled": true,
+        "options": {
+          "name": "nekoBT",
+          "timeout": 5000,
+          "mediaTypes": [
+            "anime"
+          ],
+          "useMultipleInstances": false,
+          "leaveAutoTitleTagsInFilename": true
+        },
+        "category": "Debrid"
+      },
+      {
+        "type": "torznab",
+        "instanceId": "6a6",
+        "enabled": true,
+        "options": {
+          "name": "ComeTorz",
+          "timeout": 5000,
+          "mediaTypes": [],
+          "searchMode": "auto",
+          "seasonEpisodeStrategy": "dynamic",
+          "paginate": false,
+          "useMultipleInstances": false,
+          "api": {
+            "url": "https://comet.feels.legal/torznab/api"
+          }
+        },
+        "category": "Debrid"
+      },
+      {
+        "type": "stremthruTorz",
+        "instanceId": "609",
+        "enabled": true,
+        "options": {
+          "name": "STorz",
+          "timeout": 5000,
+          "resources": [
+            "stream"
+          ],
+          "url": "",
+          "mediaTypes": [],
+          "includeP2P": false,
+          "useMultipleInstances": false
+        },
+        "category": "Debrid"
+      },
+      {
+        "type": "meteor",
+        "instanceId": "ddd",
+        "enabled": true,
+        "options": {
+          "name": "Meteor",
+          "timeout": 5000,
+          "resources": [
+            "stream"
+          ],
+          "includeP2P": false,
+          "removeTrash": false,
+          "useMultipleInstances": false,
+          "mediaTypes": [],
+          "yourMedia": {
+            "sources": [
+              "torrent",
+              "webdl"
+            ],
+            "showStreams": true,
+            "enabled": true
+          },
+          "usenet": {
+            "enabled": false,
+            "customSearchEngines": false
+          }
+        },
+        "category": "Debrid"
+      },
+      {
+        "type": "knaben",
+        "instanceId": "dc9",
+        "enabled": true,
+        "options": {
+          "name": "Knaben",
+          "timeout": 5000,
+          "mediaTypes": [],
+          "useMultipleInstances": false
+        },
+        "category": "Debrid"
+      },
+      {
+        "type": "mediafusion",
+        "instanceId": "276",
+        "enabled": true,
+        "options": {
+          "name": "MediaFusion",
+          "timeout": 5000,
+          "resources": [
+            "stream"
+          ],
+          "useCachedResultsOnly": false,
+          "enableWatchlistCatalogs": false,
+          "downloadViaBrowser": false,
+          "contributorStreams": false,
+          "certificationLevelsFilter": [],
+          "nudityFilter": [],
+          "mediaTypes": [],
+          "url": "",
+          "includeP2P": false
+        },
+        "category": "Debrid"
+      },
+      {
+        "type": "opensubtitles-v3-plus",
+        "instanceId": "262",
+        "enabled": true,
+        "options": {
+          "name": "OpenSubtitles V3+",
+          "timeout": 5000,
+          "resources": [
+            "subtitles"
+          ],
+          "sources": "all",
+          "includeAiTranslated": false,
+          "movieHashPlusAutoAdjustment": false
+        },
+        "category": "Subs"
+      },
+      {
+        "type": "comet",
+        "instanceId": "f18",
+        "enabled": true,
+        "options": {
+          "name": "Comet",
+          "timeout": 7000,
+          "resources": [
+            "stream"
+          ],
+          "includeP2P": false,
+          "removeTrash": true,
+          "scrapeDebridAccountTorrents": false,
+          "useMultipleInstances": false,
+          "mediaTypes": []
+        }
+      }
+    ],
+    "preferredQualities": [],
+    "preferredResolutions": [],
+    "preferredLanguages": [
+      "{{inputs.sourceLanguages}}",
+      "Original",
+      "Dual Audio",
+      "Multi",
+      "Dubbed",
+      "Unknown"
+    ],
+    "preferredSubtitles": [
+      "{{inputs.subtitleLanguages}}"
+    ],
+    "preferredVisualTags": [],
+    "preferredAudioTags": [],
+    "preferredAudioChannels": [],
+    "preferredStreamTypes": [],
+    "preferredEncodes": [],
+    "excludedQualities": [],
+    "includedQualities": [],
+    "requiredQualities": [],
+    "excludedResolutions": [],
+    "includedResolutions": [],
+    "requiredResolutions": [],
+    "excludedLanguages": [],
+    "includedLanguages": [],
+    "requiredLanguages": [],
+    "excludedSubtitles": [],
+    "includedSubtitles": [],
+    "requiredSubtitles": [],
+    "excludedVisualTags": [
+      "3D",
+      "H-OU",
+      "H-SBS"
+    ],
+    "includedVisualTags": [],
+    "requiredVisualTags": [],
+    "excludedAudioTags": [],
+    "includedAudioTags": [],
+    "requiredAudioTags": [],
+    "excludedAudioChannels": [],
+    "includedAudioChannels": [],
+    "requiredAudioChannels": [],
+    "excludedStreamTypes": [],
+    "includedStreamTypes": [],
+    "requiredStreamTypes": [],
+    "excludedEncodes": [],
+    "includedEncodes": [],
+    "requiredEncodes": [],
+    "deduplicator": {
+      "enabled": true,
+      "excludeAddons": [],
+      "multiGroupBehaviour": "aggressive",
+      "keys": [
+        "filename",
+        "infoHash",
+        "smartDetect"
+      ],
+      "cached": "single_result",
+      "uncached": "single_result",
+      "p2p": "single_result",
+      "http": "per_addon",
+      "smartDetectAttributes": [
+        "size",
+        "resolution",
+        "quality",
+        "visualTags",
+        "audioTags",
+        "audioChannels",
+        "languages",
+        "encode",
+        "edition",
+        "network",
+        "remastered",
+        "bitrate",
+        "releaseGroup"
+      ],
+      "smartDetectRounding": 10,
+      "libraryBehaviour": "prefer",
+      "merge": {
+        "enabled": true,
+        "failoverVariants": true,
+        "fields": [
+          "sizes",
+          "seadex",
+          "library",
+          "subtitles",
+          "languages"
+        ]
+      }
+    },
+    "seasonEpisodeMatching": {
+      "enabled": true,
+      "strict": true,
+      "requestTypes": [
+        "movie",
+        "series",
+        "anime"
+      ],
+      "addons": []
+    },
+    "yearMatching": {
+      "enabled": true,
+      "tolerance": 1,
+      "strict": true,
+      "strictTypes": [
+        "movie"
+      ],
+      "useInitialAirDate": true,
+      "requestTypes": [
+        "movie",
+        "series",
+        "anime"
+      ],
+      "addons": []
+    },
+    "titleMatching": {
+      "mode": "exact",
+      "similarityThreshold": 1,
+      "enabled": true,
+      "ambiguousResults": "discard",
+      "requestTypes": [
+        "movie",
+        "series",
+        "anime"
+      ],
+      "addons": []
+    },
+    "enableSeadex": true,
+    "checkOwned": true,
+    "precacheNextEpisode": false,
+    "precacheSingleStream": false,
+    "statistics": {
+      "enabled": false,
+      "position": "bottom",
+      "statsToShow": [
+        "addon",
+        "filter",
+        "timing"
+      ],
+      "showFilterStatsOnNoStreams": false
+    },
+    "proxy": {
+      "id": "builtin",
+      "proxiedServices": []
+    },
+    "trusted": false,
+    "hideErrors": true,
+    "hideErrorsForResources": [
+      "addon_catalog",
+      "catalog",
+      "subtitles"
+    ],
+    "addonName": "Nuvio Z Recommended",
+    "addonDescription": "A lightweight AIOStreams configuration for Nuvio Z using TorBox. Nuvio Z handles playback-mode, quality, HDR, audio and subtitle preferences."
+  }
+}
