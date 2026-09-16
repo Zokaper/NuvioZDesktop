@@ -22,6 +22,7 @@ on:
           - windows
           - macos
           - linux
+          - windows-macos
         default: all
       exclude_commits:
         description: Optional comma-separated commit hashes to omit from the notes
@@ -114,13 +115,41 @@ jobs:
           CURRENT_BUMP: ${{ steps.release.outputs.current_bump }}
           EXCLUDE_COMMITS: ${{ inputs.exclude_commits }}
         run: |
+          cat << 'EOF' > release-notes.md
+          ### Highlights
+
+          - Completely redesigned setup and onboarding flow
+          - Recommended AIOStreams + TorBox setup flow
+          - Source and subtitle language preferences
+          - Social features
+          - Watch Together
+          - Improved Watch Together reliability and UI
+          - Streamlined / Instant playback modes
+          - Unified playback preferences
+          - Smarter automatic source selection
+          - Source failover and premature EOF recovery
+          - AIOStreams Wrong IP mitigation
+          - Improved audio and subtitle language detection
+          - Reliable preferred audio selection
+          - Prefer built-in subtitles
+          - Improved loading presentation
+          - Custom themes
+          - Upstream Nuvio 0.1.23-alpha improvements
+          - Many desktop and playback fixes
+
+          *Official Nuvio Z Desktop release for Windows (x64 MSI) and macOS (Apple Silicon arm64 & Intel x86_64 DMGs).*
+
+          ### Changes
+
+          EOF
+
           ./scripts/generate-release-notes.sh \
             --from "${PREVIOUS_BUMP}" \
             --to "${CURRENT_BUMP}" \
             --repository "${GITHUB_REPOSITORY}" \
             --repository-history \
             --exclude "${EXCLUDE_COMMITS}" \
-            > release-notes.md
+            >> release-notes.md
 
           if [[ ! -s release-notes.md ]]; then
             echo "No desktop repository release-note commits were found." >&2
@@ -144,7 +173,7 @@ jobs:
 
   macos:
     name: macOS ${{ matrix.arch }}
-    if: inputs.mode != 'dry-run' && (inputs.target == 'all' || inputs.target == 'macos')
+    if: inputs.mode != 'dry-run' && (inputs.target == 'all' || inputs.target == 'macos' || inputs.target == 'windows-macos')
     needs: metadata
     runs-on: ${{ matrix.runner }}
     environment: desktop-release
@@ -422,7 +451,7 @@ jobs:
 
   windows:
     name: Windows x64
-    if: inputs.mode != 'dry-run' && (inputs.target == 'all' || inputs.target == 'windows')
+    if: inputs.mode != 'dry-run' && (inputs.target == 'all' || inputs.target == 'windows' || inputs.target == 'windows-macos')
     needs: metadata
     runs-on: windows-2022
     environment: desktop-release
@@ -1157,6 +1186,7 @@ jobs:
       && needs.metadata.result == 'success'
       && needs.macos.result != 'failure' && needs.macos.result != 'cancelled'
       && needs.windows.result != 'failure' && needs.windows.result != 'cancelled'
+      && (inputs.target != 'windows-macos' || (needs.macos.result == 'success' && needs.windows.result == 'success'))
     needs:
       - metadata
       - macos
@@ -1186,7 +1216,7 @@ jobs:
           # Collect whatever the platform jobs produced rather than a fixed
           # list, so a narrowed target still yields a valid release.
           shopt -s nullglob
-          release_assets=(
+          candidate_assets=(
             release/Nuvio-Z-macOS-*-"${RELEASE_VERSION}".dmg
             release/Nuvio-Z-Windows-*-"${RELEASE_VERSION}".msi
             "release/Nuvio-Z-Linux-x86_64-${RELEASE_VERSION}.flatpak"
@@ -1195,6 +1225,12 @@ jobs:
             "release/Nuvio-Z-Linux-x86_64-${RELEASE_VERSION}.AppImage"
             "release/Nuvio-Z-Linux-x86_64-${RELEASE_VERSION}.AppImage.zsync"
           )
+          release_assets=()
+          for asset in "${candidate_assets[@]}"; do
+            if [[ -f "${asset}" ]]; then
+              release_assets+=("${asset}")
+            fi
+          done
           if (( ${#release_assets[@]} == 0 )); then
             echo "No installers were produced for ${RELEASE_VERSION}." >&2
             exit 1
@@ -1215,7 +1251,7 @@ jobs:
       - name: Create GitHub release
         run: |
           shopt -s nullglob
-          release_assets=(
+          candidate_assets=(
             release/Nuvio-Z-macOS-*-"${RELEASE_VERSION}".dmg
             release/Nuvio-Z-Windows-*-"${RELEASE_VERSION}".msi
             "release/Nuvio-Z-Linux-x86_64-${RELEASE_VERSION}.flatpak"
@@ -1223,8 +1259,14 @@ jobs:
             "release/Nuvio-Z-Linux-x86_64-${RELEASE_VERSION}.rpm"
             "release/Nuvio-Z-Linux-x86_64-${RELEASE_VERSION}.AppImage"
             "release/Nuvio-Z-Linux-x86_64-${RELEASE_VERSION}.AppImage.zsync"
-            "release/SHA256SUMS.txt"
           )
+          release_assets=()
+          for asset in "${candidate_assets[@]}"; do
+            if [[ -f "${asset}" ]]; then
+              release_assets+=("${asset}")
+            fi
+          done
+          release_assets+=("release/SHA256SUMS.txt")
           release_args=(
             "${RELEASE_TAG}"
             --target "${RELEASE_COMMIT}"

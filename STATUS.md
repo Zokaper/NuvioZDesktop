@@ -1,6 +1,16 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-16
+Last updated: 2026-09-17
+
+## Official Desktop Release Preparation — 0.1.23-alpha-z2 (2026-09-17)
+
+Preparing official public release **`0.1.23-alpha-z2`** (serial 127).
+
+### Pre-release updates
+- Workflow: added `windows-macos` target to `.github/workflows/desktop-release.yml` for unified Windows x64 MSI and macOS (arm64 & x86_64 DMGs) release without Linux artifacts.
+- Hardened asset collection in release job to filter candidate assets to existing files so non-targeted platforms are safely omitted.
+- Included comprehensive user-facing highlights in release notes generation.
+- Release serial confirmed unused at 127; version bump to 0.1.23-alpha-z2 with VERSION_CODE 41.
 
 ## Playback: Loading screen language summary & Initial preferred audio track selection (2026-09-16)
 
