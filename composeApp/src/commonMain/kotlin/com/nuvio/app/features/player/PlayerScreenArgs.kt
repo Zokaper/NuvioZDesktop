@@ -71,4 +71,9 @@ internal data class PlayerScreenArgs(
      */
     val expectedRuntimeMinutes: Int? = null,
     val partySourceDescriptor: PartySourceDescriptorV2? = null,
+    /**
+     * The route chose this source automatically (`PlayerLaunch.autoPickedWithFailureChain`).
+     * Gates "Prefer built-in subtitles", which must leave a hand-picked source alone.
+     */
+    val automaticSourceSelection: Boolean = false,
 )

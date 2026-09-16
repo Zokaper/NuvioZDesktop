@@ -74,6 +74,8 @@ import com.nuvio.app.features.playback.PlaybackSelectionResult
 import com.nuvio.app.features.playback.PlaybackSourceCandidate
 import com.nuvio.app.features.playback.PlaybackSourceSelector
 import com.nuvio.app.features.playback.STREAMLINED_SELECTION_TIMEOUT_MS
+import com.nuvio.app.features.playback.SourceLanguageInference
+import com.nuvio.app.features.playback.automaticEmbeddedSubtitleLanguage
 import com.nuvio.app.features.playback.StreamRouteSurface
 import com.nuvio.app.features.playback.StreamRouteSurfaceInputs
 import com.nuvio.app.features.playback.playbackChain
@@ -141,6 +143,7 @@ internal fun buildP2pPlayerLaunch(
     resolvedResumeProgressFraction: Float?,
     autoPickedWithFailureChain: Boolean,
     autoPickAttempt: Int,
+    contentLanguage: String? = null,
 ): PlayerLaunch = PlayerLaunch(
     profileId = launch.profileId,
     title = launch.title,
@@ -172,6 +175,7 @@ internal fun buildP2pPlayerLaunch(
     torrentTrackers = stream.p2pTrackers,
     initialPositionMs = resolvedResumePositionMs ?: 0L,
     initialProgressFraction = resolvedResumeProgressFraction,
+    contentLanguage = contentLanguage,
     autoPickedWithFailureChain = autoPickedWithFailureChain,
     sourceFacts = SourceFactsExtractor.extract(stream),
     playbackAttempt = autoPickAttempt,
@@ -490,6 +494,23 @@ internal fun StreamDestination(
     var playbackHandedOff by rememberSaveable(route.launchId) { mutableStateOf(false) }
     /** The requested title's year, once the meta answers. Null until then, and often for good. */
     var requestedYear by remember(route.launchId) { mutableStateOf<Int?>(null) }
+    /**
+     * The title's original language, for the loading band's language inference
+     * (`SourceLanguageInference`) and the player's "original" audio target.
+     *
+     * ⚠ **Read synchronously from what is already loaded, never fetched.** A fetch would land after
+     * the band had drawn and change its language under the reader. `peek` answers from the details
+     * screen's enriched meta (TMDB `original_language`) or the cache; when neither has it - a cold
+     * Continue Watching launch - this is null for the whole play and the band says less, not more.
+     *
+     * Language only, never the production country: a country is not a language.
+     */
+    val requestedContentLanguage = remember(route.launchId) {
+        val metaId = launch.parentMetaId ?: launch.videoId
+        SourceLanguageInference.contentLanguageCode(
+            MetaDetailsRepository.peek(launch.parentMetaType ?: launch.type, metaId)?.language,
+        )
+    }
     val shouldResolveEpisodeVideoId =
         launch.parentMetaId != null &&
             launch.seasonNumber != null &&
@@ -599,6 +620,7 @@ internal fun StreamDestination(
             resolvedResumeProgressFraction = resolvedResumeProgressFraction,
             autoPickedWithFailureChain = hasFailureChain,
             autoPickAttempt = autoPickAttempt,
+            contentLanguage = requestedContentLanguage,
         )
 
         val launchId = PlayerLaunchStore.put(playerLaunch)
@@ -748,6 +770,9 @@ internal fun StreamDestination(
         playerSettings.playbackQualityCeilingMbps,
         playerSettings.playbackCodecPreference,
         playerSettings.playbackDynamicRangePolicy,
+        playerSettings.playbackPreferEmbeddedSubtitles,
+        playerSettings.preferredSubtitleLanguage,
+        playerSettings.secondaryPreferredSubtitleLanguage,
     ) {
         PlaybackSelectionContext(
             runtimeMinutes = launch.runtimeMinutes,
@@ -781,6 +806,18 @@ internal fun StreamDestination(
             dynamicRangePolicy = playerSettings.playbackDynamicRangePolicy,
             audioPreference = playerSettings.playbackAudioPreference,
             displayMaxHeight = platformDisplayMaxHeight(),
+            // Streamlined/Instant automatic picks only - null for Classic, manual and downloads.
+            preferredEmbeddedSubtitleLanguage = automaticEmbeddedSubtitleLanguage(
+                enabled = playerSettings.playbackPreferEmbeddedSubtitles,
+                mode = playerSettings.playbackMode,
+                manualSelection = launch.manualSelection,
+                downloadIntent = launch.downloadIntent,
+                primarySubtitleTarget = if (playerSettings.playbackPreferEmbeddedSubtitles) {
+                    playerSettings.primarySubtitleTarget
+                } else {
+                    null
+                },
+            ),
         )
     }
     // The quality choices for *this* title, derived from what the addons actually
@@ -1225,6 +1262,7 @@ internal fun StreamDestination(
             parentMetaType = launch.parentMetaType ?: launch.type,
             initialPositionMs = launch.resumePositionMs ?: 0L,
             initialProgressFraction = launch.resumeProgressFraction,
+            contentLanguage = requestedContentLanguage,
             autoPickedWithFailureChain = hasFailureChain,
             // The band the player draws is the band the route was drawing a frame ago.
             sourceFacts = playbackCandidates.firstOrNull { it.stream === stream }?.facts
@@ -1452,6 +1490,7 @@ internal fun StreamDestination(
             parentMetaType = launch.parentMetaType ?: launch.type,
             initialPositionMs = resolvedResumePositionMs ?: 0L,
             initialProgressFraction = resolvedResumeProgressFraction,
+            contentLanguage = requestedContentLanguage,
             sourceFacts = playbackCandidates.firstOrNull { it.stream === stream }?.facts
                 ?: SourceFactsExtractor.extract(stream),
             playbackAttempt = autoPickAttempt,
@@ -2294,6 +2333,7 @@ internal fun StreamDestination(
             // re-parse of the display title.
             facts = loadingFacts,
             failure = autoPickFailure,
+            contentLanguage = requestedContentLanguage,
         )
 
         LaunchedEffect(showLoadingSurface) {
@@ -2323,6 +2363,7 @@ internal fun StreamDestination(
                         title = launch.title,
                         attempt = autoPickAttempt,
                         facts = loadingFacts,
+                        contentLanguage = requestedContentLanguage,
                     )
                 }
             } else {

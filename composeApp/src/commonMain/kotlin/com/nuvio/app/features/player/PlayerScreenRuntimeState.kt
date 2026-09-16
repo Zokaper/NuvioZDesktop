@@ -346,6 +346,18 @@ internal class PlayerScreenRuntime(
     var preferredSubtitleSelectionApplied by mutableStateOf(false)
     var activeSubtitleTab by mutableStateOf(SubtitleTab.BuiltIn)
     var isUserExplicitSubtitleSelection by mutableStateOf(false)
+
+    /**
+     * The source now playing was picked by Streamlined/Instant rather than by the user.
+     *
+     * Starts from the route's answer and only ever turns false - when the user picks a source from
+     * the in-player list. "Prefer built-in subtitles" reads it: a hand-picked source keeps exactly
+     * the subtitle behaviour it always had.
+     */
+    var activeSourceAutoPicked by mutableStateOf(args.automaticSourceSelection)
+
+    /** The source whose embedded-subtitle verification has already been logged, so it logs once. */
+    var embeddedSubtitleVerificationLoggedFor by mutableStateOf<String?>(null)
     var hasScannedTextTracksOnce by mutableStateOf(false)
     var autoFetchedAddonSubtitlesForKey by mutableStateOf<String?>(null)
     var trackPreferenceRestoreApplied by mutableStateOf(false)

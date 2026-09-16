@@ -123,9 +123,13 @@ kotlinc -nowarn -cp "$CP_BUILD:$CP_JSON" -Xplugin="$WORK/serialization-plugin-${
   "$M/features/playback/PlaybackModeRouter.kt" \
   "$M/features/playback/ContentIdentityGuard.kt" \
   "$M/features/playback/PlaybackLoadingState.kt" \
+  "$M/features/playback/SourceLanguageInference.kt" \
   "$M/features/playback/PlaybackLoadingSession.kt" \
   "$M/features/playback/PlaybackEntranceMotion.kt" \
   "$T/core/language/LanguageCodesTest.kt" \
+  "$T/features/playback/SourceLanguageInferenceTest.kt" \
+  "$T/features/playback/AutomaticEmbeddedSubtitleLanguageTest.kt" \
+  "$T/features/downloads/EmbeddedSubtitleRankingTest.kt" \
   "$T/core/media/ReleaseTagsTest.kt" \
   "$T/features/downloads/SourceRankingTest.kt" \
   "$T/features/playback/PlaybackQualityOptionsTest.kt" \
@@ -141,6 +145,9 @@ kotlinc -nowarn -cp "$CP_BUILD:$CP_JSON" -Xplugin="$WORK/serialization-plugin-${
 
 java -cp "$WORK/out-selection:$CP_RUN:$CP_JSON" org.junit.runner.JUnitCore \
   com.nuvio.app.core.language.LanguageCodesTest \
+  com.nuvio.app.features.playback.SourceLanguageInferenceTest \
+  com.nuvio.app.features.playback.AutomaticEmbeddedSubtitleLanguageTest \
+  com.nuvio.app.features.downloads.EmbeddedSubtitleRankingTest \
   com.nuvio.app.core.media.ReleaseTagsTest \
   com.nuvio.app.features.downloads.SourceRankingTest \
   com.nuvio.app.features.playback.PlaybackQualityOptionsTest \

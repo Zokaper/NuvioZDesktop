@@ -444,6 +444,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         step = PlaybackProgressStep.StartingPlayback,
         attempt = args.playbackAttempt,
         facts = args.sourceFacts,
+        contentLanguage = args.contentLanguage,
     )
 
     val episodeText = if (seasonNumber != null && episodeNumber != null && !episodeTitle.isNullOrBlank()) {
@@ -543,6 +544,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                     title = openingPresentation.title,
                     attempt = args.playbackAttempt,
                     facts = args.sourceFacts,
+                    contentLanguage = args.contentLanguage,
                 )
                 PlaybackLoadingController.handOff(token)
                 PlaybackLoadingController.registerActions(
@@ -575,7 +577,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             )
         else -> ""
     }
-    val openingNamer = rememberLanguageNamer(openingLoadingState.facts)
+    val openingNamer = rememberLanguageNamer(openingLoadingState.facts, openingLoadingState.contentLanguage)
     val playerControlsState = PlayerControlsState(
         title = title,
         episodeText = episodeText,
@@ -781,7 +783,12 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             ""
         },
         openingFacts = PlaybackLoadingFacts
-            .facts(openingLoadingState.facts, ::formatFileSize, openingNamer)
+            .facts(
+                facts = openingLoadingState.facts,
+                formatSize = ::formatFileSize,
+                contentLanguage = openingLoadingState.contentLanguage,
+                languageName = openingNamer,
+            )
             .map { fact ->
                 PlayerOpeningFact(
                     label = stringResource(playbackFactSlotLabelRes(fact.slot)).uppercase(),
@@ -2421,6 +2428,7 @@ private fun BoxScope.RenderPlaybackOverlays(
                 step = PlaybackProgressStep.StartingPlayback,
                 attempt = args.playbackAttempt,
                 facts = args.sourceFacts,
+                contentLanguage = args.contentLanguage,
             ),
             formatSize = ::formatFileSize,
             onCopyErrorDetails = errorMessage?.let { message ->

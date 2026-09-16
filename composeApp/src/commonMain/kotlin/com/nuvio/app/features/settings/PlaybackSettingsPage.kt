@@ -573,6 +573,17 @@ private fun PlaybackSettingsSection(
                 )
                 SettingsGroupDivider(isTablet = isTablet)
                 SettingsSwitchRow(
+                    title = stringResource(Res.string.settings_playback_prefer_embedded_subtitles),
+                    description = withClassicReason(
+                        stringResource(Res.string.settings_playback_prefer_embedded_subtitles_description),
+                    ),
+                    checked = autoPlayPlayerSettings.playbackPreferEmbeddedSubtitles,
+                    enabled = !isClassicMode,
+                    isTablet = isTablet,
+                    onCheckedChange = PlayerSettingsRepository::setPlaybackPreferEmbeddedSubtitles,
+                )
+                SettingsGroupDivider(isTablet = isTablet)
+                SettingsSwitchRow(
                     title = stringResource(Res.string.settings_playback_allow_torrent_autopick),
                     description = withClassicReason(
                         stringResource(Res.string.settings_playback_allow_torrent_autopick_description),

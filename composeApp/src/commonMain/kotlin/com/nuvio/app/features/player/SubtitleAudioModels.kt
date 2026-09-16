@@ -24,6 +24,17 @@ data class SubtitleTrack(
     val language: String? = null,
     val isSelected: Boolean = false,
     val isForced: Boolean = false,
+    /**
+     * Loaded from outside the container - a stream's sidecar file or an addon subtitle added after
+     * open. False for a track inside the file. Only engines that report it (desktop mpv) set it;
+     * elsewhere it stays false, which "Prefer built-in subtitles" treats as unconfirmed, not as
+     * built-in - see [verifyEmbeddedSubtitles].
+     */
+    val isExternal: Boolean = false,
+    /** The container marks this its default subtitle track. */
+    val isDefault: Boolean = false,
+    /** Whether [isExternal] is an engine report rather than the default. */
+    val isOriginKnown: Boolean = false,
 )
 
 data class AddonSubtitle(

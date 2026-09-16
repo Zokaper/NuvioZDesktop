@@ -1282,6 +1282,9 @@ internal class NativePlayerController(
                     language = track.language,
                     trackId = track.id,
                 ),
+                isExternal = track.external == true,
+                isDefault = track.default,
+                isOriginKnown = track.external != null,
             )
         }
 
@@ -1428,6 +1431,13 @@ private data class NativeMpvTrack(
     val language: String = "",
     val selected: Boolean = false,
     val forced: Boolean = false,
+    /**
+     * mpv `track-list/N/external`. Null from a bridge built before it was added, which must read as
+     * "origin unknown" - never as "inside the file".
+     */
+    val external: Boolean? = null,
+    /** mpv `track-list/N/default` - the container's own default-track flag. */
+    val default: Boolean = false,
 )
 
 private fun resolveTrackId(index: Int, tracks: List<NativeMpvTrack>): Int? =

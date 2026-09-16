@@ -2,6 +2,35 @@
 
 Last updated: 2026-09-15
 
+## Playback: language inference + "Prefer built-in subtitles" (2026-09-15, `claude/playback-eof-probe-fixes`)
+
+⚠ **Automated gate green; not hardware-verified.** The final desktop cleanup/consolidation pass has not started.
+
+**Language slot.** Root cause: the band printed `SourceFacts.languages` verbatim, which is only ever a
+positive release-name claim, and English is the unmarked case. English releases showed nothing, and
+tagged releases showed their tag. On top of that, `VOSTFR`/`LEGENDADO`/`ENG.SUBS`/`MultiSubs` counted
+as *audio*, and `subtitleLanguages` fell back to the Nuvio-parsed audio languages. The fix:
+`releaseLanguageEvidenceIn` splits audio from subtitle evidence and adds `DUBBED`/`HC` markers.
+`SourceFacts` gains `hasStructuredLanguages`, `releaseSubtitleLanguages`, `claimsMultiSubtitles`,
+`claimsDubbedAudio` and `isHardSubbed`. `SourceLanguageInference` resolves in this order: structured
+field, release name, the title's original language (`MetaDetailsRepository.peek`, read synchronously
+so it never changes on screen, and skipped when `DUBBED` or `MULTi` contradicts it), then unknown.
+Subtitles never fall back to the title's language.
+
+**Prefer built-in subtitles** (`playback_prefer_embedded_subtitles`, off by default, synced like its siblings, Source preferences section):
+- Active only for Streamlined/Instant automatic picks: `automaticEmbeddedSubtitleLanguage` returns null for Classic, manual picks and downloads, and the player gates on `PlayerLaunch.autoPickedWithFailureChain`. A source picked in the player turns it off.
+- Before open: `SourceRanking.embeddedSubtitleScore` gives +2 for a release-name subtitle claim in the primary subtitle language and +1 for `MultiSubs`, inside `mediaScore`. It never affects the resolution or language tier. Hard-subbed releases score 0. Nothing is fetched or probed.
+- After open: `verifyEmbeddedSubtitles` reads mpv's `track-list`. All three bridges now emit `external` and `default`. A non-forced container track in the target language wins over sidecar and addon tracks in that language, with `default` breaking ties. Any other outcome logs `embedded_subtitles outcome=… embedded=… hinted=…` once per source and falls through to the unchanged auto-selection. There is no source retry. Forced-only mode never enters this path.
+
+Gate: `compileKotlinDesktop` green; focused 11 classes / 164 tests green; full `desktopTest` with results
+cleared first **2,016 tests, 0 failures, BUILD SUCCESSFUL**; `run-pure-suites.sh` all 8 groups OK (group 1 now 251).
+Android/iOS storage actuals edited but not compiled.
+
+Hardware checklist (debug MSI): 1) Streamlined + preference on, MKV with an English track → built-in
+track selected, log `outcome=confirmed`; 2) a source with no built-in subs → addon subtitle as before;
+3) AIOStreams automatic pick still opens (no Wrong IP); 4) band shows `English / —` for an untagged
+English film opened from details, `Japanese` for an untagged anime; 5) Classic unchanged.
+
 ## Social + Watch Together UX pass — Stage 8: full gate, review, debug MSI (2026-09-15)
 
 ⚠ **Automated gate green; nothing in stages 3-7 has been exercised on hardware.** The two-client checklist

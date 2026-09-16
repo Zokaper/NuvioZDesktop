@@ -1376,6 +1376,8 @@
     <string name="playback_metered_capped">Data saver</string>
     <string name="playback_metered_full">High quality</string>
     <string name="settings_playback_auto_play_classic_only">Classic controls this section. Streamlined uses the quality picker, and Instant chooses automatically.</string>
+    <string name="settings_playback_prefer_embedded_subtitles">Prefer built-in subtitles</string>
+    <string name="settings_playback_prefer_embedded_subtitles_description">Favours sources that look like they include subtitles in your subtitle language, and uses the built-in track when the file really has one. Otherwise subtitles work as usual.</string>
     <string name="settings_playback_allow_torrent_autopick">Allow torrent sources in auto-pick</string>
     <string name="settings_playback_allow_torrent_autopick_description">Uses P2P only when a healthy seeder count is known. Off by default.</string>
     <string name="settings_playback_codec_preference">Preferred codec</string>

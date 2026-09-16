@@ -1,5 +1,10 @@
 package com.nuvio.app.features.player
 
+import co.touchlab.kermit.Logger
+
+/** The startup tag, so the embedded-subtitle verdict reads alongside the rest of the play. */
+private val trackLog = Logger.withTag("PlaybackStartup")
+
 internal val PlayerScreenRuntime.subtitleStyle: SubtitleStyleState
     get() = playerSettingsUiState.subtitleStyle
 
@@ -255,6 +260,47 @@ private fun PlayerScreenRuntime.tryAutoSelectPreferredSubtitleFromAvailableTrack
         disableAutomaticSubtitleSelection()
         preferredSubtitleSelectionApplied = true
         return
+    }
+
+    // "Prefer built-in subtitles" (Streamlined/Instant auto picks only). mpv has opened the file, so
+    // its track list is the authority. A confirmed container track wins over sidecar and addon
+    // subtitles in the same language; anything else falls through to the ordinary path below,
+    // unchanged - no source retry. Forced-only selection never enters here.
+    if (
+        selectionPlan.mode == SubtitleAutoSelectionMode.NORMAL_ONLY &&
+        hasScannedTextTracksOnce &&
+        isEmbeddedSubtitlePreferenceActive(
+            enabled = playerSettingsUiState.playbackPreferEmbeddedSubtitles,
+            mode = playerSettingsUiState.playbackMode,
+            sourceAutoPicked = activeSourceAutoPicked,
+            userChoseSubtitle = isUserExplicitSubtitleSelection,
+        )
+    ) {
+        val target = selectionPlan.targets.first()
+        val verification = verifyEmbeddedSubtitles(subtitleTracks, target)
+        if (embeddedSubtitleVerificationLoggedFor != activeSourceUrl) {
+            embeddedSubtitleVerificationLoggedFor = activeSourceUrl
+            trackLog.i {
+                "embedded_subtitles outcome=${verification.outcome.name.lowercase()} target=$target " +
+                    "embedded=${verification.embeddedLanguages.joinToString(",").ifEmpty { "none" }} " +
+                    "hinted=${args.sourceFacts?.releaseSubtitleLanguages.orEmpty().joinToString(",").ifEmpty { "none" }}"
+            }
+        }
+        if (verification.outcome == EmbeddedSubtitleOutcome.CONFIRMED) {
+            val embeddedIndex = verification.trackIndex
+            preferredSubtitleSelectionApplied = true
+            if (selectedSubtitleIndex != embeddedIndex || selectedAddonSubtitleId != null) {
+                if (useCustomSubtitles) {
+                    playerController?.clearExternalSubtitleAndSelect(embeddedIndex)
+                } else {
+                    playerController?.selectSubtitleTrack(embeddedIndex)
+                }
+                selectedSubtitleIndex = embeddedIndex
+                selectedAddonSubtitleId = null
+                useCustomSubtitles = false
+            }
+            return
+        }
     }
 
     val internalIndex = findPreferredSubtitleTrackIndex(

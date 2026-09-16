@@ -58,6 +58,7 @@ actual object PlayerSettingsStorage {
     private const val tunnelingEnabledKey = "tunneling_enabled"
     private const val playbackModeKey = "playback_mode"
     private const val playbackAllowTorrentAutopickKey = "playback_allow_torrent_autopick"
+    private const val playbackPreferEmbeddedSubtitlesKey = "playback_prefer_embedded_subtitles"
     private const val playbackCodecPreferenceKey = "playback_codec_preference"
     private const val playbackDynamicRangePolicyKey = "playback_dynamic_range_policy"
     private const val playbackAudioPreferenceKey = "playback_audio_preference"
@@ -143,6 +144,7 @@ actual object PlayerSettingsStorage {
         tunnelingEnabledKey,
         playbackModeKey,
         playbackAllowTorrentAutopickKey,
+        playbackPreferEmbeddedSubtitlesKey,
         playbackCodecPreferenceKey,
         playbackDynamicRangePolicyKey,
         playbackAudioPreferenceKey,
@@ -710,6 +712,16 @@ actual object PlayerSettingsStorage {
 
     actual fun savePlaybackAllowTorrentAutopick(enabled: Boolean) {
         preferences?.edit()?.putBoolean(ProfileScopedKey.of(playbackAllowTorrentAutopickKey), enabled)?.apply()
+    }
+
+    actual fun loadPlaybackPreferEmbeddedSubtitles(): Boolean? =
+        preferences?.let { sharedPreferences ->
+            val key = ProfileScopedKey.of(playbackPreferEmbeddedSubtitlesKey)
+            if (sharedPreferences.contains(key)) sharedPreferences.getBoolean(key, false) else null
+        }
+
+    actual fun savePlaybackPreferEmbeddedSubtitles(enabled: Boolean) {
+        preferences?.edit()?.putBoolean(ProfileScopedKey.of(playbackPreferEmbeddedSubtitlesKey), enabled)?.apply()
     }
 
     actual fun loadPlaybackCodecPreference(): String? =
@@ -1286,6 +1298,9 @@ actual object PlayerSettingsStorage {
         loadPlaybackAllowTorrentAutopick()?.let {
             put(playbackAllowTorrentAutopickKey, encodeSyncBoolean(it))
         }
+        loadPlaybackPreferEmbeddedSubtitles()?.let {
+            put(playbackPreferEmbeddedSubtitlesKey, encodeSyncBoolean(it))
+        }
         loadPlaybackCodecPreference()?.let { put(playbackCodecPreferenceKey, encodeSyncString(it)) }
         loadPlaybackDynamicRangePolicy()?.let {
             put(playbackDynamicRangePolicyKey, encodeSyncString(it))
@@ -1392,6 +1407,8 @@ actual object PlayerSettingsStorage {
         payload.decodeSyncString(playbackModeKey)?.let(::savePlaybackMode)
         payload.decodeSyncBoolean(playbackAllowTorrentAutopickKey)
             ?.let(::savePlaybackAllowTorrentAutopick)
+        payload.decodeSyncBoolean(playbackPreferEmbeddedSubtitlesKey)
+            ?.let(::savePlaybackPreferEmbeddedSubtitles)
         payload.decodeSyncString(playbackCodecPreferenceKey)?.let(::savePlaybackCodecPreference)
         payload.decodeSyncString(playbackDynamicRangePolicyKey)
             ?.let(::savePlaybackDynamicRangePolicy)

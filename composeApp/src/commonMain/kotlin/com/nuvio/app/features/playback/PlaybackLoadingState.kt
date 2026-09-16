@@ -152,6 +152,11 @@ data class PlaybackLoadingState(
     val failure: PlaybackProgressFailure? = null,
     /** Whether the way out to the source list is offered yet. */
     val offerManualEscape: Boolean = false,
+    /**
+     * The title's original language, for [SourceLanguageInference]'s fallback when the release
+     * names no audio language. Null when the catalogue did not say.
+     */
+    val contentLanguage: String? = null,
 ) {
     /** Above 1, and never past the budget - "Attempt 5 of 3" is unreachable by construction. */
     val displayAttempt: Int get() = attempt.coerceIn(1, maxAttempts)
@@ -209,13 +214,17 @@ object PlaybackLoadingFacts {
     fun facts(
         facts: SourceFacts?,
         formatSize: (Long) -> String,
+        contentLanguage: String? = null,
         languageName: (String) -> String,
     ): List<PlaybackLoadingFact> = listOf(
         PlaybackLoadingFact(
             PlaybackFactSlot.RESOLUTION,
             facts?.resolution.qualityLabel.takeIf { it.isNotBlank() },
         ),
-        PlaybackLoadingFact(PlaybackFactSlot.LANGUAGE, languagePairLabel(facts, languageName)),
+        PlaybackLoadingFact(
+            PlaybackFactSlot.LANGUAGE,
+            languagePairLabel(facts, contentLanguage, languageName),
+        ),
         PlaybackLoadingFact(PlaybackFactSlot.DYNAMIC_RANGE, dynamicRangeSlot(facts)),
         PlaybackLoadingFact(PlaybackFactSlot.AUDIO, audioLabel(facts)),
         PlaybackLoadingFact(
@@ -245,16 +254,33 @@ object PlaybackLoadingFacts {
      * a slot that silently collapses to one name would let a subtitle-only claim read as an
      * audio one.
      *
-     * ⚠ **Empty is not a language claim.** `SourceFacts.languages` documents it: most English
-     * releases say nothing at all, so silence on both sides draws the unknown slot, never "EN".
+     * ⚠ **Empty is not a language claim, and neither is English.** Silence in the release is
+     * filled from [contentLanguage] - the title's *own* original language - by
+     * [SourceLanguageInference], never from an assumed default; with no content language either,
+     * silence on both sides still draws the unknown slot.
      */
-    fun languagePairLabel(facts: SourceFacts?, languageName: (String) -> String): String? {
-        val audio = namedLanguages(facts?.languages.orEmpty(), languageName)
-            ?: "MULTi".takeIf { facts?.isMultiLanguage == true }
-        val subtitles = namedLanguages(facts?.subtitleLanguages.orEmpty(), languageName)
+    fun languagePairLabel(
+        facts: SourceFacts?,
+        contentLanguage: String? = null,
+        languageName: (String) -> String,
+    ): String? {
+        val inferred = SourceLanguageInference.infer(facts, contentLanguage)
+        val audio = claimLabel(inferred.audio, languageName)
+        val subtitles = claimLabel(inferred.subtitles, languageName)
         if (audio == null && subtitles == null) return null
         return "${audio ?: UNKNOWN} / ${subtitles ?: UNKNOWN}"
     }
+
+    /** Every code [languagePairLabel] may name, for the caller resolving display names. */
+    fun languageCodesToName(facts: SourceFacts?, contentLanguage: String?): Set<String> {
+        val inferred = SourceLanguageInference.infer(facts, contentLanguage)
+        return inferred.audio.codes + inferred.subtitles.codes
+    }
+
+    private fun claimLabel(
+        claim: SourceLanguageInference.Claim,
+        languageName: (String) -> String,
+    ): String? = namedLanguages(claim.codes, languageName) ?: "MULTi".takeIf { claim.isMulti }
 
     /** `English`, `English +2`, or null. One name plus a count - a list would not fit the slot. */
     private fun namedLanguages(codes: Set<String>, languageName: (String) -> String): String? {
