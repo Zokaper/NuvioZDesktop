@@ -2,6 +2,62 @@
 
 Last updated: 2026-09-16
 
+## Desktop upstream sync - NuvioDesktop 0.1.23-alpha (2026-09-16)
+
+The canonical desktop line is now **`codex/upstream-sync-0.1.23-alpha`**, branched from
+`claude/desktop-consolidation` at `5137fc3b`. It merges named upstream release
+`0.1.23-alpha` (`af4803399e77480ca7db75284b89a049cc6fe040`) with history intact. The previous
+vanilla base was `0.1.22-alpha` (`5aca4f3f829a7a9ee259ce4c97631c9ff0b18a1c`): **68 upstream
+commits** were introduced. Moving `upstream/Dev` was deliberately not merged; it was 148 commits
+beyond the tag at audit time.
+
+### Audit and merge result
+
+- Upstream changed 144 files (+8,201/-3,168) across original-audio/subtitle handling, generic
+  skeleton/loading UI, Home/startup performance, Android downloads, desktop controls/windowing,
+  custom themes, Linux updating, localisations, dependencies and version files.
+- The three-way merge reported **18 conflicts**: `.gitignore`; six download repository/platform
+  files; `App.kt`; `StreamDestination.kt`; `Skeleton.kt`; `DesktopDetailHero.kt`; `HomeScreen.kt`;
+  `PlayerControls.kt`; `PlayerScreenRuntimeSourceActions.kt`; `PlayerScreenRuntimeUi.kt`; desktop
+  `Main.kt`; `controls.html`; and `libs.versions.toml`.
+- Upstream's custom themes, shared skeletons, stable Home lazy keys, IMDB detail restoration,
+  desktop maximize-bound handling, native control icons/shortcuts, Linux package-aware updater,
+  Compose 1.12 alignment, original-audio selection and subtitle identity/rendering fixes survive.
+- Z's UI zoom, Social rows, Watch Together hooks, playback modes/ranking/failure chains,
+  next-episode control, post-open probing, premature-EOF recovery, language inference,
+  built-in-subtitle preference and unified playback preferences survive.
+- Upstream did **not** independently replace Z's EOF recovery, source probing/ranking, failover,
+  playback-mode next-episode routing, playback loading rail/artwork, or setup revision 8.
+- Upstream's original-audio work now strengthens the player half of Z's unified language model;
+  no Z playback patch became obsolete enough to delete. Its old reuse-last-link path remains
+  deleted because it bypasses Z's mode/ranking model.
+- Upstream's new Android transfer scheduler was not layered beside Z's existing background
+  scheduler and stricter resumable-transfer contract. The duplicate scheduler/worker files and
+  their tests were omitted; Z's queue, validators, stall watchdog, partial-file guarantees and
+  system-pause recovery remain the single owner. The upstream NetworkOnMainThreadException case is
+  already avoided because Z starts network work on its I/O transfer coroutine.
+- `DesktopVersion.properties` was mechanically advanced to `0.1.23-alpha-z1`, version code 40.
+  `RELEASE_SERIAL=127` and debug build 49 were not bumped; this is not release preparation.
+  The stale desktop-copy iOS version file was intentionally kept at its Z value.
+- The inherited Linux updater tests assumed a Linux host path while running in the multiplatform
+  desktop suite. Their expectations now use `File.absolutePath`; production updater behavior is
+  unchanged and the class passes on Windows.
+
+### Verification
+
+| Gate | Result |
+| --- | --- |
+| `:composeApp:compileKotlinDesktop` | **BUILD SUCCESSFUL** |
+| focused conflict regression set | **BUILD SUCCESSFUL** - audio/subtitle, EOF, probe/failover, next episode, Home, native controls and the full desktop download E2E class |
+| clean `:composeApp:desktopTest` | **BUILD SUCCESSFUL in 8m 57s - 2,124 tests, 0 failures, 0 errors, 0 skipped**, 258 fresh XML files (`cleanDesktopTest` ran first) |
+| `scripts/run-pure-suites.sh` | **8/8 green, 669 tests** (271 / 107 / 64 / 17 / 29 / 115 / 63 / 3) |
+| `:composeApp:compileAndroidMain` | Reaches compilation and fails with the **same 15 pre-existing errors** in `AddonPlatform.android.kt`, `MainAppContent.kt`, `HomePosterHoverPreview.kt` and `PlayerScreenContent.kt`; no new download/settings/player actual error |
+
+No release, tag, MSI, backend change or Phase 6 work was performed. Remaining release-prep risk is
+manual: the 12-item hardware checklist in `HANDOFF-desktop-consolidation.md` still applies, now with
+an added smoke pass for upstream's original-audio selection, custom theme UI, Home skeletons,
+fullscreen/maximize behavior and native control shortcuts.
+
 ## Desktop consolidation - one branch, one gate, one MSI (2026-09-16)
 
 ⚠ **Automated gates green on the consolidated branch. Nothing here has been on hardware.**

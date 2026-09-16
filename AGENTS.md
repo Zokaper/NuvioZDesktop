@@ -20,7 +20,8 @@ what that means are canonical in `nuvio-z` and cover this repository too:
 
 **Upstream for this repository is a different repository from mobile's.** Upstream retired
 `NuvioMedia/NuvioMobile` branch `desktopweb` and moved desktop development to
-`NuvioMedia/NuvioDesktop` branch `Dev`, which is where our base `1704f6c9` lives.
+`NuvioMedia/NuvioDesktop` branch `Dev`, which is where our current named base
+`0.1.23-alpha` (`af480339`) lives.
 `NuvioMobile:cmp-rewrite` still carries a `desktopMain`, but it is vestigial -- 4 files against our
 278 -- so merging desktop work from it would be wrong.
 

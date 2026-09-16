@@ -23,6 +23,7 @@ internal fun resolveDesktopAppLocale(
 
 internal actual object ThemeSettingsStorage {
     private const val selectedThemeKey = "selected_theme"
+    private const val customThemeColorsKey = "custom_theme_colors"
     private const val amoledEnabledKey = "amoled_enabled"
     private const val liquidGlassNativeTabBarEnabledKey = "liquid_glass_native_tab_bar_enabled"
     private const val desktopNavigationLayoutKey = "desktop_navigation_layout"
@@ -36,6 +37,7 @@ internal actual object ThemeSettingsStorage {
     private const val desktopUiZoomPercentKey = "desktop_ui_zoom_percent"
     private val profileScopedSyncKeys = listOf(
         selectedThemeKey,
+        customThemeColorsKey,
         amoledEnabledKey,
         liquidGlassNativeTabBarEnabledKey,
         desktopNavigationLayoutKey,
@@ -49,6 +51,13 @@ internal actual object ThemeSettingsStorage {
 
     actual fun saveSelectedTheme(themeName: String) {
         store.putString(ProfileScopedKey.of(selectedThemeKey), themeName)
+    }
+
+    actual fun loadCustomThemeColors(): String? =
+        store.getString(ProfileScopedKey.of(customThemeColorsKey))
+
+    actual fun saveCustomThemeColors(colors: String) {
+        store.putString(ProfileScopedKey.of(customThemeColorsKey), colors)
     }
 
     actual fun loadAmoledEnabled(): Boolean? =
@@ -100,6 +109,7 @@ internal actual object ThemeSettingsStorage {
 
     actual fun exportToSyncPayload(): JsonObject = buildJsonObject {
         loadSelectedTheme()?.let { put(selectedThemeKey, encodeSyncString(it)) }
+        loadCustomThemeColors()?.let { put(customThemeColorsKey, encodeSyncString(it)) }
         loadAmoledEnabled()?.let { put(amoledEnabledKey, encodeSyncBoolean(it)) }
         loadLiquidGlassNativeTabBarEnabled()?.let { put(liquidGlassNativeTabBarEnabledKey, encodeSyncBoolean(it)) }
         loadDesktopNavigationLayout()?.let { put(desktopNavigationLayoutKey, encodeSyncString(it)) }
@@ -110,6 +120,7 @@ internal actual object ThemeSettingsStorage {
         // Clear only what the payload actually carries - see syncKeysToClear.
         store.removeAll(syncKeysToClear(profileScopedSyncKeys, payload).map(ProfileScopedKey::of))
         payload.decodeSyncString(selectedThemeKey)?.let(::saveSelectedTheme)
+        payload.decodeSyncString(customThemeColorsKey)?.let(::saveCustomThemeColors)
         payload.decodeSyncBoolean(amoledEnabledKey)?.let(::saveAmoledEnabled)
         payload.decodeSyncBoolean(liquidGlassNativeTabBarEnabledKey)?.let(::saveLiquidGlassNativeTabBarEnabled)
         payload.decodeSyncString(desktopNavigationLayoutKey)?.let(::saveDesktopNavigationLayout)
