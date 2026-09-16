@@ -29,7 +29,13 @@ with the same 15 pre-existing errors at `01524bb1` and at this commit (desktop-o
 `commonMain`, plus `addonHttpClient`), and `compileKotlinIosSimulatorArm64` is SKIPPED on a Windows
 host. No new error comes from this change; the iOS actual mirrors its neighbour and needs macOS.
 
-Debug MSI from this exact commit (`ad6feb22`):
+**The quality panel names the claim.** The desktop panel's chip row carries `EN subs` /
+`Multi subs` beside `DV` and `Atmos 5.1`, accented only when it is the language the preference
+is looking for. The row is now a `Layout` that drops a chip it cannot fit rather than clipping
+it - at 1100 dp a four-mark cell drew `EN subs` as a bare `EN`, found by the new
+`PlaybackQualityRenderHarness` (PNGs in `composeApp/build/playback-quality-render/`).
+
+Debug MSI from this exact commit (`a3d5975c`):
 `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi`
 (259,569,439 bytes; SHA-256 `16fbc624648666ba0812da9f1001b6bf4d25434ea5b3b55615152db660fdbd85`),
 built with `-Pnuvio.desktop.debugTools=true` (confirmed in `packageReleaseMsi.args.txt`) on the JBR
