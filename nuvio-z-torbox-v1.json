@@ -6,7 +6,7 @@
     "source": "external",
     "sourceUrl": "https://raw.githubusercontent.com/Zokaper/NuvioZDesktop/refs/heads/templates/nuvio-z-torbox-v1.json",
     "author": "Zokaper",
-    "version": "1.1.0",
+    "version": "1.1.2",
     "category": "Debrid",
     "services": [
       "torbox"
@@ -565,7 +565,10 @@
           ],
           "sources": "all",
           "includeAiTranslated": false,
-          "movieHashPlusAutoAdjustment": false
+          "movieHashPlusAutoAdjustment": false,
+          "language": [
+            "en"
+          ]
         },
         "category": "Subs"
       },
@@ -689,7 +692,7 @@
       "addons": []
     },
     "yearMatching": {
-      "enabled": true,
+      "enabled": false,
       "tolerance": 1,
       "strict": true,
       "strictTypes": [
@@ -706,8 +709,18 @@
     "titleMatching": {
       "mode": "exact",
       "similarityThreshold": 1,
-      "enabled": true,
+      "enabled": false,
       "ambiguousResults": "discard",
+      "requestTypes": [
+        "movie",
+        "series",
+        "anime"
+      ],
+      "addons": []
+    },
+    "digitalReleaseFilter": {
+      "enabled": false,
+      "tolerance": 0,
       "requestTypes": [
         "movie",
         "series",
