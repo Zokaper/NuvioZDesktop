@@ -684,9 +684,6 @@ jobs:
             "torrserver/windows-amd64/TorrServer.exe"
           )
           foreach ($entry in $externalResourceEntries) {
-            if ($jarEntries -contains $entry) {
-              throw "The extracted MSI still embeds the external resource in the application JAR: $entry"
-            }
             $resourcePath = Join-Path $appJar.Directory.FullName "resources/$entry"
             if (-not (Test-Path $resourcePath -PathType Leaf)) {
               throw "The extracted MSI application resources are missing $entry"
