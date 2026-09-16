@@ -78,6 +78,8 @@ import com.nuvio.app.features.playback.PlaybackSelectionResult
 import com.nuvio.app.features.playback.PlaybackSourceCandidate
 import com.nuvio.app.features.playback.PlaybackSourceSelector
 import com.nuvio.app.features.playback.STREAMLINED_SELECTION_TIMEOUT_MS
+import com.nuvio.app.features.playback.SourceLanguageInference
+import com.nuvio.app.features.playback.automaticEmbeddedSubtitleLanguage
 import com.nuvio.app.features.playback.StreamRouteSurface
 import com.nuvio.app.features.playback.StreamRouteSurfaceInputs
 import com.nuvio.app.features.playback.playbackChain
@@ -145,6 +147,7 @@ internal fun buildP2pPlayerLaunch(
     resolvedResumeProgressFraction: Float?,
     autoPickedWithFailureChain: Boolean,
     autoPickAttempt: Int,
+    contentLanguage: String? = null,
 ): PlayerLaunch = PlayerLaunch(
     profileId = launch.profileId,
     title = launch.title,
@@ -176,6 +179,7 @@ internal fun buildP2pPlayerLaunch(
     torrentTrackers = stream.p2pTrackers,
     initialPositionMs = resolvedResumePositionMs ?: 0L,
     initialProgressFraction = resolvedResumeProgressFraction,
+    contentLanguage = contentLanguage,
     autoPickedWithFailureChain = autoPickedWithFailureChain,
     sourceFacts = SourceFactsExtractor.extract(stream),
     playbackAttempt = autoPickAttempt,
@@ -499,11 +503,34 @@ internal fun StreamDestination(
         PlayerSettingsRepository.uiState
     }.collectAsStateWithLifecycle()
     /**
+     * The title's original language, for the loading band's language inference
+     * (`SourceLanguageInference`) and the player's "original" audio target.
+     *
+     * ⚠ **Read synchronously from what is already loaded, never fetched.** A fetch would land after
+     * the band had drawn and change its language under the reader. `peek` answers from the details
+     * screen's enriched meta (TMDB `original_language`) or the cache; when neither has it - a cold
+     * Continue Watching launch - this is null for the whole play and the band says less, not more.
+     *
+     * Language only, never the production country: a country is not a language.
+     */
+    val requestedContentLanguage = remember(route.launchId) {
+        val metaId = launch.parentMetaId ?: launch.videoId
+        SourceLanguageInference.contentLanguageCode(
+            MetaDetailsRepository.peek(launch.parentMetaType ?: launch.type, metaId)?.language,
+        )
+    }
+    /**
      * This title's own language, for the `original` audio sentinel, once the meta answers.
      *
      * Null until then and often for good, which is the honest answer: `resolveRankableLanguages`
      * turns a null into "no language opinion" rather than falling back to the device locale, so a
      * user who asked for the original language is never quietly given English instead.
+     *
+     * ⚠ **Deliberately not seeded from [requestedContentLanguage], and not the same rule.** That one
+     * refuses to read a production country as a language, because it is *displayed* and a wrong
+     * language on the band is worse than a blank one. This one is only ever *ranked* with, where
+     * `resolveContentLanguage`'s country fallback is a better guess than no guess. Two consumers,
+     * two policies, on purpose.
      */
     var contentOriginalLanguage by remember(route.launchId) { mutableStateOf<String?>(null) }
     val shouldResolveEpisodeVideoId =
@@ -629,6 +656,7 @@ internal fun StreamDestination(
             resolvedResumeProgressFraction = resolvedResumeProgressFraction,
             autoPickedWithFailureChain = hasFailureChain,
             autoPickAttempt = autoPickAttempt,
+            contentLanguage = requestedContentLanguage,
         )
 
         val launchId = PlayerLaunchStore.put(playerLaunch)
@@ -785,6 +813,9 @@ internal fun StreamDestination(
         // whole quality panel built from it - showing the previous answer until something else
         // invalidated it.
         playerSettings.playbackAudioPreference,
+        playerSettings.playbackPreferEmbeddedSubtitles,
+        playerSettings.preferredSubtitleLanguage,
+        playerSettings.secondaryPreferredSubtitleLanguage,
     ) {
         playbackSelectionContextOf(
             settings = playerSettings,
@@ -807,6 +838,20 @@ internal fun StreamDestination(
             } else {
                 null
             },
+            // Codec, dynamic range, audio preference and the display ceiling are the factory's now;
+            // passing them here again is how the three copies drifted in the first place.
+            // Streamlined/Instant automatic picks only - null for Classic, manual and downloads.
+            preferredEmbeddedSubtitleLanguage = automaticEmbeddedSubtitleLanguage(
+                enabled = playerSettings.playbackPreferEmbeddedSubtitles,
+                mode = playerSettings.playbackMode,
+                manualSelection = launch.manualSelection,
+                downloadIntent = launch.downloadIntent,
+                primarySubtitleTarget = if (playerSettings.playbackPreferEmbeddedSubtitles) {
+                    playerSettings.primarySubtitleTarget
+                } else {
+                    null
+                },
+            ),
         )
     }
     // The quality choices for *this* title, derived from what the addons actually
@@ -1251,6 +1296,7 @@ internal fun StreamDestination(
             parentMetaType = launch.parentMetaType ?: launch.type,
             initialPositionMs = launch.resumePositionMs ?: 0L,
             initialProgressFraction = launch.resumeProgressFraction,
+            contentLanguage = requestedContentLanguage,
             autoPickedWithFailureChain = hasFailureChain,
             // The band the player draws is the band the route was drawing a frame ago.
             sourceFacts = playbackCandidates.firstOrNull { it.stream === stream }?.facts
@@ -1478,6 +1524,7 @@ internal fun StreamDestination(
             parentMetaType = launch.parentMetaType ?: launch.type,
             initialPositionMs = resolvedResumePositionMs ?: 0L,
             initialProgressFraction = resolvedResumeProgressFraction,
+            contentLanguage = requestedContentLanguage,
             sourceFacts = playbackCandidates.firstOrNull { it.stream === stream }?.facts
                 ?: SourceFactsExtractor.extract(stream),
             playbackAttempt = autoPickAttempt,
@@ -2320,6 +2367,7 @@ internal fun StreamDestination(
             // re-parse of the display title.
             facts = loadingFacts,
             failure = autoPickFailure,
+            contentLanguage = requestedContentLanguage,
         )
 
         LaunchedEffect(showLoadingSurface) {
@@ -2349,6 +2397,7 @@ internal fun StreamDestination(
                         title = launch.title,
                         attempt = autoPickAttempt,
                         facts = loadingFacts,
+                        contentLanguage = requestedContentLanguage,
                     )
                 }
             } else {

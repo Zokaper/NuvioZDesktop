@@ -147,6 +147,7 @@ internal fun PlayerDestination(
         playbackAttempt = launch.playbackAttempt,
         expectedRuntimeMinutes = launch.expectedRuntimeMinutes,
         partySourceDescriptor = launch.partySourceDescriptor,
+        automaticSourceSelection = launch.autoPickedWithFailureChain,
         onStartWatchTogether = { _, _, _, _ ->
             com.nuvio.app.features.watchparty.WatchPartySessionCoordinator.promoteCurrentPlayback()
         },

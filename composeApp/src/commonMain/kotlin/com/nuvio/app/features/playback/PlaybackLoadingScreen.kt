@@ -291,9 +291,9 @@ private fun PlaybackLoadingBand(
     progress: Float?,
     modifier: Modifier = Modifier,
 ) {
-    val namer = rememberLanguageNamer(state.facts)
-    val facts = remember(state.facts, namer) {
-        PlaybackLoadingFacts.facts(state.facts, formatSize, namer)
+    val namer = rememberLanguageNamer(state.facts, state.contentLanguage)
+    val facts = remember(state.facts, state.contentLanguage, namer) {
+        PlaybackLoadingFacts.facts(state.facts, formatSize, state.contentLanguage, namer)
     }
     val providerLine = remember(state.facts) { PlaybackLoadingFacts.providerLine(state.facts) }
 
@@ -418,9 +418,9 @@ private fun PlaybackLoadingStageLine(state: PlaybackLoadingState) {
  * carry, which is worse than the code itself in a four-character slot - hence the fallback.
  */
 @Composable
-internal fun rememberLanguageNamer(facts: SourceFacts?): (String) -> String {
-    val codes = remember(facts) {
-        (facts?.languages.orEmpty() + facts?.subtitleLanguages.orEmpty()).toList()
+internal fun rememberLanguageNamer(facts: SourceFacts?, contentLanguage: String? = null): (String) -> String {
+    val codes = remember(facts, contentLanguage) {
+        PlaybackLoadingFacts.languageCodesToName(facts, contentLanguage).toList()
     }
     val unknown = stringResource(Res.string.subtitle_language_unknown)
     val names = codes.associateWith { code ->

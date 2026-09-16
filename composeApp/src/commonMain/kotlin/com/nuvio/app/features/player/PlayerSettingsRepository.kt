@@ -66,6 +66,13 @@ data class PlayerSettingsUiState(
     val playbackMode: PlaybackMode = PlaybackMode.Default,
     val playbackAllowTorrentAutopick: Boolean = false,
     /**
+     * Streamlined/Instant: prefer a source whose own container carries subtitles in the
+     * preferred subtitle language. Off by default. A release-name hint when ranking, then
+     * checked against mpv's real track list once the file is open - see
+     * `automaticEmbeddedSubtitleLanguage` and `PlayerEmbeddedSubtitlePreference.kt`.
+     */
+    val playbackPreferEmbeddedSubtitles: Boolean = false,
+    /**
      * What the *playback* picker should prefer, as distinct from what a download preset does.
      *
      * These existed only on `DownloadPreset` until 0.5.0-beta, so a user who set a codec or an
@@ -147,7 +154,18 @@ data class PlayerSettingsUiState(
     val iosSaturation: Int = 0,
     val iosGamma: Int = 0,
     val nvidiaRtxSuperResolutionEnabled: Boolean = false,
-)
+) {
+    /**
+     * The first subtitle language the player's auto-selection looks for, with `none`, `forced`
+     * and `device` already resolved - or null. For "Prefer built-in subtitles".
+     *
+     * The audio pair has no counterpart here on purpose: `resolveRankableLanguages`
+     * (`playback/PlaybackLanguageResolution.kt`) resolves every sentinel for ranking in one
+     * place, and a second resolver on the state object is how the two drift apart.
+     */
+    internal val primarySubtitleTarget: String?
+        get() = preferredSubtitleTargetsForSettings(this).firstOrNull()
+}
 
 object PlayerSettingsRepository {
     private val json = Json { ignoreUnknownKeys = true }
@@ -180,6 +198,7 @@ object PlayerSettingsRepository {
     private var tunnelingEnabled = false
     private var playbackMode = PlaybackMode.Default
     private var playbackAllowTorrentAutopick = false
+    private var playbackPreferEmbeddedSubtitles = false
     private var playbackCodecPreference = CodecPreference.ANY
     private var playbackDynamicRangePolicy = DynamicRangePolicy.ANY
     private var playbackAudioPreference = AudioPreference.ANY
@@ -262,6 +281,7 @@ object PlayerSettingsRepository {
         tunnelingEnabled = false
         playbackMode = PlaybackMode.Default
         playbackAllowTorrentAutopick = false
+        playbackPreferEmbeddedSubtitles = false
         playbackCodecPreference = CodecPreference.ANY
         playbackDynamicRangePolicy = DynamicRangePolicy.ANY
         playbackAudioPreference = AudioPreference.ANY
@@ -388,6 +408,7 @@ object PlayerSettingsRepository {
             PlaybackMode.fromStorage(PlayerSettingsStorage.loadPlaybackMode()),
         )
         playbackAllowTorrentAutopick = PlayerSettingsStorage.loadPlaybackAllowTorrentAutopick() ?: false
+        playbackPreferEmbeddedSubtitles = PlayerSettingsStorage.loadPlaybackPreferEmbeddedSubtitles() ?: false
         // An unreadable stored value falls back to ANY rather than throwing: a renamed enum
         // constant must not make the app unable to load its own settings.
         playbackCodecPreference = PlayerSettingsStorage.loadPlaybackCodecPreference()
@@ -766,6 +787,14 @@ object PlayerSettingsRepository {
         playbackAllowTorrentAutopick = enabled
         publish()
         PlayerSettingsStorage.savePlaybackAllowTorrentAutopick(enabled)
+    }
+
+    fun setPlaybackPreferEmbeddedSubtitles(enabled: Boolean) {
+        ensureLoaded()
+        if (playbackPreferEmbeddedSubtitles == enabled) return
+        playbackPreferEmbeddedSubtitles = enabled
+        publish()
+        PlayerSettingsStorage.savePlaybackPreferEmbeddedSubtitles(enabled)
     }
 
     fun setPlaybackCodecPreference(preference: CodecPreference) {
@@ -1207,6 +1236,7 @@ object PlayerSettingsRepository {
             tunnelingEnabled = tunnelingEnabled,
             playbackMode = playbackMode,
             playbackAllowTorrentAutopick = playbackAllowTorrentAutopick,
+            playbackPreferEmbeddedSubtitles = playbackPreferEmbeddedSubtitles,
             playbackCodecPreference = playbackCodecPreference,
             playbackDynamicRangePolicy = playbackDynamicRangePolicy,
             playbackAudioPreference = playbackAudioPreference,

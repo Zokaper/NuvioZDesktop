@@ -8,6 +8,7 @@ import com.nuvio.app.features.playback.PlaybackSelectionContext
 import com.nuvio.app.features.playback.PlaybackSelectionResult
 import com.nuvio.app.features.playback.PlaybackSourceCandidate
 import com.nuvio.app.features.playback.PlaybackSourceSelector
+import com.nuvio.app.features.playback.automaticEmbeddedSubtitleLanguage
 import com.nuvio.app.features.playback.playbackSelectionContextOf
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamsUiState
@@ -47,6 +48,14 @@ internal fun streamlinedEpisodeSelectionContext(
     runtimeMinutes = episode.runtime,
     contentOriginalLanguage = contentOriginalLanguage,
     displayMaxHeight = displayMaxHeight,
+    // Picking the next episode's source here is automatic; the mode check inside keeps Classic out.
+    preferredEmbeddedSubtitleLanguage = automaticEmbeddedSubtitleLanguage(
+        enabled = settings.playbackPreferEmbeddedSubtitles,
+        mode = settings.playbackMode,
+        manualSelection = false,
+        downloadIntent = false,
+        primarySubtitleTarget = if (settings.playbackPreferEmbeddedSubtitles) settings.primarySubtitleTarget else null,
+    ),
 )
 
 /**

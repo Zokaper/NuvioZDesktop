@@ -96,6 +96,27 @@ class PlaybackLoadingStateTest {
     }
 
     @Test
+    fun `an untagged release of an English title reads English from the title, not by default`() {
+        assertEquals(
+            "English / —",
+            PlaybackLoadingFacts.languagePairLabel(SourceFacts(), contentLanguage = "en") { "English" },
+        )
+    }
+
+    @Test
+    fun `the content language reaches the band through the state`() {
+        val state = PlaybackLoadingState(
+            step = PlaybackProgressStep.StartingPlayback,
+            facts = SourceFacts(),
+            contentLanguage = "ja",
+        )
+        val language = PlaybackLoadingFacts
+            .facts(state.facts, ::size, state.contentLanguage) { if (it == "ja") "Japanese" else it }
+            .first { it.slot == PlaybackFactSlot.LANGUAGE }
+        assertEquals("Japanese / —", language.value)
+    }
+
+    @Test
     fun `a subtitle-only claim does not become an audio claim`() {
         val facts = SourceFacts(subtitleLanguages = setOf("en"))
         assertEquals(

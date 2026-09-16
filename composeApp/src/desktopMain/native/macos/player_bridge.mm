@@ -2272,6 +2272,8 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
         long long channelCount = [self int64Property:[[prefix stringByAppendingString:@"/demux-channel-count"] UTF8String] fallback:0];
         BOOL selected = [self flagProperty:[[prefix stringByAppendingString:@"/selected"] UTF8String] fallback:NO];
         BOOL forced = [self flagProperty:[[prefix stringByAppendingString:@"/forced"] UTF8String] fallback:NO];
+        BOOL external = [self flagProperty:[[prefix stringByAppendingString:@"/external"] UTF8String] fallback:NO];
+        BOOL isDefault = [self flagProperty:[[prefix stringByAppendingString:@"/default"] UTF8String] fallback:NO];
         NSString *label = [self formatTrackTitleWithType:type
                                                    index:logicalIndex
                                                    title:title
@@ -2287,6 +2289,8 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
             @"language": language ?: @"",
             @"selected": @(selected),
             @"forced": @(forced),
+            @"external": @(external),
+            @"default": @(isDefault),
         }];
         logicalIndex += 1;
     }

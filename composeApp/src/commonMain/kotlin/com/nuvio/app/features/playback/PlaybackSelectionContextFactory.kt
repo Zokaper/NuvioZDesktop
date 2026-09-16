@@ -33,6 +33,13 @@ internal fun playbackSelectionContextOf(
      */
     identity: RequestedContent? = null,
     displayMaxHeight: Int? = platformDisplayMaxHeight(),
+    /**
+     * "Prefer built-in subtitles", already reduced to a language or null by
+     * [automaticEmbeddedSubtitleLanguage]. Not derived here: whether a pick is automatic is the
+     * caller's fact (Classic, a manual pick and a download intent all suppress it), and the factory
+     * does not know which of those it is serving.
+     */
+    preferredEmbeddedSubtitleLanguage: String? = null,
     deviceLanguages: List<String> = DeviceLanguagePreferences.preferredLanguageCodes(),
 ): PlaybackSelectionContext {
     val languages = resolveRankableLanguages(
@@ -58,5 +65,6 @@ internal fun playbackSelectionContextOf(
         dynamicRangePolicy = settings.playbackDynamicRangePolicy,
         audioPreference = settings.playbackAudioPreference,
         displayMaxHeight = displayMaxHeight,
+        preferredEmbeddedSubtitleLanguage = preferredEmbeddedSubtitleLanguage,
     )
 }

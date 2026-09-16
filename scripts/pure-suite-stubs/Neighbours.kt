@@ -34,7 +34,14 @@ data class SourceFacts(
     val audioChannels: Int? = null,
     val languages: Set<String> = emptySet(),
     val isMultiLanguage: Boolean = false,
+    // The audio/subtitle split and the "Prefer built-in subtitles" hint: read by SourceRanking's
+    // language and embedded-subtitle scores and by SourceLanguageInference.
+    val hasStructuredLanguages: Boolean = false,
     val subtitleLanguages: Set<String> = emptySet(),
+    val releaseSubtitleLanguages: Set<String> = emptySet(),
+    val claimsMultiSubtitles: Boolean = false,
+    val claimsDubbedAudio: Boolean = false,
+    val isHardSubbed: Boolean = false,
     val releaseQuality: String? = null,
     val releaseGroup: String? = null,
     val seeders: Int? = null,

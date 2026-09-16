@@ -87,6 +87,10 @@ internal class NativePlayerController(
 
         val json = Json { ignoreUnknownKeys = true }
         val log = Logger.withTag("NativePlayerControls")
+        val mpvLog = Logger.withTag("mpv")
+
+        const val MPV_LOG_EVENT_PREFIX = "mpvLog:"
+        const val MPV_END_FILE_EVENT_PREFIX = "mpvEndFile:"
 
         /** Cap on waiting for the previous player's teardown so a hung one cannot block playback. */
         const val TEARDOWN_WAIT_MS = 5_000L
@@ -625,6 +629,14 @@ internal class NativePlayerController(
     }
 
     private fun handlePlayerEvent(type: String, value: Double) {
+        if (type.startsWith(MPV_LOG_EVENT_PREFIX)) {
+            mpvLog.w { "handle=$handle ${type.removePrefix(MPV_LOG_EVENT_PREFIX).redactUrls()}" }
+            return
+        }
+        if (type.startsWith(MPV_END_FILE_EVENT_PREFIX)) {
+            handleMpvEndFile(type.removePrefix(MPV_END_FILE_EVENT_PREFIX), isError = value >= 0.5)
+            return
+        }
         if (type.shouldLogNativeControlEvent()) {
             log.d { "event received handle=$handle type=$type value=$value" }
         }
@@ -689,6 +701,29 @@ internal class NativePlayerController(
         }
     }
 
+    /**
+     * mpv gave up on the file: it could not be opened, or it failed while playing.
+     *
+     * ⚠ **This used to be dropped on the floor.** The Windows bridge ignored `MPV_EVENT_END_FILE`,
+     * so a 403 or an unreachable host produced no error at all and an automatic pick waited out
+     * the startup watchdog's twenty-second deadline instead. Routing it to the source's `onError`
+     * is what lets the source probe wait for mpv without making dead sources slower to skip.
+     */
+    private fun handleMpvEndFile(detail: String, isError: Boolean) {
+        val parts = detail.split(':', limit = 3)
+        val reason = parts.getOrNull(0)?.toIntOrNull()
+        val errorCode = parts.getOrNull(1)?.toIntOrNull()
+        val errorText = parts.getOrNull(2).orEmpty()
+        if (!isError) {
+            log.d { "mpv end-file handle=$handle reason=$reason" }
+            return
+        }
+        log.w { "mpv end-file error handle=$handle reason=$reason error=$errorCode ($errorText)" }
+        val pending = pendingSource ?: return
+        if (releaseRequested || handle == 0L) return
+        pending.onError("The player could not play this source ($errorText).")
+    }
+
     @Synchronized
     private fun updateLocalProgress(positionMs: Long) {
         controlsState = controlsState.copy(positionMs = positionMs)
@@ -704,7 +739,13 @@ internal class NativePlayerController(
                 if (current == 0L) return
                 val isEnded = NativePlayerBridge.isEnded(current)
                 val isPaused = NativePlayerBridge.isPaused(current)
-                if (isEnded) {
+                val durationMs = NativePlayerBridge.durationMs(current)
+                // Only a real end restarts from zero; see PrematureEndOfStreamGuard.
+                val isRealEnd = isEnded && (
+                    durationMs <= 0L ||
+                        NativePlayerBridge.positionMs(current) >= durationMs * PrematureEndOfStreamGuard.COMPLETION_FRACTION
+                    )
+                if (isRealEnd) {
                     NativePlayerBridge.seekTo(current, 0L)
                     NativePlayerBridge.setPaused(current, false)
                 } else {
@@ -1241,6 +1282,9 @@ internal class NativePlayerController(
                     language = track.language,
                     trackId = track.id,
                 ),
+                isExternal = track.external == true,
+                isDefault = track.default,
+                isOriginKnown = track.external != null,
             )
         }
 
@@ -1357,6 +1401,16 @@ private fun String.toPlaybackLogKey(): String {
     return "scheme=$scheme length=$length hash=${hashCode()}"
 }
 
+private val logUrlPattern = Regex("""(https?)://([^/\s"']+)[^\s"']*""", RegexOption.IGNORE_CASE)
+
+/**
+ * Keeps scheme and host, drops path and query. mpv quotes the URL it failed on, and debrid and
+ * addon URLs carry credentials in exactly those parts - these logs are sent in by users.
+ */
+internal fun String.redactUrls(): String = logUrlPattern.replace(this) { match ->
+    "${match.groupValues[1]}://${match.groupValues[2]}/…"
+}
+
 private fun String.shouldLogNativeControlEvent(): Boolean {
     val normalized = lowercase()
     return normalized.contains("audio") ||
@@ -1377,6 +1431,13 @@ private data class NativeMpvTrack(
     val language: String = "",
     val selected: Boolean = false,
     val forced: Boolean = false,
+    /**
+     * mpv `track-list/N/external`. Null from a bridge built before it was added, which must read as
+     * "origin unknown" - never as "inside the file".
+     */
+    val external: Boolean? = null,
+    /** mpv `track-list/N/default` - the container's own default-track flag. */
+    val default: Boolean = false,
 )
 
 private fun resolveTrackId(index: Int, tracks: List<NativeMpvTrack>): Int? =

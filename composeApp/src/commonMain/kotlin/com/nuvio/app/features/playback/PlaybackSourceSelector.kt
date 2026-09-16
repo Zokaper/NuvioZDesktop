@@ -80,6 +80,12 @@ data class PlaybackSelectionContext(
     val secondarySubtitleLanguage: String? = null,
     val languageStrictness: LanguageStrictness = LanguageStrictness.PREFER,
     val displayMaxHeight: Int? = null,
+    /**
+     * "Prefer built-in subtitles": the subtitle language whose release-name claims earn a small
+     * ranking hint. Build it with [automaticEmbeddedSubtitleLanguage] - null for Classic and every
+     * manual path, which leaves the ordering untouched.
+     */
+    val preferredEmbeddedSubtitleLanguage: String? = null,
 ) {
     internal val rankingPreferences: SourceRankingPreferences
         get() = SourceRankingPreferences(
@@ -91,7 +97,30 @@ data class PlaybackSelectionContext(
             dynamicRangePolicy = dynamicRangePolicy,
             audioPreference = audioPreference,
             displayMaxHeight = displayMaxHeight,
+            preferredEmbeddedSubtitleLanguage = preferredEmbeddedSubtitleLanguage,
         )
+}
+
+/**
+ * The language "Prefer built-in subtitles" ranks for, or null when it must not apply.
+ *
+ * ⚠ **Streamlined and Instant automatic picks only.** Classic is the user reading release names,
+ * a manual pick is the same thing in any mode, and a download is not a play - in all three the
+ * user's own choice stands and this returns null, which makes the ranking hint zero for everyone.
+ *
+ * [primarySubtitleTarget] is the already-resolved first subtitle target (sentinels such as `none`,
+ * `forced` and `device` resolved by the caller); a blank one also returns null.
+ */
+fun automaticEmbeddedSubtitleLanguage(
+    enabled: Boolean,
+    mode: PlaybackMode,
+    manualSelection: Boolean,
+    downloadIntent: Boolean,
+    primarySubtitleTarget: String?,
+): String? {
+    if (!enabled || manualSelection || downloadIntent) return null
+    if (mode != PlaybackMode.STREAMLINED && mode != PlaybackMode.INSTANT) return null
+    return primarySubtitleTarget?.trim()?.takeIf { it.isNotEmpty() }
 }
 
 /**

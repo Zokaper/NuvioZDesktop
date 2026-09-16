@@ -314,6 +314,8 @@ internal fun PlayerScreenRuntime.switchToUserSelectedSource(stream: StreamItem) 
     // still fires against the chosen source, and a large remux that is merely slow to prepare
     // gets swapped out for a source the user did not ask for.
     nextEpisodeFallbacks = emptyList()
+    // A hand-picked source: "Prefer built-in subtitles" steps aside for the rest of this player.
+    activeSourceAutoPicked = false
     publishPartySourceChange(stream)
     switchToSource(stream)
 }

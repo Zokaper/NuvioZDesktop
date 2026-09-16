@@ -642,6 +642,14 @@ internal fun settingsSearchEntries(
             )
             add(
                 PlaybackSearchRow(
+                    "playback-prefer-embedded-subtitles",
+                    stringResource(Res.string.settings_playback_prefer_embedded_subtitles),
+                    stringResource(Res.string.settings_playback_prefer_embedded_subtitles_description),
+                    sectionOverride = playbackSourcePreferences,
+                ),
+            )
+            add(
+                PlaybackSearchRow(
                     "playback-torrent-autopick",
                     stringResource(Res.string.settings_playback_allow_torrent_autopick),
                     stringResource(Res.string.settings_playback_allow_torrent_autopick_description),

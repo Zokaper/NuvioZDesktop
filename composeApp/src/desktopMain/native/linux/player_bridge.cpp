@@ -762,7 +762,8 @@ std::string mpvGetStr(mpv_handle *mpv, const std::string &name) {
 
 // Build the formatted track list both the controls webview and the Kotlin
 // NativeMpvTrack decoder expect (macOS parity — mirrors tracksJsonForType):
-// [{"index":N,"id":"..","label":"..","language":"..","selected":bool,"forced":bool}]
+// [{"index":N,"id":"..","label":"..","language":"..","selected":bool,"forced":bool,
+//   "external":bool,"default":bool}]
 // (raw mpv track-list JSON does NOT match: id is an int, no index/label, lang!=language.)
 std::string buildTracksJson(mpv_handle *mpv, const char *wantedType) {
     if (!mpv) return "[]";
@@ -821,6 +822,8 @@ std::string buildTracksJson(mpv_handle *mpv, const char *wantedType) {
              + ",\"language\":\"" + jsonEscape(lang) + "\""
              + ",\"selected\":" + (selected ? "true" : "false")
              + ",\"forced\":" + (forced ? "true" : "false")
+             + ",\"external\":" + (mpvGetFlag(mpv, (pfx + "/external").c_str()) ? "true" : "false")
+             + ",\"default\":" + (mpvGetFlag(mpv, (pfx + "/default").c_str()) ? "true" : "false")
              + "}";
         logicalIndex++;
     }

@@ -36,6 +36,13 @@ data class SourceRankingPreferences(
     val audioPreference: AudioPreference = AudioPreference.ANY,
     val sizePreference: SizePreference = SizePreference.LARGEST_UNDER_CAP,
     val displayMaxHeight: Int? = null,
+    /**
+     * Streamlined/Instant "Prefer built-in subtitles": the subtitle language to look for, or null.
+     *
+     * Null everywhere else - Classic, manual picks, downloads - so [embeddedSubtitleScore] is zero
+     * for every candidate and the ordering is exactly what it was.
+     */
+    val preferredEmbeddedSubtitleLanguage: String? = null,
 ) {
     val is8kDisplay: Boolean
         get() = (displayMaxHeight ?: 0) >= VideoResolution.UHD_4320.height
@@ -155,15 +162,43 @@ object SourceRanking {
         fun Set<String>.covers(target: String?) =
             target != null && any { languageMatchesPreference(it, target) }
 
+        // Sidecar files and release-name claims both count here: this only decides whether a
+        // source is *watchable*, and `ITA.MultiSubs` very probably is.
+        val subtitles = facts.subtitleLanguages + facts.releaseSubtitleLanguages
         return when {
             facts.languages.covers(preferred) -> NAMES_PREFERRED
             facts.languages.isEmpty() || facts.isMultiLanguage -> UNDECLARED
             facts.languages.covers(secondary) -> NAMES_SECONDARY
-            facts.subtitleLanguages.covers(preferred) ||
-                facts.subtitleLanguages.covers(secondary) -> SUBTITLES_ONLY
+            subtitles.covers(preferred) || subtitles.covers(secondary) ||
+                facts.claimsMultiSubtitles -> SUBTITLES_ONLY
             else -> NAMES_OTHER_ONLY
         }
     }
+
+    /**
+     * The "Prefer built-in subtitles" hint. Higher is better; zero when the preference is off.
+     *
+     * ⚠ **Deliberately small.** The only evidence before mpv opens a file is the release name, and
+     * a release name is not proof - so this is worth what a codec preference is worth, a tie-break
+     * among releases the rest of [mediaScore] already rates alike, and never a resolution tier or a
+     * language tier. The player confirms against the real track list once the file is open.
+     *
+     * A hard-subbed release scores nothing: burned-in text is not a track that can be chosen.
+     */
+    fun embeddedSubtitleScore(facts: SourceFacts, preferences: SourceRankingPreferences): Int {
+        val target = preferences.preferredEmbeddedSubtitleLanguage?.trim()?.takeIf { it.isNotEmpty() }
+            ?: return 0
+        if (facts.isHardSubbed) return 0
+        return when {
+            facts.releaseSubtitleLanguages.any { languageMatchesPreference(it, target) } ->
+                EMBEDDED_SUBTITLES_NAMED
+            facts.claimsMultiSubtitles -> EMBEDDED_SUBTITLES_UNNAMED
+            else -> 0
+        }
+    }
+
+    const val EMBEDDED_SUBTITLES_NAMED = 2
+    const val EMBEDDED_SUBTITLES_UNNAMED = 1
 
     const val NAMES_PREFERRED = 4
     const val UNDECLARED = 3
@@ -253,6 +288,7 @@ object SourceRanking {
             channelScore(facts, preferences.audioPreference) +
             codecScore(facts, preferences.codecPreference) +
             releaseQualityScore(facts.releaseQuality) +
+            embeddedSubtitleScore(facts, preferences) +
             aiUpscaleScore(facts) +
             theatricalCaptureScore(facts)
 

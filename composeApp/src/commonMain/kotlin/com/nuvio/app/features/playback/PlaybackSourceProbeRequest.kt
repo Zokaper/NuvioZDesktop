@@ -72,6 +72,14 @@ suspend fun probePlaybackSource(
                 contentType = lookup("Content-Type"),
                 totalBytes = total,
                 finalUrl = response.url,
+                // An error answer is usually a short text page, and its words are the diagnosis:
+                // "Wrong IP" could only be inferred before because nothing kept the body.
+                bodyPreview = response.body
+                    .takeIf { response.status !in 200..299 }
+                    ?.replace(Regex("\\s+"), " ")
+                    ?.trim()
+                    ?.take(200)
+                    ?.takeIf { it.isNotEmpty() },
             ),
         )
     } catch (cancellation: CancellationException) {
@@ -124,6 +132,8 @@ data class PlaybackProbeResult(
     val contentType: String?,
     val totalBytes: Long?,
     val finalUrl: String,
+    /** The start of the response body, kept only for a non-2xx answer. */
+    val bodyPreview: String? = null,
 ) {
     /** `status=206 type=video/mp4 total=2952790016 host=…` - one line, for the playback log. */
     fun toLogFields(): String = buildString {

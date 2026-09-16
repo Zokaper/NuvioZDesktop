@@ -395,18 +395,136 @@ data class ReleaseLanguages(
  * already tagged fields, so they go straight to [normalizeLanguageCode], which does accept short
  * codes because there the value means what it says.
  */
-fun releaseLanguagesIn(text: String?): ReleaseLanguages {
-    val lower = text?.lowercase()?.takeIf { it.isNotBlank() } ?: return ReleaseLanguages()
-    val codes = mutableSetOf<String>()
+fun releaseLanguagesIn(text: String?): ReleaseLanguages = releaseLanguageEvidenceIn(text).audio
 
-    ReleaseLanguageTokens.forEach { (token, code) ->
-        if (lower.containsReleaseToken(token)) codes += code
+/**
+ * Everything a release name says about language, with audio and subtitles kept apart.
+ *
+ * ⚠ **The split is the fix.** `VOSTFR` is original audio with French subtitles, `LEGENDADO` is
+ * original audio with Brazilian subtitles, and `ENG.SUBS` / `ESub` / `SUB.ITA` name a subtitle
+ * track. All of these used to be read as the *audio* language, which is why the loading band
+ * printed French for an English film subtitled in French, and why a strict English preference
+ * demoted a release that was English all along.
+ */
+data class ReleaseLanguageEvidence(
+    val audio: ReleaseLanguages = ReleaseLanguages(),
+    /** [ReleaseLanguages.isMulti] here means `MultiSubs`: several subtitle tracks, unnamed. */
+    val subtitles: ReleaseLanguages = ReleaseLanguages(),
+    /** `DUBBED` - the audio is not the original, whatever the title's original language is. */
+    val isDubbed: Boolean = false,
+    /** `HC` / `HardSub` - burned into the picture, so not a selectable subtitle track. */
+    val isHardSubbed: Boolean = false,
+)
+
+fun releaseLanguageEvidenceIn(text: String?): ReleaseLanguageEvidence {
+    val lower = text?.lowercase()?.takeIf { it.isNotBlank() } ?: return ReleaseLanguageEvidence()
+    val words = releaseWordsIn(lower)
+    val wordSet = words.mapTo(mutableSetOf()) { it.value }
+
+    // Subtitle words first, so the tokens they claim can be blanked out before the audio scan.
+    val masked = lower.toCharArray()
+    fun consume(word: ReleaseWord) {
+        for (index in word.start until word.end) masked[index] = ' '
     }
-    codes += flagLanguagesIn(text)
+    val subtitleCodes = mutableSetOf<String>()
+    var multiSubtitles = false
+    words.forEachIndexed { position, word ->
+        SubtitleCompoundWords[word.value]?.let { code ->
+            if (code == MULTI_SUBTITLE_MARKER) multiSubtitles = true else subtitleCodes += code
+            consume(word)
+            return@forEachIndexed
+        }
+        compoundSubtitleLanguage(word.value)?.let { code ->
+            subtitleCodes += code
+            consume(word)
+            return@forEachIndexed
+        }
+        if (word.value !in SubtitleWords) return@forEachIndexed
+        consume(word)
+        // `SUB.ITA` is the Italian convention and `ENG.SUBS` the English one. The following word
+        // is tried first so `ITA.SUB.ENG` keeps Italian as the audio and English as the subtitle.
+        val following = words.getOrNull(position + 1)
+        val preceding = words.getOrNull(position - 1)
+        val attached = listOfNotNull(following, preceding).firstOrNull { neighbour ->
+            neighbour.value in MultiLanguageTokens || SingleWordReleaseLanguages.containsKey(neighbour.value)
+        } ?: return@forEachIndexed
+        if (attached.value in MultiLanguageTokens) {
+            multiSubtitles = true
+        } else {
+            subtitleCodes += SingleWordReleaseLanguages.getValue(attached.value)
+        }
+        consume(attached)
+    }
 
-    val isMulti = MultiLanguageTokens.any { lower.containsReleaseToken(it) }
-    return ReleaseLanguages(codes = codes, isMulti = isMulti)
+    val audioText = masked.concatToString()
+    val audioCodes = mutableSetOf<String>()
+    ReleaseLanguageTokens.forEach { (token, code) ->
+        if (audioText.containsReleaseToken(token)) audioCodes += code
+    }
+    audioCodes += flagLanguagesIn(text)
+
+    return ReleaseLanguageEvidence(
+        audio = ReleaseLanguages(
+            codes = audioCodes,
+            isMulti = MultiLanguageTokens.any { audioText.containsReleaseToken(it) },
+        ),
+        subtitles = ReleaseLanguages(codes = subtitleCodes, isMulti = multiSubtitles),
+        isDubbed = DubbedWords.any { it in wordSet },
+        isHardSubbed = HardSubWords.any { it in wordSet },
+    )
 }
+
+private data class ReleaseWord(val value: String, val start: Int, val end: Int)
+
+/** Maximal letter-or-digit runs - the same boundary [containsReleaseToken] uses. */
+private fun releaseWordsIn(lower: String): List<ReleaseWord> {
+    val words = mutableListOf<ReleaseWord>()
+    var start = -1
+    for (index in 0..lower.length) {
+        val isWord = index < lower.length && lower[index].isLetterOrDigit()
+        if (isWord && start < 0) start = index
+        if (!isWord && start >= 0) {
+            words += ReleaseWord(lower.substring(start, index), start, index)
+            start = -1
+        }
+    }
+    return words
+}
+
+/** `EngSub`, `ITASubs`, `SubIta`: a language word fused to a subtitle word. */
+private fun compoundSubtitleLanguage(word: String): String? {
+    for (suffix in CompoundSubtitleAffixes) {
+        if (word.length > suffix.length && word.endsWith(suffix)) {
+            SingleWordReleaseLanguages[word.removeSuffix(suffix)]?.let { return it }
+        }
+        if (word.length > suffix.length && word.startsWith(suffix)) {
+            SingleWordReleaseLanguages[word.removePrefix(suffix)]?.let { return it }
+        }
+    }
+    return null
+}
+
+private const val MULTI_SUBTITLE_MARKER = "*multi*"
+
+private val SubtitleWords = setOf(
+    "sub", "subs", "subbed", "subtitle", "subtitles", "subtitled",
+    "subtitulado", "subtitulos", "legenda", "legendas", "sottotitoli", "untertitel",
+)
+
+private val CompoundSubtitleAffixes = listOf("subs", "sub")
+
+/** Scene words that are subtitle claims in their own right. */
+private val SubtitleCompoundWords = mapOf(
+    "esub" to "en", "esubs" to "en",
+    "vostfr" to "fr", "vost" to "fr",
+    "legendado" to "pt-br",
+    "vose" to "es",
+    "multisub" to MULTI_SUBTITLE_MARKER, "multisubs" to MULTI_SUBTITLE_MARKER,
+)
+
+private val DubbedWords = listOf("dub", "dubbed", "dubbing")
+
+private val HardSubWords = listOf("hc", "hardsub", "hardsubs", "hardsubbed", "hardcoded")
 
 /**
  * Delimiter-bounded, because release names are dot- and underscore-separated rather than spaced.
@@ -487,8 +605,9 @@ private val FlagCountryToLanguage = mapOf(
     "ir" to "fa", "ph" to "tl",
 )
 
+// `multisub` and `multisubs` used to be here, which made a subtitle claim an audio one.
 private val MultiLanguageTokens = listOf(
-    "multi", "multilang", "multilanguage", "multiaudio", "multisub", "multisubs",
+    "multi", "multilang", "multilanguage", "multiaudio",
     "dual", "dualaudio", "dual audio",
 )
 
@@ -505,11 +624,13 @@ private val ReleaseLanguageTokens: List<Pair<String, String>> = buildList {
     put("en", "eng", "english")
     put("es", "spa", "esp", "spanish", "castellano", "espanol")
     put("es-419", "latino", "latin spanish")
-    put("fr", "fre", "fra", "french", "francais", "truefrench", "vostfr", "vff", "vfq", "vfi")
+    // `vostfr` is French *subtitles* over original audio - see `SubtitleCompoundWords`.
+    put("fr", "fre", "fra", "french", "francais", "truefrench", "vff", "vfq", "vfi")
     put("de", "ger", "deu", "german", "deutsch")
     put("it", "ita", "italian", "italiano")
     put("pt", "por", "portuguese", "portugues")
-    put("pt-br", "legendado", "dublado", "brazilian")
+    // `legendado` is Brazilian *subtitles*; `dublado` is the Brazilian dub.
+    put("pt-br", "dublado", "brazilian")
     put("ru", "rus", "russian")
     put("uk", "ukr", "ukrainian")
     put("pl", "pol", "polish", "polski", "lektor")
@@ -547,3 +668,8 @@ private val ReleaseLanguageTokens: List<Pair<String, String>> = buildList {
     put("fa", "per", "fas", "persian", "farsi")
     put("tl", "tgl", "fil", "tagalog", "filipino")
 }
+
+/** The single-word entries of [ReleaseLanguageTokens], for attaching a language to `SUBS`. */
+private val SingleWordReleaseLanguages: Map<String, String> = ReleaseLanguageTokens
+    .filter { (token, _) -> token.all(Char::isLetterOrDigit) }
+    .associate { it }

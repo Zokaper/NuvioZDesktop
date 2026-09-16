@@ -52,6 +52,7 @@ internal fun PlayerScreen(
     playbackAttempt: Int = 1,
     expectedRuntimeMinutes: Int? = null,
     partySourceDescriptor: PartySourceDescriptorV2? = null,
+    automaticSourceSelection: Boolean = false,
 ) {
     PlayerScreenContent(
         PlayerScreenArgs(
@@ -100,6 +101,7 @@ internal fun PlayerScreen(
             playbackAttempt = playbackAttempt,
             expectedRuntimeMinutes = expectedRuntimeMinutes,
             partySourceDescriptor = partySourceDescriptor,
+            automaticSourceSelection = automaticSourceSelection,
         )
     )
 }

@@ -74,9 +74,15 @@ object PlaybackLoadingSessions {
         title: String? = null,
         attempt: Int = 1,
         facts: SourceFacts? = null,
+        contentLanguage: String? = null,
     ): PlaybackLoadingSession = PlaybackLoadingSession(
         token = token,
-        state = PlaybackLoadingState(step = step, attempt = attempt, facts = facts),
+        state = PlaybackLoadingState(
+            step = step,
+            attempt = attempt,
+            facts = facts,
+            contentLanguage = contentLanguage,
+        ),
         artwork = artwork,
         logo = logo,
         title = title,

@@ -47,6 +47,8 @@ typedef enum mpv_format {
 typedef enum mpv_event_id {
     MPV_EVENT_NONE = 0,
     MPV_EVENT_SHUTDOWN = 1,
+    MPV_EVENT_LOG_MESSAGE = 2,
+    MPV_EVENT_END_FILE = 7,
     MPV_EVENT_PLAYBACK_RESTART = 21,
 } mpv_event_id;
 
@@ -56,7 +58,21 @@ typedef struct mpv_event {
     uint64_t reply_userdata;
     void *data;
 } mpv_event;
+
+// Leading fields only; mpv appends to these structs and never reorders them.
+typedef struct mpv_event_end_file {
+    int reason;
+    int error;
+} mpv_event_end_file;
+
+typedef struct mpv_event_log_message {
+    const char *prefix;
+    const char *level;
+    const char *text;
+} mpv_event_log_message;
 }
+
+constexpr int MPV_END_FILE_REASON_ERROR = 4;
 
 namespace {
 
@@ -502,6 +518,7 @@ struct MpvApi {
     using mpv_free_fn = void (*)(void *);
     using mpv_wait_event_fn = mpv_event *(*)(mpv_handle *, double);
     using mpv_wakeup_fn = void (*)(mpv_handle *);
+    using mpv_request_log_messages_fn = int (*)(mpv_handle *, const char *);
 
     HMODULE library = nullptr;
     std::once_flag loadOnce;
@@ -520,6 +537,7 @@ struct MpvApi {
     mpv_free_fn freeValue = nullptr;
     mpv_wait_event_fn waitEvent = nullptr;
     mpv_wakeup_fn wakeup = nullptr;
+    mpv_request_log_messages_fn requestLogMessages = nullptr;
 
     void ensureLoaded() {
         std::call_once(loadOnce, [this]() { load(); });
@@ -579,6 +597,9 @@ struct MpvApi {
         freeValue = loadSymbol<mpv_free_fn>("mpv_free");
         waitEvent = loadSymbol<mpv_wait_event_fn>("mpv_wait_event");
         wakeup = loadSymbol<mpv_wakeup_fn>("mpv_wakeup");
+        // Optional on purpose: diagnostics must never be the reason a player fails to load.
+        requestLogMessages = reinterpret_cast<mpv_request_log_messages_fn>(
+            GetProcAddress(library, "mpv_request_log_messages"));
     }
 
     template <typename T>
@@ -1165,6 +1186,16 @@ public:
 
     bool isEnded() {
         return flagProperty("eof-reached", false);
+    }
+
+    // Play-after-end restarts from zero only when the end is real. A stream that failed mid-file
+    // also reports eof-reached, and restarting it threw away the position the user was recovering.
+    // Same 90% threshold as PrematureEndOfStreamGuard on the Kotlin side.
+    bool isEndedNearEnd() {
+        if (!isEnded()) return false;
+        double duration = doubleProperty("duration", 0.0);
+        if (!std::isfinite(duration) || duration <= 0.0) return true;
+        return rawPositionSeconds() >= duration * 0.9;
     }
 
     int videoWidth() {
@@ -1810,6 +1841,15 @@ private:
             setMpvOptionStringLocked("demuxer-seekable-cache", "yes");
             setMpvOptionStringLocked("cache-secs", "36000");
             setMpvOptionStringLocked("hr-seek", "no");
+            // A dropped connection used to end the file: ffmpeg's HTTP reader does not reconnect
+            // unless asked, so the demuxer saw EOF and mpv reported `eof-reached` mid-episode.
+            // HTTP errors are deliberately not retried - a 403 from an expired or IP-bound link
+            // should fail fast into the source chain, not loop.
+            setMpvOptionStringLocked(
+                "stream-lavf-o",
+                "reconnect=1,reconnect_on_network_error=1,reconnect_delay_max=5"
+            );
+            setMpvOptionStringLocked("network-timeout", "30");
 
             int64_t wid = (int64_t)(intptr_t)containerHwnd;
             int widResult = api.setOption(mpv, "wid", MPV_FORMAT_INT64, &wid);
@@ -1833,6 +1873,9 @@ private:
             int initResult = api.initialize(mpv);
             if (initResult < 0) {
                 throw std::runtime_error(std::string("mpv_initialize failed: ") + api.errorText(initResult));
+            }
+            if (api.requestLogMessages) {
+                api.requestLogMessages(mpv, "warn");
             }
 
             std::vector<const char *> loadCommand = {"loadfile", sourceUrl.c_str()};
@@ -1960,7 +2003,7 @@ private:
         }
         if (type == "setPlaybackState" || type == "setPlaybackStateQuiet") {
             bool shouldPlay = value >= 0.5;
-            if (shouldPlay && isEnded()) {
+            if (shouldPlay && isEndedNearEnd()) {
                 seekToMilliseconds(0);
             }
             setPaused(!shouldPlay);
@@ -2052,7 +2095,40 @@ private:
                 firstFrameRendered.store(true);
                 sendPlayerEvent("firstFrame", 1.0);
             }
+            if (event->event_id == MPV_EVENT_END_FILE && event->data) {
+                // Under keep-open a normal end never arrives here; what does is a file that could
+                // not be loaded or that failed while playing. Reason and error ride in the type
+                // because the sink carries one number.
+                auto *endFile = static_cast<mpv_event_end_file *>(event->data);
+                std::string type = "mpvEndFile:" + std::to_string(endFile->reason) + ":" +
+                    std::to_string(endFile->error) + ":" + mpvApi().errorText(endFile->error);
+                sendPlayerEvent(type, endFile->reason == MPV_END_FILE_REASON_ERROR ? 1.0 : 0.0);
+            }
+            if (event->event_id == MPV_EVENT_LOG_MESSAGE && event->data) {
+                forwardMpvLog(static_cast<mpv_event_log_message *>(event->data));
+            }
         }
+    }
+
+    // mpv's own account of why a stream stalled or ended, which nothing else can see. Capped,
+    // because a dying connection can warn in a tight loop and every line crosses JNI to the EDT.
+    ULONGLONG mpvLogWindowStartMs = 0;
+    int mpvLogLinesInWindow = 0;
+
+    void forwardMpvLog(const mpv_event_log_message *message) {
+        if (!message->text) return;
+        ULONGLONG now = GetTickCount64();
+        if (now - mpvLogWindowStartMs > 10000) {
+            mpvLogWindowStartMs = now;
+            mpvLogLinesInWindow = 0;
+        }
+        if (++mpvLogLinesInWindow > 40) return;
+        std::string text = message->text;
+        while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) text.pop_back();
+        if (text.empty()) return;
+        std::string type = std::string("mpvLog:") + (message->level ? message->level : "?") + ":" +
+            (message->prefix ? message->prefix : "?") + ": " + text;
+        sendPlayerEvent(type, 0.0);
     }
 
     JNIEnv *jniEnvDidAttach(bool *didAttach) {
@@ -2223,6 +2299,10 @@ private:
             long long channelCount = int64Property((prefix + "/demux-channel-count").c_str(), 0);
             bool selected = flagProperty((prefix + "/selected").c_str(), false);
             bool forced = flagProperty((prefix + "/forced").c_str(), false);
+            // Authoritative container flags, read after mpv has opened the file: `external` separates
+            // a sidecar or addon subtitle (sub-add) from a track inside the container.
+            bool external = flagProperty((prefix + "/external").c_str(), false);
+            bool isDefault = flagProperty((prefix + "/default").c_str(), false);
             std::string label = formatTrackTitle(type, logicalIndex, title, language, codec, decoderDescription, channels, (int)channelCount);
 
             if (!first) json << ",";
@@ -2233,7 +2313,9 @@ private:
                  << "\"label\":\"" << jsonEscape(label) << "\","
                  << "\"language\":\"" << jsonEscape(language) << "\","
                  << "\"selected\":" << (selected ? "true" : "false") << ","
-                 << "\"forced\":" << (forced ? "true" : "false")
+                 << "\"forced\":" << (forced ? "true" : "false") << ","
+                 << "\"external\":" << (external ? "true" : "false") << ","
+                 << "\"default\":" << (isDefault ? "true" : "false")
                  << "}";
             logicalIndex++;
         }

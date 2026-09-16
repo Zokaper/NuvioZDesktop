@@ -1,6 +1,7 @@
 package com.nuvio.app.features.downloads
 
 import com.nuvio.app.core.language.normalizeLanguageCode
+import com.nuvio.app.core.language.releaseLanguageEvidenceIn
 import com.nuvio.app.core.language.releaseLanguagesIn
 import com.nuvio.app.core.media.ReleaseTags
 import com.nuvio.app.features.streams.AioParsedFile
@@ -87,8 +88,28 @@ data class SourceFacts(
      * reason: it is what lets a strict preference keep the releases most likely to satisfy it.
      */
     val isMultiLanguage: Boolean = false,
-    /** Normalized subtitle language codes, from the stream's own subtitle list. */
+    /**
+     * [languages] came from a tagged field (Nuvio parsed, AIOStreams parsedFile, plugin), not
+     * from release-name prose. `SourceLanguageInference` ranks the two differently.
+     */
+    val hasStructuredLanguages: Boolean = false,
+    /** Normalized subtitle language codes, from the stream's own sidecar subtitle list. */
     val subtitleLanguages: Set<String> = emptySet(),
+    /**
+     * Subtitle languages the *release name* claims - `VOSTFR`, `ESub`, `ENG.SUBS`, `SUB.ITA`.
+     *
+     * ⚠ **A hint, never proof.** Nothing checks the file before mpv opens it (that would break
+     * IP-bound debrid links), so this may rank a source a little higher and nothing more. Kept
+     * apart from [subtitleLanguages] because those are sidecar files the addon actually listed,
+     * and these, if they exist at all, are inside the container.
+     */
+    val releaseSubtitleLanguages: Set<String> = emptySet(),
+    /** The release name claims several unnamed subtitle tracks - `MultiSubs`. */
+    val claimsMultiSubtitles: Boolean = false,
+    /** `DUBBED`: the audio is not the title's original language, whatever that is. */
+    val claimsDubbedAudio: Boolean = false,
+    /** `HC` / `HardSub`: subtitles burned into the picture - not a track anything can select. */
+    val isHardSubbed: Boolean = false,
     val releaseQuality: String? = null,
     val releaseGroup: String? = null,
     val seeders: Int? = null,
@@ -178,6 +199,15 @@ object SourceFactsExtractor {
             filenames + listOfNotNull(stream.name, stream.description, plugin?.quality)
             ).joinToString(" ")
 
+        // Language prose only: `plugin.quality` names no language, and `plugin.language` is a
+        // tagged field read through `normalizeLanguageValues` below.
+        val languageEvidence = releaseLanguageEvidenceIn(
+            (filenames + listOfNotNull(stream.name, stream.description)).joinToString(" "),
+        )
+        val structuredLanguages = normalizeLanguages(nuvioParsed)
+            .ifEmpty { normalizeLanguages(aio?.parsedFile) }
+            .ifEmpty { normalizeLanguageValues(listOfNotNull(plugin?.language)) }
+
         val filenameFacts = filenames.firstOrNull()?.let(::parseTextFacts)
         val pluginFacts = parseTextFacts(
             listOfNotNull(plugin?.quality, plugin?.language).joinToString(" "),
@@ -266,11 +296,10 @@ object SourceFactsExtractor {
                     text = releaseText,
                 ),
             ),
-            languages = normalizeLanguages(nuvioParsed)
-                .ifEmpty { normalizeLanguages(aio?.parsedFile) }
-                .ifEmpty { normalizeLanguageValues(listOfNotNull(plugin?.language)) }
+            languages = structuredLanguages
                 .ifEmpty { filenameFacts?.languages.orEmpty() }
                 .ifEmpty { fallbackFacts.languages },
+            hasStructuredLanguages = structuredLanguages.isNotEmpty(),
             // ⚠ **Not part of the ladder above, and deliberately so.** A structured field can
             // name three languages while the release name is the only place `MULTi` appears,
             // and vice versa. Falling through on first hit would drop whichever came second,
@@ -298,10 +327,17 @@ object SourceFactsExtractor {
             // Subtitles are the other half of "no English audio or subs". A release with the
             // wrong audio but the right subtitle track is not the same as one with neither,
             // and ranking them together threw away the watchable one.
+            //
+            // ⚠ **This used to fall back to `nuvioParsed.languages`** - the *audio* languages - so
+            // any Nuvio-parsed release with no sidecar subtitles "had" subtitles in whatever it was
+            // dubbed in, and the loading band printed `Hindi / Hindi` for a Hindi-only file.
             subtitleLanguages = stream.externalSubtitles
                 .mapNotNull { normalizeLanguageCode(it.language) }
-                .toSet()
-                .ifEmpty { normalizeLanguageValues(nuvioParsed?.languages.orEmpty()) },
+                .toSet(),
+            releaseSubtitleLanguages = languageEvidence.subtitles.codes,
+            claimsMultiSubtitles = languageEvidence.subtitles.isMulti,
+            claimsDubbedAudio = languageEvidence.isDubbed,
+            isHardSubbed = languageEvidence.isHardSubbed,
             releaseQuality = nuvioParsed?.quality?.normalized()
                 ?: aio?.parsedFile?.quality?.normalized()
                 ?: pluginFacts.releaseQuality
