@@ -814,8 +814,6 @@ internal fun StreamDestination(
         // invalidated it.
         playerSettings.playbackAudioPreference,
         playerSettings.playbackPreferEmbeddedSubtitles,
-        playerSettings.preferredSubtitleLanguage,
-        playerSettings.secondaryPreferredSubtitleLanguage,
     ) {
         playbackSelectionContextOf(
             settings = playerSettings,

@@ -2,6 +2,95 @@
 
 Last updated: 2026-09-16
 
+## Desktop consolidation - one branch, one gate, one MSI (2026-09-16)
+
+⚠ **Automated gates green on the consolidated branch. Nothing here has been on hardware.**
+Desktop feature development through the current roadmap work is complete enough to move on; what
+remains is QA debt, not an open development phase. The next roadmap task is **Phase 6 - Social to
+mobile**, which this pass deliberately does not start.
+
+**Canonical desktop branch: `claude/desktop-consolidation`.**
+
+### What was actually wrong
+
+Two branches had been treated as "the newest work" at different times, and **neither contained the
+other**. `claude/social-wt-ux-pass` and `claude/playback-eof-probe-fixes` both forked from `2d8be68d`
+(UX pass Stage 8, 1,957 tests). That is exactly what the 2,016-vs-1,990 test counts were reporting:
++59 tests on one line and +33 on the other, from the same base. Picking either branch as "the latest"
+would have silently dropped a completed, friend-verified feature set.
+
+| Line | Head | Carried |
+| --- | --- | --- |
+| `claude/playback-eof-probe-fixes` | `8f0e5650` | `01524bb1` premature-EOF guard + probe-after-mpv-opens (the AIOStreams **Wrong IP** fix) + native-player failover in all three bridges; `ad6feb22` source-language inference and "Prefer built-in subtitles"; `cb0be213`/`8f0e5650` the quality-panel subtitle chip, added and reverted the same day |
+| `claude/social-wt-ux-pass` | `42148c22` | `cb8088e8` the four 2026-09-15 two-client hardware fixes; `42148c22` the unified playback-preferences pass |
+
+Merged as `748b9632`. Four conflicts, all at the seam where both lines touched language:
+
+- **`PlayerSettingsRepository.kt`** - `rankableAudioLanguage` / `rankableSecondaryAudioLanguage` stay
+  **deleted**. `42148c22` replaced them with `resolveRankableLanguages`, which *resolves* the
+  `device`/`original` sentinels the old accessors merely stripped; restoring them would reinstate the
+  inert-`REQUIRE` default that pass exists to close. `primarySubtitleTarget` survives - it resolves
+  subtitle sentinels, not audio, and "Prefer built-in subtitles" is its only caller.
+- **`PlaybackSelectionContextFactory.kt`** - gains `preferredEmbeddedSubtitleLanguage`, **passed and
+  not derived**: whether a pick is automatic is the caller's fact.
+- **`StreamDestination.kt`** - both language values kept, because they answer different questions under
+  deliberately different rules. `requestedContentLanguage` is `peek`-only and refuses to read a
+  production country as a language, because it is *displayed*. `contentOriginalLanguage` is only ever
+  *ranked* with, keeps `resolveContentLanguage`'s country fallback, and is **still seeded null rather
+  than from its neighbour** - each half keeps exactly the behaviour its own branch verified. No hybrid
+  was invented during a consolidation pass.
+- **`PlayerEpisodeQualityChooser.kt`** - both imports.
+
+**Merge integrity was checked mechanically, not by eye.** Every substantive line either branch added
+against `2d8be68d` was confirmed present in the merge result: **zero missing**, both directions.
+
+### Gates, all from `claude/desktop-consolidation`
+
+Gradle daemons were stopped and `composeApp/build/test-results/desktopTest/` deleted first.
+
+| Gate | Result |
+| --- | --- |
+| `:composeApp:compileKotlinDesktop` | **BUILD SUCCESSFUL** |
+| `:composeApp:desktopTest` | **BUILD SUCCESSFUL in 13m 10s - 2,050 tests, 0 failures, 0 errors**, 251 result files, every one written by that invocation |
+| `scripts/run-pure-suites.sh` | all eight groups green - 271 / 107 / 64 / 17 / 29 / 115 / 63 / 3 = **669** |
+| backend `scripts/test-db.sh` | **12 files / 286 tests PASS** |
+
+2,050 is the union it should be: 2,016 + 1,990 - 1,957 = 2,049. **None of the three known flakies
+reproduced** - `NativePlayerControllerTeardownTest.failedOrdinaryDisposeBlocksTerminalNavigation`
+passed, as did the download-queue E2E case.
+
+**Mobile source sets - environment limits, not source failures.**
+
+- `:composeApp:compileKotlinIosSimulatorArm64` is **SKIPPED** on a Windows host. It needs macOS. This
+  says nothing either way about the iOS actual.
+- `:composeApp:compileAndroidMain` **fails, exactly as it did before this work**: 15 errors in four
+  files nothing here touches - `AddonPlatform.android.kt` (`addonHttpClient`) and desktop-only Compose
+  pointer APIs used from `commonMain` (`MainAppContent.kt`, `HomePosterHoverPreview.kt`,
+  `PlayerScreenContent.kt`). The signal worth having is the negative one: **`PlayerSettingsStorage.android.kt`
+  was analysed and reported clean**, and it is a file *both* branches changed. The shared settings code
+  compiles for Android; the module does not, for reasons that predate all of this.
+
+### What is in this build
+
+Phase 5 onboarding redesign; Social + Watch Together stabilization; the Social/Watch Together UX pass;
+the later Direct Join / Next Episode / party-lifecycle hardware fixes; the friend-machine playback
+fixes (premature EOF, AIOStreams Wrong IP, native-player failover); source-language inference and
+"Prefer built-in subtitles"; and the unified playback-preferences pass.
+
+**The friend's previously reproducible playback failures passed on his dedicated test build.** That
+build was `01524bb1` - three commits before the built-in-subtitle work and on the far side of the merge
+from the preferences pass. So that result stands for the EOF and Wrong IP fixes *as they were then*,
+and re-confirming them across the merge is on the checklist rather than assumed.
+
+### What is not proven
+
+⚠ **Broad physical QA remains deferred.** Nothing on the consolidated branch has been run on hardware.
+The short, targeted checklist for this MSI - only the seams that changed, not the historical matrix -
+is the workspace-root `HANDOFF-desktop-consolidation.md`. Specifically still unproven: the Playback
+settings page has **no render harness** and has been compiled and never drawn; setup revision 8's
+language step has been rendered but never walked; and the four fixes in `cb8088e8` were authored from
+a previous session's two-client run and committed by a later session that only proved they compile.
+
 ## Playback preferences - one model, actually enforced (2026-09-16)
 
 ⚠ **Automated gate green; none of it has been on hardware.** The checklist is §Verification 4 of the
