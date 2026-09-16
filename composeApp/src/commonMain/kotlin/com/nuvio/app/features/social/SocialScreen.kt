@@ -233,8 +233,10 @@ fun SocialScreen(
             last != null && info.totalItemsCount > 0 && last >= info.totalItemsCount - 4
         }
     }
-    LaunchedEffect(nearEnd, state.nextCursor, state.isLoadingMore) {
-        if (nearEnd && state.nextCursor != null && !state.isLoadingMore) {
+    // Not keyed on `isLoadingMore`: the page request sets it the moment it starts, which cancelled
+    // this effect mid-request, surfaced the cancellation as an error, and relaunched it - forever.
+    LaunchedEffect(nearEnd, state.nextCursor) {
+        if (nearEnd && state.nextCursor != null && !SocialRepository.uiState.value.isLoadingMore) {
             SocialRepository.refresh(append = true)
         }
     }

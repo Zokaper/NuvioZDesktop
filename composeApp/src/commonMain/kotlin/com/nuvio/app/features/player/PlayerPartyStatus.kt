@@ -35,7 +35,6 @@ import kotlinx.coroutines.delay
 
 /** How often the pill re-reads the signals that are not Compose state (the stall guard, a pending seek). */
 private const val PartyStatusTickMs = 250L
-
 /**
  * The one status line the player shows about the party, debounced.
  *
@@ -152,6 +151,8 @@ internal fun PlayerScreenRuntime.rememberPartyStatusLine(
                     hostStartReleased = partyStartReleasedKey == party.generationKey(),
                     hostBufferingReleased = false,
                 ),
+                // Set for guests too, the first time the durable row reads playing (PlayerWatchPartyEffect).
+                partyStarted = partyStartReleasedKey == party.generationKey(),
                 awaitingSource = if (isHost) {
                     partyMembersAwaitingSource(party, excludeProfileId = viewerId).map { it.toStatusPerson() }
                 } else {

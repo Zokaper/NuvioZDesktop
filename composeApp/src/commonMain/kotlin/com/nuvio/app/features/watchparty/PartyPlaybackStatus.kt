@@ -78,6 +78,12 @@ data class PartyPlaybackStatusInputs(
     val positionUnreachable: Boolean = false,
     val waitingForHostSource: Boolean = false,
     val gate: PartyPlaybackGate = PartyPlaybackGate(allowPlayback = true, reason = PartyHoldReason.NONE),
+    /**
+     * This generation has already played. A guest's gate reads every non-playing party as
+     * [PartyHoldReason.WAITING_FOR_HOST], so without this a mid-film pause - the guest's own included -
+     * says the host has not started.
+     */
+    val partyStarted: Boolean = false,
     /** Members the host's start gate waits on, named. */
     val awaitingSource: List<PartyStatusPerson> = emptyList(),
     /** Other members a stall-guard hold is waiting on (host: `holdingProfiles`; guest: the tick's `hold`). */
@@ -170,8 +176,9 @@ fun projectPartyPlaybackStatus(inputs: PartyPlaybackStatusInputs): PartyStatusLi
     if (guest && (hostBuffering || gate.reason == PartyHoldReason.HOST_BUFFERING)) {
         return PartyStatusLine(PartyStatusKind.HostBuffering, "$hostName is buffering", hostPeople, tone = PartyStatusTone.Waiting)
     }
-    // 8. The durable row lags the timeline; a playing timeline already answered this.
-    if (guest && gate.reason == PartyHoldReason.WAITING_FOR_HOST && !timelinePlaying) {
+    // 8. The durable row lags the timeline; a playing timeline already answered this. Once the party
+    // has started, a paused party is a pause (row 13), not a start that has not happened.
+    if (guest && gate.reason == PartyHoldReason.WAITING_FOR_HOST && !timelinePlaying && !partyStarted) {
         return PartyStatusLine(PartyStatusKind.WaitingForHostStart, "Waiting for $hostName to start", hostPeople, tone = PartyStatusTone.Waiting)
     }
     // 9.

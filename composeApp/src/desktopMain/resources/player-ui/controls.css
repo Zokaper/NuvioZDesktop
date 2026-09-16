@@ -508,25 +508,26 @@ button:disabled {
   z-index: 7;
   display: none;
   align-items: center;
-  gap: 8px;
-  max-width: min(560px, calc(100% - (var(--hp) * 2)));
-  min-height: 36px;
-  padding: 4px 6px 4px 14px;
+  gap: 10px;
+  max-width: min(640px, calc(100% - (var(--hp) * 2)));
+  min-height: 46px;
+  padding: 6px 7px 6px 16px;
   border-radius: 999px;
-  border: 1px solid var(--theme-border-default);
-  background: rgba(0, 0, 0, .74);
-  color: var(--theme-text-primary);
-  font-size: 13px;
+  border: 1px solid rgba(255, 255, 255, .16);
+  background: rgba(12, 12, 14, .88);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .45);
+  color: #fff;
+  font-size: 15px;
   font-weight: 600;
   line-height: 1.3;
   pointer-events: none;
   transition: transform .18s ease, opacity .18s ease, background-color .18s ease;
 }
 
-.party-banner:not(.has-action) { padding-right: 16px; }
+.party-banner:not(.has-action) { padding-right: 20px; }
 
 @media (min-width: 1440px) {
-  .party-banner { max-width: min(720px, calc(100% - (var(--hp) * 2))); }
+  .party-banner { max-width: min(800px, calc(100% - (var(--hp) * 2))); }
 }
 
 .party-banner.visible {
@@ -536,20 +537,20 @@ button:disabled {
 /* The chrome has gone: smaller and quieter, never gone. A paused film with no explanation is the bug
    this exists for. The action comes back with the chrome, which any pointer movement restores. */
 .party-banner.compact {
-  transform: translateX(-50%) scale(.85);
-  background: rgba(0, 0, 0, .52);
-  opacity: .9;
+  transform: translateX(-50%) scale(.9);
+  background: rgba(12, 12, 14, .72);
+  opacity: .95;
 }
 
 .party-banner.compact .party-banner-action { display: none; }
-.party-banner.compact { padding-right: 16px; }
+.party-banner.compact { padding-right: 20px; }
 
 .party-banner-dot {
   flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-  background: var(--theme-text-muted);
+  background: rgba(255, 255, 255, .55);
 }
 
 .party-banner[data-tone="waiting"] .party-banner-dot {
@@ -572,18 +573,18 @@ button:disabled {
 .party-banner-avatar {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   overflow: hidden;
   border-radius: 50%;
-  border: 1.5px solid rgba(0, 0, 0, .74);
+  border: 1.5px solid rgba(255, 255, 255, .22);
   background: #1e88e5;
   color: #fff;
-  font-size: 10.5px;
+  font-size: 13px;
   font-weight: 700;
 }
 
-.party-banner-avatar + .party-banner-avatar { margin-left: -7px; }
+.party-banner-avatar + .party-banner-avatar { margin-left: -9px; }
 .party-banner-avatar img { width: 100%; height: 100%; object-fit: cover; }
 
 .party-banner-text {
@@ -595,14 +596,14 @@ button:disabled {
 
 .party-banner-action {
   flex: 0 0 auto;
-  min-height: 28px;
-  padding: 0 12px;
+  min-height: 34px;
+  padding: 0 16px;
   border: 0;
   border-radius: 999px;
-  background: var(--theme-accent-strong);
-  color: #fff;
+  background: var(--theme-accent);
+  color: var(--theme-on-accent);
   font: inherit;
-  font-size: 12.5px;
+  font-size: 14px;
   font-weight: 700;
   white-space: nowrap;
   cursor: pointer;
@@ -610,8 +611,8 @@ button:disabled {
 }
 
 .party-banner-action.quiet {
-  background: rgba(255, 255, 255, .1);
-  color: var(--theme-text-primary);
+  background: rgba(255, 255, 255, .14);
+  color: #fff;
 }
 
 .party-banner-action:hover { filter: brightness(1.12); }
@@ -619,8 +620,9 @@ button:disabled {
 .party-banner-action[hidden] { display: none; }
 
 @media (max-width: 680px) {
-  .party-banner { gap: 6px; font-size: 12.5px; }
-  .party-banner-action { padding: 0 10px; }
+  .party-banner { gap: 8px; min-height: 40px; font-size: 13.5px; }
+  .party-banner-action { min-height: 30px; padding: 0 12px; font-size: 13px; }
+  .party-banner-avatar { width: 24px; height: 24px; font-size: 11.5px; }
   .party-banner-action.quiet { display: none; }
 }
 

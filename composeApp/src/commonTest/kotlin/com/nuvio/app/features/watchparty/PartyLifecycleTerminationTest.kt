@@ -206,4 +206,17 @@ class PartyLifecycleTerminationTest {
         assertFalse(partyLaunchStillLive("party", null))
         assertFalse(partyLaunchStillLive("party", party(id = "another")))
     }
+
+    @Test fun aPartyStartedInThePlayerGetsItsLobbyOnTheWayOut() {
+        // Hardware (2026-09-15): the host promoted from the player panel, pressed Escape, landed home.
+        assertEquals("party", lobbyOwedOnPlayerExit(party(), playerMatchesParty = true, lobbyPartyIdsOnStack = emptyList()))
+        // A lobby already below the player is where back lands; a second one is never pushed.
+        assertNull(lobbyOwedOnPlayerExit(party(), true, listOf("party")))
+        assertNull(lobbyOwedOnPlayerExit(party(), true, listOf(null)), "an invite-code lobby")
+        assertEquals("party", lobbyOwedOnPlayerExit(party(), true, listOf("another")))
+        // Nothing live, or a player showing something else: nothing is owed.
+        assertNull(lobbyOwedOnPlayerExit(null, false, emptyList()))
+        assertNull(lobbyOwedOnPlayerExit(party(status = WatchPartyStatus.ended), true, emptyList()))
+        assertNull(lobbyOwedOnPlayerExit(party(), playerMatchesParty = false, lobbyPartyIdsOnStack = emptyList()))
+    }
 }

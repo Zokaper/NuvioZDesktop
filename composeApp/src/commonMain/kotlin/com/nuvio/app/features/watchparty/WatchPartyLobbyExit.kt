@@ -32,6 +32,26 @@ fun decideLobbyBack(routePartyId: String?, held: WatchPartyState?): LobbyBackAct
     return LobbyBackAction.RequestDeparture
 }
 
+/**
+ * The party whose lobby a player leaving must open, or null when none is owed.
+ *
+ * Case 3's "gets one on the way out of the player", which nothing implemented: a party started from
+ * the player's own Watch Together panel has no lobby below it, so Escape went straight home and left
+ * the party running with nothing on screen to leave or end it from.
+ *
+ * [lobbyPartyIdsOnStack] are the `partyId`s of the lobby routes already on the back stack, where an
+ * invite-code lobby (no id yet) counts as any party's.
+ */
+fun lobbyOwedOnPlayerExit(
+    held: WatchPartyState?,
+    playerMatchesParty: Boolean,
+    lobbyPartyIdsOnStack: List<String?>,
+): String? {
+    if (held == null || held.status == WatchPartyStatus.ended || !playerMatchesParty) return null
+    if (lobbyPartyIdsOnStack.any { it == null || it == held.id }) return null
+    return held.id
+}
+
 /** Why a lobby that was showing a live party must now close itself. */
 enum class LobbyCloseReason {
     /** This member left, transferred or ended it themselves, or moved on to another party. Silent. */

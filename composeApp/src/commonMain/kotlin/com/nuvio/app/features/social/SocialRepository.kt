@@ -1,6 +1,7 @@
 package com.nuvio.app.features.social
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlin.coroutines.cancellation.CancellationException
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
 import com.nuvio.app.core.network.ZSessionBridge
@@ -178,6 +179,11 @@ object SocialRepository {
             )
             SocialStorage.savePayload(profileId, json.encodeToString(payload.copy(activity = activity)))
         }.onFailure { error ->
+            // A caller leaving (a screen, an effect relaunching) is not a fault to show the user.
+            if (error is CancellationException) {
+                _uiState.value = _uiState.value.copy(isLoading = false, isLoadingMore = false)
+                throw error
+            }
             _uiState.value = _uiState.value.copy(isLoading = false, isLoadingMore = false, errorMessage = error.message)
         }
     }

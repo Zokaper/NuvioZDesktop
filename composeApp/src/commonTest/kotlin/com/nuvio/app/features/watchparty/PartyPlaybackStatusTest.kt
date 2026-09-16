@@ -88,6 +88,8 @@ class PartyPlaybackStatusTest {
         assertNull(projectPartyPlaybackStatus(guest.copy(gate = gate(PartyHoldReason.WAITING_FOR_PARTICIPANTS, 2))))
         // A timeline already playing answers "waiting for host" before the row does.
         assertNull(projectPartyPlaybackStatus(guest.copy(gate = gate(PartyHoldReason.WAITING_FOR_HOST), timelinePlaying = true)))
+        // A started party that is paused (by this guest, say) is not waiting for the host to start.
+        assertNull(projectPartyPlaybackStatus(guest.copy(gate = gate(PartyHoldReason.WAITING_FOR_HOST), partyStarted = true)))
         // An open panel already shows the request row.
         assertNull(projectPartyPlaybackStatus(host.copy(incomingRequester = ahmed, panelOpen = true)))
         // Party-only rows need a party.

@@ -26,6 +26,7 @@ import com.nuvio.app.features.streams.StreamsRepository
 import com.nuvio.app.features.watchparty.WatchPartyRepository
 import com.nuvio.app.features.watchparty.PartySourceRealizer
 import com.nuvio.app.features.watchparty.partySourceKey
+import com.nuvio.app.features.watchparty.lobbyOwedOnPlayerExit
 import com.nuvio.app.features.watchparty.matchesPlayback
 import org.jetbrains.compose.resources.stringResource
 import nuvio.composeapp.generated.resources.Res
@@ -82,7 +83,16 @@ internal fun PlayerDestination(
             }
         },
         afterPop = {
-            requestedPartyLobbyId?.let { partyId ->
+            // An explicit request (Open lobby, an accepted join), else the lobby a live party this
+            // player was showing is owed - read against the stack the pop just left behind.
+            val owedLobbyId = requestedPartyLobbyId ?: WatchPartyRepository.uiState.value.party.let { held ->
+                lobbyOwedOnPlayerExit(
+                    held = held,
+                    playerMatchesParty = held?.matchesPlayback(launch.parentMetaId, launch.videoId) == true,
+                    lobbyPartyIdsOnStack = navController.routes.filterIsInstance<WatchPartyLobbyRoute>().map { it.partyId },
+                )
+            }
+            owedLobbyId?.let { partyId ->
                 requestedPartyLobbyId = null
                 navController.navigate(WatchPartyLobbyRoute(partyId = partyId)) {
                     launchSingleTop = true
