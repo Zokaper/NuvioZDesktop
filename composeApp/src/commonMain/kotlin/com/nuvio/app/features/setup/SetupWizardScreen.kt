@@ -43,6 +43,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -94,6 +95,12 @@ import com.nuvio.app.features.social.SocialIdentityBody
 import com.nuvio.app.features.social.SocialRepository
 import com.nuvio.app.features.social.shutdownSocialLayer
 import com.nuvio.app.features.player.PlayerSettingsRepository
+import com.nuvio.app.features.player.AudioLanguageOption
+import com.nuvio.app.features.player.AvailableLanguageOptions
+import com.nuvio.app.features.player.SubtitleLanguageOption
+import com.nuvio.app.features.player.languageLabelForCode
+import com.nuvio.app.features.settings.LanguageSelectionDialog
+import com.nuvio.app.features.settings.LanguageSelectionOption
 import com.nuvio.app.features.settings.ThemeSettingsRepository
 import com.nuvio.app.features.watchprogress.ContinueWatchingPreferencesRepository
 import com.nuvio.app.features.watchprogress.ContinueWatchingSectionStyle
@@ -280,10 +287,10 @@ fun SetupWizardScreen(
     }
 
     fun complete() {
-        // Both, always. `playback_mode_selector_seen` is no longer read by any gate, but it is
-        // still what `PlaybackModeDialog` treats as "answered" and it still syncs, so leaving
-        // it false would re-prompt anyone who downgrades to 0.4.x.
-        PlayerSettingsRepository.markPlaybackModeSelectorSeen()
+        // ⚠ `playback_mode_selector_seen` used to be written here too. It is gone: nothing had
+        // read it since the setup wizard replaced the standalone selector, and it was being
+        // kept alive only to spare a 0.4.x downgrade one extra prompt. The key survives as a
+        // sync tombstone so an older client's payload still clears the stale local value.
         PlayerSettingsRepository.markSetupWizardCompleted(SETUP_WIZARD_REVISION)
 
         // ⚠ Push immediately rather than leaving it to the observer, because while the wizard is
@@ -436,6 +443,8 @@ fun SetupWizardScreen(
                     languageStrictness = playerSettings.playbackLanguageStrictness,
                     dynamicRangePolicy = playerSettings.playbackDynamicRangePolicy,
                     qualityCeilingMbps = playerSettings.playbackQualityCeilingMbps,
+                    preferredAudioLanguage = playerSettings.preferredAudioLanguage,
+                    preferredSubtitleLanguage = playerSettings.preferredSubtitleLanguage,
                     posterWidthDp = posterStyle.widthDp,
                     landscapeCards = posterStyle.catalogLandscapeModeEnabled,
                     selectedTheme = selectedTheme,
@@ -545,6 +554,8 @@ fun SetupWizardScreen(
                     languageStrictness = playerSettings.playbackLanguageStrictness,
                     dynamicRangePolicy = playerSettings.playbackDynamicRangePolicy,
                     qualityCeilingMbps = playerSettings.playbackQualityCeilingMbps,
+                    preferredAudioLanguage = playerSettings.preferredAudioLanguage,
+                    preferredSubtitleLanguage = playerSettings.preferredSubtitleLanguage,
                     posterWidthDp = posterStyle.widthDp,
                     landscapeCards = posterStyle.catalogLandscapeModeEnabled,
                     selectedTheme = selectedTheme,
@@ -861,6 +872,7 @@ private val SetupStep.specimen: SetupSpecimen
         // that would ever catch them drifting from the real screens they mirror.
         SetupStep.PlaybackMode,
         SetupStep.PlaybackSetup,
+        SetupStep.Language,
         SetupStep.Sources,
         SetupStep.SocialOptIn,
         SetupStep.SocialIdentity,
@@ -1085,6 +1097,8 @@ internal fun SetupStepBody(
     languageStrictness: LanguageStrictness,
     dynamicRangePolicy: DynamicRangePolicy,
     qualityCeilingMbps: Int,
+    preferredAudioLanguage: String,
+    preferredSubtitleLanguage: String,
     posterWidthDp: Int,
     landscapeCards: Boolean,
     selectedTheme: AppTheme,
@@ -1147,6 +1161,11 @@ internal fun SetupStepBody(
                     languageStrictness = languageStrictness,
                     dynamicRangePolicy = dynamicRangePolicy,
                     qualityCeilingMbps = qualityCeilingMbps,
+                )
+
+                SetupStep.Language -> SetupLanguageBody(
+                    preferredAudioLanguage = preferredAudioLanguage,
+                    preferredSubtitleLanguage = preferredSubtitleLanguage,
                 )
 
                 SetupStep.Sources -> SetupSourcesBody(
@@ -1292,6 +1311,138 @@ internal fun SetupStepBody(
  * Settings - Playback - Source preferences uses, and shows the same words for the same values by
  * importing that page own label functions. There is no wizard-only copy of any of it.
  */
+/**
+ * The one playback question worth asking every mode.
+ *
+ * ⚠ **Unconditional, where `SetupPlaybackSetupBody` is not.** Everything that step asks feeds the
+ * automatic source picker, which Classic does not have. Language feeds that *and* the player's own
+ * track selection, which runs in all three modes - so a Classic user who skips the step above still
+ * answers this one, and the answer still does something.
+ *
+ * Revision 7 asked how hard to try for a language it never asked the user to name. The audio
+ * preference shipped as the sentinel `device` and the source picker discarded every sentinel, so
+ * "Audio language matching" was asked, stored, synced and inert. Naming the language is what makes
+ * that row mean anything.
+ *
+ * Two rows rather than a chip group, because there are seventy-nine languages and a wrapping flow
+ * of seventy-nine chips is not a setup step. They open `LanguageSelectionDialog` - the same dialog
+ * Settings opens, with the same options and the same labels - so there is no wizard-only copy of
+ * the list, which is the rule the rest of this file follows.
+ */
+@Composable
+private fun SetupLanguageBody(
+    preferredAudioLanguage: String,
+    preferredSubtitleLanguage: String,
+) {
+    var showAudioDialog by remember { mutableStateOf(false) }
+    var showSubtitleDialog by remember { mutableStateOf(false) }
+
+    SetupParagraph(stringResource(Res.string.setup_language_body))
+
+    SetupLanguageRow(
+        title = stringResource(Res.string.settings_playback_preferred_audio_language),
+        value = when (preferredAudioLanguage) {
+            AudioLanguageOption.DEFAULT -> stringResource(Res.string.settings_playback_option_default)
+            AudioLanguageOption.DEVICE -> stringResource(Res.string.settings_playback_option_device_language)
+            AudioLanguageOption.ORIGINAL -> stringResource(Res.string.settings_playback_option_original)
+            else -> languageLabelForCode(preferredAudioLanguage)
+        },
+        onClick = { showAudioDialog = true },
+    )
+    SetupLanguageRow(
+        title = stringResource(Res.string.settings_playback_preferred_subtitle_language),
+        value = when (preferredSubtitleLanguage) {
+            SubtitleLanguageOption.NONE -> stringResource(Res.string.settings_playback_option_none)
+            SubtitleLanguageOption.DEVICE -> stringResource(Res.string.settings_playback_option_device_language)
+            SubtitleLanguageOption.FORCED -> stringResource(Res.string.settings_playback_option_forced)
+            else -> languageLabelForCode(preferredSubtitleLanguage)
+        },
+        onClick = { showSubtitleDialog = true },
+    )
+
+    SetupParagraph(stringResource(Res.string.setup_language_more))
+
+    if (showAudioDialog) {
+        val originalHint = stringResource(Res.string.settings_playback_option_original_hint)
+        LanguageSelectionDialog(
+            title = stringResource(Res.string.settings_playback_preferred_audio_language),
+            options = listOf(
+                LanguageSelectionOption(
+                    AudioLanguageOption.DEVICE,
+                    stringResource(Res.string.settings_playback_option_device_language),
+                ),
+                LanguageSelectionOption(
+                    AudioLanguageOption.ORIGINAL,
+                    stringResource(Res.string.settings_playback_option_original),
+                    description = originalHint,
+                ),
+            ) + AvailableLanguageOptions.map { option ->
+                LanguageSelectionOption(option.code, stringResource(option.labelRes))
+            },
+            selectedValue = preferredAudioLanguage,
+            onSelect = { value ->
+                PlayerSettingsRepository.setPreferredAudioLanguage(value ?: AudioLanguageOption.DEVICE)
+                showAudioDialog = false
+            },
+            onDismiss = { showAudioDialog = false },
+        )
+    }
+
+    if (showSubtitleDialog) {
+        LanguageSelectionDialog(
+            title = stringResource(Res.string.settings_playback_preferred_subtitle_language),
+            options = listOf(
+                LanguageSelectionOption(
+                    SubtitleLanguageOption.NONE,
+                    stringResource(Res.string.settings_playback_option_none),
+                ),
+                LanguageSelectionOption(
+                    SubtitleLanguageOption.DEVICE,
+                    stringResource(Res.string.settings_playback_option_device_language),
+                ),
+            ) + AvailableLanguageOptions.map { option ->
+                LanguageSelectionOption(option.code, stringResource(option.labelRes))
+            },
+            selectedValue = preferredSubtitleLanguage,
+            onSelect = { value ->
+                PlayerSettingsRepository.setPreferredSubtitleLanguage(value ?: SubtitleLanguageOption.NONE)
+                showSubtitleDialog = false
+            },
+            onDismiss = { showSubtitleDialog = false },
+        )
+    }
+}
+
+/** A label and the current answer, sized to its content like [SetupChoiceGroup]'s chips. */
+@Composable
+private fun SetupLanguageRow(
+    title: String,
+    value: String,
+    onClick: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge,
+            color = tokens.colors.textPrimary,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Surface(
+            modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+            shape = RoundedCornerShape(12.dp),
+            color = tokens.colors.surfaceCard,
+        ) {
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodyLarge,
+                color = tokens.colors.textPrimary,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            )
+        }
+    }
+}
+
 @Composable
 private fun SetupPlaybackSetupBody(
     variant: PlaybackSetupVariant,
@@ -1665,6 +1816,7 @@ private val SetupStep.titleRes
         SetupStep.Welcome -> Res.string.setup_welcome_title
         SetupStep.PlaybackMode -> Res.string.playback_mode_selector_title
         SetupStep.PlaybackSetup -> Res.string.setup_playback_setup_title
+        SetupStep.Language -> Res.string.setup_language_title
         SetupStep.Sources -> Res.string.setup_sources_title
         SetupStep.SocialOptIn -> Res.string.setup_social_title
         SetupStep.SocialIdentity -> Res.string.setup_social_identity_title
@@ -1700,6 +1852,7 @@ private val SetupStep.subtitleRes
         // Never read - `setupStepSubtitle` answers for this step - but enumerated so that a new
         // step is a compile error here rather than a header with no subtitle.
         SetupStep.PlaybackSetup -> Res.string.setup_playback_setup_subtitle_streamlined
+        SetupStep.Language -> Res.string.setup_language_subtitle
         SetupStep.Sources -> Res.string.setup_sources_subtitle
         SetupStep.SocialOptIn -> Res.string.setup_social_subtitle
         SetupStep.SocialIdentity -> Res.string.setup_social_identity_subtitle

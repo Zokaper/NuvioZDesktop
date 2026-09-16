@@ -13,7 +13,6 @@ import nuvio.composeapp.generated.resources.settings_playback_audio_preference_i
 import nuvio.composeapp.generated.resources.settings_playback_audio_preference_require_lossless
 import nuvio.composeapp.generated.resources.settings_playback_audio_preference_require_lossless_description
 import nuvio.composeapp.generated.resources.settings_playback_section_source_preferences
-import nuvio.composeapp.generated.resources.settings_playback_section_audio
 import nuvio.composeapp.generated.resources.compose_settings_page_subtitles
 import nuvio.composeapp.generated.resources.settings_subtitles_open
 import nuvio.composeapp.generated.resources.settings_subtitles_open_description
@@ -325,12 +324,15 @@ private fun PlaybackSettingsSection(
 ) {
     var showPreferredAudioDialog by remember { mutableStateOf(false) }
     var showSecondaryAudioDialog by remember { mutableStateOf(false) }
+    var showPreferredSubtitleDialog by remember { mutableStateOf(false) }
+    var showSecondarySubtitleDialog by remember { mutableStateOf(false) }
     var showPlaybackModeDialog by remember { mutableStateOf(false) }
     var showPlaybackCodecDialog by remember { mutableStateOf(false) }
     var showPlaybackDynamicRangeDialog by remember { mutableStateOf(false) }
     var showPlaybackAudioPreferenceDialog by remember { mutableStateOf(false) }
     var showPlaybackLanguageStrictnessDialog by remember { mutableStateOf(false) }
     var showPlaybackQualityCeilingDialog by remember { mutableStateOf(false) }
+    var showMeteredCapDialog by remember { mutableStateOf(false) }
     var showExternalPlayerDialog by remember { mutableStateOf(false) }
     var showExternalPlayerAppDialog by remember { mutableStateOf(false) }
     var showPlaybackEngineDialog by remember { mutableStateOf(false) }
@@ -500,6 +502,72 @@ private fun PlaybackSettingsSection(
             }
         }
 
+        // ⚠ **One question, asked once.** Audio language lived here under "Audio", subtitle
+        // language lived on the Subtitles page, and the row that decides how hard to try for
+        // either - "Audio language matching", below - lived on a third list next to codec and
+        // bitrate settings. Nothing about that grouping was wrong in isolation; together it meant
+        // a user stating one preference had to visit two pages and could reasonably conclude the
+        // two halves were unrelated settings.
+        //
+        // This section is deliberately **not** gated on playback mode. Everything below it feeds
+        // the automatic source picker and is inert in Classic; these four also drive the player's
+        // own track selection, which runs in every mode including Classic.
+        SettingsSection(
+            title = stringResource(Res.string.settings_playback_section_language),
+            isTablet = isTablet,
+        ) {
+            // An external player picks its own audio track, so the audio rows are its to ignore.
+            // The subtitle rows survive one step further: with subtitle forwarding on, the track
+            // they choose is the one handed over.
+            val isExternalPlayer = autoPlayPlayerSettings.externalPlayerEnabled
+            val audioLanguageEnabled = !isExternalPlayer
+            val subtitleLanguageEnabled =
+                !isExternalPlayer || autoPlayPlayerSettings.externalPlayerForwardSubtitles
+            SettingsGroup(isTablet = isTablet) {
+                SettingsNavigationRow(
+                    title = stringResource(Res.string.settings_playback_preferred_audio_language),
+                    description = when (preferredAudioLanguage) {
+                        AudioLanguageOption.DEFAULT -> stringResource(Res.string.settings_playback_option_default)
+                        AudioLanguageOption.DEVICE -> stringResource(Res.string.settings_playback_option_device_language)
+                        AudioLanguageOption.ORIGINAL -> stringResource(Res.string.settings_playback_option_original)
+                        else -> languageLabelForCode(preferredAudioLanguage)
+                    },
+                    enabled = audioLanguageEnabled,
+                    isTablet = isTablet,
+                    onClick = { showPreferredAudioDialog = true },
+                )
+                SettingsGroupDivider(isTablet = isTablet)
+                SettingsNavigationRow(
+                    title = stringResource(Res.string.settings_playback_secondary_audio_language),
+                    description = languageLabelForCode(secondaryPreferredAudioLanguage),
+                    enabled = audioLanguageEnabled,
+                    isTablet = isTablet,
+                    onClick = { showSecondaryAudioDialog = true },
+                )
+                SettingsGroupDivider(isTablet = isTablet)
+                SettingsNavigationRow(
+                    title = stringResource(Res.string.settings_playback_preferred_subtitle_language),
+                    description = when (preferredSubtitleLanguage) {
+                        SubtitleLanguageOption.NONE -> stringResource(Res.string.settings_playback_option_none)
+                        SubtitleLanguageOption.DEVICE -> stringResource(Res.string.settings_playback_option_device_language)
+                        SubtitleLanguageOption.FORCED -> stringResource(Res.string.settings_playback_option_forced)
+                        else -> languageLabelForCode(preferredSubtitleLanguage)
+                    },
+                    enabled = subtitleLanguageEnabled,
+                    isTablet = isTablet,
+                    onClick = { showPreferredSubtitleDialog = true },
+                )
+                SettingsGroupDivider(isTablet = isTablet)
+                SettingsNavigationRow(
+                    title = stringResource(Res.string.settings_playback_secondary_subtitle_language),
+                    description = languageLabelForCode(secondaryPreferredSubtitleLanguage),
+                    enabled = subtitleLanguageEnabled,
+                    isTablet = isTablet,
+                    onClick = { showSecondarySubtitleDialog = true },
+                )
+            }
+        }
+
         SettingsSection(
             title = stringResource(Res.string.settings_playback_section_source_preferences),
             isTablet = isTablet,
@@ -571,6 +639,21 @@ private fun PlaybackSettingsSection(
                     isTablet = isTablet,
                     onClick = { showPlaybackAudioPreferenceDialog = true },
                 )
+                if (autoPlayPlayerSettings.playbackMode == PlaybackMode.INSTANT) {
+                    // ⚠ Read since it shipped (`StreamDestination`'s Instant branch) and writable
+                    // from nowhere, so it has been pinned at 720 for every desktop user - and,
+                    // being one of `hasTunedAnAdvancedSetting`'s probes, a value synced in from
+                    // mobile would silently unhide the whole advanced settings page. Shown only in
+                    // Instant because only Instant reads it; greying it on the other two modes
+                    // would add a permanently dead row to both.
+                    SettingsGroupDivider(isTablet = isTablet)
+                    SettingsNavigationRow(
+                        title = stringResource(Res.string.settings_playback_metered_cap),
+                        description = stringResource(Res.string.settings_playback_metered_cap_description),
+                        isTablet = isTablet,
+                        onClick = { showMeteredCapDialog = true },
+                    )
+                }
                 SettingsGroupDivider(isTablet = isTablet)
                 SettingsSwitchRow(
                     title = stringResource(Res.string.settings_playback_allow_torrent_autopick),
@@ -582,36 +665,6 @@ private fun PlaybackSettingsSection(
                     isAdvanced = true,
                     isTablet = isTablet,
                     onCheckedChange = PlayerSettingsRepository::setPlaybackAllowTorrentAutopick,
-                )
-            }
-        }
-
-        SettingsSection(
-            title = stringResource(Res.string.settings_playback_section_audio),
-            isTablet = isTablet,
-        ) {
-            // An external player picks its own audio track, so these two are its to ignore.
-            val audioLanguageEnabled = !autoPlayPlayerSettings.externalPlayerEnabled
-            SettingsGroup(isTablet = isTablet) {
-                SettingsNavigationRow(
-                    title = stringResource(Res.string.settings_playback_preferred_audio_language),
-                    description = when (preferredAudioLanguage) {
-                        AudioLanguageOption.DEFAULT -> stringResource(Res.string.settings_playback_option_default)
-                        AudioLanguageOption.DEVICE -> stringResource(Res.string.settings_playback_option_device_language)
-                        AudioLanguageOption.ORIGINAL -> stringResource(Res.string.settings_playback_option_original)
-                        else -> languageLabelForCode(preferredAudioLanguage)
-                    },
-                    enabled = audioLanguageEnabled,
-                    isTablet = isTablet,
-                    onClick = { showPreferredAudioDialog = true },
-                )
-                SettingsGroupDivider(isTablet = isTablet)
-                SettingsNavigationRow(
-                    title = stringResource(Res.string.settings_playback_secondary_audio_language),
-                    description = languageLabelForCode(secondaryPreferredAudioLanguage),
-                    enabled = audioLanguageEnabled,
-                    isTablet = isTablet,
-                    onClick = { showSecondaryAudioDialog = true },
                 )
             }
         }
@@ -939,12 +992,42 @@ private fun PlaybackSettingsSection(
         )
     }
 
+    if (showPreferredSubtitleDialog) {
+        LanguageSelectionDialog(
+            title = stringResource(Res.string.settings_playback_preferred_subtitle_language),
+            options = listOf(
+                LanguageSelectionOption(SubtitleLanguageOption.NONE, stringResource(Res.string.settings_playback_option_none)),
+                LanguageSelectionOption(SubtitleLanguageOption.DEVICE, stringResource(Res.string.settings_playback_option_device_language)),
+                LanguageSelectionOption(SubtitleLanguageOption.FORCED, stringResource(Res.string.settings_playback_option_forced)),
+            ) + AvailableLanguageOptions.map { option ->
+                LanguageSelectionOption(option.code, stringResource(option.labelRes))
+            },
+            selectedValue = preferredSubtitleLanguage,
+            onSelect = { value ->
+                PlayerSettingsRepository.setPreferredSubtitleLanguage(value ?: SubtitleLanguageOption.NONE)
+                showPreferredSubtitleDialog = false
+            },
+            onDismiss = { showPreferredSubtitleDialog = false },
+        )
+    }
 
-
-
-
-
-
+    if (showSecondarySubtitleDialog) {
+        LanguageSelectionDialog(
+            title = stringResource(Res.string.settings_playback_secondary_subtitle_language),
+            options = listOf(
+                LanguageSelectionOption(null, stringResource(Res.string.settings_playback_option_none)),
+                LanguageSelectionOption(SubtitleLanguageOption.FORCED, stringResource(Res.string.settings_playback_option_forced)),
+            ) + AvailableLanguageOptions.map { option ->
+                LanguageSelectionOption(option.code, stringResource(option.labelRes))
+            },
+            selectedValue = secondaryPreferredSubtitleLanguage,
+            onSelect = { value ->
+                PlayerSettingsRepository.setSecondaryPreferredSubtitleLanguage(value)
+                showSecondarySubtitleDialog = false
+            },
+            onDismiss = { showSecondarySubtitleDialog = false },
+        )
+    }
 
     // Reuses the generic enum dialog rather than adding a third selection surface. Its name
     // says Ios; it is not iOS-specific, and renaming it is a bigger diff than this change
@@ -1025,12 +1108,27 @@ private fun PlaybackSettingsSection(
         )
     }
 
+    if (showMeteredCapDialog) {
+        IosEnumSelectionDialog(
+            title = stringResource(Res.string.settings_playback_metered_cap),
+            options = PLAYBACK_METERED_CAP_HEIGHTS,
+            selected = PLAYBACK_METERED_CAP_HEIGHTS.minByOrNull { height ->
+                kotlin.math.abs(height - autoPlayPlayerSettings.playbackMeteredCapHeight)
+            } ?: 720,
+            label = { height -> stringResource(Res.string.settings_playback_metered_cap_value, "${height}p") },
+            onSelect = {
+                PlayerSettingsRepository.setPlaybackMeteredCapHeight(it)
+                showMeteredCapDialog = false
+            },
+            onDismiss = { showMeteredCapDialog = false },
+        )
+    }
+
     if (showPlaybackModeDialog) {
         PlaybackModeDialog(
             selected = autoPlayPlayerSettings.playbackMode,
             onModeSelected = { mode ->
                 PlayerSettingsRepository.setPlaybackMode(mode)
-                PlayerSettingsRepository.markPlaybackModeSelectorSeen()
                 showPlaybackModeDialog = false
             },
             onDismiss = { showPlaybackModeDialog = false },
@@ -1103,6 +1201,15 @@ private fun PlaybackSettingsSection(
 
 
 }
+
+/**
+ * The rungs offered for the metered-connection cap.
+ *
+ * Heights rather than a free integer, and the same shape as `PLAYBACK_QUALITY_CEILING_STEPS`:
+ * the stored value is clamped to `360..2160`, so a value arriving from another platform need not
+ * be one of these - the dialog snaps to the nearest rung rather than drawing nothing as selected.
+ */
+internal val PLAYBACK_METERED_CAP_HEIGHTS = listOf(480, 720, 1080, 2160)
 
 internal data class LanguageSelectionOption(
     val value: String?,

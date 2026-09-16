@@ -47,8 +47,6 @@ actual object PlayerSettingsStorage {
     private const val subtitleUseForcedSubtitlesKey = "subtitle_use_forced_subtitles"
     private const val subtitleShowOnlyPreferredLanguagesKey = "subtitle_show_only_preferred_languages"
     private const val addonSubtitleStartupModeKey = "addon_subtitle_startup_mode"
-    private const val streamReuseLastLinkEnabledKey = "stream_reuse_last_link_enabled"
-    private const val streamReuseLastLinkCacheHoursKey = "stream_reuse_last_link_cache_hours"
     private const val androidPlaybackEngineKey = "android_playback_engine"
     private const val androidLibmpvVideoOutputKey = "android_libmpv_video_output"
     private const val androidLibmpvHardwareDecodingEnabledKey = "android_libmpv_hardware_decoding_enabled"
@@ -67,6 +65,7 @@ actual object PlayerSettingsStorage {
     private const val playbackMeteredCapHeightKey = "playback_metered_cap_height"
     private const val playbackModeSelectorSeenKey = "playback_mode_selector_seen"
     private const val setupWizardCompletedRevisionKey = "setup_wizard_completed_revision"
+    private const val playbackLanguageMigratedKey = "playback_language_migrated_v1"
     private const val streamAutoPlayModeKey = "stream_auto_play_mode"
     private const val streamAutoPlaySourceKey = "stream_auto_play_source"
     private const val streamAutoPlaySelectedAddonsKey = "stream_auto_play_selected_addons"
@@ -132,8 +131,6 @@ actual object PlayerSettingsStorage {
         subtitleStripSdhKey,
         subtitleUseForcedSubtitlesKey,
         subtitleShowOnlyPreferredLanguagesKey,
-        streamReuseLastLinkEnabledKey,
-        streamReuseLastLinkCacheHoursKey,
         androidPlaybackEngineKey,
         androidLibmpvVideoOutputKey,
         androidLibmpvHardwareDecodingEnabledKey,
@@ -150,8 +147,16 @@ actual object PlayerSettingsStorage {
         playbackQualityCeilingMbpsKey,
         showAdvancedSettingsKey,
         playbackMeteredCapHeightKey,
+        // ⚠ **Tombstone, deliberately kept in `syncKeys` only.** The preference itself is gone -
+        // the first-launch selector it gated was superseded by the setup wizard and nothing had
+        // read it for two releases. The key stays on this list so that a payload written by an
+        // older client, which still exports it, clears the orphaned local value instead of
+        // leaving it on disk forever. Nothing here writes it. Removable once no client in the
+        // wild still exports it.
         playbackModeSelectorSeenKey,
         setupWizardCompletedRevisionKey,
+        playbackLanguageMigratedKey,
+        introSubmitEnabledKey,
         streamAutoPlayModeKey,
         streamAutoPlaySourceKey,
         streamAutoPlaySelectedAddonsKey,
@@ -781,23 +786,6 @@ actual object PlayerSettingsStorage {
         preferences?.edit()?.putInt(ProfileScopedKey.of(setupWizardCompletedRevisionKey), revision)?.apply()
     }
 
-    actual fun loadPlaybackModeSelectorSeen(): Boolean? =
-        preferences?.let { sharedPreferences ->
-            val key = ProfileScopedKey.of(playbackModeSelectorSeenKey)
-            if (sharedPreferences.contains(key)) {
-                sharedPreferences.getBoolean(key, false)
-            } else {
-                null
-            }
-        }
-
-    actual fun savePlaybackModeSelectorSeen(seen: Boolean) {
-        preferences
-            ?.edit()
-            ?.putBoolean(ProfileScopedKey.of(playbackModeSelectorSeenKey), seen)
-            ?.apply()
-    }
-
     actual fun loadStreamAutoPlayMode(): String? =
         preferences?.getString(ProfileScopedKey.of(streamAutoPlayModeKey), null)
 
@@ -947,6 +935,23 @@ actual object PlayerSettingsStorage {
         preferences
             ?.edit()
             ?.putString(ProfileScopedKey.of(introDbApiKeyKey), apiKey)
+            ?.apply()
+    }
+
+    actual fun loadPlaybackLanguageMigrated(): Boolean? =
+        preferences?.let { sharedPreferences ->
+            val key = ProfileScopedKey.of(playbackLanguageMigratedKey)
+            if (sharedPreferences.contains(key)) {
+                sharedPreferences.getBoolean(key, false)
+            } else {
+                null
+            }
+        }
+
+    actual fun savePlaybackLanguageMigrated(migrated: Boolean) {
+        preferences
+            ?.edit()
+            ?.putBoolean(ProfileScopedKey.of(playbackLanguageMigratedKey), migrated)
             ?.apply()
     }
 
@@ -1300,11 +1305,17 @@ actual object PlayerSettingsStorage {
             put(playbackQualityCeilingMbpsKey, encodeSyncInt(it))
         }
         loadPlaybackMeteredCapHeight()?.let { put(playbackMeteredCapHeightKey, encodeSyncInt(it)) }
-        loadPlaybackModeSelectorSeen()?.let {
-            put(playbackModeSelectorSeenKey, encodeSyncBoolean(it))
-        }
         loadSetupWizardCompletedRevision()?.let {
             put(setupWizardCompletedRevisionKey, encodeSyncInt(it))
+        }
+        loadPlaybackLanguageMigrated()?.let {
+            put(playbackLanguageMigratedKey, encodeSyncBoolean(it))
+        }
+        // ⚠ Was decoded on import and never exported, and absent from `syncKeys`. A remote
+        // payload could therefore switch it on and nothing could ever switch it back off:
+        // not in the payload means "unchanged", and this device never put it there.
+        loadIntroSubmitEnabled()?.let {
+            put(introSubmitEnabledKey, encodeSyncBoolean(it))
         }
         loadStreamAutoPlayMode()?.let { put(streamAutoPlayModeKey, encodeSyncString(it)) }
         loadStreamAutoPlaySource()?.let { put(streamAutoPlaySourceKey, encodeSyncString(it)) }
@@ -1402,8 +1413,6 @@ actual object PlayerSettingsStorage {
             ?.let(::savePlaybackLanguageStrictness)
         payload.decodeSyncInt(playbackQualityCeilingMbpsKey)?.let(::savePlaybackQualityCeilingMbps)
         payload.decodeSyncInt(playbackMeteredCapHeightKey)?.let(::savePlaybackMeteredCapHeight)
-        payload.decodeSyncBoolean(playbackModeSelectorSeenKey)
-            ?.let(::savePlaybackModeSelectorSeen)
         mergeMonotonicSyncInt(
             local = localSetupWizardRevision,
             remote = payload.decodeSyncInt(setupWizardCompletedRevisionKey),
@@ -1420,6 +1429,7 @@ actual object PlayerSettingsStorage {
         payload.decodeSyncString(animeSkipClientIdKey)?.let(::saveAnimeSkipClientId)
         payload.decodeSyncString(introDbApiKeyKey)?.let(::saveIntroDbApiKey)
         payload.decodeSyncBoolean(introSubmitEnabledKey)?.let(::saveIntroSubmitEnabled)
+        payload.decodeSyncBoolean(playbackLanguageMigratedKey)?.let(::savePlaybackLanguageMigrated)
         payload.decodeSyncBoolean(streamAutoPlayNextEpisodeEnabledKey)?.let(::saveStreamAutoPlayNextEpisodeEnabled)
         payload.decodeSyncBoolean(streamAutoPlayNextEpisodeFallbackEnabledKey)?.let(::saveStreamAutoPlayNextEpisodeFallbackEnabled)
         payload.decodeSyncBoolean(streamAutoPlayPreferBingeGroupKey)?.let(::saveStreamAutoPlayPreferBingeGroup)

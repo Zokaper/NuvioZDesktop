@@ -1,6 +1,83 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-15
+Last updated: 2026-09-16
+
+## Playback preferences - one model, actually enforced (2026-09-16)
+
+⚠ **Automated gate green; none of it has been on hardware.** The checklist is §Verification 4 of the
+approved plan (Claude plan `you-re-planning-one-final-frolicking-giraffe.md`), and it needs a **debug
+MSI** - `dev-desktop.ps1 hot` cannot attach the native player, and every claim there needs a first frame.
+
+**The root cause this pass closes.** `preferredAudioLanguage` ships as the sentinel `device`, and the
+source picker's `rankableAudioLanguage` stripped `device`/`default`/`original` to null one call before
+ranking read it. So `LanguageStrictness.REQUIRE` - the shipped default - **did nothing at all** for any
+profile that had never opened the language dialog, and "original audio, subtitles in my language" was
+expressible in the player and invisible to the picker.
+
+| Stage | What landed |
+| --- | --- |
+| 1 | `features/playback/PlaybackLanguageResolution.kt` (new, pure, import-free): `resolveRankableLanguages` resolves `device` to the OS locale and `original` to the title's own language, and `default`/`none`/`forced` to no opinion. `rankableAudioLanguage` / `rankableSecondaryAudioLanguage` deleted. `PlaybackSelectionContext` gains the two subtitle fields. |
+| 2 | `SourceRanking.subtitleLanguageBonus` - a **separate** comparator key between `languageScore` and `mediaScore`, 2/1/0, **promotes and never demotes** (a name that says nothing and a name that says the wrong thing score the same). Nulled under `LanguageStrictness.OFF` with the audio pair. |
+| 3 | `features/playback/PlaybackSelectionContextFactory.kt` (new): one `playbackSelectionContextOf`, used by all three builders. The in-player next-episode sheet had been setting 6 of 13 fields, so episode 2 was picked without the ceiling or the language rule episode 1 honoured. `StreamDestination`'s `remember` key list also gains `playbackAudioPreference`, which was missing. |
+| 4 | Default strictness `REQUIRE` -> `PREFER`, and a one-shot migration (`playback_language_migrated_v1`, all three actuals + `syncKeys`) writes the resolved device code over the sentinel. It runs inside `loadFromDisk`, which `ProfileSettingsSync.ensureRepositoriesLoaded()` calls before any import. The subtitle preference is **not** migrated: `none` is a deliberate answer. |
+| 5 | One **Language** section at the top of Playback - four rows, never greyed on mode, because they feed the player's own track selection in every mode including Classic. The subtitle pair moved off the Subtitles page, which keeps a pointer row. `SettingsSearch` rewired: its two subtitle rows used to land on the page the setting had left. |
+| 6 | `SetupStep.Language` in **all three** mode branches, `SETUP_WIZARD_REVISION` 7 -> 8, two rows opening the same `LanguageSelectionDialog` Settings opens. New `DiagramLanguage()` band. |
+| 7 | `playbackModeSelectorSeen` deleted (field, setter, storage, loader, three write sites); the key stays in `syncKeys` as a **tombstone** so an older client's payload still clears the orphaned local value. `stream_reuse_last_link_*` deleted from all three actuals. `intro_submit_enabled` now exports and is in `syncKeys` (it was import-only, so a remote payload could set it and nothing could clear it). `subtitleStyle.stripSdh` and `playbackMeteredCapHeight` given controls - both were read by shipped code and writable from nowhere. |
+| 8 | Already implemented. The six `streamAutoPlay*` rows on the Advanced page were already greyed with a reason line for non-Classic modes (`AdvancedSettingsPage.kt:748`). No new code; the plan's assumption was stale. |
+
+**Gate.** `scripts/run-pure-suites.sh`: all eight groups green. `:composeApp:compileKotlinDesktop` green.
+Full `:composeApp:desktopTest`: **BUILD SUCCESSFUL in 14m51s, 1,990 tests, 0 failures, 0 errors** (245
+result files, all written by that run). None of the three known flakies reproduced.
+
+**New tests.** `PlaybackLanguageResolutionTest` (sentinels, the anime case, the migration rule),
+`PlaybackSelectionContextFactoryTest` (every field reaches the context; the five the next-episode sheet
+used to drop are pinned by name), `SourceRankingTest` +4 (promotes, never demotes, never outranks
+resolution or audio language, nulled under `OFF`), `PlaybackSourceSelectorTest` +2 (`REQUIRE` with a
+resolved `device` language now partitions where it used to no-op), `SetupWizardStepsTest` +3 and eight
+existing assertions updated for the tenth step.
+
+**Rendered.** `SetupWizardRenderHarness` draws the new step in all three mode branches at 1280x820,
+2560x1440 and 3840x2160 (`build/setup-wizard-render/desktop-*-language-*.png`); the bands render at 420
+and 1100. Reading them caught one real defect: the two subtitle rows were titled "Preferred Language" /
+"Secondary Preferred Language", which read correctly under a *Subtitles* heading and read as nonsense
+beside "Preferred Audio Language". Retitled to "Preferred Subtitle Language" / "Secondary Subtitle
+Language". ⚠ **The Playback settings page has no render harness** - only setup and social do - so the new
+Language section and the metered-cap row have been compiled and never drawn. They are on the hardware list.
+
+**Logged, deliberately not built here** (all three are in the plan's out-of-scope list):
+
+- **No HDR display-capability gate.** `windows/player_bridge.cpp` has zero HDR code; macOS detects EDR
+  only inside the player, after a video is decoding, and exposes nothing to Kotlin. A gate needs a DXGI /
+  `DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO` probe, a JNI surface and three actuals. The resolution-shaped
+  default in `PlaybackQualityOptions` stays exactly as written.
+- **`PlayerEngine.desktop.kt:45` drops per-stream `externalSubtitles`** - accepted and never forwarded to
+  `NativePlayerSurface`. A real defect, but player plumbing rather than preferences.
+- **`applySubtitlePreferences` is a desktop no-op** (`PlayerEngine.kt:51-58`, overridden only on Android).
+  Harmless today: `refreshTracks()` in `PlayerScreenRuntimeEffects.kt` is what re-runs selection.
+
+**Not started, deliberately:** the final desktop consolidation and Phase 6 mobile. The two pure files are
+import-free so the mobile port is a copy; see the shared `nuvio-z/STATUS.md` entry.
+
+## Inherited: four Watch Together / social hardware fixes (2026-09-15, committed 2026-09-16)
+
+⚠ **Written by the previous session from its own two-client run; this session only found them
+uncommitted on disk, confirmed they compile and that their tests pass, and committed them.** Nobody has
+re-verified them on hardware since.
+
+- `PartyPlaybackStatusInputs.partyStarted` - a guest's gate reads every non-playing party as
+  `WAITING_FOR_HOST`, so a mid-film pause (the guest's own included) said the host had not started.
+  Set from the durable row the first time it reads playing.
+- `WatchPartyLobbyExit.lobbyOwedOnPlayerExit` + `PlayerDestination.afterPop` - a party started from the
+  player's own Watch Together panel had no lobby under it, so Escape went home and left the party running
+  with nothing on screen to leave or end it from.
+- `SocialScreen` pagination - the load-more effect was keyed on `isLoadingMore`, which the request sets
+  the moment it starts, so the effect cancelled its own request, surfaced the cancellation as an error
+  and relaunched forever. `SocialRepository.refresh` also no longer reports a `CancellationException` as
+  a failure.
+- `controls.css` - the party banner pill enlarged (46px min-height, 15px text, its own backdrop rather
+  than the theme border token).
+
+`DEBUG_BUILD` moved 46 -> 48 in the same round.
 
 ## Social + Watch Together UX pass — Stage 8: full gate, review, debug MSI (2026-09-15)
 

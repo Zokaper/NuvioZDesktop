@@ -73,10 +73,10 @@ import com.nuvio.app.features.playback.PlaybackLoadingState
 import com.nuvio.app.features.playback.PlaybackProgressStep
 import com.nuvio.app.features.playback.PlaybackQualityOptions
 import com.nuvio.app.features.playback.PlaybackQualitySheet
-import com.nuvio.app.features.playback.PlaybackSelectionContext
 import com.nuvio.app.features.playback.PlaybackSelectionResult
 import com.nuvio.app.features.playback.PlaybackSourceCandidate
 import com.nuvio.app.features.playback.PlaybackSourceSelector
+import com.nuvio.app.features.playback.playbackSelectionContextOf
 import com.nuvio.app.features.playback.playbackFactSlotLabelRes
 import com.nuvio.app.features.playback.rememberLanguageNamer
 import com.nuvio.app.features.player.skip.SkipIntroRepository
@@ -2609,13 +2609,19 @@ private fun PlayerScreenRuntime.RenderPlayerModals(displayedPositionMs: Long) {
     )
 
     episodeQualitySheetEpisode?.let { episode ->
-        val selectionContext = PlaybackSelectionContext(
-            runtimeMinutes = episode.runtime,
+        // ⚠ Was six of thirteen fields, hand-built. The five it omitted - the quality ceiling,
+        // the language requirement, the secondary audio language, the audio preference and the
+        // display height - are exactly the ones the first episode of the same session had been
+        // picked under, so episode 2 was chosen by a weaker rule than episode 1 with nothing on
+        // screen to say so. Built by the shared factory now; see its KDoc.
+        val selectionContext = playbackSelectionContextOf(
+            settings = playerSettingsUiState,
             isEpisode = true,
-            allowTorrentSources = playerSettingsUiState.playbackAllowTorrentAutopick,
-            preferredAudioLanguage = playerSettingsUiState.rankableAudioLanguage,
-            codecPreference = playerSettingsUiState.playbackCodecPreference,
-            dynamicRangePolicy = playerSettingsUiState.playbackDynamicRangePolicy,
+            runtimeMinutes = episode.runtime,
+            contentOriginalLanguage = resolveContentLanguage(
+                language = metaUiState.meta?.language,
+                country = metaUiState.meta?.country,
+            ) ?: args.contentLanguage,
         )
         val candidates = episodeStreamsRepoState.groups.flatMapIndexed { addonOrder, group ->
             group.streams.map { stream ->

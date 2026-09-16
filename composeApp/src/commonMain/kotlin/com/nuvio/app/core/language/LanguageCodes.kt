@@ -17,6 +17,31 @@ package com.nuvio.app.core.language
  * there; only the parsing moves. **Keep this file import-free.**
  */
 
+/**
+ * The three sentinel values [preferredAudioLanguage][com.nuvio.app.features.player.PlayerSettingsUiState.preferredAudioLanguage]
+ * can hold instead of a language code.
+ *
+ * They live here, beside the parsing, rather than with the localized labels in
+ * `features/player/PlayerLanguagePreferences.kt`, because **both** the player's track selection
+ * and the source picker have to agree on what they mean. While they lived next to the labels the
+ * source picker could not import them - that file reaches the generated Compose resource bundle -
+ * so it discarded them instead, and `LanguageStrictness.REQUIRE` was inert for every profile that
+ * had never opened the language dialog. `PlayerLanguagePreferences` re-exports both names, so the
+ * seventy-odd existing call sites are unchanged.
+ */
+object AudioLanguageOption {
+    const val DEFAULT = "default"
+    const val DEVICE = "device"
+    const val ORIGINAL = "original"
+}
+
+/** [AudioLanguageOption]'s subtitle counterpart, here for the same reason. */
+object SubtitleLanguageOption {
+    const val NONE = "none"
+    const val DEVICE = "device"
+    const val FORCED = "forced"
+}
+
 internal val LanguageCodeAliases = mapOf(
     "pt-pt" to "pt",
     "pt_br" to "pt-BR",

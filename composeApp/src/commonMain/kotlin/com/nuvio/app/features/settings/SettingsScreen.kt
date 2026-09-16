@@ -458,7 +458,6 @@ fun SettingsScreen(
                 selected = playerSettingsUiState.playbackMode,
                 onModeSelected = { mode ->
                     PlayerSettingsRepository.setPlaybackMode(mode)
-                    PlayerSettingsRepository.markPlaybackModeSelectorSeen()
                     showRootPlaybackModeDialog = false
                 },
                 onDismiss = { showRootPlaybackModeDialog = false },
@@ -717,6 +716,7 @@ private fun MobileSettingsScreen(
                 )
                 SettingsPage.Subtitles -> subtitlesSettingsContent(
                     isTablet = false,
+                    onOpenPlaybackLanguage = { onPageChange(SettingsPage.Playback) },
                 )
                 SettingsPage.Streams -> streamsSettingsContent(
                     isTablet = false,
@@ -1186,6 +1186,7 @@ private fun TabletSettingsScreen(
                         )
                         SettingsPage.Subtitles -> subtitlesSettingsContent(
                             isTablet = true,
+                            onOpenPlaybackLanguage = { openInlinePage(SettingsPage.Playback) },
                         )
                         SettingsPage.Streams -> streamsSettingsContent(
                             isTablet = true,

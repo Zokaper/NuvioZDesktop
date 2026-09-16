@@ -40,6 +40,10 @@ import com.nuvio.app.features.debrid.DirectDebridPlayableResult
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
 import com.nuvio.app.features.debrid.toastMessage
 import com.nuvio.app.features.details.MetaDetailsRepository
+import com.nuvio.app.core.language.AudioLanguageOption
+import com.nuvio.app.core.language.normalizeLanguageCode
+import com.nuvio.app.features.player.resolveContentLanguage
+import com.nuvio.app.features.playback.playbackSelectionContextOf
 import com.nuvio.app.features.downloads.SourceFacts
 import com.nuvio.app.features.downloads.SourceFactsExtractor
 import com.nuvio.app.features.downloads.SourceRanking
@@ -490,6 +494,18 @@ internal fun StreamDestination(
     var playbackHandedOff by rememberSaveable(route.launchId) { mutableStateOf(false) }
     /** The requested title's year, once the meta answers. Null until then, and often for good. */
     var requestedYear by remember(route.launchId) { mutableStateOf<Int?>(null) }
+    val playerSettings by remember {
+        PlayerSettingsRepository.ensureLoaded()
+        PlayerSettingsRepository.uiState
+    }.collectAsStateWithLifecycle()
+    /**
+     * This title's own language, for the `original` audio sentinel, once the meta answers.
+     *
+     * Null until then and often for good, which is the honest answer: `resolveRankableLanguages`
+     * turns a null into "no language opinion" rather than falling back to the device locale, so a
+     * user who asked for the original language is never quietly given English instead.
+     */
+    var contentOriginalLanguage by remember(route.launchId) { mutableStateOf<String?>(null) }
     val shouldResolveEpisodeVideoId =
         launch.parentMetaId != null &&
             launch.seasonNumber != null &&
@@ -522,6 +538,20 @@ internal fun StreamDestination(
         if (!shouldResolveEpisodeVideoId) {
             effectiveVideoId = launch.videoId
             hasResolvedVideoId = true
+            // A movie needs no video-id resolution, so this branch used to return before meta was
+            // ever fetched. That is still right for everyone except the one preference that cannot
+            // be answered without meta: `original` audio names a language only the title knows.
+            // Fetched here rather than always, because it buys nothing for the other settings.
+            if (normalizeLanguageCode(playerSettings.preferredAudioLanguage) == AudioLanguageOption.ORIGINAL) {
+                val metaId = launch.parentMetaId ?: launch.videoId
+                val movieMeta = runCatching {
+                    MetaDetailsRepository.fetch(launch.parentMetaType ?: launch.type, metaId)
+                }.getOrNull()
+                contentOriginalLanguage = resolveContentLanguage(
+                    language = movieMeta?.language,
+                    country = movieMeta?.country,
+                )
+            }
             return@LaunchedEffect
         }
         // Deliberately *not* reset to `launch.videoId` first. This effect
@@ -543,6 +573,10 @@ internal fun StreamDestination(
         // the guard treats a null as "not known", which always passes, so an addon that reports
         // no release info simply gets no year check rather than a wrong one.
         requestedYear = meta?.releaseInfo?.let(ContentIdentityGuard::parseYear)
+        contentOriginalLanguage = resolveContentLanguage(
+            language = meta?.language,
+            country = meta?.country,
+        )
         val resolvedVideoId = meta
         ?.videos
         ?.firstOrNull { video ->
@@ -556,10 +590,6 @@ internal fun StreamDestination(
         hasResolvedVideoId = true
     }
 
-    val playerSettings by remember {
-        PlayerSettingsRepository.ensureLoaded()
-        PlayerSettingsRepository.uiState
-    }.collectAsStateWithLifecycle()
     // Streamlined and Instant own source selection. Passing them through the
     // legacy auto-play policy would run two pickers over the same candidates.
     val streamManualSelection = launch.manualSelection ||
@@ -738,29 +768,29 @@ internal fun StreamDestination(
 
     val playbackSelectionContext = remember(
         requestedYear,
+        contentOriginalLanguage,
         launch.runtimeMinutes,
         launch.seasonNumber,
         launch.episodeNumber,
         playerSettings.playbackAllowTorrentAutopick,
         playerSettings.preferredAudioLanguage,
         playerSettings.secondaryPreferredAudioLanguage,
+        playerSettings.preferredSubtitleLanguage,
+        playerSettings.secondaryPreferredSubtitleLanguage,
         playerSettings.playbackLanguageStrictness,
         playerSettings.playbackQualityCeilingMbps,
         playerSettings.playbackCodecPreference,
         playerSettings.playbackDynamicRangePolicy,
+        // Was absent, so changing the audio preference left the context - and therefore the
+        // whole quality panel built from it - showing the previous answer until something else
+        // invalidated it.
+        playerSettings.playbackAudioPreference,
     ) {
-        PlaybackSelectionContext(
-            runtimeMinutes = launch.runtimeMinutes,
+        playbackSelectionContextOf(
+            settings = playerSettings,
             isEpisode = launch.seasonNumber != null && launch.episodeNumber != null,
-            allowTorrentSources = playerSettings.playbackAllowTorrentAutopick,
-            preferredAudioLanguage = playerSettings.rankableAudioLanguage,
-            // The same sentinel-stripping the primary gets. `default`, `device`
-            // and `original` are instructions to the player's track selection and
-            // name no language a release can be ranked against.
-            secondaryAudioLanguage = playerSettings.rankableSecondaryAudioLanguage,
-            languageStrictness = playerSettings.playbackLanguageStrictness,
-            qualityCeilingMbps = playerSettings.playbackQualityCeilingMbps
-                .takeIf { it > 0 }?.toDouble(),
+            runtimeMinutes = launch.runtimeMinutes,
+            contentOriginalLanguage = contentOriginalLanguage,
             // ⚠ **Automatic modes only.** Classic and every manual path leave this null, so the
             // guard is inert for them: a manual pick is the user reading the release name and
             // choosing anyway, and overriding that would be a refusal wearing a helper's name.
@@ -777,10 +807,6 @@ internal fun StreamDestination(
             } else {
                 null
             },
-            codecPreference = playerSettings.playbackCodecPreference,
-            dynamicRangePolicy = playerSettings.playbackDynamicRangePolicy,
-            audioPreference = playerSettings.playbackAudioPreference,
-            displayMaxHeight = platformDisplayMaxHeight(),
         )
     }
     // The quality choices for *this* title, derived from what the addons actually

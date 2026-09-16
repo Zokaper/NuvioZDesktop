@@ -95,17 +95,15 @@ data class LanguagePreferenceOption(
     val labelRes: StringResource,
 )
 
-object AudioLanguageOption {
-    const val DEFAULT = "default"
-    const val DEVICE = "device"
-    const val ORIGINAL = "original"
-}
+/**
+ * Re-exported from `core/language`, where the sentinels now live so that the source picker can
+ * read them too - see the KDoc there. The names stay in this package because a dozen player call
+ * sites import them from here.
+ */
+typealias AudioLanguageOption = com.nuvio.app.core.language.AudioLanguageOption
 
-object SubtitleLanguageOption {
-    const val NONE = "none"
-    const val DEVICE = "device"
-    const val FORCED = "forced"
-}
+/** Re-exported alongside [AudioLanguageOption]. */
+typealias SubtitleLanguageOption = com.nuvio.app.core.language.SubtitleLanguageOption
 
 val AvailableLanguageOptions: List<LanguagePreferenceOption> = listOf(
     LanguagePreferenceOption("af", Res.string.lang_afrikaans),

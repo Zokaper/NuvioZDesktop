@@ -6,6 +6,7 @@ import com.nuvio.app.features.downloads.AudioPreference
 import com.nuvio.app.features.downloads.CodecPreference
 import com.nuvio.app.features.downloads.DynamicRangePolicy
 import com.nuvio.app.features.playback.LanguageStrictness
+import com.nuvio.app.features.playback.migratedPreferredAudioLanguage
 import com.nuvio.app.features.playback.PlaybackMode
 import com.nuvio.app.features.player.skip.AutoSkipSegmentType
 import com.nuvio.app.features.streams.StreamAutoPlayMode
@@ -85,17 +86,23 @@ data class PlayerSettingsUiState(
     /**
      * How hard Streamlined tries to honour [preferredAudioLanguage] when picking a source.
      *
-     * Defaults to REQUIRE, which is unusual for a preference and deliberate: the reported
-     * failure is being handed a source with no audio or subtitles the user can follow, and a
-     * soft preference is what produced it.
+     * ⚠ **Was REQUIRE, and REQUIRE was inert.** It shipped strict deliberately - the reported
+     * failure was being handed a source with no audio or subtitles the user could follow, and a
+     * soft preference is what produced it - but [preferredAudioLanguage] ships as the sentinel
+     * `device`, and the picker discarded every sentinel before ranking read it. So the strict
+     * default did nothing at all for any profile that had never opened the language dialog, which
+     * is almost all of them.
+     *
+     * Resolving the sentinels makes it live. Turning it on for everyone *and* leaving it at
+     * REQUIRE would have silently changed what plays for every existing install at once, on a
+     * preference none of them had ever stated, so the default drops to PREFER in the same change
+     * that gives it something to act on. REQUIRE remains one tap away and now does what it says.
      */
-    val playbackLanguageStrictness: LanguageStrictness = LanguageStrictness.REQUIRE,
+    val playbackLanguageStrictness: LanguageStrictness = LanguageStrictness.PREFER,
     /** Megabits per second the automatic picker may not exceed. `0` means no ceiling. */
     val playbackQualityCeilingMbps: Int = 0,
     val showAdvancedSettings: Boolean = false,
     val playbackMeteredCapHeight: Int = 720,
-    /** False until the first-launch mode selector has been answered or dismissed. */
-    val playbackModeSelectorSeen: Boolean = false,
     /**
      * Highest setup-wizard revision this profile has finished; 0 means never.
      *
@@ -140,31 +147,7 @@ data class PlayerSettingsUiState(
     val iosSaturation: Int = 0,
     val iosGamma: Int = 0,
     val nvidiaRtxSuperResolutionEnabled: Boolean = false,
-) {
-    /**
-     * [preferredAudioLanguage] as something a *release* can be ranked against, or null.
-     *
-     * The stored value doubles as an instruction to the player's own track selection, and
-     * three of its values - `default`, `device`, `original` - name no language at all.
-     * Passing one of those to `SourceRanking` matches nothing, which looks exactly like the
-     * preference not being wired up: the defect this exists to close. Resolved in one place
-     * because two callers build a `PlaybackSelectionContext`, and a rule applied in one of
-     * them is a rule that holds for the first episode and not the next one.
-     */
-    val rankableAudioLanguage: String?
-        get() = preferredAudioLanguage.rankableLanguageOrNull()
-
-    /** [secondaryPreferredAudioLanguage], under exactly [rankableAudioLanguage]'s rules. */
-    val rankableSecondaryAudioLanguage: String?
-        get() = secondaryPreferredAudioLanguage?.rankableLanguageOrNull()
-
-    private fun String.rankableLanguageOrNull(): String? = takeIf {
-        it.isNotBlank() &&
-            it != AudioLanguageOption.DEFAULT &&
-            it != AudioLanguageOption.DEVICE &&
-            it != AudioLanguageOption.ORIGINAL
-    }
-}
+)
 
 object PlayerSettingsRepository {
     private val json = Json { ignoreUnknownKeys = true }
@@ -200,11 +183,10 @@ object PlayerSettingsRepository {
     private var playbackCodecPreference = CodecPreference.ANY
     private var playbackDynamicRangePolicy = DynamicRangePolicy.ANY
     private var playbackAudioPreference = AudioPreference.ANY
-    private var playbackLanguageStrictness = LanguageStrictness.REQUIRE
+    private var playbackLanguageStrictness = LanguageStrictness.PREFER
     private var playbackQualityCeilingMbps = 0
     private var showAdvancedSettings = false
     private var playbackMeteredCapHeight = 720
-    private var playbackModeSelectorSeen = false
     private var setupWizardCompletedRevision = 0
     private var streamAutoPlayMode = StreamAutoPlayMode.MANUAL
     private var streamAutoPlaySource = StreamAutoPlaySource.ALL_SOURCES
@@ -283,11 +265,10 @@ object PlayerSettingsRepository {
         playbackCodecPreference = CodecPreference.ANY
         playbackDynamicRangePolicy = DynamicRangePolicy.ANY
         playbackAudioPreference = AudioPreference.ANY
-        playbackLanguageStrictness = LanguageStrictness.REQUIRE
+        playbackLanguageStrictness = LanguageStrictness.PREFER
         playbackQualityCeilingMbps = 0
         showAdvancedSettings = false
         playbackMeteredCapHeight = 720
-        playbackModeSelectorSeen = false
         setupWizardCompletedRevision = 0
         streamAutoPlayMode = StreamAutoPlayMode.MANUAL
         streamAutoPlaySource = StreamAutoPlaySource.ALL_SOURCES
@@ -418,9 +399,12 @@ object PlayerSettingsRepository {
         playbackAudioPreference = PlayerSettingsStorage.loadPlaybackAudioPreference()
             ?.let { stored -> AudioPreference.entries.firstOrNull { it.name == stored } }
             ?: AudioPreference.ANY
+        // Unset falls to PREFER along with the field's own default. A profile that stored REQUIRE
+        // explicitly keeps it - it is now the strict rule it always claimed to be, and the user
+        // chose it.
         playbackLanguageStrictness = PlayerSettingsStorage.loadPlaybackLanguageStrictness()
             ?.let { stored -> LanguageStrictness.entries.firstOrNull { it.name == stored } }
-            ?: LanguageStrictness.REQUIRE
+            ?: LanguageStrictness.PREFER
         playbackQualityCeilingMbps = PlayerSettingsStorage.loadPlaybackQualityCeilingMbps()
             ?.coerceAtLeast(0)
             ?: 0
@@ -439,8 +423,6 @@ object PlayerSettingsRepository {
             )
         playbackMeteredCapHeight = PlayerSettingsStorage.loadPlaybackMeteredCapHeight()
             ?.takeIf { it in 360..2160 } ?: 720
-        playbackModeSelectorSeen =
-            PlayerSettingsStorage.loadPlaybackModeSelectorSeen() ?: false
         setupWizardCompletedRevision =
             PlayerSettingsStorage.loadSetupWizardCompletedRevision() ?: 0
         streamAutoPlayMode = PlayerSettingsStorage.loadStreamAutoPlayMode()
@@ -518,7 +500,33 @@ object PlayerSettingsRepository {
         iosSaturation = PlayerSettingsStorage.loadIosSaturation() ?: 0
         iosGamma = PlayerSettingsStorage.loadIosGamma() ?: 0
         nvidiaRtxSuperResolutionEnabled = PlayerSettingsStorage.loadNvidiaRtxSuperResolutionEnabled() ?: false
+        settleDeviceAudioLanguageSentinel()
         publish()
+    }
+
+    /**
+     * Turn a never-answered `device` audio language into the code it already resolves to.
+     *
+     * Runs inside [loadFromDisk], so it is finished before anything can read the state and - the
+     * part that matters - before `ProfileSettingsSync` can import a remote payload over it. Run
+     * after the import instead and it would look at whatever the other device had, decide that had
+     * been answered, and leave this one on the sentinel forever.
+     *
+     * The flag is written even when the device reports no languages at all. Nothing was changed in
+     * that case, but the question was asked and the answer was "there is nothing to migrate to";
+     * re-asking it on every launch would be the same non-answer at the same cost.
+     */
+    private fun settleDeviceAudioLanguageSentinel() {
+        if (PlayerSettingsStorage.loadPlaybackLanguageMigrated() == true) return
+        migratedPreferredAudioLanguage(
+            alreadyMigrated = false,
+            storedPreferredAudio = PlayerSettingsStorage.loadPreferredAudioLanguage(),
+            deviceLanguages = DeviceLanguagePreferences.preferredLanguageCodes(),
+        )?.let { resolved ->
+            preferredAudioLanguage = resolved
+            PlayerSettingsStorage.savePreferredAudioLanguage(resolved)
+        }
+        PlayerSettingsStorage.savePlaybackLanguageMigrated(true)
     }
 
     fun setShowLoadingOverlay(enabled: Boolean) {
@@ -811,21 +819,6 @@ object PlayerSettingsRepository {
         playbackMeteredCapHeight = normalized
         publish()
         PlayerSettingsStorage.savePlaybackMeteredCapHeight(normalized)
-    }
-
-    /**
-     * Records that the mode selector has been answered.
-     *
-     * Kept separate from [setPlaybackMode] because choosing Classic - the
-     * pre-selected option - is a no-op for the mode and must still dismiss the
-     * selector for good.
-     */
-    fun markPlaybackModeSelectorSeen() {
-        ensureLoaded()
-        if (playbackModeSelectorSeen) return
-        playbackModeSelectorSeen = true
-        publish()
-        PlayerSettingsStorage.savePlaybackModeSelectorSeen(true)
     }
 
     /**
@@ -1221,7 +1214,6 @@ object PlayerSettingsRepository {
             playbackQualityCeilingMbps = playbackQualityCeilingMbps,
             showAdvancedSettings = showAdvancedSettings,
             playbackMeteredCapHeight = playbackMeteredCapHeight,
-            playbackModeSelectorSeen = playbackModeSelectorSeen,
             setupWizardCompletedRevision = setupWizardCompletedRevision,
             streamAutoPlayMode = streamAutoPlayMode,
             streamAutoPlaySource = streamAutoPlaySource,

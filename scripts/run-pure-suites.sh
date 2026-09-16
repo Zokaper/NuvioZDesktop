@@ -117,6 +117,7 @@ kotlinc -nowarn -cp "$CP_BUILD:$CP_JSON" -Xplugin="$WORK/serialization-plugin-${
   "$M/core/media/ReleaseTags.kt" \
   "$M/features/downloads/SourceRanking.kt" \
   "$M/features/playback/PlaybackModeModels.kt" \
+  "$M/features/playback/PlaybackLanguageResolution.kt" \
   "$M/features/playback/PlaybackSourceSelector.kt" \
   "$M/features/playback/PlaybackQualityOptions.kt" \
   "$M/features/playback/StreamRouteSurface.kt" \
@@ -128,6 +129,7 @@ kotlinc -nowarn -cp "$CP_BUILD:$CP_JSON" -Xplugin="$WORK/serialization-plugin-${
   "$T/core/language/LanguageCodesTest.kt" \
   "$T/core/media/ReleaseTagsTest.kt" \
   "$T/features/downloads/SourceRankingTest.kt" \
+  "$T/features/playback/PlaybackLanguageResolutionTest.kt" \
   "$T/features/playback/PlaybackQualityOptionsTest.kt" \
   "$T/features/playback/StreamRouteSurfaceTest.kt" \
   "$T/features/playback/PlaybackModeRouterTest.kt" \
@@ -143,6 +145,7 @@ java -cp "$WORK/out-selection:$CP_RUN:$CP_JSON" org.junit.runner.JUnitCore \
   com.nuvio.app.core.language.LanguageCodesTest \
   com.nuvio.app.core.media.ReleaseTagsTest \
   com.nuvio.app.features.downloads.SourceRankingTest \
+  com.nuvio.app.features.playback.PlaybackLanguageResolutionTest \
   com.nuvio.app.features.playback.PlaybackQualityOptionsTest \
   com.nuvio.app.features.playback.StreamRouteSurfaceTest \
   com.nuvio.app.features.playback.PlaybackModeRouterTest \

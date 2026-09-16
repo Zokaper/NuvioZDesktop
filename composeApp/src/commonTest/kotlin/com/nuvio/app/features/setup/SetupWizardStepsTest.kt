@@ -123,7 +123,42 @@ class SetupWizardStepsTest {
         // one; a configuration screen with nothing on it directly after that reads as a bug.
         val classic = SetupWizardPlan(playbackModeName = "CLASSIC")
         assertFalse(setupWizardSteps(classic).contains(SetupStep.PlaybackSetup))
-        assertEquals(SetupStep.Sources, nextSetupStep(SetupStep.PlaybackMode, classic))
+        // Language is the step Classic does not skip: it feeds the player's own track
+        // selection, which runs in all three modes.
+        assertEquals(SetupStep.Language, nextSetupStep(SetupStep.PlaybackMode, classic))
+    }
+
+    /**
+     * ⚠ **Unconditional, where `PlaybackSetup` is not.** Everything that step asks feeds the
+     * automatic source picker, which Classic has none of. Language feeds that *and* the
+     * player's own track selection, which runs in every mode - so it is the one playback
+     * question a Classic user is still asked, and the answer still does something.
+     */
+    @Test
+    fun everyModeIsAskedForALanguage() {
+        everyPlan.forEach { plan ->
+            assertTrue(
+                setupWizardSteps(plan).contains(SetupStep.Language),
+                "plan ${plan.playbackModeName} must ask for a language",
+            )
+        }
+    }
+
+    @Test
+    fun languageIsAskedWithPlaybackRatherThanWithAppearance() {
+        val steps = SetupStep.entries
+        assertTrue(steps.indexOf(SetupStep.Language) > steps.indexOf(SetupStep.PlaybackMode))
+        assertTrue(steps.indexOf(SetupStep.Language) < steps.indexOf(SetupStep.Sources))
+    }
+
+    /**
+     * The revision the Language step arrived in. Without the bump the step exists and no
+     * existing profile is ever shown it, which is the failure mode this constant exists for.
+     */
+    @Test
+    fun theLanguageStepShipsAsRevisionEight() {
+        assertEquals(8, SETUP_WIZARD_REVISION)
+        assertTrue(shouldShowSetupWizard(completedRevision = 7, currentRevision = SETUP_WIZARD_REVISION))
     }
 
     @Test
@@ -146,7 +181,7 @@ class SetupWizardStepsTest {
             offerSocialIdentity = true,
         )
         assertEquals(SetupStep.entries, setupWizardSteps(full))
-        assertEquals(9, SetupStep.entries.size)
+        assertEquals(10, SetupStep.entries.size)
     }
 
     @Test
@@ -224,7 +259,8 @@ class SetupWizardStepsTest {
         )
         assertEquals(SetupStep.PlaybackMode, nextSetupStep(SetupStep.Welcome, plan))
         assertEquals(SetupStep.PlaybackSetup, nextSetupStep(SetupStep.PlaybackMode, plan))
-        assertEquals(SetupStep.Sources, nextSetupStep(SetupStep.PlaybackSetup, plan))
+        assertEquals(SetupStep.Language, nextSetupStep(SetupStep.PlaybackSetup, plan))
+        assertEquals(SetupStep.Sources, nextSetupStep(SetupStep.Language, plan))
         assertEquals(SetupStep.SocialOptIn, nextSetupStep(SetupStep.Sources, plan))
         assertEquals(SetupStep.SocialIdentity, nextSetupStep(SetupStep.SocialOptIn, plan))
         assertEquals(SetupStep.Look, nextSetupStep(SetupStep.SocialIdentity, plan))
@@ -243,6 +279,8 @@ class SetupWizardStepsTest {
         assertEquals(SetupStep.Look, previousSetupStep(SetupStep.Theme, plan))
         assertEquals(SetupStep.SocialIdentity, previousSetupStep(SetupStep.Look, plan))
         assertEquals(SetupStep.SocialOptIn, previousSetupStep(SetupStep.SocialIdentity, plan))
+        assertEquals(SetupStep.Language, previousSetupStep(SetupStep.Sources, plan))
+        assertEquals(SetupStep.PlaybackSetup, previousSetupStep(SetupStep.Language, plan))
         assertEquals(SetupStep.PlaybackMode, previousSetupStep(SetupStep.PlaybackSetup, plan))
     }
 
@@ -283,8 +321,8 @@ class SetupWizardStepsTest {
     @Test
     fun aDroppedOptionalStepIsSteppedOver() {
         val plan = SetupWizardPlan(offerSources = false)
-        assertEquals(SetupStep.SocialOptIn, nextSetupStep(SetupStep.PlaybackMode, plan))
-        assertEquals(SetupStep.PlaybackMode, previousSetupStep(SetupStep.SocialOptIn, plan))
+        assertEquals(SetupStep.Language, nextSetupStep(SetupStep.PlaybackMode, plan))
+        assertEquals(SetupStep.Language, previousSetupStep(SetupStep.SocialOptIn, plan))
     }
 
     @Test
@@ -293,10 +331,10 @@ class SetupWizardStepsTest {
         // strand somebody if `nextSetupStep` answered null for a step outside the plan.
         val addonInstalled = SetupWizardPlan(offerSources = false)
         assertEquals(SetupStep.SocialOptIn, nextSetupStep(SetupStep.Sources, addonInstalled))
-        assertEquals(SetupStep.PlaybackMode, previousSetupStep(SetupStep.Sources, addonInstalled))
+        assertEquals(SetupStep.Language, previousSetupStep(SetupStep.Sources, addonInstalled))
 
         val switchedToClassic = SetupWizardPlan(playbackModeName = "CLASSIC")
-        assertEquals(SetupStep.Sources, nextSetupStep(SetupStep.PlaybackSetup, switchedToClassic))
+        assertEquals(SetupStep.Language, nextSetupStep(SetupStep.PlaybackSetup, switchedToClassic))
         assertEquals(SetupStep.PlaybackMode, previousSetupStep(SetupStep.PlaybackSetup, switchedToClassic))
 
         val socialTurnedOff = SetupWizardPlan(socialEnabled = false)
@@ -314,12 +352,12 @@ class SetupWizardStepsTest {
             offerSocialIdentity = true,
         )
         assertEquals(1, setupStepPosition(SetupStep.Welcome, full))
-        assertEquals(9, setupStepPosition(SetupStep.Done, full))
+        assertEquals(10, setupStepPosition(SetupStep.Done, full))
 
         // Classic, addons already installed, social off: the three droppable steps all gone.
         val lean = SetupWizardPlan(offerSources = false, playbackModeName = "CLASSIC")
-        assertEquals(6, setupWizardSteps(lean).size)
-        assertEquals(6, setupStepPosition(SetupStep.Done, lean))
+        assertEquals(7, setupWizardSteps(lean).size)
+        assertEquals(7, setupStepPosition(SetupStep.Done, lean))
     }
 
     @Test

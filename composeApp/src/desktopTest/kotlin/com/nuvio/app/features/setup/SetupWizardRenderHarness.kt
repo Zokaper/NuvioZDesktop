@@ -7,6 +7,8 @@ import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import com.nuvio.app.core.language.AudioLanguageOption
+import com.nuvio.app.core.language.SubtitleLanguageOption
 import com.nuvio.app.core.ui.AppTheme
 import com.nuvio.app.core.ui.NuvioTheme
 import com.nuvio.app.core.ui.desktopUiScaleForWindow
@@ -241,6 +243,11 @@ class SetupWizardRenderHarness {
                             languageStrictness = LanguageStrictness.REQUIRE,
                             dynamicRangePolicy = DynamicRangePolicy.ANY,
                             qualityCeilingMbps = 0,
+                            // The shipped defaults, so the Language step draws the two
+                            // sentinel labels rather than a language name - the pair a
+                            // fresh profile actually sees.
+                            preferredAudioLanguage = AudioLanguageOption.DEVICE,
+                            preferredSubtitleLanguage = SubtitleLanguageOption.NONE,
                             posterWidthDp = 126,
                             landscapeCards = false,
                             selectedTheme = AppTheme.WHITE,

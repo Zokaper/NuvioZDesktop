@@ -6,7 +6,7 @@ import nuvio.composeapp.generated.resources.settings_social_title
 import nuvio.composeapp.generated.resources.settings_subtitles_section_languages
 import nuvio.composeapp.generated.resources.settings_subtitles_section_rendering
 import nuvio.composeapp.generated.resources.settings_playback_section_source_preferences
-import nuvio.composeapp.generated.resources.settings_playback_section_audio
+import nuvio.composeapp.generated.resources.settings_playback_section_language
 import nuvio.composeapp.generated.resources.settings_playback_audio_preference
 import nuvio.composeapp.generated.resources.settings_playback_audio_preference_description
 import androidx.compose.animation.AnimatedVisibility
@@ -581,7 +581,7 @@ internal fun settingsSearchEntries(
     val playbackPlayer = stringResource(Res.string.settings_playback_section_player)
     val playbackSourcePreferences =
         stringResource(Res.string.settings_playback_section_source_preferences)
-    val playbackAudio = stringResource(Res.string.settings_playback_section_audio)
+    val playbackLanguage = stringResource(Res.string.settings_playback_section_language)
     val subtitlesPage = stringResource(Res.string.compose_settings_page_subtitles)
     val subtitlesLanguages = stringResource(Res.string.settings_subtitles_section_languages)
     val subtitlesRendering = stringResource(Res.string.settings_subtitles_section_rendering)
@@ -734,24 +734,29 @@ internal fun settingsSearchEntries(
     addPlaybackRows(
         addRow = ::addRow,
         pageLabel = playbackPage,
-        section = playbackAudio,
+        // ⚠ The two subtitle rows used to send the user to the Subtitles page, because that
+        // is where they were. They are on Playback - Language now, beside the audio pair,
+        // and a search row that lands on the page a setting has left is worse than no row.
+        section = playbackLanguage,
         icon = Icons.Rounded.PlayArrow,
         rows = listOf(
             PlaybackSearchRow("preferred-audio", stringResource(Res.string.settings_playback_preferred_audio_language)),
             PlaybackSearchRow("secondary-audio", stringResource(Res.string.settings_playback_secondary_audio_language)),
+            PlaybackSearchRow("preferred-subtitles", stringResource(Res.string.settings_playback_preferred_subtitle_language)),
+            PlaybackSearchRow("secondary-subtitles", stringResource(Res.string.settings_playback_secondary_subtitle_language)),
+        ),
+    )
+    addPlaybackRows(
+        addRow = ::addRow,
+        pageLabel = subtitlesPage,
+        page = SettingsPage.Subtitles,
+        section = subtitlesLanguages,
+        icon = Icons.Rounded.PlayArrow,
+        rows = listOf(
             PlaybackSearchRow(
-                "preferred-subtitles",
-                stringResource(Res.string.settings_playback_preferred_subtitle_language),
-                sectionOverride = subtitlesLanguages,
-                pageOverride = SettingsPage.Subtitles,
-                pageLabelOverride = subtitlesPage,
-            ),
-            PlaybackSearchRow(
-                "secondary-subtitles",
-                stringResource(Res.string.settings_playback_secondary_subtitle_language),
-                sectionOverride = subtitlesLanguages,
-                pageOverride = SettingsPage.Subtitles,
-                pageLabelOverride = subtitlesPage,
+                "subtitle-strip-sdh",
+                stringResource(Res.string.settings_playback_subtitle_strip_sdh),
+                stringResource(Res.string.settings_playback_subtitle_strip_sdh_description),
             ),
         ),
     )

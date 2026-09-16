@@ -38,7 +38,7 @@ package com.nuvio.app.features.setup
  * launch - see `mergeMonotonicSyncInt` in `core/sync/SyncPreferenceJson.kt`. When testing this,
  * the launch that proves anything is the **second** one.
  */
-const val SETUP_WIZARD_REVISION: Int = 7
+const val SETUP_WIZARD_REVISION: Int = 8
 
 /**
  * Whether the first-launch wizard should gate the app.
@@ -81,6 +81,20 @@ enum class SetupStep {
      * [playbackSetupVariant], which decides both whether this step appears and what it asks.
      */
     PlaybackSetup,
+
+    /**
+     * The language the user watches in - audio, and subtitles.
+     *
+     * ⚠ **Unconditional, unlike [PlaybackSetup], and that asymmetry is the point.** Everything
+     * PlaybackSetup asks feeds the automatic source picker, which Classic does not have. Language
+     * feeds that *and* the player's own track selection, which runs in all three modes - so this
+     * is the one playback question worth asking a Classic user.
+     *
+     * It is also the question revision 7 never asked while asking how hard to try to honour the
+     * answer. The audio preference ships as the sentinel `device` and the picker discarded every
+     * sentinel, so "Audio language matching: Require" was asked, stored, synced, and inert.
+     */
+    Language,
 
     /** Addons. Optional, and the only step that can fail. */
     Sources,

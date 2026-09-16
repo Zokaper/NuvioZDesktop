@@ -116,15 +116,6 @@ internal expect object PlayerSettingsStorage {
     fun savePlaybackMeteredCapHeight(height: Int)
 
     /**
-     * Whether the mode selector has been shown, tracked separately from the mode itself.
-     *
-     * Without this, "chose Classic" and "never chose" are the same stored value, so the
-     * selector would either reappear forever or never reach an existing install.
-     */
-    fun loadPlaybackModeSelectorSeen(): Boolean?
-    fun savePlaybackModeSelectorSeen(seen: Boolean)
-
-    /**
      * The highest setup-wizard revision this profile has completed.
      *
      * An integer rather than a boolean so a later release can add steps and ask again, and
@@ -136,6 +127,18 @@ internal expect object PlayerSettingsStorage {
      */
     fun loadSetupWizardCompletedRevision(): Int?
     fun saveSetupWizardCompletedRevision(revision: Int)
+
+    /**
+     * Whether this profile's `device` audio-language sentinel has been settled into a real code.
+     *
+     * A flag rather than an inferred condition, because the migration's own outcome is
+     * indistinguishable from never having run: a profile whose device list was empty is left on
+     * the sentinel, and without the flag it would be re-examined on every launch and on every
+     * device. It is synced for the same reason - the question is answered once per profile, not
+     * once per machine. See `migratedPreferredAudioLanguage`.
+     */
+    fun loadPlaybackLanguageMigrated(): Boolean?
+    fun savePlaybackLanguageMigrated(migrated: Boolean)
     fun loadStreamAutoPlayNextEpisodeEnabled(): Boolean?
     fun saveStreamAutoPlayNextEpisodeEnabled(enabled: Boolean)
     fun loadStreamAutoPlayNextEpisodeFallbackEnabled(): Boolean?

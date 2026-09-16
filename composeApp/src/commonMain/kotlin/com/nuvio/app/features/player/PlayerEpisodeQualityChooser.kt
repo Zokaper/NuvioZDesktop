@@ -8,6 +8,7 @@ import com.nuvio.app.features.playback.PlaybackSelectionContext
 import com.nuvio.app.features.playback.PlaybackSelectionResult
 import com.nuvio.app.features.playback.PlaybackSourceCandidate
 import com.nuvio.app.features.playback.PlaybackSourceSelector
+import com.nuvio.app.features.playback.playbackSelectionContextOf
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamsUiState
 
@@ -39,17 +40,12 @@ internal fun streamlinedEpisodeSelectionContext(
     settings: PlayerSettingsUiState,
     episode: MetaVideo,
     displayMaxHeight: Int? = com.nuvio.app.platformDisplayMaxHeight(),
-): PlaybackSelectionContext = PlaybackSelectionContext(
-    runtimeMinutes = episode.runtime,
+    contentOriginalLanguage: String? = null,
+): PlaybackSelectionContext = playbackSelectionContextOf(
+    settings = settings,
     isEpisode = true,
-    allowTorrentSources = settings.playbackAllowTorrentAutopick,
-    preferredAudioLanguage = settings.rankableAudioLanguage,
-    secondaryAudioLanguage = settings.rankableSecondaryAudioLanguage,
-    languageStrictness = settings.playbackLanguageStrictness,
-    qualityCeilingMbps = settings.playbackQualityCeilingMbps.takeIf { it > 0 }?.toDouble(),
-    codecPreference = settings.playbackCodecPreference,
-    dynamicRangePolicy = settings.playbackDynamicRangePolicy,
-    audioPreference = settings.playbackAudioPreference,
+    runtimeMinutes = episode.runtime,
+    contentOriginalLanguage = contentOriginalLanguage,
     displayMaxHeight = displayMaxHeight,
 )
 

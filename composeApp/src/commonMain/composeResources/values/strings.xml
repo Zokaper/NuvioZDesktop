@@ -1213,7 +1213,7 @@
     <string name="settings_playback_reuse_binge_group">Reuse Binge Group</string>
     <string name="settings_playback_reuse_binge_group_description">Remember and reuse the last binge group across sessions (Continue Watching, Details, etc.).</string>
     <string name="settings_playback_preferred_audio_language">Preferred Audio Language</string>
-    <string name="settings_playback_preferred_subtitle_language">Preferred Language</string>
+    <string name="settings_playback_preferred_subtitle_language">Preferred Subtitle Language</string>
     <string name="settings_playback_presets">Presets</string>
     <string name="settings_playback_regex_matches_against">Matches against stream name/title/description/addon/url. Example: 4K|2160p|Remux</string>
     <string name="settings_playback_regex_pattern">Regex Pattern</string>
@@ -1240,7 +1240,7 @@
     <string name="settings_playback_reuse_last_link">Reuse Last Link</string>
     <string name="settings_playback_reuse_last_link_description">Auto-play your last working stream for this same movie/episode when cache is still valid</string>
     <string name="settings_playback_secondary_audio_language">Secondary Audio Language</string>
-    <string name="settings_playback_secondary_subtitle_language">Secondary Preferred Language</string>
+    <string name="settings_playback_secondary_subtitle_language">Secondary Subtitle Language</string>
     <string name="settings_playback_section_decoder">DECODER</string>
     <string name="settings_playback_engine">Playback Engine</string>
     <string name="settings_playback_engine_auto_description">Use ExoPlayer first and fall back to libmpv if playback fails.</string>
@@ -1385,6 +1385,12 @@
     <string name="settings_subtitles_section_rendering">Rendering</string>
     <string name="settings_subtitles_open">Subtitles</string>
     <string name="settings_subtitles_open_description">Languages, size, colour and rendering.</string>
+    <string name="settings_playback_section_language">Language</string>
+    <string name="settings_subtitles_languages_moved">Subtitle languages</string>
+    <string name="settings_subtitles_languages_moved_description">Now set with audio language, under Playback.</string>
+    <string name="settings_playback_metered_cap">Resolution on metered connections</string>
+    <string name="settings_playback_metered_cap_description">The most Instant will spend when you choose Data saver on a metered connection.</string>
+    <string name="settings_playback_metered_cap_value">%1$s and below</string>
     <string name="settings_playback_section_source_preferences">Source Preferences</string>
     <string name="settings_playback_section_audio">Audio</string>
     <string name="settings_playback_audio_preference">Preferred audio</string>
@@ -2659,6 +2665,13 @@
     <string name="setup_playback_setup_body_streamlined">You will see a short list of qualities each time. Nuvio then chooses the best release in the one you pick.</string>
     <string name="setup_playback_setup_body_instant">Nuvio measures your connection and starts playing without asking. A ceiling keeps it from choosing something bigger than you want.</string>
     <string name="setup_playback_setup_more">Codec, audio and torrent preferences are in Settings → Playback.</string>
+
+    <!-- Language. The one playback question every mode is asked: it feeds the automatic source
+         picker and the player's own track selection, and Classic has the second one. -->
+    <string name="setup_language_title">Which language do you watch in?</string>
+    <string name="setup_language_subtitle">Used both to choose a source and to pick the tracks inside it.</string>
+    <string name="setup_language_body">Nuvio prefers releases that carry your audio language, then selects the matching audio and subtitle tracks once playback starts. Both halves apply in every playback mode.</string>
+    <string name="setup_language_more">Second-choice languages, and how strictly to match, are in Settings → Playback → Language.</string>
 
     <!-- Social. The first question is whether the feature exists at all, not what it is called. -->
     <string name="setup_social_title">Watch with friends?</string>
