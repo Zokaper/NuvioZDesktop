@@ -195,62 +195,6 @@ class PlaybackLoadingStateTest {
         )
     }
 
-    /**
-     * The quality panel's subtitle chip. It reads a release-name *claim*, at the same standard as
-     * the DV and Atmos chips beside it, and the player still verifies against mpv afterwards.
-     */
-    @Test
-    fun `the chip names the language the user asked for when the release claims it`() {
-        val facts = SourceFacts(releaseSubtitleLanguages = setOf("fr", "en"))
-        val claim = PlaybackLoadingFacts.builtInSubtitleClaim(facts, preferredLanguage = "en")
-        assertEquals("en", claim?.code)
-        assertTrue(claim?.matchesPreference == true)
-    }
-
-    @Test
-    fun `a claim in another language is shown plainly rather than as a match`() {
-        val facts = SourceFacts(releaseSubtitleLanguages = setOf("fr"))
-        val claim = PlaybackLoadingFacts.builtInSubtitleClaim(facts, preferredLanguage = "en")
-        assertEquals("fr", claim?.code)
-        assertTrue(claim?.matchesPreference == false)
-    }
-
-    @Test
-    fun `MultiSubs names no language and so matches nothing`() {
-        val claim = PlaybackLoadingFacts.builtInSubtitleClaim(
-            SourceFacts(claimsMultiSubtitles = true),
-            preferredLanguage = "en",
-        )
-        assertNull(claim?.code)
-        assertTrue(claim?.matchesPreference == false)
-    }
-
-    @Test
-    fun `no claim and burned-in subtitles both draw no chip`() {
-        assertNull(PlaybackLoadingFacts.builtInSubtitleClaim(SourceFacts(), preferredLanguage = "en"))
-        assertNull(PlaybackLoadingFacts.builtInSubtitleClaim(null, preferredLanguage = "en"))
-        // Burned into the picture is not a track, which is why it scores nothing in the ranking
-        // either - the chip must not offer it as one.
-        assertNull(
-            PlaybackLoadingFacts.builtInSubtitleClaim(
-                SourceFacts(releaseSubtitleLanguages = setOf("en"), isHardSubbed = true),
-                preferredLanguage = "en",
-            ),
-        )
-    }
-
-    @Test
-    fun `sidecar subtitles are not a built-in claim`() {
-        // `subtitleLanguages` is the addon's own sidecar list - external files, not tracks in the
-        // container, so they earn no chip on this row.
-        assertNull(
-            PlaybackLoadingFacts.builtInSubtitleClaim(
-                SourceFacts(subtitleLanguages = setOf("en")),
-                preferredLanguage = "en",
-            ),
-        )
-    }
-
     /** "Attempt 5 of 3" must be unreachable however the counter got there. */
     @Test
     fun `the displayed attempt never exceeds the budget`() {

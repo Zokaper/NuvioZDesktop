@@ -74,8 +74,6 @@ import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.playback_progress_choosing
 import nuvio.composeapp.generated.resources.playback_quality_best
 import nuvio.composeapp.generated.resources.playback_quality_checking_connection
-import nuvio.composeapp.generated.resources.playback_quality_chip_subs
-import nuvio.composeapp.generated.resources.playback_quality_chip_subs_multi
 import nuvio.composeapp.generated.resources.playback_quality_column_needs
 import nuvio.composeapp.generated.resources.playback_quality_column_size
 import nuvio.composeapp.generated.resources.playback_quality_description
@@ -1248,8 +1246,6 @@ private data class QualityFigures(
     val sourceKey: String?,
     val isAiUpscaled: Boolean = false,
     val isTheatricalCapture: Boolean = false,
-    /** The release's own subtitle claim, for the chip. Null when it claims none. */
-    val builtInSubtitles: BuiltInSubtitleClaim? = null,
 )
 
 /**
@@ -1311,14 +1307,6 @@ private fun qualityFigures(
         sourceKey = PlaybackQualityOptions.sourceKey(preview),
         isAiUpscaled = preview?.facts?.isAiUpscaled == true,
         isTheatricalCapture = preview?.facts?.isTheatricalCapture == true,
-        // ⚠ The preference's language, which is non-null only while "Prefer built-in subtitles"
-        // is on. That is what decides whether the chip is *accented*: the accent says "this is
-        // the row your preference favoured", and with the preference off the claim is still
-        // worth showing - plainly - because it is a fact about the release either way.
-        builtInSubtitles = PlaybackLoadingFacts.builtInSubtitleClaim(
-            facts = preview?.facts,
-            preferredLanguage = selectionContext.preferredEmbeddedSubtitleLanguage,
-        ),
     )
 }
 
@@ -1369,7 +1357,6 @@ private fun FeatureChips(
     dynamicRange: String?,
     audio: String?,
     isAiUpscaled: Boolean = false,
-    builtInSubtitles: BuiltInSubtitleClaim? = null,
     modifier: Modifier = Modifier,
 ) {
     val tokens = MaterialTheme.nuvio
@@ -1377,14 +1364,12 @@ private fun FeatureChips(
     // fact must leave its neighbours where they are.
     //
     // ⚠ **Drops a chip that does not fit rather than clipping it**, which is why this is a
-    // `Layout` and not a `Row`. A `Row` truncates its last child mid-word: at 1100 dp a cell
-    // carrying all four marks - `AI Upscale`, `SDR`, `Atmos 5.1`, `EN subs` - drew the last one
-    // as a bare `EN`, which reads as an English *audio* track rather than as a subtitle claim
-    // cut in half. Found by `PlaybackQualityRenderHarness`; the compiler and the pure suites
-    // cannot see it.
+    // `Layout` and not a `Row`. A `Row` truncates its last child mid-word, and a chip cut in
+    // half says something the release never claimed - a clipped `EN subs` reads as an English
+    // *audio* track. Found by `PlaybackQualityRenderHarness` against a four-chip row; three
+    // wide marks (`AI Upscale`, `HDR10+`, `DTS-HD MA 7.1`) can still reach the same edge.
     //
-    // The children are declared in descending importance, so dropping from the end always sheds
-    // the subtitle claim first and the AI-upscale warning last.
+    // The children are declared in descending importance, so the row sheds from the end.
     ChipRow(modifier = modifier.height(CHIP_ROW_HEIGHT)) {
         if (isAiUpscaled) {
             AiUpscaleChip()
@@ -1401,24 +1386,6 @@ private fun FeatureChips(
             )
         }
         audio?.let { FeatureChip(text = it, color = tokens.colors.textSecondary) }
-        builtInSubtitles?.let { claim ->
-            // Last in the row: it is the newest mark and the least load-bearing of the three.
-            FeatureChip(
-                text = if (claim.code == null) {
-                    stringResource(Res.string.playback_quality_chip_subs_multi)
-                } else {
-                    stringResource(
-                        Res.string.playback_quality_chip_subs,
-                        claim.code.uppercase(),
-                    )
-                },
-                color = if (claim.matchesPreference) {
-                    tokens.colors.accent
-                } else {
-                    tokens.colors.textMuted
-                },
-            )
-        }
     }
 }
 
@@ -1569,7 +1536,6 @@ private fun BestAvailableHero(
                     dynamicRange = figures.dynamicRange,
                     audio = figures.audio,
                     isAiUpscaled = figures.isAiUpscaled,
-                    builtInSubtitles = figures.builtInSubtitles,
                 )
             }
         }
@@ -1691,7 +1657,6 @@ private fun QualityColumnCell(
             dynamicRange = figures.dynamicRange,
             audio = figures.audio,
             isAiUpscaled = figures.isAiUpscaled,
-            builtInSubtitles = figures.builtInSubtitles,
         )
         Row(
             verticalAlignment = Alignment.CenterVertically,

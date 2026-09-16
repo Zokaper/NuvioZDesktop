@@ -29,13 +29,16 @@ with the same 15 pre-existing errors at `01524bb1` and at this commit (desktop-o
 `commonMain`, plus `addonHttpClient`), and `compileKotlinIosSimulatorArm64` is SKIPPED on a Windows
 host. No new error comes from this change; the iOS actual mirrors its neighbour and needs macOS.
 
-**The quality panel names the claim.** The desktop panel's chip row carries `EN subs` /
-`Multi subs` beside `DV` and `Atmos 5.1`, accented only when it is the language the preference
-is looking for. The row is now a `Layout` that drops a chip it cannot fit rather than clipping
-it - at 1100 dp a four-mark cell drew `EN subs` as a bare `EN`, found by the new
-`PlaybackQualityRenderHarness` (PNGs in `composeApp/build/playback-quality-render/`).
+**The quality panel deliberately says nothing about subtitles.** A chip was added and then
+removed the same day, on hardware evidence: for *The Punisher* only one 1080p release named
+subtitles, while the recommended 4K release carried them and said nothing - so the chip's
+*absence* read as "this source has none", which is the asymmetry the language inference above
+exists to avoid. A release name can only ever confirm, never deny. The ranking hint and the
+post-open verification are unaffected; they never needed the chip. What survives from it is
+`PlaybackQualityRenderHarness` (PNGs in `composeApp/build/playback-quality-render/`) and a chip
+row that drops a mark it cannot fit rather than clipping it mid-word.
 
-Debug MSI from `64dacbe6`, the last commit that touches code:
+Debug MSI from `64dacbe6` - **stale**: it carries the chip that was removed afterwards.
 `composeApp/build/compose/release-msis/Nuvio-Z-Windows-x64-0.1.22-alpha-z1.msi`
 (259,577,632 bytes; SHA-256 `2cee289596b9318572b271732523b4622ed83c87852c54b93adcbf8137ff97d3`),
 built with `-Pnuvio.desktop.debugTools=true` (confirmed in `packageReleaseMsi.args.txt`) on the JBR
