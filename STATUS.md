@@ -46,12 +46,15 @@ against `2d8be68d` was confirmed present in the merge result: **zero missing**, 
 
 ### Gates, all from `claude/desktop-consolidation`
 
-Gradle daemons were stopped and `composeApp/build/test-results/desktopTest/` deleted first.
+Gradle daemons were stopped and `composeApp/build/test-results/desktopTest/` deleted first. The whole
+gate was **run twice**: once on the merge commit `748b9632`, and again on the final HEAD `2da1675e`
+after the duplicate-key cleanup, so the figures below belong to the commit this branch actually points
+at rather than to an earlier tree. Both runs gave the same 2,050 / 0.
 
 | Gate | Result |
 | --- | --- |
 | `:composeApp:compileKotlinDesktop` | **BUILD SUCCESSFUL** |
-| `:composeApp:desktopTest` | **BUILD SUCCESSFUL in 13m 10s - 2,050 tests, 0 failures, 0 errors**, 251 result files, every one written by that invocation |
+| `:composeApp:desktopTest` | **BUILD SUCCESSFUL in 17m 33s - 2,050 tests, 0 failures, 0 errors**, 251 result files, every one written by that invocation |
 | `scripts/run-pure-suites.sh` | all eight groups green - 271 / 107 / 64 / 17 / 29 / 115 / 63 / 3 = **669** |
 | backend `scripts/test-db.sh` | **12 files / 286 tests PASS** |
 
@@ -69,6 +72,29 @@ passed, as did the download-queue E2E case.
   `PlayerScreenContent.kt`). The signal worth having is the negative one: **`PlayerSettingsStorage.android.kt`
   was analysed and reported clean**, and it is a file *both* branches changed. The shared settings code
   compiles for Android; the module does not, for reasons that predate all of this.
+
+### The MSI
+
+One build, from the canonical branch at **`2da1675e`** with a clean tree.
+
+`composeApp/build/compose/release-msis/Nuvio-Z-Debug-Windows-x64-0.1.22-alpha-z1.49.msi`
+259,594,065 bytes; SHA-256 `fc3a6a8859bed68a2d66c2744325277fbd7e8c642934ee2c2ff26f183da79599`.
+
+- `-Pnuvio.desktop.debugTools=true`, confirmed as `-Dnuvio.debugTools=true` in `packageReleaseMsi.args.txt`.
+- Built on the **JBR SDK** (`.gradle/jdks/jetbrains_s_r_o_-25-amd64-windows.2`), which is the one with
+  `jni.h`; the Android Studio JBR cannot build the native bridge.
+- `player_bridge.dll` was **deleted before the build** and rebuilt at 14:18, nine minutes before the MSI
+  was packaged, so the `external`/`default` track flags and the failover changes are genuinely in it
+  rather than carried over from an older artifact.
+- `DEBUG_BUILD` 48 -> 49 so this does not overwrite the MSI built from `cb8088e8`, which shares every
+  other part of its name.
+
+⚠ **Not published.** It was not uploaded anywhere and no release tag was cut, so neither in-app updater
+can see it. It exists on this machine only.
+
+⚠ **An earlier MSI build from the merge commit `748b9632` was started and deliberately killed.** The
+duplicate-key cleanup landed after it, and an MSI whose source does not match the branch HEAD is exactly
+the sort of artifact that gets misread later. The one above is from HEAD.
 
 ### What is in this build
 
