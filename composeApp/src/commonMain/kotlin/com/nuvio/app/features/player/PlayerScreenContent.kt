@@ -1,6 +1,7 @@
 package com.nuvio.app.features.player
 
 import androidx.compose.foundation.background
+import com.nuvio.app.core.ui.platformPointerNavigationGuard
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -9,10 +10,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.PointerButton
-import androidx.compose.ui.input.pointer.PointerEventType
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -86,20 +83,7 @@ internal fun PlayerScreenContent(args: PlayerScreenArgs) {
         modifier = args.modifier
             .fillMaxSize()
             .background(Color.Black)
-            .pointerInput(Unit) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        if (event.type == PointerEventType.Press) {
-                            if (event.button == PointerButton.Back) {
-                                event.changes.forEach { it.consume() }
-                            } else if (event.button == PointerButton.Forward) {
-                                event.changes.forEach { it.consume() }
-                            }
-                        }
-                    }
-                }
-            },
+            .platformPointerNavigationGuard(),
     ) {
         val density = LocalDensity.current
         val horizontalSafePadding = playerHorizontalSafePadding()
