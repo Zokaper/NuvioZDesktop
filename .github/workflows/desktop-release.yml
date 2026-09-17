@@ -118,24 +118,11 @@ jobs:
           cat << 'EOF' > release-notes.md
           ### Highlights
 
-          - Completely redesigned setup and onboarding flow
-          - Recommended AIOStreams + TorBox setup flow
-          - Source and subtitle language preferences
-          - Social features
-          - Watch Together
-          - Improved Watch Together reliability and UI
-          - Streamlined / Instant playback modes
-          - Unified playback preferences
-          - Smarter automatic source selection
-          - Source failover and premature EOF recovery
-          - AIOStreams Wrong IP mitigation
-          - Improved audio and subtitle language detection
-          - Reliable preferred audio selection
-          - Prefer built-in subtitles
-          - Improved loading presentation
-          - Custom themes
-          - Upstream Nuvio 0.1.23-alpha improvements
-          - Many desktop and playback fixes
+          - Setup wizard buttons now respond to the first click (trackpad clicks were being dropped)
+          - Joining a friend from Watching Now no longer leaves "Matching source" stuck on screen
+          - Joining a playing Watch Together party now pauses once and resumes once, instead of stuttering
+          - A party that was paused before someone joined stays paused
+          - Clearer Watch Together diagnostics for who paused or played, and why
 
           *Official Nuvio Z Desktop release for Windows (x64 MSI) and macOS (Apple Silicon arm64 & Intel x86_64 DMGs).*
 
