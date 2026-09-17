@@ -70,7 +70,20 @@ data class WatchingNowItem(
     @SerialName("playback_speed") val playbackSpeed: Float = 1f,
     val state: SocialPlaybackState,
     @SerialName("heartbeat_at") val heartbeatAt: String,
+    /** The live Watch Together party this friend is in, if any. Null from a backend before 2026-09-17. */
+    @SerialName("party_id") val partyId: String? = null,
+    @SerialName("party_host_profile_id") val partyHostProfileId: String? = null,
+    @SerialName("party_member_count") val partyMemberCount: Int? = null,
+    /**
+     * Other friends shown in this entry because they are in the same party. Filled only by
+     * [groupWatchingNowByParty]; never from the wire.
+     */
+    @kotlinx.serialization.Transient val partyCompanions: List<SocialProfileSummary> = emptyList(),
 ) {
+    /** A guest in someone else's party: joining must go through the host, never through this session. */
+    val isPartyGuest: Boolean
+        get() = partyId != null && partyHostProfileId != null && partyHostProfileId != profile.profileId
+
     val progressFraction: Float
         get() = if (durationMs <= 0) 0f else (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
 

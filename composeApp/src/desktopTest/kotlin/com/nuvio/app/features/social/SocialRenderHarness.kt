@@ -206,7 +206,17 @@ class SocialRenderHarness {
             effectiveJoinPolicy = WatchJoinPolicy.approval,
             state = SocialPlaybackState.playing, heartbeatAt = "2026-09-15T12:00:00Z",
         ),
-    )
+    ) + listOf("Ana" to "ana", "Rayo" to "rayo", "Ben" to "ben").map { (name, handle) ->
+        // One Watch Together party of three, hosted by Rayo: must draw as a single card (2026-09-17).
+        WatchingNowItem(
+            profile = profile(name, handle), contentId = "tt7282468", contentType = "movie",
+            videoId = "tt7282468", title = "Burning", sessionId = "s-$handle",
+            positionMs = 1_079_915, durationMs = 8_890_326,
+            effectiveJoinPolicy = WatchJoinPolicy.approval,
+            state = SocialPlaybackState.playing, heartbeatAt = "2026-09-17T13:53:00Z",
+            partyId = "party-burning", partyHostProfileId = "p-rayo", partyMemberCount = 3,
+        )
+    }
 
     /** Every non-idle affordance, drawn once each, so each label is checked for wrapping. */
     private fun affordanceFor(item: WatchingNowItem): WatchingNowJoinAffordance = when (item.sessionId) {

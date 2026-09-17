@@ -182,6 +182,34 @@ fun partyActorNotice(
 }
 
 /**
+ * "Ana joined the party", "Ana and Ben left the party" - what changed in the membership between two
+ * snapshots of the same party, as the viewer should read it. Null when nothing worth saying did.
+ *
+ * Membership, not connection: a member whose socket blips is still in the party, and announcing
+ * every reconnect would turn this into noise. A different party, or no previous snapshot, says
+ * nothing - arriving in a party is not "everyone joined". The viewer is never announced to itself.
+ */
+fun partyMembershipNotice(previous: WatchPartyState?, current: WatchPartyState?, viewerProfileId: String?): String? {
+    if (previous == null || current == null || previous.id != current.id) return null
+    if (current.status == WatchPartyStatus.ended) return null
+    fun WatchPartyState.present() = members.filter { it.readyState != SourceResolutionState.left }
+    val before = previous.present().associateBy { it.profileId }
+    val after = current.present().associateBy { it.profileId }
+    fun sentence(people: List<WatchPartyParticipant>, verb: String): String? {
+        val names = people.filter { it.profileId != viewerProfileId }.map { it.displayName(viewerProfileId = null) }
+        return when (names.size) {
+            0 -> null
+            1 -> "${names[0]} $verb the party"
+            2 -> "${names[0]} and ${names[1]} $verb the party"
+            else -> "${names[0]} and ${names.size - 1} others $verb the party"
+        }
+    }
+    val joined = sentence(after.values.filter { it.profileId !in before }, "joined")
+    val left = sentence(before.values.filter { it.profileId !in after }, "left")
+    return listOfNotNull(joined, left).joinToString(" · ").ifEmpty { null }
+}
+
+/**
  * The actor's name as the *other* members should read it.
  *
  * [displayName] answers "You" for the viewer, which is right on a member list and wrong in a

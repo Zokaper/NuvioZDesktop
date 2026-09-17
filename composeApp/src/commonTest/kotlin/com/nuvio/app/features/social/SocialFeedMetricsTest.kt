@@ -42,12 +42,10 @@ class SocialFeedMetricsTest {
     }
 
     @Test
-    fun aWideWindowDoesNotGiveTheFeedMoreThanTheDashboardHas() {
-        // `maxWidth` was read straight, but the dashboard is capped and centred, so the feed was
-        // dividing width it never actually had.
-        val wide = socialFeedMetrics(3840.dp, railVisible = true)
-        assertEquals(SocialDashboardMaxWidth - SocialFriendsRailWidth, wide.feedWidth)
-        assertEquals(socialFeedMetrics(1440.dp, railVisible = true), wide)
+    fun aWideWindowSpendsTheWholeWidth() {
+        // The dashboard is no longer capped: a 1440dp cap left bare margins on a 1920px monitor.
+        val wide = socialFeedMetrics(1920.dp, railVisible = true)
+        assertEquals(1920.dp - SocialFriendsRailWidth, wide.feedWidth)
     }
 
     @Test

@@ -227,8 +227,25 @@ internal data class AioStreamsRecovery(
     override fun toString(): String = "AioStreamsRecovery(uuid=$uuid, password=redacted)"
 }
 
+/** Persists [recovery] for [manifestUrl]; see [AioStreamsCredentialStorage]. */
+internal fun rememberAioStreamsCredentials(manifestUrl: String, recovery: AioStreamsRecovery) {
+    val value = buildJsonObject {
+        put("manifestUrl", JsonPrimitive(manifestUrl))
+        put("configureUrl", JsonPrimitive(recovery.configureUrl))
+        put("uuid", JsonPrimitive(recovery.uuid))
+        put("password", JsonPrimitive(recovery.password))
+    }.toString()
+    runCatching { AioStreamsCredentialStorage.save(recovery.uuid, value) }
+}
+
 internal const val NUVIO_Z_RECOMMENDED_TEMPLATE_ID = "zokaper.nuvio-z-recommended"
-internal const val NUVIO_Z_RECOMMENDED_ADDON_NAME = "Nuvio Z Recommended"
+internal const val NUVIO_Z_RECOMMENDED_ADDON_NAME = "AIOStreams Z"
+
+/**
+ * Every name the recommended install has shipped under, so re-running setup still replaces an install
+ * made before the 2026-09-17 rename ("Nuvio Z Recommended" read as if one source were endorsed).
+ */
+internal val NUVIO_Z_RECOMMENDED_ADDON_NAMES = setOf(NUVIO_Z_RECOMMENDED_ADDON_NAME, "Nuvio Z Recommended")
 
 @OptIn(ExperimentalUuidApi::class)
 internal fun generateAioStreamsPassword(): String =

@@ -54,6 +54,7 @@ internal class SetupSourcesActions(
     val onUseRecommended: () -> Unit = {},
     val onSetUpManually: () -> Unit = {},
     val onKeepExisting: () -> Unit = {},
+    val onDoItLater: () -> Unit = {},
     val onBackToChoice: () -> Unit = {},
     val onTorBoxApiKeyChange: (String) -> Unit = {},
     val onSourceLanguageChange: (String) -> Unit = {},
@@ -98,6 +99,9 @@ private fun SourcesQuestion(actions: SetupSourcesActions) {
         }
         TextButton(onClick = actions.onSetUpManually) {
             Text(stringResource(Res.string.setup_sources_set_up_manually))
+        }
+        TextButton(onClick = actions.onDoItLater) {
+            Text(stringResource(Res.string.setup_sources_do_it_later))
         }
     }
     SetupParagraph(stringResource(Res.string.setup_sources_skip_hint))

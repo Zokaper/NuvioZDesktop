@@ -634,6 +634,12 @@ internal fun StreamDestination(
         // and this keeps it out of the party's candidates, which is what the launch's hardcoded
         // `manualSelection = true` used to do - before it also overrode Streamlined and Instant.
         partySourceSelection != null ||
+        // ⚠ **Back from the player is back to a list the user picks from.** Classic keeps this route
+        // under a hand-picked play, and the player saves that release's binge group while it runs.
+        // The pop re-fetched the list as an automatic request, which now found a remembered binge
+        // group, raised "Finding source…" over the list, armed the same release - and then the
+        // abandon rightly refused to play it, so the overlay stayed up until a second Escape.
+        userAbandonedPlayback ||
         playerSettings.playbackMode != PlaybackMode.CLASSIC
 
     fun openP2pStream(
@@ -1085,6 +1091,9 @@ internal fun StreamDestination(
                 // Classic and the manual paths came *from* the list, so the
                 // list is where backing out belongs.
                 playbackHandedOff = false
+                // The hand-picked play that set this is over; left true, the route still believed
+                // a play was starting, and the next pick reused a closed loading session.
+                manualPlaybackStarting = false
                 lastHandedOffFacts = null
                 userAbandonedPlayback = true
                 return@LaunchedEffect

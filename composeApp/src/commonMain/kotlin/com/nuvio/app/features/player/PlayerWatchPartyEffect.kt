@@ -52,6 +52,7 @@ import com.nuvio.app.features.watchparty.actorDisplayName
 import com.nuvio.app.features.watchparty.matchesPlayback
 import com.nuvio.app.features.watchparty.memberMayControl
 import com.nuvio.app.features.watchparty.partyActorNotice
+import com.nuvio.app.features.watchparty.partyMembershipNotice
 import com.nuvio.app.features.watchparty.PartySourceMatchTier
 import com.nuvio.app.features.watchparty.partySourceMatchTier
 import com.nuvio.app.features.watchparty.partyBarrierPlan
@@ -268,6 +269,25 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
 
     val partyUi by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
     val matchingParty = partyUi.party?.takeIf { it.matchesPlayback(parentMetaId, playbackSession.videoId) }
+
+    // Guests arriving and leaving, told to everyone already watching. Read from the repository's
+    // stream rather than from composition, so two snapshots between frames cannot hide a change.
+    LaunchedEffect(Unit) {
+        var previous: com.nuvio.app.features.watchparty.WatchPartyState? = null
+        WatchPartyRepository.uiState.collect { ui ->
+            val current = ui.party?.takeIf { it.matchesPlayback(parentMetaId, playbackSession.videoId) }
+            partyMembershipNotice(previous, current, ui.activeProfileId)?.let { notice ->
+                partyLog.i { "membership notice=\"$notice\"" }
+                if (isDesktop) {
+                    playerNotificationMessage = notice
+                    playerNotificationToken += 1
+                } else {
+                    showGestureMessage(notice)
+                }
+            }
+            previous = current
+        }
+    }
     val generationKey = matchingParty?.generationKey()
     val isHost = matchingParty != null && matchingParty.hostProfileId == partyUi.activeProfileId
     val mediaLoaded = playbackSnapshot.durationMs > 0L

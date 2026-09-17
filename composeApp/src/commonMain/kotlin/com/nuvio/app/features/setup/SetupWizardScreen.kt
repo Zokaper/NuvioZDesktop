@@ -340,10 +340,22 @@ fun SetupWizardScreen(
         }
     }
 
+    val advanceState = setupAdvanceFor(step, sources)
+
+    /** Back from a Sources setup path returns to its question, not to the previous step. */
+    fun back() {
+        if (advanceState == SetupAdvance.Disabled) {
+            sourcesController.backToChoice()
+            return
+        }
+        previousSetupStep(step, plan)?.let { stepName = it.name }
+    }
+
     val sourcesActions = SetupSourcesActions(
         onUseRecommended = sourcesController::chooseRecommended,
         onSetUpManually = sourcesController::chooseManual,
         onKeepExisting = { advance() },
+        onDoItLater = { advance() },
         onBackToChoice = sourcesController::backToChoice,
         onTorBoxApiKeyChange = sourcesController::setTorBoxApiKey,
         onSourceLanguageChange = sourcesController::setSourceLanguage,
@@ -460,8 +472,9 @@ fun SetupWizardScreen(
                 nextUpLabel = nextUpLabel,
                 topInset = insets.calculateTopPadding(),
                 bottomInset = insets.calculateBottomPadding(),
-                onBack = { previousSetupStep(step, plan)?.let { stepName = it.name } },
+                onBack = ::back,
                 onAdvance = ::advance,
+                advance = advanceState,
             ) {
                 SetupStepBody(
                     step = step,
@@ -547,8 +560,9 @@ fun SetupWizardScreen(
                 // width, not a line of body text stretched across a desktop monitor.
                 maxPanelWidth = if (windowWidth >= 768.dp) 620.dp else windowWidth,
                 bottomInset = insets.calculateBottomPadding(),
-                onBack = { previousSetupStep(step, plan)?.let { stepName = it.name } },
+                onBack = ::back,
                 onAdvance = ::advance,
+                advance = advanceState,
                 modifier = Modifier.weight(1f),
             ) {
                 SetupStepBody(
@@ -881,6 +895,7 @@ private fun SetupPanel(
     bottomInset: Dp,
     onBack: () -> Unit,
     onAdvance: () -> Unit,
+    advance: SetupAdvance = SetupAdvance.Shown,
     modifier: Modifier = Modifier,
     body: @Composable () -> Unit,
 ) {
@@ -929,6 +944,7 @@ private fun SetupPanel(
                 plan = plan,
                 onBack = onBack,
                 onAdvance = onAdvance,
+                advance = advance,
             )
         }
     }
@@ -1005,6 +1021,7 @@ private fun SetupPanelFooter(
     plan: SetupWizardPlan,
     onBack: () -> Unit,
     onAdvance: () -> Unit,
+    advance: SetupAdvance = SetupAdvance.Shown,
 ) {
     // Welcome's own two buttons live in `SetupWelcomeSurface`; it never reaches this panel.
     Row(
@@ -1014,7 +1031,7 @@ private fun SetupPanelFooter(
     ) {
         SetupBackButton(step = step, plan = plan, onBack = onBack)
         Spacer(modifier = Modifier.weight(1f))
-        SetupAdvanceButton(step = step, plan = plan, onAdvance = onAdvance)
+        SetupAdvanceButton(step = step, plan = plan, onAdvance = onAdvance, advance = advance)
     }
 }
 
@@ -1038,14 +1055,31 @@ internal fun SetupBackButton(
     }
 }
 
+/** Whether the footer offers Next on the current screen. */
+enum class SetupAdvance { Shown, Disabled, Hidden }
+
+/**
+ * The footer's Next for a step. Only Sources restricts it: people press Next without reading, so the
+ * source question has no Next at all (its own buttons, including "Do it later", are the only ways on),
+ * and a setup path keeps Next greyed until a source is actually installed. Leaving a path without
+ * one is Back, which returns to the question.
+ */
+internal fun setupAdvanceFor(step: SetupStep, sources: SetupSourcesState): SetupAdvance = when {
+    step != SetupStep.Sources || sources.configuredName != null -> SetupAdvance.Shown
+    sources.mode == SetupSourcesMode.Choice -> SetupAdvance.Hidden
+    else -> SetupAdvance.Disabled
+}
+
 /** Next, or Finish on the last step the plan will show. */
 @Composable
 internal fun SetupAdvanceButton(
     step: SetupStep,
     plan: SetupWizardPlan,
     onAdvance: () -> Unit,
+    advance: SetupAdvance = SetupAdvance.Shown,
 ) {
-    Button(onClick = onAdvance) {
+    if (advance == SetupAdvance.Hidden) return
+    Button(onClick = onAdvance, enabled = advance == SetupAdvance.Shown) {
         Text(
             text = stringResource(
                 if (isFinalSetupStep(step, plan)) {

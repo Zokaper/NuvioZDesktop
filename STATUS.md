@@ -53,6 +53,29 @@ Last updated: 2026-09-17
 - Phase 6 (Social to mobile) is the next planned phase.
 - Phase 6 has NOT started yet.
 
+## Hotfix Desktop Release - 0.1.23-alpha-z5 (2026-09-17)
+
+- **Contents** (owner-reported bugs, one session):
+  1. Watching Now: members of one Watch Together party showed as separate cards, each "Ask to join"-able.
+     Backend migration `202609170001_watching_now_party_grouping.sql` (deployed) adds `party_id`,
+     `party_host_profile_id`, `party_member_count` to each entry and makes `social_join_watching` answer
+     `disabled` for a request aimed at a non-host member (promoting a guest's presence built a second party).
+     Client `groupWatchingNowByParty` collapses a party into the host's entry; no join offered if the host
+     is not on the viewer's list. Verified against the live party `44ec84f5` (3 members, 3 presence sessions).
+  2. Classic: Escape from a hand-picked play sometimes landed on "Finding source…" over the list. The
+     player saves a binge group mid-play; the list re-fetch on return became an auto-play request and the
+     abandon flag blocked the play that would have cleared the overlay. `userAbandonedPlayback` now makes
+     the request manual, and `manualPlaybackStarting` is reset on return. **Physical QA owed.**
+  3. Social screen: the 1440dp dashboard cap (commit 190a0c6d) left side margins on 1920px monitors.
+     Cap removed; column caps raised to 3 (Watching Now) / 4 (activity). Render harness checked at 1920.
+  4. Player: toasts when members join or leave the party (`partyMembershipNotice`). **Physical QA owed.**
+  5. Wizard Sources step: no Next on the question page (explicit "Do it later"); Next greyed on the
+     recommended/manual paths until a source installs; Back there returns to the question.
+  6. Template (`templates` branch `6279dee3`, live for all versions): renamed "AIOStreams Z", OpenSubtitles
+     preset dropped. Re-run replacement matches both names. AIOStreams uuid/password are now persisted per
+     install (`AioStreamsCredentialStorage`) so future template changes can be pushed to installs made from
+     z5 on; installs made earlier have no stored password and need the step re-run.
+
 ## Official Desktop Release - 0.1.23-alpha-z4 (2026-09-17)
 
 - **Released**: `0.1.23-alpha-z4`, tag `0.1.23-alpha-z4+129`, release serial `129`

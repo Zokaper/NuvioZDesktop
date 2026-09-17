@@ -1,12 +1,12 @@
 {
   "metadata": {
     "id": "zokaper.nuvio-z-recommended",
-    "name": "Nuvio Z Recommended",
-    "description": "Recommended AIOStreams source configuration for Nuvio Z. Requires TorBox. Source and subtitle languages are prioritised in results; playback mode, quality, HDR, audio-track and subtitle-track choices remain Nuvio Z preferences.",
+    "name": "AIOStreams Z",
+    "description": "The AIOStreams configuration Nuvio Z sets up for you. Subtitles come from the OpenSubtitles addon every Nuvio Z account already has. Requires TorBox. Source and subtitle languages are prioritised in results; playback mode, quality, HDR, audio-track and subtitle-track choices remain Nuvio Z preferences.",
     "source": "external",
     "sourceUrl": "https://raw.githubusercontent.com/Zokaper/NuvioZDesktop/refs/heads/templates/nuvio-z-torbox-v1.json",
     "author": "Zokaper",
-    "version": "1.1.2",
+    "version": "1.2.0",
     "category": "Debrid",
     "services": [
       "torbox"
@@ -554,25 +554,6 @@
         "category": "Debrid"
       },
       {
-        "type": "opensubtitles-v3-plus",
-        "instanceId": "262",
-        "enabled": true,
-        "options": {
-          "name": "OpenSubtitles V3+",
-          "timeout": 5000,
-          "resources": [
-            "subtitles"
-          ],
-          "sources": "all",
-          "includeAiTranslated": false,
-          "movieHashPlusAutoAdjustment": false,
-          "language": [
-            "en"
-          ]
-        },
-        "category": "Subs"
-      },
-      {
         "type": "comet",
         "instanceId": "f18",
         "enabled": true,
@@ -753,7 +734,7 @@
       "catalog",
       "subtitles"
     ],
-    "addonName": "Nuvio Z Recommended",
+    "addonName": "AIOStreams Z",
     "addonDescription": "A lightweight AIOStreams configuration for Nuvio Z using TorBox. Nuvio Z handles playback-mode, quality, HDR, audio and subtitle preferences."
   }
 }

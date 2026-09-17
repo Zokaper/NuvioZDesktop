@@ -2750,7 +2750,8 @@
     <string name="setup_sources_url_placeholder">Addon manifest URL</string>
     <string name="setup_sources_install">Add source</string>
     <string name="setup_sources_configured">Sources configured: %1$s</string>
-    <string name="setup_sources_skip_hint">Not ready yet? Press Next to skip. You can add sources later.</string>
+    <string name="setup_sources_skip_hint">Not ready yet? Choose Do it later. You can add sources any time in Settings.</string>
+    <string name="setup_sources_do_it_later">Do it later</string>
     <string name="setup_sources_debrid_hint">Using a debrid service? Add it later in Settings → Integrations → Debrid.</string>
 
     <string name="setup_done_title">You're all set</string>

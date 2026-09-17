@@ -32,7 +32,7 @@ class AioStreamsRecommendedSetupTest {
 
         assertIs<AioStreamsConfigResult.Created>(result)
         assertEquals("$Base/stremio/uuid-1/ENC_pw/manifest.json", result.manifestUrl)
-        assertEquals("Nuvio Z Recommended", result.addonName)
+        assertEquals("AIOStreams Z", result.addonName)
         assertEquals("uuid-1", result.recovery.uuid)
         assertEquals(64, result.recovery.password.length)
         assertEquals(listOf("GET $TemplateUrl", "GET $Base/api/v1/status", "POST $Base/api/v1/user"), http.calls)
@@ -63,7 +63,7 @@ class AioStreamsRecommendedSetupTest {
         assertEquals("gdrive", config["formatter"]!!.jsonObject["id"]!!.jsonPrimitive.content)
         assertEquals("zokaper.nuvio-z-recommended", config["appliedTemplates"]!!.jsonArray.single().jsonObject["id"]!!.jsonPrimitive.content)
         // The template's own values are untouched by that layer.
-        assertEquals("Nuvio Z Recommended", config["addonName"]!!.jsonPrimitive.content)
+        assertEquals("AIOStreams Z", config["addonName"]!!.jsonPrimitive.content)
         assertEquals(listOf("3D", "H-OU", "H-SBS"), config["excludedVisualTags"]!!.jsonArray.map { it.jsonPrimitive.content })
     }
 

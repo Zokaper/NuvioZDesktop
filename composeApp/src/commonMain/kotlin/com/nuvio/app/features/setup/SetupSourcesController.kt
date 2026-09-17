@@ -62,6 +62,8 @@ internal class SetupSourcesController(
     private val install: suspend (String) -> AddAddonResult = AddonRepository::addAddon,
     private val remove: (String) -> Unit = AddonRepository::removeAddon,
     private val installedAddons: () -> List<ManagedAddon> = { AddonRepository.uiState.value.addons },
+    /** Keeps the install's AIOStreams credentials, so template changes can reach it later. */
+    private val rememberCredentials: (manifestUrl: String, AioStreamsRecovery) -> Unit = ::rememberAioStreamsCredentials,
     private val instanceBaseUrl: String = AIOSTREAMS_INSTANCE_BASE_URL,
     initial: SetupSourcesState = SetupSourcesState(),
 ) {
@@ -156,6 +158,7 @@ internal class SetupSourcesController(
                         return
                     }
                     previous.forEach(remove)
+                    rememberCredentials(created.manifestUrl, created.recovery)
                     val name = (installed as SetupSourceInstallResult.Installed).addonName
                     _state.update {
                         it.copy(busy = false, configuredName = name, recovery = created.recovery)
@@ -202,7 +205,7 @@ internal class SetupSourcesController(
             .filter { addon ->
                 addon.manifestUrl != except &&
                     addon.manifestUrl.startsWith(prefix) &&
-                    addon.manifest?.name == NUVIO_Z_RECOMMENDED_ADDON_NAME
+                    addon.manifest?.name in NUVIO_Z_RECOMMENDED_ADDON_NAMES
             }
             .map(ManagedAddon::manifestUrl)
     }

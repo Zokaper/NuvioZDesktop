@@ -69,9 +69,11 @@ class SetupSourcesControllerTest {
     fun successInstallsTheManifestOnceAndClearsTheKey() = runBlocking {
         val requests = mutableListOf<RecommendedSourceRequest>()
         val installs = mutableListOf<String>()
+        val remembered = mutableListOf<Pair<String, AioStreamsRecovery>>()
         val controller = controller(
             createConfig = { request -> requests += request; created() },
             install = { url -> installs += url; AddAddonResult.Success(manifest("Nuvio Z Recommended")) },
+            rememberCredentials = { url, recovery -> remembered += url to recovery },
         )
         controller.seedLanguages("ja", "en")
         controller.chooseRecommended()
@@ -89,6 +91,8 @@ class SetupSourcesControllerTest {
         assertEquals("Japanese", requests.single().sourceLanguage)
         assertEquals("English", requests.single().subtitleLanguage)
         assertEquals("uuid-2", state.recovery?.uuid)
+        // Kept past the step, so a later template change can be applied to this install.
+        assertEquals(manifestUrl to state.recovery, remembered.single())
 
         controller.forgetSensitive()
         assertNull(controller.state.value.recovery, "recovery details must not outlive the step")
@@ -208,6 +212,24 @@ class SetupSourcesControllerTest {
         controller.setUpRecommended()
 
         assertEquals(listOf(oldRecommended.manifestUrl), removed)
+    }
+
+    @Test
+    fun rerunReplacesInstallsUnderTheCurrentAndThePreRenameName() = runBlocking {
+        val removed = mutableListOf<String>()
+        val legacy = installed("$Base/stremio/uuid-1/OLD/manifest.json", "Nuvio Z Recommended")
+        val renamed = installed("$Base/stremio/uuid-2/NEWER/manifest.json", NUVIO_Z_RECOMMENDED_ADDON_NAME)
+        val controller = controller(
+            createConfig = { created() },
+            install = { AddAddonResult.Success(manifest(NUVIO_Z_RECOMMENDED_ADDON_NAME)) },
+            remove = { removed += it },
+            installedAddons = { listOf(legacy, renamed) },
+        )
+        controller.setTorBoxApiKey(key)
+
+        controller.setUpRecommended()
+
+        assertEquals(listOf(legacy.manifestUrl, renamed.manifestUrl), removed)
     }
 
     @Test
@@ -336,11 +358,13 @@ class SetupSourcesControllerTest {
         install: suspend (String) -> AddAddonResult = { AddAddonResult.Success(manifest("Nuvio Z Recommended")) },
         remove: (String) -> Unit = {},
         installedAddons: () -> List<ManagedAddon> = { emptyList() },
+        rememberCredentials: (String, AioStreamsRecovery) -> Unit = { _, _ -> },
     ) = SetupSourcesController(
         createConfig = createConfig,
         install = install,
         remove = remove,
         installedAddons = installedAddons,
+        rememberCredentials = rememberCredentials,
         instanceBaseUrl = Base,
     )
 

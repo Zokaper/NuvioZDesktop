@@ -40,9 +40,13 @@ fun watchingNowJoinAffordance(
 ): WatchingNowJoinAffordance {
     val live = heldParty?.takeIf { it.status != WatchPartyStatus.ended }
     val friend = item.profile.profileId
-    if (live != null && (live.hostProfileId == friend || live.members.any { it.profileId == friend })) {
+    if (live != null && (live.hostProfileId == friend || live.members.any { it.profileId == friend } ||
+            (item.partyId != null && live.id == item.partyId))
+    ) {
         return WatchingNowJoinAffordance.InYourParty
     }
+    // A party whose host is not on this list: the server refuses a request aimed at a guest, so offer none.
+    if (item.isPartyGuest) return WatchingNowJoinAffordance.None
     val request = outgoingRequest as? OutgoingJoinRequestState.Bound
     // Keyed by the session, not the person: a friend who restarted playback is a new thing to join.
     if (request != null && request.target.sessionId == item.sessionId && request.target.profileId == friend) {
@@ -75,6 +79,27 @@ fun watchingNowJoinAffordance(
  */
 fun orderWatchingNowForDisplay(items: List<WatchingNowItem>): List<WatchingNowItem> {
     val byTitle = LinkedHashMap<Pair<String, String>, MutableList<WatchingNowItem>>()
-    items.forEach { byTitle.getOrPut(it.contentId to it.videoId) { mutableListOf() } += it }
+    groupWatchingNowByParty(items).forEach { byTitle.getOrPut(it.contentId to it.videoId) { mutableListOf() } += it }
     return byTitle.values.flatten()
+}
+
+/**
+ * One entry per Watch Together party, the one grouping Watching Now allows: the server says these
+ * friends share a party, so they share one card and one action.
+ *
+ * The entry kept is the host's when the host is on the list, since a join has to target the host's
+ * session; otherwise the first guest's, which [watchingNowJoinAffordance] offers no action for. The
+ * rest become [WatchingNowItem.partyCompanions]. Entries outside a party pass through untouched.
+ */
+fun groupWatchingNowByParty(items: List<WatchingNowItem>): List<WatchingNowItem> {
+    val byParty = items.filter { it.partyId != null }.groupBy { it.partyId }
+    if (byParty.values.none { it.size > 1 }) return items
+    val emitted = HashSet<String>()
+    return items.mapNotNull { item ->
+        val partyId = item.partyId ?: return@mapNotNull item
+        if (!emitted.add(partyId)) return@mapNotNull null
+        val members = byParty.getValue(partyId)
+        val lead = members.firstOrNull { it.profile.profileId == it.partyHostProfileId } ?: item
+        lead.copy(partyCompanions = members.filter { it !== lead }.map { it.profile })
+    }
 }

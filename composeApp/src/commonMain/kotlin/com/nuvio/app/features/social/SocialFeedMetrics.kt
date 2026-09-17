@@ -20,8 +20,12 @@ import androidx.compose.ui.unit.dp
  * enough to hold their own labels - see `SocialFeedMetricsTest`.
  */
 
-/** The dashboard never runs edge to edge on a very wide monitor; the feed's arithmetic must know that. */
-internal val SocialDashboardMaxWidth = 1440.dp
+/**
+ * The dashboard runs edge to edge. It was capped at 1440dp and centred, which on a 1920px monitor
+ * read as unexplained margins either side of the whole screen; wide windows now get more columns
+ * instead (see the caps below).
+ */
+internal val SocialDashboardMaxWidth = Dp.Infinity
 
 /** The feed's own `contentPadding`, on each side. Part of the arithmetic, so it is named here. */
 internal val SocialFeedHorizontalPadding = 24.dp
@@ -43,8 +47,8 @@ internal val SocialActivityMinCardWidth = 280.dp
  * Column caps. Watching Now stays at two so a live card keeps a generous footprint; activity is
  * allowed three, past which the cards start reading as a catalogue grid again.
  */
-internal const val SocialWatchingNowMaxColumns = 2
-internal const val SocialActivityMaxColumns = 3
+internal const val SocialWatchingNowMaxColumns = 3
+internal const val SocialActivityMaxColumns = 4
 
 /** Everything the Social feed's layout needs, derived from the window in one place. */
 internal data class SocialFeedMetrics(

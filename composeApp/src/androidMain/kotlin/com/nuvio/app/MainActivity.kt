@@ -136,6 +136,7 @@ open class MainActivity : AppCompatActivity() {
         WatchProgressStorage.initialize(applicationContext)
         StreamBadgeSettingsStorage.initialize(applicationContext)
         BingeGroupCacheStorage.initialize(applicationContext)
+        com.nuvio.app.features.setup.AioStreamsCredentialStorage.initialize(applicationContext)
         PluginStorage.initialize(applicationContext)
         CollectionMobileSettingsStorage.initialize(applicationContext)
         CollectionStorage.initialize(applicationContext)

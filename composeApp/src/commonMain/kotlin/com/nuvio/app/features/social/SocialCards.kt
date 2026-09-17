@@ -152,6 +152,22 @@ internal fun watchingNowMetadataLine(season: Int?, episode: Int?, episodeTitle: 
     }.joinToString(" · ")
 
 /**
+ * "Ana", "Ana & Ben", "Ana, Ben & Cy", or "Ana & 3 others" - friends on the card first, then anyone
+ * else in the party this viewer cannot see.
+ */
+internal fun watchingNowPeopleLabel(item: WatchingNowItem): String {
+    val names = (listOf(item.profile) + item.partyCompanions).map { it.displayName.ifBlank { it.handle } }
+    val total = maxOf(names.size, item.partyMemberCount?.takeIf { item.partyId != null } ?: 0)
+    return when {
+        total <= 1 -> names.first()
+        total == names.size && total == 2 -> "${names[0]} & ${names[1]}"
+        total == names.size && total == 3 -> "${names[0]}, ${names[1]} & ${names[2]}"
+        total == 2 -> "${names[0]} & 1 other"
+        else -> "${names[0]} & ${total - 1} others"
+    }
+}
+
+/**
  * A friend, mid-episode, with something to do about it.
  *
  * *Who*, then *what*, then *can I join*, left to right. The identity leads with a 28dp avatar whose
@@ -216,7 +232,20 @@ private fun ColumnScope.WatchingNowText(
     onCancelRequest: () -> Unit,
 ) {
     val playing = item.state == SocialPlaybackState.playing
+    val companions = item.partyCompanions
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (companions.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy((-14).dp)) {
+                companions.take(1).forEach { friend ->
+                    Box(
+                        Modifier.size(28.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surface),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        SocialAvatar(friend.displayName, friend.avatarUrl, friend.avatarColorHex, 24.dp)
+                    }
+                }
+            }
+        }
         Box {
             SocialAvatar(item.profile.displayName, item.profile.avatarUrl, item.profile.avatarColorHex, 28.dp)
             Box(
@@ -234,14 +263,18 @@ private fun ColumnScope.WatchingNowText(
         }
         Column(Modifier.weight(1f)) {
             Text(
-                item.profile.displayName.ifBlank { item.profile.handle },
+                watchingNowPeopleLabel(item),
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                if (playing) "Playing" else "Paused",
+                when {
+                    item.partyId == null || (item.partyMemberCount ?: 0) < 2 -> if (playing) "Playing" else "Paused"
+                    playing -> "Watch party"
+                    else -> "Party paused"
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,

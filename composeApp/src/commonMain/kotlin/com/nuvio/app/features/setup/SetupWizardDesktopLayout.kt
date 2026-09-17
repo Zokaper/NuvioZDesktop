@@ -89,6 +89,7 @@ fun SetupWizardDesktopLayout(
     bottomInset: Dp,
     onBack: () -> Unit,
     onAdvance: () -> Unit,
+    advance: SetupAdvance = SetupAdvance.Shown,
     modifier: Modifier = Modifier,
     body: @Composable () -> Unit,
 ) {
@@ -190,6 +191,7 @@ fun SetupWizardDesktopLayout(
                 bottomInset = bottomInset,
                 onBack = onBack,
                 onAdvance = onAdvance,
+                advance = advance,
                 modifier = Modifier
                     .width(controlPaneWidth)
                     .fillMaxHeight(),
@@ -289,6 +291,7 @@ private fun SetupDesktopControlPane(
     bottomInset: Dp,
     onBack: () -> Unit,
     onAdvance: () -> Unit,
+    advance: SetupAdvance = SetupAdvance.Shown,
     modifier: Modifier = Modifier,
     body: @Composable () -> Unit,
 ) {
@@ -339,6 +342,7 @@ private fun SetupDesktopControlPane(
                 plan = plan,
                 onBack = onBack,
                 onAdvance = onAdvance,
+                advance = advance,
             )
         }
     }
@@ -357,6 +361,7 @@ private fun SetupDesktopFooter(
     plan: SetupWizardPlan,
     onBack: () -> Unit,
     onAdvance: () -> Unit,
+    advance: SetupAdvance = SetupAdvance.Shown,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -365,6 +370,6 @@ private fun SetupDesktopFooter(
     ) {
         SetupBackButton(step = step, plan = plan, onBack = onBack)
         Spacer(modifier = Modifier.weight(1f))
-        SetupAdvanceButton(step = step, plan = plan, onAdvance = onAdvance)
+        SetupAdvanceButton(step = step, plan = plan, onAdvance = onAdvance, advance = advance)
     }
 }
