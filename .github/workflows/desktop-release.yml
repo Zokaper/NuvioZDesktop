@@ -118,11 +118,11 @@ jobs:
           cat << 'EOF' > release-notes.md
           ### Highlights
 
-          - Setup wizard buttons now respond to the first click (trackpad clicks were being dropped)
-          - Joining a friend from Watching Now no longer leaves "Matching source" stuck on screen
-          - Joining a playing Watch Together party now pauses once and resumes once, instead of stuttering
-          - A party that was paused before someone joined stays paused
-          - Clearer Watch Together diagnostics for who paused or played, and why
+          - Native AIOStreams + TorBox source setup: no web page, no copy and paste, done in one step
+          - Link to find your TorBox API key right from the setup screen
+          - Signing in no longer leaves you stuck on the login screen until a restart
+          - Picking a social handle in the setup wizard now saves
+          - The setup wizard only offers colours your account can use, and Custom opens the colour editor
 
           *Official Nuvio Z Desktop release for Windows (x64 MSI) and macOS (Apple Silicon arm64 & Intel x86_64 DMGs).*
 
