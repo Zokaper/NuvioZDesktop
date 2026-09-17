@@ -118,12 +118,9 @@ jobs:
           cat << 'EOF' > release-notes.md
           ### Highlights
 
-          - Friends in the same Watch Together party now show as one Watching Now card, with one join button
-          - Watch Together now tells you in the player when someone joins or leaves the party
-          - Pressing Escape in the Classic player goes straight back to the source list, instead of a "Finding source" screen that needed a second Escape
-          - The Social screen fills the window again, with no empty margins at the sides
-          - Setup wizard: the sources step has an explicit "Do it later", and Next stays greyed out until a source is actually set up
-          - The recommended AIOStreams source is now called "AIOStreams Z", and no longer adds its own OpenSubtitles (your account already has it)
+          - Updating on Windows works again: the downloaded installer now actually installs, instead of silently doing nothing
+          - Updates install on their own after you press install, with just a progress bar and one Windows permission prompt, then Nuvio Z reopens
+          - Updates keep Nuvio Z in the folder you installed it to, instead of moving it to Program Files
 
           *Official Nuvio Z Desktop release for Windows (x64 MSI) and macOS (Apple Silicon arm64 & Intel x86_64 DMGs).*
 
