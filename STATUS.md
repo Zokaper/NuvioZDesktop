@@ -2,15 +2,56 @@
 
 Last updated: 2026-09-17
 
-## Official Desktop Release Preparation — 0.1.23-alpha-z2 (2026-09-17)
+## Official Desktop Release — 0.1.23-alpha-z2 (2026-09-17)
 
-Preparing official public release **`0.1.23-alpha-z2`** (serial 127).
+### Nuvio Z Desktop official release
 
-### Pre-release updates
-- Workflow: added `windows-macos` target to `.github/workflows/desktop-release.yml` for unified Windows x64 MSI and macOS (arm64 & x86_64 DMGs) release without Linux artifacts.
-- Hardened asset collection in release job to filter candidate assets to existing files so non-targeted platforms are safely omitted.
-- Included comprehensive user-facing highlights in release notes generation.
-- Release serial confirmed unused at 127; version bump to 0.1.23-alpha-z2 with VERSION_CODE 41.
+- **Released**: `0.1.23-alpha-z2`
+- **Tag**: `0.1.23-alpha-z2+127`
+- **Release serial**: `127`
+- **Release source**: `879dabfca3489eca27714bed1be28c4e79554a40`
+- **Release branch**: `release/0.1.23-alpha-z2`
+- **Publish workflow**: GitHub Actions run `35154508494`
+- **Public release**: https://github.com/Zokaper/NuvioZDesktop/releases/tag/0.1.23-alpha-z2%2B127
+- **Release status**: public, `draft=false`, `prerelease=false`
+- **Upstream base**: Nuvio `0.1.23-alpha`
+
+### Platforms shipped
+
+- **Windows x64**: Succeeded (`.msi`)
+- **macOS arm64**: Succeeded (`.dmg`)
+- **macOS x86_64**: Succeeded (`.dmg`)
+- **Linux**: Intentionally skipped (packaging exists upstream/in repo; physical Nuvio Z Linux validation still owed)
+
+### Artifacts & Checksums
+
+- **Windows artifact**: `Nuvio-Z-Windows-x64-0.1.23-alpha-z2.msi`
+  - SHA256: `8bf81695d548b95c1c44f42a18540b10dac2972006ec8f85b14bf8f02e99f475`
+- **macOS arm64 artifact**: `Nuvio-Z-macOS-arm64-0.1.23-alpha-z2.dmg`
+  - SHA256: `79d9bf6c00415cb2daa87c6c5905e47d7204b8beb93c565cb0391155137e9667`
+- **macOS x86_64 artifact**: `Nuvio-Z-macOS-x86_64-0.1.23-alpha-z2.dmg`
+  - SHA256: `6605e65fba6faf5786b92c5c19c09177be179c2bf01b270a56e6ae45dbdbdc8d`
+
+### Known release engineering debt
+
+- **macOS signing / notarization**: Both macOS DMGs were built through the existing unsigned-DMG path. Signing and notarization was intentionally disabled in the workflow and remains known release-engineering debt until an Apple Developer account is configured.
+
+### Automated release gate
+
+- `desktopTest`: 2,158 passed, 0 failures, 0 errors, 0 skipped
+- `scripts/run-pure-suites.sh`: 676 tests, 8/8 green
+- `compileKotlinDesktop`: green
+- Windows MSI packaging + verification successful
+- Both macOS DMG packaging + verification successful
+- Final GitHub release creation successful
+
+### Current mode & next steps
+
+- Upstream base is Nuvio `0.1.23-alpha`.
+- Desktop release is now complete.
+- Desktop moves into real-world feedback / maintenance mode.
+- Phase 6 (Social to mobile) is the next planned phase.
+- Phase 6 has NOT started yet.
 
 ## Playback: Loading screen language summary & Initial preferred audio track selection (2026-09-16)
 
