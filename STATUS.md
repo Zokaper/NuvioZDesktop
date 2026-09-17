@@ -53,6 +53,17 @@ Last updated: 2026-09-17
 - Phase 6 (Social to mobile) is the next planned phase.
 - Phase 6 has NOT started yet.
 
+## Official Desktop Release - 0.1.23-alpha-z3 (2026-09-17)
+
+- **Released**: `0.1.23-alpha-z3`, tag `0.1.23-alpha-z3+128`, release serial `128`
+- **Release source**: `cde8e4b21e07b1582caeaf8edba69e378d3e1ce8` on `release/0.1.23-alpha-z3`
+- **Publish workflow**: GitHub Actions run `35198929798` (mode `publish`, target `windows-macos`), after dry-run `35198705893`
+- **Public release**: https://github.com/Zokaper/NuvioZDesktop/releases/tag/0.1.23-alpha-z3%2B128 (`draft=false`, `prerelease=false`)
+- **Artifacts**: Windows x64 MSI, macOS arm64 DMG, macOS x86_64 DMG, `SHA256SUMS.txt` (macOS still unsigned)
+- **Contents**: the three post-release fixes below. Physically checked on debug build `debug-v0.1.23-alpha-z2.51`
+  before release (Watching Now join; wizard). The first-source failure seen in that run was a dead TorBox link
+  abandoned by the startup watchdog before any party existed, not a regression.
+
 ## Post-release stabilization for z3 (2026-09-17)
 
 On branch **`claude/post-release-z3-stabilization`**, cut from `Dev` at `eb8357c3` (z2 release + its
