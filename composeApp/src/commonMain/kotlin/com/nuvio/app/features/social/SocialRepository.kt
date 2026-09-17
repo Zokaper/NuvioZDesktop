@@ -188,9 +188,17 @@ object SocialRepository {
         }
     }
 
-    suspend fun setupHandle(handle: String): Result<SocialProfileSummary> = socialCall {
+    /**
+     * ⚠ [profileId] exists for the setup wizard, which runs before `MainAppContent` has called
+     * [activate] - so there is no active social profile yet, and relying on one failed every
+     * wizard save with "No active social profile". Everywhere else leaves it at the default.
+     */
+    suspend fun setupHandle(
+        handle: String,
+        profileId: String? = activeProfileId,
+    ): Result<SocialProfileSummary> = socialCall(profileId) {
         require(isValidSocialHandle(handle)) { "Handle must be 3–24 lowercase letters, numbers, or underscores" }
-        val profileId = requireActiveProfile()
+        requireNotNull(profileId) { "No active social profile" }
         val result = ZSupabaseProvider.client.postgrest.rpc("social_upsert_profile", buildJsonObject {
             put("p_profile_id", profileId); put("p_handle", normalizeSocialHandle(handle))
         }).decodeAs<SocialProfileSummary>()
@@ -433,8 +441,11 @@ object SocialRepository {
     private suspend fun socialMutation(rpc: String, params: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit): Result<Unit> = socialCall {
         ZSupabaseProvider.client.postgrest.rpc(rpc, buildJsonObject(params)); refresh(false)
     }
-    private suspend fun <T> socialCall(block: suspend () -> T): Result<T> {
-        val profileId = activeProfileId ?: return runCatching { block() }
+    private suspend fun <T> socialCall(
+        callProfileId: String? = activeProfileId,
+        block: suspend () -> T,
+    ): Result<T> {
+        val profileId = callProfileId ?: return runCatching { block() }
         if (!ZSessionBridge.ensureSession(profileId)) {
             return Result.failure(
                 IllegalStateException(ZSessionBridge.lastFailure ?: "Nuvio Z social is unavailable"),

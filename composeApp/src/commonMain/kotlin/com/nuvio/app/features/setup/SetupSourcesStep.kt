@@ -28,8 +28,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.NuvioInputField
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
@@ -39,6 +45,9 @@ import com.nuvio.app.features.settings.LanguageSelectionDialog
 import com.nuvio.app.features.settings.LanguageSelectionOption
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
+
+/** Where TorBox shows the account API key the recommended setup asks for. */
+private const val TorBoxApiKeySettingsUrl = "https://torbox.app/settings?section=account"
 
 /** Every callback the Sources step can fire. A class so the body's signature stays readable. */
 internal class SetupSourcesActions(
@@ -141,8 +150,27 @@ private fun SourcesRecommended(state: SetupSourcesState, actions: SetupSourcesAc
             placeholder = stringResource(Res.string.setup_sources_torbox_key),
             visualTransformation = PasswordVisualTransformation(),
         )
+        val keyHint = stringResource(Res.string.setup_sources_torbox_key_hint)
+        val keyLink = stringResource(Res.string.setup_sources_torbox_key_link)
         Text(
-            text = stringResource(Res.string.setup_sources_torbox_key_hint),
+            text = buildAnnotatedString {
+                append(keyHint)
+                append(" ")
+                withLink(
+                    LinkAnnotation.Url(
+                        url = TorBoxApiKeySettingsUrl,
+                        styles = TextLinkStyles(
+                            style = SpanStyle(
+                                color = tokens.colors.accent,
+                                fontWeight = FontWeight.SemiBold,
+                                textDecoration = TextDecoration.Underline,
+                            ),
+                        ),
+                    ),
+                ) {
+                    append(keyLink)
+                }
+            },
             style = MaterialTheme.typography.bodySmall,
             color = tokens.colors.textMuted,
         )

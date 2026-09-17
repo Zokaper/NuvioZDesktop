@@ -70,6 +70,9 @@ import com.nuvio.app.core.ui.NuvioInputField
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import com.nuvio.app.core.ui.PosterCardStyleRepository
 import com.nuvio.app.core.ui.ThemeColors
+import com.nuvio.app.features.membership.MemberAccessRepository
+import com.nuvio.app.features.membership.availableAppThemes
+import com.nuvio.app.features.settings.CustomThemeEditor
 import com.nuvio.app.core.ui.labelRes
 import com.nuvio.app.core.ui.isBackdropBlurSupported
 import com.nuvio.app.core.ui.nuvio
@@ -487,6 +490,7 @@ fun SetupWizardScreen(
                     onSaveSocialHandle = {
                         saveSocialHandle(
                             scope = scope,
+                            profileId = socialProfileId,
                             handle = socialHandle,
                             setBusy = { socialHandleBusy = it },
                             onFailed = { socialHandleMessage = it },
@@ -574,6 +578,7 @@ fun SetupWizardScreen(
                     onSaveSocialHandle = {
                         saveSocialHandle(
                             scope = scope,
+                            profileId = socialProfileId,
                             handle = socialHandle,
                             setBusy = { socialHandleBusy = it },
                             onFailed = { socialHandleMessage = it },
@@ -1502,13 +1507,17 @@ private fun SetupSummaryRow(label: String, value: String) {
  */
 private fun saveSocialHandle(
     scope: CoroutineScope,
+    profileId: String?,
     handle: String,
     setBusy: (Boolean) -> Unit,
     onFailed: (message: String) -> Unit,
 ) {
     scope.launch {
         setBusy(true)
-        SocialRepository.setupHandle(handle)
+        // ⚠ The profile is passed explicitly: the social layer is not activated until the app shell
+        // runs, which is after the wizard. Success drops this step from the plan, which advances.
+        SocialRepository.setupHandle(handle, profileId)
+            .onSuccess { SocialFeaturePreferencesRepository.recordKnownIdentity() }
             .onFailure { error -> onFailed(error.message ?: "Could not save that handle") }
         setBusy(false)
     }
@@ -1629,7 +1638,12 @@ private fun SetupToggleRow(
 }
 
 /**
- * The seven palettes as colour swatches.
+ * The palettes this account can use, as colour swatches.
+ *
+ * ⚠ **The same list Settings offers, from [availableAppThemes].** Listing every [AppTheme] showed
+ * supporter-only palettes (Gold, Jade, Rose Gold, Arctic Blue, Graphite) that
+ * `ThemeSettingsRepository.setTheme` silently refuses without the entitlement, so tapping them did
+ * nothing. Custom opens the same editor Settings does rather than applying unseen colours.
  *
  * The swatch is the palette's own accent read straight from [ThemeColors], so it cannot drift
  * from what tapping it produces - and tapping it recolours the whole wizard, band included,
@@ -1641,8 +1655,15 @@ private fun SetupThemeGrid(
     onSelected: (AppTheme) -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
+    val memberAccess by remember {
+        MemberAccessRepository.ensureStarted()
+        MemberAccessRepository.access
+    }.collectAsStateWithLifecycle()
+    val customColors by ThemeSettingsRepository.customThemeColors.collectAsStateWithLifecycle()
+    var showCustomEditor by remember { mutableStateOf(false) }
+    val themes = availableAppThemes(memberAccess.entitlements)
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        AppTheme.entries.chunked(4).forEach { row ->
+        themes.chunked(4).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 row.forEach { theme ->
                     val isSelected = theme == selected
@@ -1656,7 +1677,9 @@ private fun SetupThemeGrid(
                                 color = if (isSelected) tokens.colors.accent else tokens.colors.borderSubtle,
                                 shape = RoundedCornerShape(12.dp),
                             )
-                            .clickable { onSelected(theme) }
+                            .clickable {
+                                if (theme == AppTheme.CUSTOM) showCustomEditor = true else onSelected(theme)
+                            }
                             .padding(vertical = 10.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1665,7 +1688,7 @@ private fun SetupThemeGrid(
                             modifier = Modifier
                                 .size(26.dp)
                                 .clip(CircleShape)
-                                .background(ThemeColors.getColorPalette(theme).secondary),
+                                .background(ThemeColors.getColorPalette(theme, customColors).secondary),
                             contentAlignment = Alignment.Center,
                         ) {
                             if (isSelected) {
@@ -1685,11 +1708,19 @@ private fun SetupThemeGrid(
                         )
                     }
                 }
-                // Seven palettes over rows of four leaves one gap; an explicit spacer keeps the
-                // last row's chips the same width as the first's instead of stretching them.
+                // A short last row keeps its chips the same width as a full row's instead of
+                // stretching them.
                 repeat(4 - row.size) { Spacer(modifier = Modifier.weight(1f)) }
             }
         }
+    }
+    if (showCustomEditor) {
+        CustomThemeEditor(
+            initialColors = customColors,
+            allowGradient = memberAccess.tier != null,
+            onSave = ThemeSettingsRepository::setCustomTheme,
+            onDismiss = { showCustomEditor = false },
+        )
     }
 }
 

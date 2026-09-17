@@ -150,6 +150,18 @@ object SocialFeaturePreferencesRepository {
     }
 
     /**
+     * Records that this profile now has a social identity because the user just saved a handle.
+     *
+     * The wizard needs this: it runs before the social layer is active, so the saved profile never
+     * reaches `SocialRepository.uiState.me`, and without it the handle step would stay in the
+     * plan after a successful save.
+     */
+    fun recordKnownIdentity() {
+        ensureLoaded()
+        _uiState.value = _uiState.value.copy(hasKnownIdentity = true)
+    }
+
+    /**
      * Ask the backend whether this profile already has a social identity.
      *
      * Only worth doing when the local cache could not answer and no explicit preference exists -

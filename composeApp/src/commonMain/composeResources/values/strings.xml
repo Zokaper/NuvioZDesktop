@@ -2723,7 +2723,8 @@
     <string name="setup_sources_recommended_title">AIOStreams with TorBox</string>
     <string name="setup_sources_recommended_body">Nuvio Z creates and installs the source configuration for you. Your TorBox key is sent to AIOStreams once to set it up and is never stored by Nuvio Z.</string>
     <string name="setup_sources_torbox_key">TorBox API key</string>
-    <string name="setup_sources_torbox_key_hint">Find it in your TorBox account settings, under API key.</string>
+    <string name="setup_sources_torbox_key_hint">Find your key</string>
+    <string name="setup_sources_torbox_key_link">here</string>
     <string name="setup_sources_source_language">Source language</string>
     <string name="setup_sources_subtitle_language">Subtitle language</string>
     <string name="setup_sources_set_up">Set up sources</string>
