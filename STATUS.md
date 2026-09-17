@@ -55,6 +55,10 @@ Last updated: 2026-09-17
 
 ## Hotfix Desktop Release - 0.1.23-alpha-z5 (2026-09-17)
 
+- **Released**: tag `0.1.23-alpha-z5+130`, serial `130`, source `d7a05537` on `release/0.1.23-alpha-z5` (Dev at the same commit)
+- **Workflows**: dry-run `35235607051`, publish `35235793671` (windows-macos); public, `draft=false`, `prerelease=false`
+- **Public release**: https://github.com/Zokaper/NuvioZDesktop/releases/tag/0.1.23-alpha-z5%2B130
+- **Gates**: desktopTest 2,230 run, 1 failure = the known `WatchedItemsStoreTest.kt:45` flake; pure suites 8/8, 695 tests
 - **Contents** (owner-reported bugs, one session):
   1. Watching Now: members of one Watch Together party showed as separate cards, each "Ask to join"-able.
      Backend migration `202609170001_watching_now_party_grouping.sql` (deployed) adds `party_id`,
