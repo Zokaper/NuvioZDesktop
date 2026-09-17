@@ -118,11 +118,12 @@ jobs:
           cat << 'EOF' > release-notes.md
           ### Highlights
 
-          - Native AIOStreams + TorBox source setup: no web page, no copy and paste, done in one step
-          - Link to find your TorBox API key right from the setup screen
-          - Signing in no longer leaves you stuck on the login screen until a restart
-          - Picking a social handle in the setup wizard now saves
-          - The setup wizard only offers colours your account can use, and Custom opens the colour editor
+          - Friends in the same Watch Together party now show as one Watching Now card, with one join button
+          - Watch Together now tells you in the player when someone joins or leaves the party
+          - Pressing Escape in the Classic player goes straight back to the source list, instead of a "Finding source" screen that needed a second Escape
+          - The Social screen fills the window again, with no empty margins at the sides
+          - Setup wizard: the sources step has an explicit "Do it later", and Next stays greyed out until a source is actually set up
+          - The recommended AIOStreams source is now called "AIOStreams Z", and no longer adds its own OpenSubtitles (your account already has it)
 
           *Official Nuvio Z Desktop release for Windows (x64 MSI) and macOS (Apple Silicon arm64 & Intel x86_64 DMGs).*
 
