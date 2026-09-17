@@ -279,10 +279,24 @@ internal object WatchPartySync : PartyRealtimeTransport {
      * it arrives. Everything else that advances the watch is a message, so this is the only path by
      * which a pure elapsed-time transition reaches anybody.
      */
-    fun refreshStallWatch(): List<String> {
+    fun refreshStallWatch(
+        startingUp: Collection<String> = emptyList(),
+        present: Set<String>? = null,
+    ): List<String> {
+        // Membership first: a member who has gone must stop being held before anything is decided.
+        present?.let { bufferWatch = bufferWatch.retainOnly(it) }
+        if (startingUp.isNotEmpty()) {
+            bufferWatch = bufferWatch.graceStartup(startingUp, partyNowMs() + WatchPartyStartupStallGraceMs)
+        }
         val holding = advanceBufferWatch()
         if (_state.value.holdingProfiles != holding) publishState()
         return holding
+    }
+
+    /** Starts the start-up grace for [profileIds] now - the instant a start barrier releases them. */
+    fun grantStartupGrace(profileIds: Collection<String>) {
+        if (profileIds.isEmpty()) return
+        bufferWatch = bufferWatch.graceStartup(profileIds, partyNowMs() + WatchPartyStartupStallGraceMs)
     }
 
     /**
@@ -294,8 +308,9 @@ internal object WatchPartySync : PartyRealtimeTransport {
      * play and immediately pause again for somebody who was already ready.
      */
     fun resetStallWatch() {
-        if (bufferWatch == GuestBufferingWatch()) return
-        bufferWatch = GuestBufferingWatch()
+        val reset = bufferWatch.resetKeepingStartupGrace()
+        if (bufferWatch == reset) return
+        bufferWatch = reset
         publishState()
     }
 

@@ -58,6 +58,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -125,13 +127,26 @@ fun NuvioScreen(
  * underneath. That has now shipped twice: the stream route's hand-off surface left an invisible
  * source list fully tappable in `0.5.0-beta`, and the setup wizard's re-run - which covers
  * `MainAppContent` - was opening links on the settings page behind it in revision 6.
+ *
+ * ⚠ **Presses and releases only - never the movement between them.** This used to consume every
+ * change, and that silently broke every button *inside* a surface wearing it. Compose's tap
+ * detector checks the `Final` pass of each event between press and release for consumption, and
+ * the `Final` pass runs ancestor-first, so this modifier on a root marked the event consumed before
+ * the button looked at it: any pointer travel during a click cancelled the click. A still mouse never
+ * showed it; a trackpad click, which almost always carries a pixel of travel, lost clicks at random -
+ * the post-release "Setup Wizard buttons need two to four presses on macOS". The same rule broke
+ * text selection drags and scrollbar drags under it. What stops a tap reaching the surface
+ * underneath is being a pointer-input hit target at all; the press and release are consumed only for
+ * any `Final`-pass listener above. `SetupWizardClickTest` pins it.
  */
 internal fun Modifier.nuvioConsumePointerEvents(): Modifier =
     pointerInput(Unit) {
         awaitPointerEventScope {
             while (true) {
                 awaitPointerEvent(PointerEventPass.Final).changes.forEach { change ->
-                    change.consume()
+                    if (change.changedToDownIgnoreConsumed() || change.changedToUpIgnoreConsumed()) {
+                        change.consume()
+                    }
                 }
             }
         }

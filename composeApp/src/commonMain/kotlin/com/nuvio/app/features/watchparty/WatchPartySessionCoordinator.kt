@@ -47,6 +47,8 @@ private sealed interface PartySessionIntent {
         val durationMs: Long?,
         val sourceGeneration: Int?,
         val sourceMatch: PartySourceMatch?,
+        /** Derived from the realizer rather than reported by a player. See `realizerReadinessMayPublish`. */
+        val fromRealizer: Boolean = false,
     ) : PartySessionIntent
     data object Promote : PartySessionIntent
     data object DiscoverPromotion : PartySessionIntent
@@ -74,6 +76,7 @@ object WatchPartySessionCoordinator {
     val state: StateFlow<PartySessionState> = _state.asStateFlow()
     private var presenceSessionId: String? = null
     private var presenceDeviceId: String? = null
+    private var lastPublishedReadiness: PublishedPartyReadiness? = null
     private val _promotionFailures = MutableSharedFlow<PartyPromotionFailure>(extraBufferCapacity = 4)
 
     /** Refusals from [promoteCurrentPlayback], so a surface can say what happened. */
@@ -98,6 +101,7 @@ object WatchPartySessionCoordinator {
                                 durationMs = null,
                                 sourceGeneration = sourceGeneration,
                                 sourceMatch = null,
+                                fromRealizer = true,
                             ),
                         )
                     }
@@ -166,7 +170,18 @@ object WatchPartySessionCoordinator {
                 // ⚠ An ended party gets no readiness. A report queued by work that was already in
                 // flight when the party ended would otherwise be a write to a party this member has
                 // left - refused, and indistinguishable in the log from a party still preparing.
-                if (liveParty() == null) return
+                val party = liveParty() ?: return
+                val generation = intent.sourceGeneration
+                if (intent.fromRealizer && generation != null &&
+                    !realizerReadinessMayPublish(intent.state to generation, party.id, lastPublishedReadiness)
+                ) {
+                    promotionLog.i {
+                        "readiness ${intent.state} from realizer skipped - already ${lastPublishedReadiness?.state} " +
+                            "for party=${party.id.shortId()} srcGen=$generation"
+                    }
+                    return
+                }
+                lastPublishedReadiness = PublishedPartyReadiness(party.id, intent.state, generation)
                 gateway.publishReadiness(
                     intent.state,
                     intent.durationMs,

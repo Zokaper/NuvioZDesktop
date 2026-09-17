@@ -378,6 +378,17 @@ internal class PlayerScreenRuntime(
     var partyStartReleasedKey by mutableStateOf<String?>(null)
 
     /**
+     * The generation whose start barrier has captured this player's playback intent, and that intent.
+     *
+     * Captured once, the first time the barrier is evaluated for a generation - before the gate itself
+     * pauses the player - and changed afterwards only by the user's own play or pause. See
+     * `partyStartReleaseResumes`: nothing read later can tell a paused-by-the-barrier host from a host
+     * who had paused.
+     */
+    var partyStartIntentKey: String? = null
+    var partyStartIntentPlaying: Boolean? = null
+
+    /**
      * The party source generation this player has already acted on, adopted or already playing.
      *
      * Deliberately not cleared by a failed adoption. A source the party moved to and this client

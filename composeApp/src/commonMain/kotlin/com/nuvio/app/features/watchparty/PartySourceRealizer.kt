@@ -2,6 +2,7 @@ package com.nuvio.app.features.watchparty
 
 import com.nuvio.app.features.player.PartyPlayerLaunchKey
 import com.nuvio.app.features.player.PlayerLaunch
+import co.touchlab.kermit.Logger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -107,7 +108,14 @@ object PartySourceRealizer {
         launches.clear()
         val id = nextRealizationId++
         launches[id] = launch
+        val before = _state.value
         _state.value = PartySourceRealizationState.Ready(key, id)
+        if (before !is PartySourceRealizationState.Ready) {
+            realizerLog.i {
+                "realization ${before::class.simpleName}->Ready party=${key.partyId.take(8)} " +
+                    "gen=${key.contentGeneration}/${key.sourceGeneration} by=player-launch"
+            }
+        }
         return id
     }
 
@@ -122,8 +130,75 @@ object PartySourceRealizer {
 
     private fun transition(key: PartyPlayerLaunchKey, next: PartySourceRealizationState): Boolean {
         if (authorityKey != key) return false
+        val before = _state.value
         _state.value = next
+        if (before::class != next::class) {
+            realizerLog.i {
+                "realization ${before::class.simpleName}->${next::class.simpleName} " +
+                    "party=${key.partyId.take(8)} gen=${key.contentGeneration}/${key.sourceGeneration}"
+            }
+        }
         return true
+    }
+}
+
+private val realizerLog = Logger.withTag("PartySourceRealizer")
+
+/**
+ * The party source a player launch has realized, or null when it realizes none.
+ *
+ * ⚠ **Post-release Bug 2 (2026-09-17): a guest who joined from Watching Now watched the film with
+ * "Matching <host>'s source…" pinned over it.** `PlayerDestination` retained a launch only when its
+ * descriptor was *byte-equal* to the party's. Every other identity question in Watch Together - the
+ * readiness report's `source_match`, the in-player handoff, the automatic-launch claim - asks
+ * [partySourceMatchTier] instead, and a guest's own catalogue describes the same release with its
+ * own addon version, size and language facts. So the strict matcher resolved the host's release,
+ * the player opened it and reported `source_match=exact` to the party, and the realizer was never
+ * told: it stayed `Resolving` for the life of the player, which the status pill reads as "Matching".
+ * The physical run's member row carries exactly that pair - `ready`, `exact`, and a pill that never
+ * cleared.
+ *
+ * One rule now: a launch of the party's current content completes its realization when it plays
+ * the party's release at an exact tier, or when it plays an alternate the member chose by hand after
+ * the matcher had already answered FallbackRequired (or Failed) for this very key. Either way the
+ * member has a usable local source, which is the only thing "Matching" ever claimed they lacked.
+ */
+fun partyRealizationCompletedByLaunch(
+    party: WatchPartyState?,
+    launchContentId: String,
+    launchVideoId: String?,
+    launchDescriptor: PartySourceDescriptorV2?,
+    realization: PartySourceRealizationState,
+): PartyPlayerLaunchKey? {
+    val live = party?.takeIf { it.matchesPlayback(launchContentId, launchVideoId) } ?: return null
+    val key = live.partySourceKey() ?: return null
+    val local = launchDescriptor ?: return null
+    if (partySourceMatchTier(key.descriptor, local) in PartyExactMatchTiers) return key
+    val alternateChosenAfterNoMatch = when (realization) {
+        is PartySourceRealizationState.FallbackRequired -> realization.key == key
+        is PartySourceRealizationState.Failed -> realization.key == key
+        is PartySourceRealizationState.Ready -> realization.key == key
+        else -> false
+    }
+    return key.takeIf { alternateChosenAfterNoMatch }
+}
+
+/** The status pill's reading of the realizer, for the party the player is showing. */
+fun partyRealizationPhaseFor(realization: PartySourceRealizationState, partyId: String?): PartyRealizationPhase {
+    val key = when (realization) {
+        is PartySourceRealizationState.Matching -> realization.key
+        is PartySourceRealizationState.Resolving -> realization.key
+        is PartySourceRealizationState.FallbackRequired -> realization.key
+        is PartySourceRealizationState.Failed -> realization.key
+        else -> return PartyRealizationPhase.None
+    }
+    if (partyId == null || key.partyId != partyId) return PartyRealizationPhase.None
+    return when (realization) {
+        is PartySourceRealizationState.Matching -> PartyRealizationPhase.Matching
+        is PartySourceRealizationState.Resolving -> PartyRealizationPhase.Resolving
+        is PartySourceRealizationState.FallbackRequired -> PartyRealizationPhase.FallbackRequired
+        is PartySourceRealizationState.Failed -> PartyRealizationPhase.Failed
+        else -> PartyRealizationPhase.None
     }
 }
 

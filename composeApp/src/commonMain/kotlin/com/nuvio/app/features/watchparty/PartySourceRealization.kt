@@ -98,6 +98,36 @@ fun decidePartyRealization(
  * nothing about readiness"; the source generation travels with it so the backend can reject a
  * report that belongs to a generation the party has already left.
  */
+/** What this member last told the party about its readiness, for [realizerReadinessMayPublish]. */
+data class PublishedPartyReadiness(
+    val partyId: String,
+    val state: SourceResolutionState,
+    val sourceGeneration: Int?,
+)
+
+/**
+ * Whether a report derived from the realizer may go out over what the member last published.
+ *
+ * ⚠ **A realization becoming Ready must never walk a playing member back to `source_ready`.** The
+ * realizer learns of the launch from the player route, and the player publishes `ready` itself once
+ * its media is loaded - two writers, one row, and no order between them. The physical run's host log
+ * has the regression on the record: `ready`, then `source_ready`, then `ready` again inside half a
+ * second. `source_ready` is still a waiting state for the host's start gate, so on a joining guest
+ * the same flap closes a gate that had just opened - one more pause and play for everyone watching.
+ * Every other realizer report stays allowed: a member who goes back to the source list really is
+ * matching again.
+ */
+fun realizerReadinessMayPublish(
+    report: Pair<SourceResolutionState, Int>,
+    partyId: String,
+    lastPublished: PublishedPartyReadiness?,
+): Boolean {
+    if (report.first != SourceResolutionState.source_ready) return true
+    val last = lastPublished ?: return true
+    if (last.partyId != partyId || last.sourceGeneration != report.second) return true
+    return last.state != SourceResolutionState.ready && last.state != SourceResolutionState.buffering
+}
+
 fun partyReadinessReport(state: PartySourceRealizationState): Pair<SourceResolutionState, Int>? =
     when (state) {
         PartySourceRealizationState.Unresolved -> null

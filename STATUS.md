@@ -53,6 +53,39 @@ Last updated: 2026-09-17
 - Phase 6 (Social to mobile) is the next planned phase.
 - Phase 6 has NOT started yet.
 
+## Post-release stabilization for z3 (2026-09-17)
+
+On branch **`claude/post-release-z3-stabilization`**, cut from `Dev` at `eb8357c3` (z2 release + its
+docs commit). No version bump, no release. Three bugs from physical use of `0.1.23-alpha-z2`.
+
+1. **Setup Wizard buttons needed several presses (macOS).** Root cause:
+   `nuvioConsumePointerEvents()` on the wizard root consumed *every* change on the `Final` pass;
+   Compose's tap detector cancels a click when a move between press and release is consumed on
+   `Final`, and ancestors see `Final` first. Any pointer travel inside a click - normal on a trackpad -
+   lost it. Not window activation. The modifier now consumes only presses and releases (the fall-through
+   protection comes from being a hit target). Also fixes the same loss on `PlaybackLoadingScreen`'s back
+   button. `SetupWizardClickTest` (desktopTest, real pointer pipeline via `ImageComposeScene`) failed 4/5
+   before the fix. **Physical macOS check still owed.**
+2. **Watching Now join stuck on "Matching <host>'s source…".** `PlayerDestination` retained the party
+   realization only on a byte-equal descriptor, while every other identity check is tiered; a guest's
+   catalogue describes the same release differently, so the realizer stayed `Resolving` forever
+   (production row for the physical run: `ready` + `source_match=exact`). Now
+   `partyRealizationCompletedByLaunch` (exact tiers, or an alternate chosen after FallbackRequired/Failed).
+   Also: the realizer's `source_ready` may no longer overwrite a player's `ready`
+   (`realizerReadinessMayPublish`) - the host log showed `ready -> source_ready -> ready`.
+3. **Join made the film pause/play/pause/play.** Host log 2026-09-17 08:52-08:53: start-barrier pause at
+   the promoted party, `gate` play on durable `ready`, then two stall-guard pause/play cycles for the
+   same guest's cold-start rebuffers. Fix, all in the existing barrier: the start release now also waits
+   for fresh peer `paused`/`playing` from members in the player (bounded, `WatchPartyStartPlaybackReadyMaxWaitMs`);
+   the release resumes only if the host's captured pre-barrier intent was playing (a paused host stays
+   paused); members starting up get `WatchPartyStartupStallGraceMs` from the stall guard; members who
+   left/disconnected are dropped from holds; a guest opening into a non-playing party starts parked.
+   `WatchPartyJoinBarrierTest` (pure suite) replays the log.
+
+Gates: compileKotlinDesktop green; pure suites 8/8, 695 tests; desktopTest 2,184 passed, 0 failures, 0 errors, 0 skipped (BUILD SUCCESSFUL, stale results cleared first).
+Physical QA owed: macOS wizard clicks (trackpad), and a two-client Watching Now join with the host
+playing and with the host paused.
+
 ## Playback: Loading screen language summary & Initial preferred audio track selection (2026-09-16)
 
 On branch **`codex/upstream-sync-0.1.23-alpha`**.

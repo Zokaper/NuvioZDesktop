@@ -25,7 +25,7 @@ import com.nuvio.app.features.playback.PlaybackLoadingController
 import com.nuvio.app.features.streams.StreamsRepository
 import com.nuvio.app.features.watchparty.WatchPartyRepository
 import com.nuvio.app.features.watchparty.PartySourceRealizer
-import com.nuvio.app.features.watchparty.partySourceKey
+import com.nuvio.app.features.watchparty.partyRealizationCompletedByLaunch
 import com.nuvio.app.features.watchparty.lobbyOwedOnPlayerExit
 import com.nuvio.app.features.watchparty.matchesPlayback
 import org.jetbrains.compose.resources.stringResource
@@ -58,12 +58,16 @@ internal fun PlayerDestination(
         return
     }
     val partyUi by WatchPartyRepository.uiState.collectAsStateWithLifecycle()
-    val retainedPartyKey = partyUi.party?.let { party ->
-        party.partySourceKey()?.takeIf { key ->
-            key.descriptor == launch.partySourceDescriptor &&
-                party.matchesPlayback(launch.parentMetaId, launch.videoId)
-        }
-    }
+    val realization by PartySourceRealizer.state.collectAsStateWithLifecycle()
+    // Tiered, not byte-equal: see `partyRealizationCompletedByLaunch` for the stuck "Matching" pill
+    // an equality test here produced.
+    val retainedPartyKey = partyRealizationCompletedByLaunch(
+        party = partyUi.party,
+        launchContentId = launch.parentMetaId,
+        launchVideoId = launch.videoId,
+        launchDescriptor = launch.partySourceDescriptor,
+        realization = realization,
+    )
     LaunchedEffect(route.launchId, retainedPartyKey) {
         retainedPartyKey?.let { PartySourceRealizer.retain(it, launch) }
     }

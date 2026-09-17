@@ -361,6 +361,11 @@ data class GuestBufferingWatch(
     val bufferingSinceByProfile: Map<String, Long> = emptyMap(),
     val readySinceByProfile: Map<String, Long> = emptyMap(),
     val heldSinceByProfile: Map<String, Long> = emptyMap(),
+    /**
+     * Members who are starting up, and the party instant until which their buffering is start-up
+     * rather than a stall. See [WatchPartyStartupStallGraceMs].
+     */
+    val startupGraceUntilByProfile: Map<String, Long> = emptyMap(),
 ) {
     /** Members the host is holding the party for right now. */
     val holdingProfiles: List<String> get() = heldSinceByProfile.keys.sorted()
@@ -421,7 +426,11 @@ data class GuestBufferingWatch(
     fun advance(partyNowMs: Long): GuestBufferingWatch {
         val next = heldSinceByProfile.toMutableMap()
         for ((profileId, since) in bufferingSinceByProfile) {
-            if (partyNowMs - since < WatchPartyGuestBufferingGraceMs) continue
+            // A member still starting up is not stalling. Once the start-up grace ends, a stall still
+            // has to outlast the ordinary grace from *that* instant, so the end of the grace never
+            // turns ten seconds of opening into an instant hold.
+            val stallSince = maxOf(since, startupGraceUntilByProfile[profileId] ?: Long.MIN_VALUE)
+            if (partyNowMs - stallSince < WatchPartyGuestBufferingGraceMs) continue
             if (!next.containsKey(profileId)) next[profileId] = partyNowMs
         }
         val released = next.keys.filter { profileId ->
@@ -434,15 +443,163 @@ data class GuestBufferingWatch(
             settled || abandoned
         }
         released.forEach { next.remove(it) }
-        return if (next == heldSinceByProfile) this else copy(heldSinceByProfile = next)
+        val grace = startupGraceUntilByProfile.filterValues { until ->
+            // Kept one ordinary grace past its end, because `stallSince` above still reads it then.
+            partyNowMs - until < WatchPartyGuestBufferingGraceMs
+        }
+        return if (next == heldSinceByProfile && grace == startupGraceUntilByProfile) {
+            this
+        } else {
+            copy(heldSinceByProfile = next, startupGraceUntilByProfile = grace)
+        }
     }
 
     fun forget(profileId: String): GuestBufferingWatch = copy(
         bufferingSinceByProfile = bufferingSinceByProfile - profileId,
         readySinceByProfile = readySinceByProfile - profileId,
         heldSinceByProfile = heldSinceByProfile - profileId,
+        startupGraceUntilByProfile = startupGraceUntilByProfile - profileId,
+    )
+
+    /**
+     * Forgets every member not in [present].
+     *
+     * A member who left or whose connection the server has given up on cannot be waited for, and a
+     * hold standing for them would otherwise last until [WatchPartyStallHoldMaxMs] - thirty seconds
+     * of a stopped party for somebody who is not coming back.
+     */
+    fun retainOnly(present: Set<String>): GuestBufferingWatch {
+        val known = bufferingSinceByProfile.keys + readySinceByProfile.keys + heldSinceByProfile.keys +
+            startupGraceUntilByProfile.keys
+        val absent = known - present
+        return if (absent.isEmpty()) this else absent.fold(this) { watch, profileId -> watch.forget(profileId) }
+    }
+
+    /** Extends (never shortens) the start-up grace of [profileIds] to [untilPartyMs]. */
+    fun graceStartup(profileIds: Collection<String>, untilPartyMs: Long): GuestBufferingWatch {
+        if (profileIds.isEmpty()) return this
+        val next = startupGraceUntilByProfile.toMutableMap()
+        profileIds.forEach { id -> next[id] = maxOf(next[id] ?: Long.MIN_VALUE, untilPartyMs) }
+        return if (next == startupGraceUntilByProfile) this else copy(startupGraceUntilByProfile = next)
+    }
+
+    /**
+     * What a party start keeps: nothing about who was buffering before it, but the start-up grace of
+     * members who are still opening. A reset that dropped the grace would let the very first play -
+     * or a user's pause and play a second later - hand a joiner's cold start straight to the guard.
+     */
+    fun resetKeepingStartupGrace(): GuestBufferingWatch = GuestBufferingWatch(
+        startupGraceUntilByProfile = startupGraceUntilByProfile,
     )
 }
+
+/**
+ * How long, once a member has a source, the stall guard leaves their buffering alone.
+ *
+ * ⚠ **Post-release Bug 3 (2026-09-17): a friend joining from Watching Now made the host's film go
+ * pause, play, pause, play, pause, play.** The host log of that run names every transition: the
+ * start gate paused the host at the join and released it when the guest reported `ready`, then the
+ * stall guard paused and resumed the party twice more inside ten seconds, each time for the same
+ * guest - whose freshly opened, cold stream rebuffered at 08:53:23, 29 and 34. Those were not stalls
+ * in a film everybody was watching; they were one member's stream filling for the first time, and the
+ * guard's 400 ms "recovered" settle released each hold into the next rebuffer. A member who is
+ * starting up is caught up by its own drift correction instead - which moves only that member.
+ */
+const val WatchPartyStartupStallGraceMs = 10_000L
+
+/**
+ * The longest the start barrier waits, after every member has a source, for them to be able to play.
+ *
+ * `ready` means the member's file opened and has a duration - not that it can start. In the physical
+ * run the gate released on exactly that and the guest's first real frame was still seconds away,
+ * which is why the party's first act after the hold was another hold. Bounded, because a member whose
+ * player never reports itself parked must not keep the party stopped: after this the barrier releases
+ * on durable readiness alone, exactly as it did before, and the start-up grace absorbs the rest.
+ */
+const val WatchPartyStartPlaybackReadyMaxWaitMs = 12_000L
+
+/** Whether the start barrier may release, and who it is still waiting on when it may not. */
+data class PartyStartRelease(
+    val release: Boolean,
+    val waitingOn: List<String>,
+    val timedOut: Boolean = false,
+)
+
+/**
+ * The start barrier's second condition: every member it waited on can actually play.
+ *
+ * Called only once the durable gate has opened, so every connected member already has a source.
+ * A member is playback-ready when its fresh peer status is `paused` or `playing`: `partyStatusFor`
+ * reports `buffering` for as long as the engine is loading or has no first frame, so `paused` from a
+ * member the party is holding means parked on a decoded frame. Members the barrier does not wait on:
+ * the viewer, anyone disconnected, left or failed, and anyone who has never been in a player and says
+ * nothing on the live plane - durable readiness is all there is to know about them. Without a live
+ * plane there is no playback evidence to wait for, so the durable gate is the whole answer.
+ */
+fun partyStartPlaybackRelease(
+    members: List<WatchPartyParticipant>,
+    viewerProfileId: String?,
+    peerTelemetry: Map<String, PartyPeerTelemetry>,
+    realtimeLive: Boolean,
+    partyNowMs: Long,
+    durablyReadyAtPartyMs: Long,
+): PartyStartRelease {
+    if (!realtimeLive) return PartyStartRelease(release = true, waitingOn = emptyList())
+    val waiting = members.filter { member ->
+        if (member.profileId == viewerProfileId || !member.connected) return@filter false
+        if (member.readyState == SourceResolutionState.left ||
+            member.readyState == SourceResolutionState.failed ||
+            member.readyState == SourceResolutionState.disconnected
+        ) return@filter false
+        val status = peerTelemetry[member.profileId]
+            ?.takeIf { partyNowMs - it.receivedAtPartyMs <= WatchPartyClockStaleMs }
+            ?.status
+        when (status) {
+            WatchPartyStatus.paused, WatchPartyStatus.playing -> false
+            WatchPartyStatus.buffering -> true
+            else -> member.clientLocation == WatchPartyClientLocation.player
+        }
+    }.map { it.profileId }.sorted()
+    if (waiting.isEmpty()) return PartyStartRelease(release = true, waitingOn = emptyList())
+    val timedOut = partyNowMs - durablyReadyAtPartyMs >= WatchPartyStartPlaybackReadyMaxWaitMs
+    return PartyStartRelease(release = timedOut, waitingOn = waiting, timedOut = timedOut)
+}
+
+/**
+ * Members whose party start is still in progress: they are working towards a source for the current
+ * generation. Deliberately not `buffering` (a mid-film stall) or `disconnected`.
+ */
+fun partyMembersStartingUp(party: WatchPartyState, viewerProfileId: String?): List<String> =
+    party.members.filter { member ->
+        member.profileId != viewerProfileId && member.connected && member.readyState in PartyStartingUpStates
+    }.map { it.profileId }
+
+/** Members the stall watch may still hold for: present and connected. */
+fun partyMembersPresent(party: WatchPartyState): Set<String> =
+    party.members.filter {
+        it.connected && it.readyState != SourceResolutionState.left && it.readyState != SourceResolutionState.disconnected
+    }.map { it.profileId }.toSet()
+
+private val PartyStartingUpStates = setOf(
+    SourceResolutionState.joined,
+    SourceResolutionState.waiting_for_host,
+    SourceResolutionState.fetching,
+    SourceResolutionState.resolving,
+    SourceResolutionState.choosing_fallback,
+    SourceResolutionState.source_ready,
+)
+
+/**
+ * What the start barrier resumes into.
+ *
+ * ⚠ **The intent is the explicit one the player held when the barrier closed, never a callback from
+ * inside it.** A party built from a host's playback starts `paused` on the server whatever the host
+ * was doing, and the gate then pauses the host itself - so by release time every signal says "paused"
+ * and only the captured intent still knows the film was running. The same capture is what keeps a
+ * host who had paused before a friend joined paused afterwards: releasing used to mean `play`,
+ * unconditionally.
+ */
+fun partyStartReleaseResumes(intentPlaying: Boolean?): Boolean = intentPlaying ?: true
 
 /**
  * How often a host has held the party for a stalled guest, and whether it should keep doing it.

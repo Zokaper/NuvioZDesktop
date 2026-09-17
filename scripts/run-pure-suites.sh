@@ -287,10 +287,12 @@ kotlinc -nowarn -cp "$CP_BUILD:$CP_JSON:$CP_COROUTINES" -Xplugin="$WORK/serializ
   "$T/features/watchparty/WatchPartySessionStateTest.kt" \
   "$T/features/watchparty/WatchPartyPlaybackLifecycleTest.kt" \
   "$T/features/watchparty/WatchPartySyncTest.kt" \
+  "$T/features/watchparty/WatchPartyJoinBarrierTest.kt" \
   2>&1 | grep -v "^warning:" | grep -v "Picked up JAVA" || true
 
 java -cp "$WORK/out-watchparty:$CP_RUN:$CP_JSON:$CP_COROUTINES" org.junit.runner.JUnitCore \
   com.nuvio.app.features.watchparty.WatchPartyModelsTest \
+  com.nuvio.app.features.watchparty.WatchPartyJoinBarrierTest \
   com.nuvio.app.features.watchparty.PartySourceDescriptorV2Test \
   com.nuvio.app.features.watchparty.WatchPartySessionStateTest \
   com.nuvio.app.features.watchparty.WatchPartyPlaybackLifecycleTest \

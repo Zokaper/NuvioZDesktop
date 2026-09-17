@@ -57,6 +57,10 @@ import com.nuvio.app.features.watchparty.partySourceMatchTier
 import com.nuvio.app.features.watchparty.partyBarrierPlan
 import com.nuvio.app.features.watchparty.partyFallbackDriftCorrection
 import com.nuvio.app.features.watchparty.partyMembersAwaitingSource
+import com.nuvio.app.features.watchparty.partyMembersPresent
+import com.nuvio.app.features.watchparty.partyMembersStartingUp
+import com.nuvio.app.features.watchparty.partyStartPlaybackRelease
+import com.nuvio.app.features.watchparty.partyStartReleaseResumes
 import com.nuvio.app.features.watchparty.partyPlaybackGate
 import com.nuvio.app.features.watchparty.resolvePartyStartupHold
 import com.nuvio.app.features.watchparty.partyGenerationKey
@@ -414,20 +418,55 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
         // is the same fact half a second old. Two authorities over one transport is how a guest ends
         // up paused by the older of them a moment after the newer one started it.
         if (!isHost && WatchPartySync.isPrecise()) return@LaunchedEffect
+        // The intent the barrier resumes into, captured before the gate below can pause anything.
+        if (isHost && partyStartReleasedKey != generationKey && partyStartIntentKey != generationKey) {
+            partyStartIntentKey = generationKey
+            partyStartIntentPlaying = shouldPlay
+            partyLog.i { "start barrier $generationKey intent=${if (shouldPlay) "playing" else "paused"}" }
+        }
         if (!gate.allowPlayback) {
+            if (shouldPlay || playbackSnapshot.isPlaying) {
+                partyLog.i { "pause src=start-barrier $generationKey reason=${gate.reason} waitingOn=${gate.waitingOn}" }
+            }
             shouldPlay = false
             controller.pause()
             return@LaunchedEffect
         }
         if (isHost && partyStartReleasedKey != generationKey) {
-            // Everyone has a source. The play command is what sets the authoritative clock running,
-            // and it is sent from here rather than from the lobby so that it coincides with playback
-            // actually beginning. It goes out as a barrier, so every member's first frame is the
-            // same frame rather than each one starting when its own copy of the news arrived.
-            val sample = samplePlaybackPosition()
-            partyLog.i { "gate released $generationKey by=allReady positionMs=${sample.positionMs}" }
-            partyStartReleasedKey = generationKey
-            startPartyPlayback(sample.positionMs, source = "gate")
+            // Everyone has a source. Before the clock starts, everyone the barrier waited on must also
+            // be able to *play*: `ready` only says the file opened. Releasing on it is what put the
+            // physical run's guest on a cold stream at the barrier instant and handed its first
+            // rebuffers to the stall guard - two more pause and play cycles for everybody. Polled,
+            // because the evidence is live peer status and the timeout is elapsed time; this effect
+            // is cancelled with the gate the moment another member starts waiting again.
+            val durablyReadyAt = WatchPartySync.partyNowMs()
+            var reported: List<String>? = null
+            while (true) {
+                // Start anyway: the host released it by hand while this was waiting.
+                if (partyStartReleasedKey == generationKey) return@LaunchedEffect
+                val live = WatchPartyRepository.uiState.value
+                val party = live.party?.takeIf { it.generationKey() == generationKey } ?: return@LaunchedEffect
+                val decision = partyStartPlaybackRelease(
+                    members = party.members,
+                    viewerProfileId = live.activeProfileId,
+                    peerTelemetry = WatchPartySync.state.value.peerTelemetry,
+                    realtimeLive = live.health.capability() == com.nuvio.app.features.watchparty.PartySyncCapability.FullSync,
+                    partyNowMs = WatchPartySync.partyNowMs(),
+                    durablyReadyAtPartyMs = durablyReadyAt,
+                )
+                if (decision.release) {
+                    if (decision.timedOut) {
+                        partyLog.w { "start barrier $generationKey timed out waiting for playback from [${decision.waitingOn.joinToString { it.shortId() }}]" }
+                    }
+                    releasePartyStart(generationKey, party, by = if (decision.timedOut) "timeout" else "allPlaybackReady")
+                    return@LaunchedEffect
+                }
+                if (decision.waitingOn != reported) {
+                    reported = decision.waitingOn
+                    partyLog.i { "start barrier $generationKey waiting for playback from [${decision.waitingOn.joinToString { it.shortId() }}]" }
+                }
+                delay(WatchPartyStallWatchPollMs)
+            }
         }
     }
 
@@ -567,7 +606,13 @@ internal fun PlayerScreenRuntime.BindWatchPartyEffect() {
         if (generationKey == null || !isHost) return@LaunchedEffect
         var reactedTo: List<String>? = null
         while (true) {
-            val holding = WatchPartySync.refreshStallWatch()
+            // Read fresh each pass: membership and readiness move under this loop, and a member who is
+            // still opening, or who has gone, must never be what the party stops for.
+            val party = WatchPartyRepository.uiState.value.party
+            val holding = WatchPartySync.refreshStallWatch(
+                startingUp = party?.let { partyMembersStartingUp(it, WatchPartyRepository.uiState.value.activeProfileId) }.orEmpty(),
+                present = party?.let(::partyMembersPresent),
+            )
             if (holding != reactedTo) {
                 reactedTo = holding
                 reactToStalledGuests(holding)
@@ -1209,6 +1254,28 @@ private fun PlayerScreenRuntime.announcePartyActor(command: PartyCommand) {
 internal data class PartyPauseAttribution(val profileId: String, val atEpochMs: Long)
 
 /**
+ * Ends the start barrier exactly once, resuming only if the party was playing when it closed.
+ *
+ * Everyone the barrier waited on is starting their stream now, so they get the start-up grace from
+ * this instant: their first rebuffers are opening, not stalls. Then one `play` - or, for a host who
+ * had paused before the barrier, nothing, and the party stays where the host left it.
+ */
+private fun PlayerScreenRuntime.releasePartyStart(generationKey: String, party: WatchPartyState, by: String) {
+    if (partyStartReleasedKey == generationKey) return
+    partyStartReleasedKey = generationKey
+    val viewer = WatchPartyRepository.uiState.value.activeProfileId
+    WatchPartySync.grantStartupGrace(party.members.map { it.profileId }.filter { it != viewer })
+    val intentPlaying = partyStartIntentPlaying.takeIf { partyStartIntentKey == generationKey }
+    val sample = samplePlaybackPosition()
+    if (partyStartReleaseResumes(intentPlaying)) {
+        partyLog.i { "gate released $generationKey by=$by intent=playing positionMs=${sample.positionMs}" }
+        startPartyPlayback(sample.positionMs, source = "gate")
+    } else {
+        partyLog.i { "gate released $generationKey by=$by intent=paused - staying paused positionMs=${sample.positionMs}" }
+    }
+}
+
+/**
  * "Don't wait" on the stall-hold pill: the host lets the party play on without the buffering guest.
  *
  * Turning the switch off alone would leave the party standing still, because the guard that took the
@@ -1292,7 +1359,19 @@ internal fun PlayerScreenRuntime.applyWatchPartyStartPosition(party: WatchPartyS
     activeInitialPositionMs = positionMs
     activeInitialProgressFraction = null
     initialSeekApplied = positionMs <= 0L
+    // A guest opening into a party that is not playing starts parked. Its engine used to start on
+    // load and be paused a moment later by the gate or the host's tick - a visible start and stop on
+    // the joiner, and a `playing` status the host could mistake for a member already running. The
+    // party's own `play` barrier is what starts it, at the instant everyone else starts.
+    if (shouldStartParkedForParty(matching, WatchPartyRepository.uiState.value.activeProfileId)) {
+        partyLog.i { "startPosition $key guest opens parked status=${matching.status}" }
+        shouldPlay = false
+    }
 }
+
+/** Whether a player opening into [party] should wait for the party's play rather than start itself. */
+internal fun shouldStartParkedForParty(party: WatchPartyState, viewerProfileId: String?): Boolean =
+    party.hostProfileId != viewerProfileId && party.status != WatchPartyStatus.playing
 
 /** Whether this client's transport belongs to the party rather than to whoever pressed the button. */
 internal fun PlayerScreenRuntime.partyOwnsTransport(): Boolean =
@@ -1406,6 +1485,10 @@ internal fun PlayerScreenRuntime.submitPartyPlayPause(isPlaying: Boolean, positi
         partyLog.i { "gate released ${party.generationKey()} by=forceStart positionMs=$positionMs" }
     }
     if (isPlaying) partyStartReleasedKey = party.generationKey()
+    // A pause pressed while the start barrier still holds is the user changing what it resumes into.
+    if (!isPlaying && partyStartReleasedKey != party.generationKey() && partyStartIntentKey == party.generationKey()) {
+        partyStartIntentPlaying = false
+    }
     // The user has taken the transport back. Without this, a guest recovering later would have the
     // stall guard resume over a pause a person made in the meantime - the guard would be undoing a
     // decision it did not take.

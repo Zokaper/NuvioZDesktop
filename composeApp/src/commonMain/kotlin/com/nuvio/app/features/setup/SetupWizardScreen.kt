@@ -342,9 +342,9 @@ fun SetupWizardScreen(
             // ⚠ **This is the second time this defect has shipped.** `0.5.0-beta` item 1 was the
             // same thing on the stream route - "the surface consumed no pointer input, so the
             // invisible source list underneath was fully tappable". `nuvioConsumePointerEvents`
-            // is the fix written then, and it consumes on `PointerEventPass.Final`, so this
-            // screen's own controls still receive events first and only unhandled ones are
-            // swallowed.
+            // is the fix written then. ⚠ It now consumes only presses and releases: consuming the
+            // movement inside a click cancelled this screen's own buttons, which is the post-release
+            // "wizard buttons need several presses on macOS" - see the modifier's own comment.
             //
             // The gate path never showed it because there `MainAppContent` is not composed at
             // all. Only the dismissible re-run is affected, which is why it took a re-run to

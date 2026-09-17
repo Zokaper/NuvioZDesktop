@@ -10,7 +10,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.features.watchparty.PartyPlaybackStatusInputs
 import com.nuvio.app.features.watchparty.PartyPresentationProjector
-import com.nuvio.app.features.watchparty.PartyRealizationPhase
+import com.nuvio.app.features.watchparty.partyRealizationPhaseFor
 import com.nuvio.app.features.watchparty.PartyRealtimeHealth
 import com.nuvio.app.features.watchparty.PartySourceRealizationState
 import com.nuvio.app.features.watchparty.PartySourceRealizer
@@ -32,6 +32,8 @@ import com.nuvio.app.features.watchparty.partyMembersAwaitingSource
 import com.nuvio.app.features.watchparty.partyPlaybackGate
 import com.nuvio.app.features.watchparty.projectPartyPlaybackStatus
 import kotlinx.coroutines.delay
+
+private val partyStatusLog = co.touchlab.kermit.Logger.withTag("WatchPartyStatus")
 
 /** How often the pill re-reads the signals that are not Compose state (the stall guard, a pending seek). */
 private const val PartyStatusTickMs = 250L
@@ -115,17 +117,7 @@ internal fun PlayerScreenRuntime.rememberPartyStatusLine(
     } else {
         val tickHold = syncState.tickHold.takeIf { !isHost && syncState.tickStatus != WatchPartyStatus.playing }.orEmpty()
         val stallHold = if (isHost) partyAutoPausedForGuests else tickHold.filter { it != viewerId }
-        val realizationPhase = if (realizationKey?.partyId != party.id) {
-            PartyRealizationPhase.None
-        } else {
-            when (realization) {
-                is PartySourceRealizationState.Matching -> PartyRealizationPhase.Matching
-                is PartySourceRealizationState.Resolving -> PartyRealizationPhase.Resolving
-                is PartySourceRealizationState.FallbackRequired -> PartyRealizationPhase.FallbackRequired
-                is PartySourceRealizationState.Failed -> PartyRealizationPhase.Failed
-                else -> PartyRealizationPhase.None
-            }
-        }
+        val realizationPhase = partyRealizationPhaseFor(realization, party.id)
         val partyPaused = if (isHost) !playbackSnapshot.isPlaying else presentation.freshHostStatus != WatchPartyStatus.playing
         // Deferred by one tick interval: a stall hold's tick follows its `pause` command, and "Paused
         // by Seraph" flashing up before "Waiting for Ahmed to buffer" is the misreading this removes.
@@ -175,6 +167,12 @@ internal fun PlayerScreenRuntime.rememberPartyStatusLine(
 
     LaunchedEffect(projected, nowMs) {
         debounce = debouncePartyStatus(debounce, projected, currentEpochMs())
+    }
+    // The visible line, logged on change only, so a trace can say what the viewer was actually shown
+    // beside the realization and hold transitions that produced it.
+    val shownKind = debounce.shown?.kind
+    LaunchedEffect(shownKind, party?.id) {
+        partyStatusLog.i { "status shown=${shownKind ?: "none"} party=${party?.id?.take(8)} realization=${realization::class.simpleName}" }
     }
     return debounce.shown
 }
