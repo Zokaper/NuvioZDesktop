@@ -1,6 +1,19 @@
 # Phase 4 Two-Client Watched Verification
 
-Status: **NOT EXECUTED**. This worksheet prepares the physical Stage 14 run; it records no manual result.
+Status: the 21-scenario table is **NOT EXECUTED**. The physical results this file does carry are in
+the two sections after it. (This line used to read "it records no manual result", which stopped
+being true when the 2026-09-10 retest was added below and was never updated.)
+
+> **Read this before quoting the `NOT RUN` column.** The 21-scenario table below has never been
+> walked and every cell in it is honestly unrun — but that is not the same as "Watch Together has
+> never been shown to work", and the two sections that follow the table record physical runs that
+> did work. Phase 6 planning read the blanket `NOT RUN` the wrong way, which is why this note exists.
+> The evidence, in order: the **2026-09-10 refinement retest** near the end of this file (two
+> clients, itemized results), and **§"Field use through `z2`..`z6`"** immediately below it.
+
+---
+
+## The worksheet
 
 Authoritative criteria: `../PLAN-phase-4.md`, section 14. Use two installed desktop clients with different real social profiles and isolated data directories. Prefer two machines; two Windows processes with separate `APPDATA` roots are acceptable.
 
@@ -95,3 +108,27 @@ everyone" on, unless a step says otherwise.
    Expect steady state inside ~±65ms, and expect `holdMs` on the guest's `barrier` lines to now be
    **greater than zero** for most commands rather than zero for all of them - that is the barrier
    lead change working. Post-resume excursions should stay under ~350ms and close in about a second.
+
+## Field use through `z2`..`z6`, recorded 2026-09-17
+
+Recorded from the maintainer at the opening of Phase 6, because neither section above captures it
+and the gap between this worksheet and reality was materially misleading Phase 6's risk assessment.
+
+Desktop builds in the `0.1.23-alpha-z2`..`z6` range have carried real Watch Together sessions with:
+
+- **three simultaneous users** — every run documented above used two
+- **host transfer exercised**, and it worked
+- sessions holding up in ordinary use
+
+This is unstructured field use, not a walked matrix, and it is weaker evidence than the 2026-09-10
+retest rather than stronger: no cell was observed against its stated required result, and nothing
+was captured in the evidence form the table asks for. **No row above changes on the strength of
+it.** The scenarios most likely to be broken — policy races, stale requests, cross-addon matching,
+cleanup — are precisely the ones ordinary use never reaches.
+
+What it does establish is the one thing Phase 6 needs: the core path — create, join, synchronized
+playback, authority, **host transfer**, and three-way membership — is working software on the
+current desktop line. So **desktop is a trusted reference peer** for Android↔desktop testing, and
+when such a session misbehaves the fault is on the new side until shown otherwise.
+
+What remains genuinely open is unchanged: the untested edges are *unknown*, not known-good.
