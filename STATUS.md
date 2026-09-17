@@ -53,6 +53,21 @@ Last updated: 2026-09-17
 - Phase 6 (Social to mobile) is the next planned phase.
 - Phase 6 has NOT started yet.
 
+## Hotfix Desktop Release - 0.1.23-alpha-z6 (2026-09-17)
+
+- **Contents** (owner-reported: z5 update downloaded, app closed, no installer):
+  1. Every release MSI of one base version had ProductVersion `1.1.23` (z3/z4/z5), so jpackage gave them one
+     ProductCode and Windows entered maintenance mode instead of upgrading. Release MSIs now use
+     `2.0.<RELEASE_SERIAL>` (major 2 clears the 1.5.0 shipped by `0.5.0-beta`); debug/macOS/Linux unchanged.
+  2. Windows MSI updates run unattended: `resources/updater/run-hidden.js` starts `windows-msi-update.ps1`,
+     which waits for the JVM + launcher, runs `msiexec /passive` elevated (one UAC prompt), reports a failure
+     code in a message box, and relaunches the app either way.
+  3. `INSTALLDIR` is passed from `jpackage.app-path`, so a custom-folder install is upgraded in place
+     (the jpackage MSI does not remember its folder). Drive-root installs fall back to the default.
+- **Caveat**: z3-z5 installs run the old updater for this one update, so they get the normal wizard; a
+  custom-folder user must browse back to their folder. The silent path applies from z6 onward and was verified
+  with a fake MSI and a logged INSTALLDIR run, not yet through a real UAC-approved upgrade.
+
 ## Hotfix Desktop Release - 0.1.23-alpha-z5 (2026-09-17)
 
 - **Released**: tag `0.1.23-alpha-z5+130`, serial `130`, source `d7a05537` on `release/0.1.23-alpha-z5` (Dev at the same commit)

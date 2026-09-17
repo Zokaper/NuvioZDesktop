@@ -10,6 +10,7 @@ import nuvio.composeapp.generated.resources.updates_download_failed
 import nuvio.composeapp.generated.resources.updates_download_failed_http
 import nuvio.composeapp.generated.resources.updates_downloaded_file_missing
 import nuvio.composeapp.generated.resources.updates_empty_download_body
+import nuvio.composeapp.generated.resources.updates_install_failed
 import org.jetbrains.compose.resources.getString
 import java.io.File
 import java.io.FileOutputStream
@@ -153,6 +154,10 @@ actual object AppUpdaterPlatform {
     }
 
     private fun launchInstaller(updateFile: File) {
+        if (currentOs == DesktopUpdaterOs.WINDOWS && updateFile.isMsi()) {
+            launchWindowsMsiUpdate(updateFile)
+            return
+        }
         val command = when (currentOs) {
             DesktopUpdaterOs.WINDOWS -> windowsInstallerCommand(updateFile)
             DesktopUpdaterOs.MACOS -> listOf("open", updateFile.absolutePath)
@@ -165,6 +170,44 @@ actual object AppUpdaterPlatform {
             DesktopUpdaterOs.UNKNOWN -> error("Desktop updates are not supported on this operating system.")
         }
         ProcessBuilder(command).start()
+    }
+
+    // An MSI is installed unattended by a helper that outlives the app: it waits for
+    // this process to exit, runs msiexec elevated with a progress bar only, and starts
+    // the app again - updated, or as it was if the user cancelled the UAC prompt.
+    private fun launchWindowsMsiUpdate(updateFile: File) {
+        val dir = updatesDir()
+        val helper = copyUpdaterResource(windowsMsiUpdateScriptResource, dir)
+        val hiddenLauncher = copyUpdaterResource(windowsHiddenLauncherResource, dir)
+        val current = ProcessHandle.current()
+        val launcherPath = System.getProperty(jpackageAppPathProperty)?.takeIf { it.isNotBlank() }
+        val environment = windowsMsiUpdateEnvironment(
+            msiPath = updateFile.absolutePath,
+            logPath = File(dir, "${updateFile.nameWithoutExtension}-install.log").absolutePath,
+            waitPids = windowsUpdateWaitPids(
+                currentPid = current.pid(),
+                parentPid = current.parent().orElse(null)?.pid(),
+                parentCommand = current.parent().flatMap { it.info().command() }.orElse(null),
+                launcherPath = launcherPath,
+            ),
+            relaunchPath = launcherPath,
+            installDir = windowsInstallDirFor(launcherPath),
+            title = if (isDebugBuild) "Nuvio Z Debug" else "Nuvio Z",
+            failedMessage = runBlocking { getString(Res.string.updates_install_failed) },
+        )
+        ProcessBuilder(windowsMsiUpdateCommand(hiddenLauncher, helper))
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .also { it.environment().putAll(environment) }
+            .start()
+    }
+
+    private fun copyUpdaterResource(name: String, dir: File): File {
+        val target = File(dir, name)
+        val stream = AppUpdaterPlatform::class.java.getResourceAsStream("/updater/$name")
+            ?: error("Missing updater resource $name")
+        stream.use { input -> target.outputStream().use { input.copyTo(it) } }
+        return target
     }
 
     private fun scheduleAppExit() {
@@ -227,12 +270,65 @@ private fun desktopArchitectureFragments(): List<String> {
 }
 
 internal fun windowsInstallerCommand(updateFile: File): List<String> {
-    if (!updateFile.extension.equals("msi", ignoreCase = true)) {
+    if (!updateFile.isMsi()) {
         return listOf(updateFile.absolutePath)
     }
 
     return listOf("msiexec", "/i", updateFile.absolutePath)
 }
+
+private fun File.isMsi(): Boolean = extension.equals("msi", ignoreCase = true)
+
+internal const val windowsMsiUpdateScriptResource = "windows-msi-update.ps1"
+internal const val windowsHiddenLauncherResource = "run-hidden.js"
+
+internal fun windowsMsiUpdateCommand(hiddenLauncher: File, helperScript: File): List<String> =
+    listOf("wscript.exe", "//B", "//Nologo", "//E:jscript", hiddenLauncher.absolutePath, helperScript.absolutePath)
+
+// jpackage runs the JVM as a child of the launcher exe, and both hold files the MSI
+// replaces. The parent is waited on only when it is that launcher: from a Gradle or
+// IDE run the parent is unrelated and could outlive the update indefinitely.
+internal fun windowsUpdateWaitPids(
+    currentPid: Long,
+    parentPid: Long?,
+    parentCommand: String?,
+    launcherPath: String?,
+): List<Long> {
+    val parentIsLauncher = parentPid != null &&
+        !parentCommand.isNullOrBlank() &&
+        !launcherPath.isNullOrBlank() &&
+        File(parentCommand).absoluteFile == File(launcherPath).absoluteFile
+    return if (parentIsLauncher) listOf(currentPid, parentPid!!) else listOf(currentPid)
+}
+
+// The jpackage MSI does not remember where it was installed: a major upgrade takes
+// INSTALLDIR from its default, Program Files, and removes the old copy wherever it
+// was. The wizard lets the user browse back to their folder; an unattended install
+// has no wizard, so the folder the running launcher sits in is passed explicitly -
+// jpackage puts the launcher exe at the root of INSTALLDIR. A drive root is left out:
+// its trailing backslash would escape the closing quote on msiexec's command line.
+internal fun windowsInstallDirFor(launcherPath: String?): String? {
+    val dir = launcherPath?.takeIf { it.isNotBlank() }?.let { File(it).absoluteFile.parent } ?: return null
+    return dir.takeUnless { it.endsWith("\\") || it.endsWith("/") }
+}
+
+internal fun windowsMsiUpdateEnvironment(
+    msiPath: String,
+    logPath: String,
+    waitPids: List<Long>,
+    relaunchPath: String?,
+    installDir: String?,
+    title: String,
+    failedMessage: String,
+): Map<String, String> = mapOf(
+    "NUVIO_UPDATE_MSI" to msiPath,
+    "NUVIO_UPDATE_LOG" to logPath,
+    "NUVIO_UPDATE_WAIT_PIDS" to waitPids.joinToString(","),
+    "NUVIO_UPDATE_RELAUNCH" to relaunchPath.orEmpty(),
+    "NUVIO_UPDATE_INSTALL_DIR" to installDir.orEmpty(),
+    "NUVIO_UPDATE_TITLE" to title,
+    "NUVIO_UPDATE_FAILED_MESSAGE" to failedMessage,
+)
 
 internal enum class LinuxInstallMethod {
     APP_IMAGE,

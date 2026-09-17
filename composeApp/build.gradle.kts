@@ -618,6 +618,24 @@ val desktopReleasePackageVersion = if (isDesktopDebugChannel) {
     jpackageCompatibleVersion(desktopBaseVersionName)
 }
 
+// The release MSI cannot use the version above. jpackage derives the MSI ProductCode
+// from the ProductVersion, and every Z revision of one base shares it - 0.1.23-alpha-z3,
+// -z4 and -z5 all became 1.1.23 - so Windows took each new MSI for the product already
+// installed, entered maintenance mode and installed nothing. The release serial is
+// what orders stable releases, so it becomes the version Windows compares. The major
+// is 2 because the fork has shipped 1.x ProductVersions up to 1.5.0 (0.5.0-beta), and
+// an MSI older than one of those would be refused as a downgrade. macOS and Linux keep
+// the marketing-derived version; neither derives package identity from it.
+val desktopWindowsMsiVersion = if (isDesktopDebugChannel) {
+    desktopReleasePackageVersion
+} else {
+    require(desktopReleaseSerial in 1..65535) {
+        "RELEASE_SERIAL ($desktopReleaseSerial) must be 1..65535 to become the release MSI " +
+            "ProductVersion 2.0.<serial>; without it every MSI of one base version collides."
+    }
+    "2.0.$desktopReleaseSerial"
+}
+
 // Display name of the installed application. jpackage also names its default
 // output after this, so the artifact rename helpers below derive from it.
 val desktopPackageName = if (isDesktopDebugChannel) "Nuvio Z Debug" else "Nuvio Z"
@@ -1565,6 +1583,7 @@ compose.desktop {
             windows {
                 iconFile.set(project.file("src/desktopMain/resources/icons/nuvio-app-icon-transparent.ico"))
                 upgradeUuid = windowsMsiUpgradeUuid
+                msiPackageVersion = desktopWindowsMsiVersion
                 shortcut = true
                 menu = true
                 menuGroup = desktopPackageName
@@ -1627,7 +1646,7 @@ fun publishWindowsMsiOutput(release: Boolean) {
     val distributionName = if (release) "main-release" else "main"
     val outputDir = layout.buildDirectory.dir("compose/binaries/$distributionName/msi").get().asFile
     val finalMsi = outputDir.resolve("$desktopArtifactName-Windows-$windowsPlayerBridgeArch-$desktopReleaseVersionName.msi")
-    val defaultMsi = outputDir.resolve("$desktopPackageName-$desktopReleasePackageVersion.msi")
+    val defaultMsi = outputDir.resolve("$desktopPackageName-$desktopWindowsMsiVersion.msi")
     val sourceMsi = defaultMsi.takeIf { it.exists() }
         ?: finalMsi.takeIf { it.exists() }
         ?: error("Expected Windows MSI output in ${outputDir.absolutePath}")
