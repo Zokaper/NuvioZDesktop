@@ -38,7 +38,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -59,7 +58,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -164,7 +162,6 @@ fun SetupWizardScreen(
 ) {
     val tokens = MaterialTheme.nuvio
     val scope = rememberCoroutineScope()
-    val uriHandler = LocalUriHandler.current
 
     val playerSettings by remember {
         PlayerSettingsRepository.ensureLoaded()
@@ -249,13 +246,27 @@ fun SetupWizardScreen(
     val goingForward = position >= lastPosition
     LaunchedEffect(position) { lastPosition = position }
 
-    var addonUrl by rememberSaveable { mutableStateOf("") }
-    var addonBusy by remember { mutableStateOf(false) }
-    // Two states rather than a message plus a boolean: the error text comes from the addon or
-    // the manifest fetch and is shown verbatim, while the success line is a formatted string
-    // resource and can only be built in composition.
-    var addonError by remember { mutableStateOf<String?>(null) }
-    var addonInstalledName by remember { mutableStateOf<String?>(null) }
+    // ⚠ `remember`, never `rememberSaveable`: this state holds the TorBox key while it is being typed,
+    // and a saveable would write it into the saved-instance bundle. Only the mode is saved.
+    var sourcesModeName by rememberSaveable { mutableStateOf(SetupSourcesMode.Choice.name) }
+    val sourcesController = remember {
+        SetupSourcesController(
+            initial = SetupSourcesState(
+                mode = SetupSourcesMode.entries.firstOrNull { it.name == sourcesModeName } ?: SetupSourcesMode.Choice,
+            ),
+        )
+    }
+    val sources by sourcesController.state.collectAsStateWithLifecycle()
+    LaunchedEffect(sources.mode) { sourcesModeName = sources.mode.name }
+    // Nothing sensitive outlives the step: not a half-typed key, not the recovery password.
+    // The pickers follow the Language step, which comes first, until the user picks one here.
+    LaunchedEffect(step) {
+        if (step == SetupStep.Sources) {
+            sourcesController.seedLanguages(playerSettings.preferredAudioLanguage, playerSettings.preferredSubtitleLanguage)
+        } else {
+            sourcesController.forgetSensitive()
+        }
+    }
 
     // The handle draft survives a process-death restore for the same reason `stepName` does: a
     // half-typed handle is work, and losing it on a step that gates the app is a bad trade.
@@ -325,6 +336,19 @@ fun SetupWizardScreen(
             stepName = (nextSetupStep(step, plan) ?: SetupStep.Done).name
         }
     }
+
+    val sourcesActions = SetupSourcesActions(
+        onUseRecommended = sourcesController::chooseRecommended,
+        onSetUpManually = sourcesController::chooseManual,
+        onKeepExisting = { advance() },
+        onBackToChoice = sourcesController::backToChoice,
+        onTorBoxApiKeyChange = sourcesController::setTorBoxApiKey,
+        onSourceLanguageChange = sourcesController::setSourceLanguage,
+        onSubtitleLanguageChange = sourcesController::setSubtitleLanguage,
+        onSetUpRecommended = { scope.launch { sourcesController.setUpRecommended() } },
+        onManualUrlChange = sourcesController::setManualUrl,
+        onInstallManual = { scope.launch { sourcesController.installManual(emptyUrlMessage) } },
+    )
 
     BoxWithConstraints(
         modifier = modifier
@@ -455,7 +479,6 @@ fun SetupWizardScreen(
                     socialHandle = socialHandle,
                     socialHandleBusy = socialHandleBusy,
                     socialHandleMessage = socialHandleMessage,
-                    sourcesReady = existingStreamAddonName != null || addonInstalledName != null,
                     onSocialEnabledChange = ::setSocialEnabled,
                     onSocialHandleChange = {
                         socialHandle = it
@@ -469,36 +492,9 @@ fun SetupWizardScreen(
                             onFailed = { socialHandleMessage = it },
                         )
                     },
-                    addonUrl = addonUrl,
-                    addonBusy = addonBusy,
-                    addonError = addonError,
-                    addonInstalledName = addonInstalledName,
+                    sources = sources,
                     existingSourceName = existingStreamAddonName,
-                    onAddonUrlChange = {
-                        addonUrl = it
-                        addonError = null
-                        addonInstalledName = null
-                    },
-                    onInstallAddon = {
-                        installAddon(
-                            scope = scope,
-                            rawUrl = addonUrl,
-                            emptyUrlMessage = emptyUrlMessage,
-                            setBusy = { addonBusy = it },
-                            onInstalled = { name ->
-                                addonUrl = ""
-                                addonError = null
-                                addonInstalledName = name
-                            },
-                            onFailed = { message ->
-                                addonInstalledName = null
-                                addonError = message
-                            },
-                        )
-                    },
-                    onOpenAioStreams = {
-                        runCatching { uriHandler.openUri(aioStreamsSetupUrl()) }
-                    },
+                    sourcesActions = sourcesActions,
                 )
             }
             return@BoxWithConstraints
@@ -570,7 +566,6 @@ fun SetupWizardScreen(
                     socialHandle = socialHandle,
                     socialHandleBusy = socialHandleBusy,
                     socialHandleMessage = socialHandleMessage,
-                    sourcesReady = existingStreamAddonName != null || addonInstalledName != null,
                     onSocialEnabledChange = ::setSocialEnabled,
                     onSocialHandleChange = {
                         socialHandle = it
@@ -584,36 +579,9 @@ fun SetupWizardScreen(
                             onFailed = { socialHandleMessage = it },
                         )
                     },
-                    addonUrl = addonUrl,
-                    addonBusy = addonBusy,
-                    addonError = addonError,
-                    addonInstalledName = addonInstalledName,
+                    sources = sources,
                     existingSourceName = existingStreamAddonName,
-                    onAddonUrlChange = {
-                        addonUrl = it
-                        addonError = null
-                        addonInstalledName = null
-                    },
-                    onInstallAddon = {
-                        installAddon(
-                            scope = scope,
-                            rawUrl = addonUrl,
-                            emptyUrlMessage = emptyUrlMessage,
-                            setBusy = { addonBusy = it },
-                            onInstalled = { name ->
-                                addonUrl = ""
-                                addonError = null
-                                addonInstalledName = name
-                            },
-                            onFailed = { message ->
-                                addonInstalledName = null
-                                addonError = message
-                            },
-                        )
-                    },
-                    onOpenAioStreams = {
-                        runCatching { uriHandler.openUri(aioStreamsSetupUrl()) }
-                    },
+                    sourcesActions = sourcesActions,
                 )
             }
         }
@@ -1117,18 +1085,12 @@ internal fun SetupStepBody(
     socialHandle: String,
     socialHandleBusy: Boolean,
     socialHandleMessage: String?,
-    sourcesReady: Boolean,
     onSocialEnabledChange: (Boolean) -> Unit,
     onSocialHandleChange: (String) -> Unit,
     onSaveSocialHandle: () -> Unit,
-    addonUrl: String,
-    addonBusy: Boolean,
-    addonError: String?,
-    addonInstalledName: String?,
+    sources: SetupSourcesState,
     existingSourceName: String?,
-    onAddonUrlChange: (String) -> Unit,
-    onInstallAddon: () -> Unit,
-    onOpenAioStreams: () -> Unit,
+    sourcesActions: SetupSourcesActions,
 ) {
     AnimatedContent(
         targetState = step,
@@ -1179,14 +1141,9 @@ internal fun SetupStepBody(
                 )
 
                 SetupStep.Sources -> SetupSourcesBody(
-                    addonUrl = addonUrl,
-                    busy = addonBusy,
-                    error = addonError,
-                    installedName = addonInstalledName,
+                    state = sources,
                     existingSourceName = existingSourceName,
-                    onAddonUrlChange = onAddonUrlChange,
-                    onInstall = onInstallAddon,
-                    onOpenAioStreams = onOpenAioStreams,
+                    actions = sourcesActions,
                 )
 
                 SetupStep.SocialOptIn -> {
@@ -1293,10 +1250,10 @@ internal fun SetupStepBody(
                     // Only worth a line when there is something to report. A profile that skipped
                     // the Sources step has no answer here, and a row saying nothing is the kind
                     // of filler a three-line summary exists to avoid.
-                    if (sourcesReady) {
+                    if (sources.configuredName != null || existingSourceName != null) {
                         SetupSummaryRow(
                             label = stringResource(Res.string.setup_done_sources),
-                            value = addonInstalledName
+                            value = sources.configuredName
                                 ?: stringResource(Res.string.setup_done_sources_ready),
                         )
                     }
@@ -1427,7 +1384,7 @@ private fun SetupLanguageBody(
 
 /** A label and the current answer, sized to its content like [SetupChoiceGroup]'s chips. */
 @Composable
-private fun SetupLanguageRow(
+internal fun SetupLanguageRow(
     title: String,
     value: String,
     onClick: () -> Unit,
@@ -1530,156 +1487,7 @@ private fun SetupSummaryRow(label: String, value: String) {
     }
 }
 
-@Composable
-private fun SetupSourcesBody(
-    addonUrl: String,
-    busy: Boolean,
-    error: String?,
-    installedName: String?,
-    existingSourceName: String?,
-    onAddonUrlChange: (String) -> Unit,
-    onInstall: () -> Unit,
-    onOpenAioStreams: () -> Unit,
-) {
-    val tokens = MaterialTheme.nuvio
-    val configuredName = installedName ?: existingSourceName
-
-    if (configuredName != null) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(tokens.colors.success.copy(alpha = 0.12f))
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Check,
-                contentDescription = null,
-                tint = tokens.colors.success,
-                modifier = Modifier.size(20.dp),
-            )
-            Text(
-                text = stringResource(Res.string.setup_sources_configured, configuredName),
-                style = MaterialTheme.typography.bodyMedium,
-                color = tokens.colors.textPrimary,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
-    }
-
-    Surface(
-        color = tokens.colors.surfaceCard,
-        shape = RoundedCornerShape(18.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, tokens.colors.accent.copy(alpha = 0.55f), RoundedCornerShape(18.dp)),
-    ) {
-        Column(
-            modifier = Modifier.padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(
-                text = stringResource(Res.string.setup_sources_recommended),
-                style = MaterialTheme.typography.labelLarge,
-                color = tokens.colors.accent,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                text = stringResource(Res.string.setup_sources_aiostreams_title),
-                style = MaterialTheme.typography.titleLarge,
-                color = tokens.colors.textPrimary,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                text = stringResource(Res.string.setup_sources_aiostreams_body),
-                style = MaterialTheme.typography.bodyMedium,
-                color = tokens.colors.textSecondary,
-            )
-            Button(onClick = onOpenAioStreams) {
-                Text(text = stringResource(Res.string.setup_sources_aiostreams_action))
-                Spacer(modifier = Modifier.size(8.dp))
-                Icon(
-                    imageVector = Icons.Rounded.OpenInNew,
-                    contentDescription = null,
-                    modifier = Modifier.size(17.dp),
-                )
-            }
-        }
-    }
-
-    Text(
-        text = stringResource(Res.string.setup_sources_manual_title),
-        style = MaterialTheme.typography.titleMedium,
-        color = tokens.colors.textPrimary,
-        fontWeight = FontWeight.SemiBold,
-    )
-    SetupParagraph(stringResource(Res.string.setup_sources_manual_body))
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        NuvioInputField(
-            value = addonUrl,
-            onValueChange = onAddonUrlChange,
-            placeholder = stringResource(Res.string.setup_sources_url_placeholder),
-            modifier = Modifier.weight(1f),
-        )
-        Button(onClick = onInstall, enabled = !busy) {
-            if (busy) {
-                NuvioLoadingIndicator(
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(18.dp),
-                )
-            } else {
-                Text(text = stringResource(Res.string.setup_sources_install))
-            }
-        }
-    }
-    if (error != null) {
-        Text(text = error, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.danger)
-    }
-    SetupParagraph(stringResource(Res.string.setup_sources_skip_hint))
-}
-
-// --- the one thing that can fail ----------------------------------------------------------
-
-/**
- * Installs an addon from a pasted manifest URL.
- *
- * Reuses `AddonRepository.addAddon`, which is what `AddonsScreen`'s own `AddAddonCard` calls,
- * so URL normalisation, the manifest fetch and the duplicate check behave identically here -
- * including the errors, which are the point. A first-time user pasting a URL that does not
- * work needs to be told what went wrong, not returned to a blank field.
- *
- * The wizard never blocks on this. The step is skippable whether it succeeds or not: an app
- * with no sources is a bad first experience, but a setup flow the user cannot leave because a
- * server is down is a worse one.
- */
-private fun installAddon(
-    scope: CoroutineScope,
-    rawUrl: String,
-    emptyUrlMessage: String,
-    setBusy: (Boolean) -> Unit,
-    onInstalled: (name: String) -> Unit,
-    onFailed: (message: String) -> Unit,
-) {
-    if (rawUrl.isBlank()) {
-        onFailed(emptyUrlMessage)
-        return
-    }
-    scope.launch {
-        setBusy(true)
-        val result = installSetupSource(rawUrl, emptyUrlMessage)
-        setBusy(false)
-        when (result) {
-            is SetupSourceInstallResult.Installed -> onInstalled(result.addonName)
-            is SetupSourceInstallResult.Failed -> onFailed(result.message)
-        }
-    }
-}
+// --- the things that can fail --------------------------------------------------------------
 
 /**
  * Saves the handle through the same call the Social tab uses.
@@ -1709,7 +1517,7 @@ private fun saveSocialHandle(
 // --- small shared pieces -----------------------------------------------------------------
 
 @Composable
-private fun SetupParagraph(text: String) {
+internal fun SetupParagraph(text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.bodyMedium,

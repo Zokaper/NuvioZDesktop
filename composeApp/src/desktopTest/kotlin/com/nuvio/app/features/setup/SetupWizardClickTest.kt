@@ -211,18 +211,12 @@ class SetupWizardClickTest {
                 socialHandle = "",
                 socialHandleBusy = false,
                 socialHandleMessage = null,
-                sourcesReady = true,
                 onSocialEnabledChange = {},
                 onSocialHandleChange = {},
                 onSaveSocialHandle = {},
-                addonUrl = "",
-                addonBusy = false,
-                addonError = null,
-                addonInstalledName = null,
+                sources = SetupSourcesState(),
                 existingSourceName = "Existing Streams",
-                onAddonUrlChange = {},
-                onInstallAddon = {},
-                onOpenAioStreams = {},
+                sourcesActions = SetupSourcesActions(),
             )
         }
     }

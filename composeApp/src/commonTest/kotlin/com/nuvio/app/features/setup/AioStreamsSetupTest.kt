@@ -13,29 +13,6 @@ import kotlin.test.assertNull
 class AioStreamsSetupTest {
 
     @Test
-    fun defaultAioStreamsSetupUrlConstructsExpectedFormat() {
-        val expected =
-            "https://aiostreamsfortheweebsstable.midnightignite.me/stremio/configure?template=" +
-                "https%3A%2F%2Fraw.githubusercontent.com%2FZokaper%2FNuvioZDesktop%2Frefs%2Fheads%2Ftemplates%2Fnuvio-z-torbox-v1.json"
-
-        assertEquals(expected, aioStreamsSetupUrl())
-    }
-
-    @Test
-    fun aioStreamsSetupUrlTrimsTrailingSlashesAndEncodesTemplate() {
-        val url = aioStreamsSetupUrl(
-            instanceBaseUrl = "https://custom.aiostreams.example.org/",
-            templateUrl = "https://raw.githubusercontent.com/owner/repo/branch/template.json",
-        )
-
-        assertEquals(
-            "https://custom.aiostreams.example.org/stremio/configure?template=" +
-                "https%3A%2F%2Fraw.githubusercontent.com%2Fowner%2Frepo%2Fbranch%2Ftemplate.json",
-            url,
-        )
-    }
-
-    @Test
     fun firstEnabledStreamAddonNameReturnsNullForEmptyOrNonStreamAddons() {
         val empty = emptyList<ManagedAddon>()
         assertNull(empty.firstEnabledStreamAddonName())

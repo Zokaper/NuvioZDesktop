@@ -258,18 +258,12 @@ class SetupWizardRenderHarness {
                             socialHandle = if (run.socialEnabled) "big_z" else "",
                             socialHandleBusy = false,
                             socialHandleMessage = null,
-                            sourcesReady = true,
                             onSocialEnabledChange = {},
                             onSocialHandleChange = {},
                             onSaveSocialHandle = {},
-                            addonUrl = "",
-                            addonBusy = false,
-                            addonError = null,
-                            addonInstalledName = null,
+                            sources = SetupSourcesState(),
                             existingSourceName = if (step == SetupStep.Sources) "Existing Streams" else null,
-                            onAddonUrlChange = {},
-                            onInstallAddon = {},
-                            onOpenAioStreams = {},
+                            sourcesActions = SetupSourcesActions(),
                         )
                     }
                 }

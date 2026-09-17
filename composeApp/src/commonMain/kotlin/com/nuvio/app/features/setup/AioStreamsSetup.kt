@@ -3,21 +3,14 @@ package com.nuvio.app.features.setup
 import com.nuvio.app.features.addons.AddAddonResult
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.ManagedAddon
-import io.ktor.http.encodeURLParameter
 
 /** Stable public instance documented by AIOStreams and operated by TorBox's community manager. */
 internal const val AIOSTREAMS_INSTANCE_BASE_URL =
     "https://aiostreamsfortheweebsstable.midnightignite.me"
 
-/** Long-lived raw URL maintained on the repository's dedicated templates branch. */
+/** Long-lived raw URL maintained on the repository's dedicated templates branch. Fetched at setup time. */
 internal const val NUVIO_Z_AIOSTREAMS_TEMPLATE_URL =
     "https://raw.githubusercontent.com/Zokaper/NuvioZDesktop/refs/heads/templates/nuvio-z-torbox-v1.json"
-
-internal fun aioStreamsSetupUrl(
-    instanceBaseUrl: String = AIOSTREAMS_INSTANCE_BASE_URL,
-    templateUrl: String = NUVIO_Z_AIOSTREAMS_TEMPLATE_URL,
-): String =
-    "${instanceBaseUrl.trimEnd('/')}/stremio/configure?template=${templateUrl.encodeURLParameter()}"
 
 internal fun List<ManagedAddon>.firstEnabledStreamAddonName(): String? =
     firstOrNull { addon ->
