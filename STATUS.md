@@ -53,6 +53,30 @@ Last updated: 2026-09-17
 - Phase 6 (Social to mobile) is the next planned phase.
 - Phase 6 has NOT started yet.
 
+## Official Desktop Release - 0.1.23-alpha-z4 (2026-09-17)
+
+- **Released**: `0.1.23-alpha-z4`, tag `0.1.23-alpha-z4+129`, release serial `129`
+- **Release source**: `731a98e1e3989aa4d06f8df4d2abf719c5fb0546` on `release/0.1.23-alpha-z4` (Dev fast-forwarded to it)
+- **Publish workflow**: GitHub Actions run `35222361359` (mode `publish`, target `windows-macos`), after dry-run `35222251832`
+- **Public release**: https://github.com/Zokaper/NuvioZDesktop/releases/tag/0.1.23-alpha-z4%2B129 (`draft=false`, `prerelease=false`)
+- **Artifacts**: Windows x64 MSI, macOS arm64 DMG, macOS x86_64 DMG, `SHA256SUMS.txt` (macOS still unsigned)
+- **Contents**:
+  1. Native Compose AIOStreams + TorBox Sources setup (`POST /api/v1/user`, no WebView), from
+     `claude/experiment-native-sources-onboarding`. Physically tested by the owner on debug build
+     `debug-v0.1.23-alpha-z3.51` (local MSI, not published).
+  2. Login screen stuck after sign-in: `SupabaseProvider.client` could build two clients under concurrent
+     first reads; now double-checked locking + `@Volatile` (`SupabaseProviderConcurrencyTest`).
+  3. Wizard handle save failed with "No active social profile" - the wizard runs before `MainAppContent`
+     activates `SocialRepository`; the wizard now passes its profile id and records the identity on success.
+  4. Wizard colour step listed supporter-only palettes that `setTheme` refuses; now `availableAppThemes`,
+     and Custom opens `CustomThemeEditor`.
+  5. TorBox API key hint links to `https://torbox.app/settings?section=account`.
+- **Gates**: compileKotlinDesktop green; desktopTest 2,213 passed, 0 failures, 0 errors, 0 skipped (fresh XML);
+  pure suites 8/8, 695 tests.
+- **Physical QA owed**: fixes 3-5 were not exercised in a running app before release.
+- The main checkout's uncommitted `SupabaseProvider.kt` diff and untracked `SupabaseProviderConcurrencyTest.kt`
+  are now identical in intent to commit `27cc26a8` on Dev; discard them before pulling.
+
 ## Official Desktop Release - 0.1.23-alpha-z3 (2026-09-17)
 
 - **Released**: `0.1.23-alpha-z3`, tag `0.1.23-alpha-z3+128`, release serial `128`
