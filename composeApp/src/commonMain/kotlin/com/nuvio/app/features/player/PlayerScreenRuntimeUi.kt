@@ -596,7 +596,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         pauseOverlayEpisodeTitle = activeEpisodeTitle.orEmpty(),
         pauseOverlayDescription = (activePauseDescription ?: activeStreamSubtitle).orEmpty(),
         resizeModeLabel = stringResource(resizeMode.labelRes),
-        playbackSpeedLabel = formatPlaybackSpeedLabel(playbackSnapshot.playbackSpeed),
+        playbackSpeedLabel = formatPlaybackSpeedLabel(nominalPlaybackSpeed),
         subtitlesLabel = stringResource(Res.string.compose_player_subs),
         audioLabel = stringResource(Res.string.compose_player_audio),
         sourcesLabel = stringResource(Res.string.compose_player_sources),
@@ -1044,7 +1044,12 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
             seasonNumber = activeSeasonNumber,
             episodeNumber = activeEpisodeNumber,
             episodeTitle = activeEpisodeTitle,
-            playbackSnapshot = playbackSnapshot,
+            // The rate the person chose, never a Watch Together correction running underneath it.
+            playbackSnapshot = if (partyNominalSpeedDuringCorrection == null) {
+                playbackSnapshot
+            } else {
+                playbackSnapshot.copy(playbackSpeed = nominalPlaybackSpeed)
+            },
             displayedPositionMs = displayedPositionMs,
             metrics = metrics,
             resizeMode = resizeMode,
@@ -1349,7 +1354,7 @@ private fun PlayerScreenRuntime.startWatchTogetherFromCurrentPlayback() {
         ),
         descriptor,
         playbackSnapshot.positionMs,
-        playbackSnapshot.playbackSpeed,
+        nominalPlaybackSpeed,
     )
 }
 
