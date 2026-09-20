@@ -2,6 +2,21 @@
 
 Last updated: 2026-09-20
 
+## Phase 6 Away lifecycle cut for hardware - z6.58 (2026-09-20)
+
+`f7bec859` on `claude/heartbeat-session-renewal`, the desktop half of the Away/lifecycle work.
+**The canonical write-up is `nuvio-z/STATUS.md`** under the Away heading, with the log grep lines
+for the device run and the list of what a device can still contradict. Ledger: **S10** in
+`nuvio-z/Docs/Z-FEATURES.md`.
+
+Published here as **`debug-v0.1.23-alpha-z6.58`** against Android **`0.4.13-z1.37`**. Debug channel
+only - `-Pnuvio.desktop.debugChannel=true`, GitHub prerelease, "Nuvio Z Debug" with its own upgrade
+UUID and data directory. **The release line and the stable updater were not touched.** The only
+change in this cut is `DEBUG_BUILD=58`; no Away logic moved.
+
+**Unverified on hardware.** Nothing in this chunk has run on a phone or against a real desktop
+party yet; that is what these two builds are for.
+
 ## Phase 6 Watch Together playback/source stabilization - DONE WITH NON-BLOCKING QA DEBT (2026-09-20)
 
 Closed, and published on this side as **`debug-v0.1.23-alpha-z6.57`** against Android
