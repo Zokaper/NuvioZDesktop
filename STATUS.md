@@ -1,6 +1,38 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-20
+Last updated: 2026-09-21
+
+## Phase 6 Away hardware run: the source-change bypass was the desktop's (2026-09-21)
+
+**The canonical write-up is `nuvio-z/STATUS.md`** under the 2026-09-21 heading: three defects found
+on the `0.4.13-z1.37` / `z6.58` run, two of them Android lifecycle and one of them this repo's.
+Nothing is published; the fix sits on `claude/heartbeat-session-renewal` and no desktop build has
+been cut.
+
+The one that is desktop-facing: a **host changing source from the native/HTML player controls told
+nobody.** `"selectSource"` called `switchToSource(stream)`, which is the internal switch that
+deliberately says nothing to the party; the Compose panel calls `switchToUserSelectedSource(stream)`,
+which publishes and advances `sourceGeneration`. The host loaded and played its new source and every
+guest stayed on the old one, still syncing its timeline against it. Since the desktop draws the
+sources panel with the native controls, this was the shipped behaviour of Change Source for every
+desktop host.
+
+The native consent continuation had the same bypass for a P2P pick, and the Compose path had the
+inverse defect - it published before the consent dialog, so cancelling moved the party onto a source
+nobody started. Both now publish exactly when the pick takes effect.
+
+The two Android-side defects (a screen-lock return that never cleared Away, and an away flag that
+outlived its party and made every peer publish say `away=true`) are shared code and are in this repo
+too. `PartyPresence.kt`, `PartyLifecycleMonitor.android.kt` and `PlayerWatchPartyEffect.kt` are
+byte-identical with mobile.
+
+**Verified here.** 8/8 pure groups; `:composeApp:desktopTest` **2397 tests, 0 failures**.
+`PlayerSourcePickRoutingTest` lives in `desktopTest` here and in `androidHostTest` on mobile - the
+one deliberate divergence in this change, since neither repo can run the other's source set.
+
+**Not verified.** No desktop host has changed source with this build, through either panel, and no
+P2P consent dialog has been accepted or cancelled in a live party. See the hardware list in
+`nuvio-z/STATUS.md`.
 
 ## Phase 6 Away lifecycle cut for hardware - z6.58 (2026-09-20)
 
