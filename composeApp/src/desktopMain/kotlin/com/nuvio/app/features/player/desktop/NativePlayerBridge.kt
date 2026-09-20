@@ -71,6 +71,19 @@ internal object NativePlayerBridge {
     external fun positionMs(handle: Long): Long
     external fun bufferedPositionMs(handle: Long): Long
     external fun isLoading(handle: Long): Boolean
+
+    /**
+     * What mpv says about its own ability to present media now, packed as
+     * [NativeMpvReadinessFlags] - and the only honest source for Watch Together's starvation signal.
+     *
+     * [isLoading] cannot answer it: that one is blended with intent (`core-idle && !paused`), so the
+     * instant the party pauses a starving guest it goes false and the host reads its own pause coming
+     * back as a recovery. These flags carry no intent at all, which is the whole point of them.
+     *
+     * Unlike [diagnosticsJson] this is *not* gated to debug builds: the shipped snapshot poll reads
+     * it, once per poll, for the party.
+     */
+    external fun engineReadinessFlags(handle: Long): Int
     external fun isEnded(handle: Long): Boolean
     external fun isPaused(handle: Long): Boolean
     external fun hasFirstFrame(handle: Long): Boolean

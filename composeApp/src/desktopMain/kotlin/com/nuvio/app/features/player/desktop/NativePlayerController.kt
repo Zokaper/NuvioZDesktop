@@ -17,6 +17,7 @@ import com.nuvio.app.features.player.ParentalWarning
 import com.nuvio.app.features.player.PlayerControlsAction
 import com.nuvio.app.features.player.PlayerControlsState
 import com.nuvio.app.features.player.PlayerEngineController
+import com.nuvio.app.features.player.PlayerEngineReadiness
 import com.nuvio.app.features.player.PlayerExitDiagnostics
 import com.nuvio.app.features.player.PlayerPlaybackSnapshot
 import com.nuvio.app.features.player.PartyStatusBridgeState
@@ -98,6 +99,15 @@ internal class NativePlayerController(
 
         @Volatile
         var rememberedVolumeLevel: Float = DesktopPlayerVolumeStorage.loadVolumeLevel() ?: 1f
+
+        /**
+         * Cleared for the process the first time the readiness export turns out to be missing.
+         *
+         * Per-process rather than per-controller because it is a fact about the loaded library, and
+         * because the next source opening a new controller would otherwise pay the same throw again.
+         */
+        @Volatile
+        var engineReadinessExportPresent: Boolean = true
 
         @Volatile
         var rememberedResizeMode: PlayerResizeMode = PlayerResizeMode.Fit
@@ -839,6 +849,31 @@ internal class NativePlayerController(
         return Pair(diag?.videoWidth ?: 0, diag?.videoHeight ?: 0)
     }
 
+    /**
+     * mpv's readiness, or [PlayerEngineReadiness.Unknown] if this bridge cannot answer.
+     *
+     * ⚠ **A stale local DLL is the expected failure here, not a broken one.** The Gradle task that
+     * compiles `player_bridge.cpp` skips itself whenever a DLL is already in `build/native/windows`,
+     * so a Kotlin-only session on a machine with no MSVC toolchain runs a bridge from before this
+     * export existed. Letting the `UnsatisfiedLinkError` reach [snapshot]'s `runCatching` would turn
+     * every poll into an all-loading snapshot and break playback outright, which is a far worse
+     * outcome than the party falling back to buffer occupancy - so it is caught here, once, and the
+     * export is not called again for the life of the process.
+     */
+    private fun readEngineReadiness(handle: Long, durationMs: Long): PlayerEngineReadiness {
+        if (!engineReadinessExportPresent) return PlayerEngineReadiness.Unknown
+        return try {
+            mpvEngineReadinessFromFlags(NativePlayerBridge.engineReadinessFlags(handle), durationMs)
+        } catch (error: UnsatisfiedLinkError) {
+            engineReadinessExportPresent = false
+            log.w(error) {
+                "engineReadinessFlags is missing from this player_bridge; Watch Together falls back " +
+                    "to buffer occupancy. Delete composeApp/build/native to rebuild the bridge."
+            }
+            PlayerEngineReadiness.Unknown
+        }
+    }
+
     fun snapshot(): PlayerPlaybackSnapshot {
         val current = handle
         if (current == 0L) return PlayerPlaybackSnapshot(isLoading = true, engineName = "Desktop-mpv")
@@ -846,17 +881,19 @@ internal class NativePlayerController(
             val isLoading = NativePlayerBridge.isLoading(current)
             val isEnded = NativePlayerBridge.isEnded(current)
             val (width, height) = readVideoDimensions(current)
+            val durationMs = NativePlayerBridge.durationMs(current)
             PlayerPlaybackSnapshot(
                 isLoading = isLoading,
                 isPlaying = !NativePlayerBridge.isPaused(current) && !isLoading && !isEnded,
                 isEnded = isEnded,
-                durationMs = NativePlayerBridge.durationMs(current),
+                durationMs = durationMs,
                 positionMs = NativePlayerBridge.positionMs(current),
                 bufferedPositionMs = NativePlayerBridge.bufferedPositionMs(current),
                 playbackSpeed = NativePlayerBridge.speed(current),
                 videoWidth = width,
                 videoHeight = height,
                 engineName = "Desktop-mpv",
+                engineReadiness = readEngineReadiness(current, durationMs),
             )
         }.getOrElse { error ->
             // ⚠ **A throwing bridge used to be indistinguishable from a source that never

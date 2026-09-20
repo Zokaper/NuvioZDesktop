@@ -284,6 +284,33 @@ bool computeLoading(mpv_handle *mpv) {
     return !fileReady || (idle && !paused && !eof) || bufferingCache;
 }
 
+// mpv's own verdict about whether it can present media now, with no intent mixed into it, as the
+// flags Watch Together's starvation signal is built on (`NativeMpvReadinessFlags` on the Kotlin
+// side, duplicated in the Windows and macOS bridges).
+//
+// computeLoading above cannot answer this and must not be asked to: its `idle && !paused` term means
+// the instant the party pauses a starving guest the guest stops reporting that it is empty, and the
+// host's stall guard reads its own pause coming back as a recovery. That cost the party of
+// 2026-09-19 its only source. Every property here is reported whether or not playback has been asked
+// for; the mapping lives in Kotlin so it is testable without an engine and stays identical to the
+// Android bridge's.
+int computeReadinessFlags(mpv_handle *mpv) {
+    if (!mpv) return 1 << 4;
+    int flags = 0;
+    if (mpvGetFlag(mpv, "paused-for-cache")) flags |= 1 << 0;
+    // A percentage of the cache-fill target, so anything under 100 is still filling. mpvGetInt
+    // returns 0 when the property is absent, which would read as "buffering" - so the presence of
+    // the property is checked rather than assumed.
+    int64_t cacheBuffering = 0;
+    bool hasCacheBuffering =
+        mpv_get_property(mpv, "cache-buffering-state", MPV_FORMAT_INT64, &cacheBuffering) >= 0;
+    if (hasCacheBuffering && cacheBuffering >= 0 && cacheBuffering < 100) flags |= 1 << 1;
+    if (mpvGetFlag(mpv, "pause")) flags |= 1 << 2;
+    if (mpvGetFlag(mpv, "seeking")) flags |= 1 << 3;
+    if (mpvGetFlag(mpv, "core-idle")) flags |= 1 << 4;
+    return flags;
+}
+
 // Loading for the whole initial open: stay true until the FIRST FRAME is actually
 // shown, so Nuvio's opening overlay (dismissed the first time isLoading is false,
 // a one-way latch) survives mpv's flag flicker during open + resume-seek. After
@@ -1825,6 +1852,14 @@ JNIEXPORT jboolean JNICALL NP(isLoading)(JNIEnv *, jobject, jlong handle) {
     Player *p = asPlayer(handle);
     if (!p) return JNI_TRUE;
     return playerLoading(p) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL NP(engineReadinessFlags)(JNIEnv *, jobject, jlong handle) {
+    Player *p = asPlayer(handle);
+    // A dead handle is no source rather than an empty one: `core-idle` alone, which the Kotlin
+    // mapping reads as `NoSource` once the duration is zero too.
+    if (!p) return (jint)(1 << 4);
+    return (jint)computeReadinessFlags(p->mpv);
 }
 
 JNIEXPORT jboolean JNICALL NP(isEnded)(JNIEnv *, jobject, jlong handle) {

@@ -110,6 +110,7 @@ static constexpr double kMaxVolumePercent = 200.0;
 - (long long)positionMs;
 - (long long)bufferedPositionMs;
 - (BOOL)isLoading;
+- (int)engineReadinessFlags;
 - (BOOL)isEnded;
 - (NSString *)audioTracksJson;
 - (NSString *)subtitleTracksJson;
@@ -1968,6 +1969,32 @@ static void setMpvOptionString(mpv_handle *mpv, const char *name, const char *va
     return _cachedLoading.load();
 }
 
+/**
+ * mpv's own verdict about whether it can present media now, with no intent mixed into it.
+ *
+ * `rawLoadingWithPaused:` below cannot be used for this and must not be: its `idle && !paused` term
+ * means the instant Watch Together pauses a starving guest the guest stops reporting that it is
+ * empty, and the host's stall guard reads its own pause coming back as a recovery. That cost the
+ * party of 2026-09-19 its only source. These are the raw properties, each reported whether or not
+ * playback has been asked for, and read directly the way `diagnosticsJson` reads its own - the
+ * cached values exist for the controls loop's latency, not because a read off this thread is unsafe.
+ *
+ * Flag values are `NativeMpvReadinessFlags`, and are duplicated in the Windows and Linux bridges.
+ */
+- (int)engineReadinessFlags {
+    if (!_mpv) return 1 << 4;
+    int flags = 0;
+    if ([self flagProperty:"paused-for-cache" fallback:NO]) flags |= 1 << 0;
+    // A percentage of the cache-fill target, so anything under 100 is still filling. The fallback is
+    // -1 because an absent property is mpv not buffering to a target at all, not an empty cache.
+    long long cacheBuffering = [self int64Property:"cache-buffering-state" fallback:-1];
+    if (cacheBuffering >= 0 && cacheBuffering < 100) flags |= 1 << 1;
+    if ([self rawIsPaused]) flags |= 1 << 2;
+    if ([self flagProperty:"seeking" fallback:NO]) flags |= 1 << 3;
+    if ([self flagProperty:"core-idle" fallback:YES]) flags |= 1 << 4;
+    return flags;
+}
+
 - (BOOL)rawLoadingWithPaused:(BOOL)paused ended:(BOOL)eofReached duration:(double)duration {
     BOOL idle = [self flagProperty:"core-idle" fallback:YES];
     BOOL bufferingCache = [self flagProperty:"paused-for-cache" fallback:NO];
@@ -2847,6 +2874,19 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_isLoading(
     if (handle == 0) return JNI_TRUE;
     MpvWebPlayer *player = (__bridge MpvWebPlayer *)(void *)(intptr_t)handle;
     return [player isLoading] ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_engineReadinessFlags(
+    JNIEnv * /* env */,
+    jobject /* bridge */,
+    jlong handle
+) {
+    // A dead handle is no source rather than an empty one: `core-idle` alone, which the Kotlin
+    // mapping reads as `NoSource` once the duration is zero too.
+    if (handle == 0) return (jint)(1 << 4);
+    MpvWebPlayer *player = (__bridge MpvWebPlayer *)(void *)(intptr_t)handle;
+    return (jint)[player engineReadinessFlags];
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
