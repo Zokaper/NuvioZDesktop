@@ -1,6 +1,37 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-17
+Last updated: 2026-09-20
+
+## Phase 6 hardware run passed; manual host source pick now advances the party (2026-09-20)
+
+`ccac89fe` on `claude/heartbeat-session-renewal`, cherry-picked from mobile `2b81383d9` on
+`claude/phase-6-convergence-linear`. **The canonical write-up is `nuvio-z/STATUS.md`** - this entry
+carries only the desktop-specific half.
+
+The run was captured on desktop `debug-v0.1.23-alpha-z6.56` (installed 1.45.56) against Android
+`0.4.13-z1.35`. Both seek directions held the readiness barrier and resumed together. **Every
+resume on this side was `reason=all-ready`; the 12 s ceiling never fired.** Desktop-host waits were
+3.7 s, 3.9 s and 8.5 s - the 8.5 s is 71% of the budget, which is the evidence for leaving the
+ceiling where it is. Desktop debug logs for the run are in
+`%APPDATA%\Nuvio Z Debug\logs\nuvio-debug-20260920-16*.log`.
+
+The change itself: an explicit **host** pick from the sources panel now narrows the duplicate test
+to `PartySameReleaseTiers`, so a deliberately chosen `EquivalentMedia` look-alike advances the
+authoritative party source instead of being refused as a duplicate. Re-picking the party's own
+release is still refused, automatic paths keep the full test, and a guest's pick keeps it too.
+
+Verified here: `:composeApp:desktopTest` **2348 tests, 0 failures** (full suite, results directory
+cleared and `--rerun-tasks`). The three known flaky suites - `WatchedItemsStoreTest`,
+`DesktopDownloadQueueE2ETest` and `NativePlayerControllerTeardownTest` - all passed on this run.
+
+**Mirror note.** `git merge mobile/<branch>` was attempted first, per `AGENTS.md`, and **aborted**:
+the merge base is far enough back that it pulled in the whole fork gap, conflicting in 19 files
+including `AppUpdater.kt` and `MetaDetailsScreen.kt`, both on the never-copy list. Every Phase 6
+shared commit before this one crossed as a separate commit for the same reason (`8044f0b1`/
+`7ff3a02b`, `95ebc494`/`84c3ec5c`), so this one was cherry-picked with `-x`. After it, the two
+repos' copies of `PartySourceSwitch.kt` and the new test are byte-identical and
+`PlayerScreenRuntimeSourceActions.kt` differs only by the two blank lines it already differed by.
+**Merging these branches is not currently viable and wants an upstream reconciliation first.**
 
 ## Official Desktop Release — 0.1.23-alpha-z2 (2026-09-17)
 
