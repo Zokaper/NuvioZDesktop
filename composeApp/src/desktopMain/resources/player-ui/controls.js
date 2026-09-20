@@ -62,6 +62,7 @@ const openingRelease = document.getElementById("openingRelease");
 const openingManualButton = document.getElementById("openingManualButton");
 const partyBanner = document.getElementById("partyBanner");
 const partyBannerText = document.getElementById("partyBannerText");
+const partyBannerDetail = document.getElementById("partyBannerDetail");
 const partyBannerAvatars = document.getElementById("partyBannerAvatars");
 const partyBannerAction = document.getElementById("partyBannerAction");
 const partyBannerSecondary = document.getElementById("partyBannerSecondary");
@@ -350,7 +351,7 @@ let state = {
   openingManualEscapeLabel: "",
   openingProviderLine: "",
   openingReleaseName: "",
-  partyStatus: { visible: false, text: "", tone: "neutral", action: "", actionLabel: "", secondaryAction: "", secondaryActionLabel: "", people: [] },
+  partyStatus: { visible: false, text: "", detail: "", tone: "neutral", action: "", actionLabel: "", secondaryAction: "", secondaryActionLabel: "", people: [] },
   watchTogether: {
     open: false, state: "idle", badge: "none", memberCount: 0, buttonLabel: "Watch Together",
     people: [], inviteTargets: [], joinPolicy: 1,
@@ -2171,6 +2172,10 @@ const renderPartyBanner = suppress => {
     return;
   }
   partyBannerText.textContent = messageText;
+  // The second line: what happened is the headline, what is being done about it is subordinate.
+  const detailText = String(status.detail || "").trim();
+  partyBannerDetail.textContent = detailText;
+  partyBannerDetail.hidden = detailText.length === 0;
   partyBanner.dataset.tone = String(status.tone || "neutral");
   partyBanner.classList.toggle("compact", !state.controlsVisible);
   const people = Array.isArray(status.people) ? status.people.slice(0, 2) : [];

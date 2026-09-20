@@ -151,7 +151,12 @@
       <section class="party-banner" id="partyBanner" role="status" aria-live="polite" aria-hidden="true" data-tone="neutral">
         <span class="party-banner-dot" aria-hidden="true"></span>
         <span class="party-banner-avatars" id="partyBannerAvatars" aria-hidden="true"></span>
-        <span class="party-banner-text" id="partyBannerText"></span>
+        <span class="party-banner-lines">
+          <span class="party-banner-text" id="partyBannerText"></span>
+          <!-- What is being done about what the line above says happened. Hidden when the row
+               has nothing to add, which is most of them. -->
+          <span class="party-banner-detail" id="partyBannerDetail" hidden></span>
+        </span>
         <button type="button" class="party-banner-action quiet" id="partyBannerSecondary" hidden></button>
         <button type="button" class="party-banner-action" id="partyBannerAction" hidden></button>
       </section>
