@@ -286,6 +286,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                 )
             },
             waitForEveryone = watchPartyUiState.waitForEveryone,
+            pauseForAwayUsers = watchPartyUiState.pauseForAwayUsers,
             errorMessage = partyPanelError ?: watchPartyUiState.errorMessage,
             sourceMatch = activeParty?.members?.firstOrNull { it.profileId == watchPartyUiState.activeProfileId }?.sourceMatch,
             releaseName = activeStreamTitle.takeIf { it.isNotBlank() },
@@ -1436,6 +1437,8 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
             }
         }
         "wtSetWaitForEveryone" -> WatchPartyRepository.setWaitForEveryone(value >= 0.5)
+        "wtSetPauseForAway" -> WatchPartyRepository.setPauseForAwayUsers(value >= 0.5)
+        "wtSetPauseForAway" -> WatchPartyRepository.setPauseForAwayUsers(value >= 0.5)
         "wtInviteFriend", "partyInvite" -> {
             val party = WatchPartyRepository.uiState.value.party ?: return true
             val targets = SocialRepository.uiState.value.friends

@@ -101,6 +101,7 @@ const wtCopyInviteCodeButton = document.getElementById("wtCopyInviteCodeButton")
 const wtSettingsSection = document.getElementById("wtSettingsSection");
 const wtGuestControlSwitch = document.getElementById("wtGuestControlSwitch");
 const wtWaitSwitch = document.getElementById("wtWaitSwitch");
+const wtAwaySwitch = document.getElementById("wtAwaySwitch");
 const wtPolicySection = document.getElementById("wtPolicySection");
 const wtPolicySegments = document.getElementById("wtPolicySegments");
 const wtPolicyExplanation = document.getElementById("wtPolicyExplanation");
@@ -2353,6 +2354,11 @@ const renderPartyPanel = suppress => {
   wtWaitSwitch.setAttribute("aria-checked", wt.pauseWhenBuffers ? "true" : "false");
   wtWaitSwitch.dataset.wtCommand = "wtSetWaitForEveryone";
   wtWaitSwitch.dataset.wtValue = wt.pauseWhenBuffers ? "0" : "1";
+  // Its own switch beside the one it is most likely to be confused with. A stalled stream and a
+  // person who has stepped away are different problems with different right answers.
+  wtAwaySwitch.setAttribute("aria-checked", wt.pauseForAway ? "true" : "false");
+  wtAwaySwitch.dataset.wtCommand = "wtSetPauseForAway";
+  wtAwaySwitch.dataset.wtValue = wt.pauseForAway ? "0" : "1";
 
   wtPolicySection.hidden = !wt.joinPolicyVisible;
   wtPolicySegments.classList.toggle("saving", Boolean(wt.joinPolicySaving));
