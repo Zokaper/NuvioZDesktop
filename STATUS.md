@@ -2,6 +2,23 @@
 
 Last updated: 2026-09-20
 
+## Phase 6 Watch Together playback/source stabilization - DONE WITH NON-BLOCKING QA DEBT (2026-09-20)
+
+Closed, and published on this side as **`debug-v0.1.23-alpha-z6.57`** against Android
+`0.4.13-z1.36`. **The canonical write-up is `nuvio-z/STATUS.md`** under the same heading; it lists
+the whole chunk - engine-native starvation and readiness, the watchdog's viability rule, the seek
+positive-readiness barrier and its four named exits, timeline-safe host/guest source failover, the
+source-resolution UX states, and explicit host `EquivalentMedia` manual source authority - together
+with the ledger row, **S9** in `nuvio-z/Docs/Z-FEATURES.md`.
+
+Hardware-verified in both directions on 2026-09-20. **Every observed barrier resume was
+`reason=all-ready`**; the 12 s ceiling never fired and **stays at 12 s**. Desktop-host waits were
+3.7 s, 3.9 s and 8.5 s.
+
+**Non-blocking QA debt:** a natural host source failure, a natural guest compatible fallback and a
+natural guest incompatible / no-compatible-fallback case are all still unverified on hardware. They
+cannot be forced reliably and are trial by fire from normal usage. Not blockers.
+
 ## Phase 6 hardware run passed; manual host source pick now advances the party (2026-09-20)
 
 `ccac89fe` on `claude/heartbeat-session-renewal`, cherry-picked from mobile `2b81383d9` on
