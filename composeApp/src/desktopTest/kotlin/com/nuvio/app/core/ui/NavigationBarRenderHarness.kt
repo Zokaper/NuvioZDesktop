@@ -78,8 +78,8 @@ class NavigationBarRenderHarness {
      * Widths where the fit is in question.
      *
      * 411 is the maintainer's S25 in portrait, which is where ")ownload" was photographed. 360 is
-     * the common small Android phone. 320 is the narrowest thing worth supporting and where the
-     * labels are expected to give up entirely. 891 is the same S25 in landscape.
+     * the common small Android phone and, measured, already too narrow for six labels. 320 is the
+     * narrowest thing worth supporting. 891 is the same S25 in landscape.
      */
     private val widths = listOf(320, 360, 411, 891)
 
@@ -161,6 +161,11 @@ class NavigationBarRenderHarness {
      *   bar demoted to icons on a 891dp landscape phone with room to spare.
      * - the pill's `Radius.full` corners eat about 11dp at the labels' baseline, so with the row
      *   inset at `Space.s6` the outer two labels were drawn inside the curve and cut by it.
+     * - each *cell* was clipped to `Radius.full` too, which on a ~58 x 62dp cell is nearly a
+     *   circle; "Download" fitted its cell's width at 411dp and was still cut on both ends.
+     * - the reserve is a per-layout maximum, and the demote is requested while the labelled layout
+     *   is being measured - so it used to file the labelled height under the demoted layout and the
+     *   reserve never came back down. That is why this test could pass while the bar was icons.
      *
      * If this fails, the bar has changed its mind about a width - decide which answer is right
      * before changing the numbers.
@@ -195,14 +200,23 @@ class NavigationBarRenderHarness {
             )
         }
 
-        // 360dp is the common small Android phone; still expected to hold its labels.
-        val onASmallPhone = reservedAt(360, NavBarStyle.EXPANDED)
-        if (onASmallPhone != labelled) {
-            fail(
-                "At 360dp the bar gave up its labels (reserved ${onASmallPhone}dp against " +
-                    "${labelled}dp). That is the commonest small Android phone and it used to show " +
-                    "labels, cut or not.",
-            )
+        // 360dp and 320dp cannot hold six labels, and the bar must say so by dropping them all.
+        // Measured, not assumed: "Download" is 58dp at `Type.labelXs`, so six cells need 348dp and
+        // a 360dp window leaves 12dp for every margin and inset the pill has. Expecting labels at
+        // 360 - as this harness once did - could only be satisfied by cutting one.
+        //
+        // This is also the half of the rule that went unasserted, and dead, through two committed
+        // detectors, so it is asserted at both widths.
+        for (narrow in listOf(360, 320)) {
+            val reserved = reservedAt(narrow, NavBarStyle.EXPANDED)
+            if (reserved != unlabelled) {
+                fail(
+                    "At ${narrow}dp the bar kept its labels (reserved ${reserved}dp, an unlabelled " +
+                        "bar is ${unlabelled}dp). Six labels cannot fit there; either the demote is " +
+                        "not firing and the bar is showing stems like \"Downl..\", or the reserve " +
+                        "is still holding the labelled height it measured on the first frame.",
+                )
+            }
         }
 
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
