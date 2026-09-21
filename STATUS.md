@@ -2,6 +2,37 @@
 
 Last updated: 2026-09-21
 
+## The z1.38/z6.59 run: the unlock race, and the seek that was eating the buffer (2026-09-21)
+
+**The canonical write-up is `nuvio-z/STATUS.md`** under the same heading. Both findings are in
+shared code and arrived here by cherry-pick from `mobile/claude/phase-6-convergence-linear`
+(`2e86bdb8`); every Kotlin file auto-merged, which is the converged state doing its job. Nothing is
+published; the fix sits on `claude/heartbeat-session-renewal`.
+
+**The one that is desktop-facing is the second.** The buffer -> seek -> buffer loop was watched from
+this side: a Windows host with an Android guest on a struggling source, the host taking a couple of
+seconds to react and the loop never breaking. It is not a detection limit. A guest seeks once it is
+`WatchPartySeekThresholdMs` (1s) behind, but the host - this app - only holds the party after
+`WatchPartyGuestBufferingGraceMs` (2.5s) of *continuous* buffering, so every rebuffer in between
+forced the guest into a seek that discarded its freshly rebuilt buffer while this host was still
+deciding whether to wait. The host's hold never fired to break the loop because no single rebuffer
+lasted long enough.
+
+The fix is a bounded recent-starvation recovery policy in `DriftTracker`, described in full in the
+mobile write-up. **The host's 2.5s hold is untouched**, and the new 3s seek override sits
+deliberately just above it so the two mechanisms hand the problem over instead of both standing
+down - `theStarveOverrideStaysAboveTheHostsBufferingGrace` asserts that ordering.
+
+The first finding (an unlock that cleared Away only sometimes, because `ON_START` re-read the
+keyguard that `USER_PRESENT` had just refused to) is Android lifecycle, so it changes nothing this
+app runs - `PartyLifecycleMonitor.android.kt` is carried here but not built. It is in this repo so
+the shared files stay byte-identical.
+
+**Verified here.** 8/8 pure groups; `:composeApp:desktopTest` - see the run recorded below.
+
+**Not verified.** No desktop host has watched a guest recover from a rebuffer with this policy in
+place, and the loop has not been re-run on hardware. See the list in `nuvio-z/STATUS.md`.
+
 ## Phase 6 Away hardware run: the source-change bypass was the desktop's (2026-09-21)
 
 **The canonical write-up is `nuvio-z/STATUS.md`** under the 2026-09-21 heading: three defects found
