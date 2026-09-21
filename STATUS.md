@@ -2,6 +2,19 @@
 
 Last updated: 2026-09-21
 
+## Phase 6 closed; one mobile fix desktop still lacks (2026-09-21)
+
+**The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 6 closeout". Phase 6 closed as DONE WITH
+NON-BLOCKING QA DEBT. The desktop -> mobile parity audit found nothing desktop has that mobile lacks.
+No desktop code changed.
+
+**One fix went the other way and is not here.** `PlayerScreenRuntimeUi` picks the in-player social
+card's notification with a filter that skips join requests, but the card's Accept / Decline / Join
+handler acts on the *first* unread notification that has any actions. With a join request pending,
+Accept on a friend request's card therefore lets the requester into the party. Mobile fixed this by
+resolving both through `inPlayerSocialCardNotification` and acting by id. Bring that across on the
+next desktop touch, by merge rather than by copy.
+
 ## Mobile UI pass, stages 5-10: shared lobby and Social phone layouts (2026-09-21)
 
 **The canonical write-up is `nuvio-z/STATUS.md`** under the same heading. Six mobile commits arrived
