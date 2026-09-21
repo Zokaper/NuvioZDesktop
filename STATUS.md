@@ -6,8 +6,11 @@ Last updated: 2026-09-21
 
 **The canonical write-up is `nuvio-z/STATUS.md`** under the 2026-09-21 heading: three defects found
 on the `0.4.13-z1.37` / `z6.58` run, two of them Android lifecycle and one of them this repo's.
-Nothing is published; the fix sits on `claude/heartbeat-session-renewal` and no desktop build has
-been cut.
+Published here as **`debug-v0.1.23-alpha-z6.59`** (MSI ProductVersion 1.45.59) against Android
+**`0.4.13-z1.38`**, from `claude/heartbeat-session-renewal`. Debug channel only -
+`-Pnuvio.desktop.debugChannel=true`, GitHub prerelease, "Nuvio Z Debug" with its own upgrade UUID
+and data directory. **The release line and the stable updater were not touched.** The only change
+in the cut itself is `DEBUG_BUILD=59`; no fix logic moved.
 
 The one that is desktop-facing: a **host changing source from the native/HTML player controls told
 nobody.** `"selectSource"` called `switchToSource(stream)`, which is the internal switch that
@@ -30,9 +33,9 @@ byte-identical with mobile.
 `PlayerSourcePickRoutingTest` lives in `desktopTest` here and in `androidHostTest` on mobile - the
 one deliberate divergence in this change, since neither repo can run the other's source set.
 
-**Not verified.** No desktop host has changed source with this build, through either panel, and no
-P2P consent dialog has been accepted or cancelled in a live party. See the hardware list in
-`nuvio-z/STATUS.md`.
+**Not verified.** No desktop host has changed source with `z6.59`, through either panel, and no
+P2P consent dialog has been accepted or cancelled in a live party. That is what this package and
+Android `z1.38` were cut for; the hardware list is in `nuvio-z/STATUS.md`.
 
 ## Phase 6 Away lifecycle cut for hardware - z6.58 (2026-09-20)
 
