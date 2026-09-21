@@ -6,8 +6,12 @@ Last updated: 2026-09-21
 
 **The canonical write-up is `nuvio-z/STATUS.md`** under the same heading. Both findings are in
 shared code and arrived here by cherry-pick from `mobile/claude/phase-6-convergence-linear`
-(`2e86bdb8`); every Kotlin file auto-merged, which is the converged state doing its job. Nothing is
-published; the fix sits on `claude/heartbeat-session-renewal`.
+(`2e86bdb8`); every Kotlin file auto-merged, which is the converged state doing its job.
+
+Published here as **`debug-v0.1.23-alpha-z6.60`** (MSI ProductVersion 1.45.60) against Android
+**`0.4.13-z1.39`**. Debug channel only - `-Pnuvio.desktop.debugChannel=true`, GitHub prerelease,
+its own upgrade UUID and data directory. **The release line and the stable updater were not
+touched.** Only `DEBUG_BUILD=60` moved to cut it.
 
 **The one that is desktop-facing is the second.** The buffer -> seek -> buffer loop was watched from
 this side: a Windows host with an Android guest on a struggling source, the host taking a couple of
