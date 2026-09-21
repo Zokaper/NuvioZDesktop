@@ -2,6 +2,15 @@
 
 Last updated: 2026-09-21
 
+## Mobile UI pass, stages 5-10: shared lobby and Social phone layouts (2026-09-21)
+
+**The canonical write-up is `nuvio-z/STATUS.md`** under the same heading. Six mobile commits arrived
+here by cherry-pick (`d79c88d6`, `d098792d`, `7692602a`, `91a0ff21`, `e296258f`, `93537c00`), all
+clean. `c757619e` adds `WatchPartyLobbyRenderHarness` and moves `SocialRenderHarness` onto the real
+`SocialFeed`, with phone scenes. **Desktop is visually unchanged:** every desktop Social scene is
+byte-identical before and after, and the lobby's two-pane and tablet branches are the old code moved
+verbatim into `PartyLobbyContent`. `:composeApp:desktopTest` 2425 / 0 failures.
+
 ## Away return: the Android half, fixed on evidence and verified on the phone (2026-09-21)
 
 **The canonical write-up is `nuvio-z/STATUS.md`** under the same heading, with the adb capture that
