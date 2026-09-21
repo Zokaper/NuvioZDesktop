@@ -5,7 +5,9 @@ Last updated: 2026-09-21
 ## Away return: the Android half, fixed on evidence and verified on the phone (2026-09-21)
 
 **The canonical write-up is `nuvio-z/STATUS.md`** under the same heading, with the adb capture that
-diagnosed it. Cherry-picked from mobile `94505408`.
+diagnosed it. Cherry-picked from mobile `94505408`. Published here as
+**`debug-v0.1.23-alpha-z6.61`** (MSI ProductVersion 1.45.61) against Android
+**`0.4.13-z1.40`** - debug channel only, the release line and stable updater untouched.
 
 **This changes nothing this app runs.** `PartyLifecycleMonitor.android.kt` is carried here and not
 built; the shared rule in `PartyPresence.kt` gains a `resumed` parameter that only the Android
