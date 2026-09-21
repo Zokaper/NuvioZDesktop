@@ -2,6 +2,13 @@
 
 Last updated: 2026-09-21
 
+## Phase 7 opened: Release Engineering v1 (2026-09-22)
+
+Active branch: `codex/phase-7-release-engineering`. The superseding Phase 7 scope hardens the live
+desktop release path and prepares the joint Android/iOS mobile launch. Desktop retains its current
+version, serial, stable MSI upgrade UUID, `2.0.<serial>` ProductVersion mapping and updater lineage.
+It is not renumbered to match mobile. No release has been published.
+
 ## Phase 6 closed; one mobile fix desktop still lacks (2026-09-21)
 
 **The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 6 closeout". Phase 6 closed as DONE WITH

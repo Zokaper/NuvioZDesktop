@@ -570,11 +570,11 @@ require(!isDesktopDebugChannel || desktopDebugBuild > 0) {
     "DEBUG_BUILD must be a positive integer for a debug-channel build."
 }
 
-// The release ordering serial, mirroring RELEASE_SERIAL in the mobile repository and
-// kept in step with it: the serial identifies a RELEASE, and the two apps ship one
-// version name between them. Also its own file, and for the same reason as the debug
-// counter above. Optional and defaulted - 0 means "no serial", and VersionUtils falls
-// back to the old string comparison whenever either side lacks one.
+// The desktop release-ordering serial. Mobile follows the same policy with its own
+// counter, but the values are deliberately independent: desktop is already live on
+// a different vanilla/version lineage. Also its own file, and for the same reason as
+// the debug counter above. Optional and defaulted - 0 means "no serial", and
+// VersionUtils falls back to the old string comparison whenever either side lacks one.
 val desktopReleaseSerialConfigFile = rootProject.file("composeApp/Configuration/DesktopReleaseSerial.properties")
 val desktopReleaseSerialProps = Properties().apply {
     if (desktopReleaseSerialConfigFile.exists()) {
