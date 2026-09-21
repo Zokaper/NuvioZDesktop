@@ -2,6 +2,31 @@
 
 Last updated: 2026-09-21
 
+## Away return: the Android half, fixed on evidence and verified on the phone (2026-09-21)
+
+**The canonical write-up is `nuvio-z/STATUS.md`** under the same heading, with the adb capture that
+diagnosed it. Cherry-picked from mobile `94505408`.
+
+**This changes nothing this app runs.** `PartyLifecycleMonitor.android.kt` is carried here and not
+built; the shared rule in `PartyPresence.kt` gains a `resumed` parameter that only the Android
+adapter passes. It is in this repo so the shared files stay converged.
+
+Worth knowing on this side anyway, because the desktop is the other end of every one of these
+parties: a guest whose phone was locked could sit `away=true` on the roster indefinitely - the
+`USER_PRESENT` broadcast is dropped to a cached process, and the `ON_START` keyguard re-read that
+was meant to cover that fires during the dismiss animation and reads the lock as still up. The
+return now hangs on `ON_RESUME`, which cannot be dropped and cannot be misread. On a host with
+"Pause when someone is away" enabled, that member was holding the party for everyone.
+
+**Verified on hardware** (the mobile write-up has the log): two lock/unlock cycles, two returns,
+`away roster []` both times - so this host saw them come back.
+
+**The starve-recovery policy from z6.59/z1.38 was confirmed on the same run**, which is what it was
+cut for: `action=TEMPORARY_SPEED ... starveRecovery=true`, the gap closing 806 -> 108ms, no seek and
+no loop.
+
+**Verified here.** 8/8 pure groups; `:composeApp:desktopTest` - see the run below.
+
 ## The z1.38/z6.59 run: the unlock race, and the seek that was eating the buffer (2026-09-21)
 
 **The canonical write-up is `nuvio-z/STATUS.md`** under the same heading. Both findings are in
