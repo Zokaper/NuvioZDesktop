@@ -222,11 +222,80 @@ class NavigationBarRenderHarness {
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
     }
 
+    /**
+     * A scroll-collapse and a scroll back must give the labels back.
+     *
+     * WARN **Found on a phone, after every static assertion above had passed.** While the labels
+     * fade, the pill's horizontal padding animates towards its collapsed width, so the cells narrow
+     * under labels that are still drawn. The fit check fired mid-animation at 411dp and the demote
+     * latched at a width the bar never leaves: one scroll removed the labels until the app was
+     * killed. A harness that only renders a bar at rest cannot see it, so this one drives the
+     * animation frame by frame, the way the app does.
+     */
+    @Test
+    fun aCollapseAndExpandGivesTheLabelsBack() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+
+        val restingState = NuvioNavBarHeightState()
+        render("navbar-cycle-rest", 411, 140, failures) {
+            NavBarScene(style = NavBarStyle.EXPANDED, selectedIndex = 4, heightState = restingState)
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+        val labelled = restingState.overlayHeight.value
+
+        val heightState = NuvioNavBarHeightState()
+        val scrollState = NuvioNavBarScrollState()
+        runCatching {
+            val scene = ImageComposeScene(width = 411, height = 140, density = Density(1f)) {
+                NuvioTheme(darkTheme = true, appTheme = AppTheme.WHITE, amoled = false) {
+                    NavBarScene(
+                        style = NavBarStyle.ADAPTIVE,
+                        selectedIndex = 4,
+                        heightState = heightState,
+                        scrollState = scrollState,
+                    )
+                }
+            }
+            try {
+                var clock = 0L
+                fun run(millis: Long) {
+                    val end = clock + millis
+                    while (clock < end) {
+                        scene.render(clock * 1_000_000L)
+                        clock += 16
+                    }
+                }
+                run(100)
+                scrollState.collapse()
+                run(1_000)
+                scrollState.expand()
+                run(1_000)
+                val image = scene.render(clock * 1_000_000L)
+                val data = image.encodeToData(EncodedImageFormat.PNG) ?: error("encodeToData was null")
+                File(outputDir, "navbar-cycle-after.png").writeBytes(data.bytes)
+            } finally {
+                scene.close()
+            }
+        }.onFailure { error -> failures += "navbar-cycle: ${error::class.simpleName}: ${error.message}" }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+
+        val after = heightState.overlayHeight.value
+        if (after != labelled) {
+            fail(
+                "After a collapse and an expand at 411dp the bar reserves ${after}dp, not the " +
+                    "labelled ${labelled}dp: the labels did not come back. The fit check has fired " +
+                    "on a mid-animation frame and latched the demote.",
+            )
+        }
+    }
+
     @Composable
     private fun NavBarScene(
         style: NavBarStyle,
         selectedIndex: Int,
         heightState: NuvioNavBarHeightState? = null,
+        scrollState: NuvioNavBarScrollState? = null,
     ) {
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             // A little content behind it, so the pill's translucency reads as it does in the app
@@ -247,6 +316,7 @@ class NavigationBarRenderHarness {
                 modifier = Modifier.align(Alignment.BottomCenter),
                 navBarStyle = style,
                 heightState = heightState,
+                scrollState = scrollState,
             ) {
                 tabs.forEachIndexed { index, label ->
                     NavItem(
