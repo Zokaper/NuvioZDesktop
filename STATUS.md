@@ -1,13 +1,27 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-21
+Last updated: 2026-09-22
 
-## Phase 7 opened: Release Engineering v1 (2026-09-22)
+## Phase 7 closeout: desktop release hardening (2026-09-22)
 
-Active branch: `codex/phase-7-release-engineering`. The superseding Phase 7 scope hardens the live
-desktop release path and prepares the joint Android/iOS mobile launch. Desktop retains its current
-version, serial, stable MSI upgrade UUID, `2.0.<serial>` ProductVersion mapping and updater lineage.
-It is not renumbered to match mobile. No release has been published.
+**Complete.** Desktop retains `0.1.23-alpha-z6` / release serial `131`, stable upgrade UUID
+`7b1f2c94-53ad-4c1e-9f6a-2d8e0b45c7f1`, MSI ProductVersion `2.0.<serial>`, the existing updater
+repository and tag lineage. It was deliberately not renumbered to match mobile.
+
+`Build Desktop Release` now separates real artifact-producing `build-only`/`dry-run` from draft and
+publish, requires `Dev` for promotion, refuses an incomplete Windows/macOS stable set, clears stale
+outputs, verifies exact artifact names/counts and checksums, requires notes and an unused tag, and
+checks that the version bump is the final application change. Signing/notarization hooks are ready;
+the current live unsigned-Mac path remains available only with an explicit publish acknowledgement.
+The stable updater continues to reject prereleases/debug tags and now fails closed on malformed
+serials. Downgrade/rollback remains a forward release with a greater serial.
+
+Verified: pure suites **8/8, 778 tests**; `:composeApp:desktopTest` **2427 / 0 failures**; local debug
+MSI `Nuvio-Z-Debug-Windows-x64-0.1.23-alpha-z6.61.msi` at ProductVersion `1.45.61`; local stable MSI
+`Nuvio-Z-Windows-x64-0.1.23-alpha-z6.msi` at ProductVersion `2.0.131`; build-only CI run
+`35666931626` produced and verified the Windows x64 MSI plus arm64 and x86_64 DMGs and consolidated
+checksums. Its publish job was skipped. No stable release or tag was created. Canonical policy and
+procedures are in `nuvio-z/Docs/RELEASES.md`.
 
 ## Phase 6 closed; one mobile fix desktop still lacks (2026-09-21)
 
