@@ -167,6 +167,9 @@ java -cp "$WORK/out-selection:$CP_RUN:$CP_JSON" org.junit.runner.JUnitCore \
 rm -rf "$WORK/out-standalone"
 kotlinc -nowarn -cp "$CP_BUILD" -d "$WORK/out-standalone" \
   "$M/features/downloads/DownloadTransfer.kt" \
+  "$M/features/downloads/IosBackgroundTransferReconciler.kt" \
+  "$M/features/downloads/DownloadsLiveStatusPolicy.kt" \
+  "$M/features/downloads/LocalPlaybackPolicy.kt" \
   "$M/features/streams/PlaybackUrlCredentials.kt" \
   "$M/core/network/ThroughputWindow.kt" \
   "$M/core/build/NuvioZVersion.kt" \
@@ -177,6 +180,9 @@ kotlinc -nowarn -cp "$CP_BUILD" -d "$WORK/out-standalone" \
   "$M/features/playback/PlaybackPosition.kt" \
   "$M/features/playback/PlaybackSourceProbe.kt" \
   "$T/features/downloads/DownloadTransferTest.kt" \
+  "$T/features/downloads/IosBackgroundTransferReconcilerTest.kt" \
+  "$T/features/downloads/DownloadsLiveStatusPolicyTest.kt" \
+  "$T/features/downloads/LocalPlaybackPolicyTest.kt" \
   "$T/features/streams/PlaybackUrlCredentialsTest.kt" \
   "$T/core/network/ThroughputWindowTest.kt" \
   "$T/core/build/NuvioZVersionTest.kt" \
@@ -190,6 +196,9 @@ kotlinc -nowarn -cp "$CP_BUILD" -d "$WORK/out-standalone" \
 
 java -cp "$WORK/out-standalone:$CP_RUN" org.junit.runner.JUnitCore \
   com.nuvio.app.features.downloads.DownloadTransferTest \
+  com.nuvio.app.features.downloads.IosBackgroundTransferReconcilerTest \
+  com.nuvio.app.features.downloads.DownloadsLiveStatusPolicyTest \
+  com.nuvio.app.features.downloads.LocalPlaybackPolicyTest \
   com.nuvio.app.features.streams.PlaybackUrlCredentialsTest \
   com.nuvio.app.core.network.ThroughputWindowTest \
   com.nuvio.app.core.build.NuvioZVersionTest \
