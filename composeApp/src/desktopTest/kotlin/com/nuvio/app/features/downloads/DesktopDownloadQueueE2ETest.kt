@@ -56,6 +56,7 @@ class DesktopDownloadQueueE2ETest {
 
     private lateinit var server: FaultyMediaServer
     private lateinit var defaultResolver: suspend (StreamItem, Int?, Int?) -> DownloadSourceResolution
+    private lateinit var defaultIsMetered: () -> Boolean
 
     @BeforeTest
     fun setUp() {
@@ -77,6 +78,11 @@ class DesktopDownloadQueueE2ETest {
         DownloadsTiming.sourceResolveTimeoutMs = SOURCE_RESOLVE_TIMEOUT_MS
         DownloadsTiming.connectivityRefreshIntervalMs = 100L
         defaultResolver = DownloadsRepository.resolvePlayableStream
+        defaultIsMetered = DownloadsRepository.isMeteredNetwork
+        // The developer's own connection may be flagged metered; the Wi-Fi rule is tested on
+        // purpose below, never by accident.
+        DownloadsRepository.isMeteredNetwork = { false }
+        DownloadsRepository.updateDeviceSettings { DownloadDeviceSettings() }
         server = FaultyMediaServer()
     }
 
@@ -86,6 +92,8 @@ class DesktopDownloadQueueE2ETest {
         DownloadsRepository.deleteDownloadsForTitle(META_ID)
         DownloadsTiming.reset()
         DownloadsRepository.resolvePlayableStream = defaultResolver
+        DownloadsRepository.isMeteredNetwork = defaultIsMetered
+        DownloadsRepository.updateDeviceSettings { DownloadDeviceSettings() }
         DownloadsRepository.restoreConnectivityFeedAfterTests()
     }
 
@@ -881,6 +889,52 @@ class DesktopDownloadQueueE2ETest {
             episodes.all { itemFor(it).status == DownloadStatus.Completed },
             "not every episode completed",
         )
+    }
+
+    @Test
+    fun `the downloads-at-once setting is the concurrency limit`() {
+        DownloadsRepository.updateDeviceSettings { it.copy(maxConcurrent = 1) }
+        val episodes = (1..3).map { publishEpisode(it) }
+        var peak = 0
+
+        episodes.forEach { enqueue(it) }
+        awaitQueueDrained(
+            onSample = { items ->
+                peak = maxOf(peak, items.count { it.status == DownloadStatus.Downloading })
+            },
+        )
+
+        assertEquals(1, peak, "one at a time was asked for")
+    }
+
+    @Test
+    fun `on mobile data the queue waits for Wi-Fi, and download now anyway starts one`() {
+        var metered = true
+        DownloadsRepository.isMeteredNetwork = { metered }
+        val first = publishEpisode(1)
+        val second = publishEpisode(2)
+        enqueue(first)
+        enqueue(second)
+
+        awaitCondition(10_000L, "both episodes to wait for Wi-Fi") { items ->
+            items.size == 2 && items.all { it.activity == DownloadActivity.WAITING_FOR_WIFI }
+        }
+        Thread.sleep(500L)
+        assertTrue(
+            DownloadsRepository.uiState.value.items.none { it.downloadedBytes > 0L },
+            "a byte moved on mobile data under Wi-Fi only",
+        )
+
+        DownloadsRepository.allowMobileData(listOf(itemFor(first).id))
+        awaitCondition(30_000L, "the allowed episode to finish") {
+            itemFor(first).status == DownloadStatus.Completed
+        }
+        assertEquals(DownloadActivity.WAITING_FOR_WIFI, itemFor(second).activity)
+        assertEquals(0L, itemFor(second).downloadedBytes)
+
+        // Wi-Fi comes back with no other queue event: the recheck must notice on its own.
+        metered = false
+        awaitQueueDrained()
     }
 
     @Test
