@@ -21,6 +21,11 @@ import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamsUiState
 import com.nuvio.app.features.tracking.TrackingMediaReference
 import com.nuvio.app.features.watched.WatchedUiState
+import com.nuvio.app.features.watchparty.PartyLifecycleFacts
+import com.nuvio.app.features.watchparty.PartyPendingResume
+import com.nuvio.app.features.watchparty.PartyPresenceState
+import com.nuvio.app.features.watchparty.PartySourceMatch
+import com.nuvio.app.features.watchparty.PartySourceTimelineDecision
 import com.nuvio.app.features.watchparty.PartyStartupHold
 import com.nuvio.app.features.watchparty.PendingPartySeek
 import com.nuvio.app.features.watchparty.StallHoldBudget
@@ -472,6 +477,23 @@ internal class PlayerScreenRuntime(
     /** The seek this client has issued and is waiting to see land, or null. Expires on its own. */
     var partyPendingSeek: PendingPartySeek? = null
 
+    /**
+     * The speed the party is nominally playing at, while Watch Together is running the engine at a
+     * slightly different one to close a drift gap; null the rest of the time.
+     *
+     * The engine's own rate is the wrong answer to "what speed is this" during a correction: it read
+     * `1.0035x` on the S25's speed control on 2026-09-18, and - worse than the label - every party
+     * command a guest sent while one was running carried that rate as the party's new speed.
+     */
+    var partyNominalSpeedDuringCorrection by mutableStateOf<Float?>(null)
+
+    /**
+     * The playback speed as the person watching chose it: what the controls show, what a speed
+     * gesture steps from, and what this client tells anybody else. Never a transient correction.
+     */
+    val nominalPlaybackSpeed: Float
+        get() = partyNominalSpeedDuringCorrection ?: playbackSnapshot.playbackSpeed
+
     /** How often this host has held the party for a stalled guest, per content generation. */
     var partyStallHoldBudget: StallHoldBudget = StallHoldBudget()
 
@@ -487,6 +509,26 @@ internal class PlayerScreenRuntime(
 
     /** The last status this client told the party about itself, so only changes are published. */
     var partyReportedPeerStatus: WatchPartyStatus? = null
+
+    /**
+     * The last buffer-occupancy fact published beside [partyReportedPeerStatus].
+     *
+     * Held separately because it transitions while the status does not: a guest the host is holding
+     * reports `paused` empty and `paused` full, and only the second ends the hold.
+     */
+    var partyReportedPeerStarved: Boolean = false
+
+    /**
+     * Where Watch Together has last commanded this player's playhead, or null when it has not.
+     *
+     * ⚠ **The startup watchdog measures progress from a baseline, and a party seek moves the
+     * playhead without the source having fetched anything.** Left unsaid, the jump reads as
+     * progress: the S25 run of 2026-09-19 had a guest aligned from 4339 ms to 12012 ms by the
+     * host, which flipped its watchdog onto the shorter post-progress stall deadline and then
+     * abandoned the party's only candidate. Published here so the sampler can rebase - see
+     * `PlaybackStartupWatchdog.observe`.
+     */
+    var partyAlignedBaselineMs by mutableStateOf<Long?>(null)
 
     /**
      * The stalled guests this host paused the party for, empty when it did not.
@@ -513,6 +555,89 @@ internal class PlayerScreenRuntime(
 
     /** The generation the host pressed "Don't wait" in; the stall guard comes back on for the next one. */
     var partyDontWaitGenerationKey: String? = null
+
+    /**
+     * The last timeline verdict this player logged about its own source.
+     *
+     * The readiness effect re-runs on every duration and descriptor change, and the verdict is the
+     * same one almost every time; a line each would bury the transition that matters - the one where
+     * a chain step lands on a release the party is not on.
+     */
+    var partyReportedTimelineDecision by mutableStateOf<PartySourceTimelineDecision?>(null)
+
+    /**
+     * Whether this player is on the party's own release or on a compatible alternate.
+     *
+     * The same verdict that goes to the party as `source_match`, kept locally because the status
+     * line has to say "Using a compatible source" about it and nothing else on this client knows.
+     */
+    var partyLocalSourceMatch by mutableStateOf<PartySourceMatch?>(null)
+
+    /**
+     * The seek this host has issued and not yet resumed the party from.
+     *
+     * The readiness barrier for deliberate buffering: a seek empties everybody's buffer by
+     * construction, so the party parks on the target and the resume waits for positive readiness
+     * instead of running on a lead and being pulled back by the stall guard afterwards. Compose
+     * state because the effect that does the waiting is keyed on it.
+     */
+    var partyPendingResume by mutableStateOf<PartyPendingResume?>(null)
+
+    /**
+     * Who that resume is still waiting on, for the status pill and the tick the guests read.
+     *
+     * Kept beside [partyAutoPausedForGuests] rather than inside it: this is a wait the party chose
+     * and the stall guard must not read it as a stall it took.
+     */
+    var partyAwaitingResumeReadiness by mutableStateOf<List<String>>(emptyList())
+
+    /**
+     * This client's own presence, and the facts it was decided from. See `PartyPresence.kt`.
+     *
+     * Held on the runtime rather than inside a `remember` in the effect because the return path
+     * needs the presence that was in force when the app went away, and a value scoped to one
+     * composition is exactly the thing a backgrounded Android process is least able to promise.
+     */
+    var partyPresence by mutableStateOf(PartyPresenceState())
+
+    /**
+     * How many lifecycle observations have been folded in, so a late one cannot overwrite a newer.
+     *
+     * Monotonic for the life of the player. See [PartyLifecycleFacts.seq]: Android delivers the
+     * callbacks around picture-in-picture in an order that is not guaranteed, and a posted `ON_STOP`
+     * landing after the foreground it was overtaken by would otherwise put an active viewer Away.
+     */
+    var partyLifecycleSeq: Long = 0L
+
+    /**
+     * The party generation this client was following when it went away, null when it is not away.
+     *
+     * The whole of the source-preservation rule lives on this comparison: unchanged on return means
+     * the open stream is still the party's stream and nothing may be re-resolved. See
+     * [partyReturnAction].
+     */
+    var partyAwayAtGenerationKey: String? = null
+
+    /**
+     * The play intent the party had for this client at the moment it went away.
+     *
+     * Away pauses the engine, so by the time the member comes back every local signal says "paused"
+     * and only this still knows whether the party was running. The same argument
+     * [partyStartReleaseResumes] makes about the start barrier, for the same reason.
+     */
+    var partyAwayIntentPlaying: Boolean = false
+
+    /**
+     * Whether this client is catching up after being away, and must not play at its stale position.
+     *
+     * Read by the peer publisher as well as by the transport: a member seeking minutes forward is
+     * doing what the party asked, exactly like a barrier park, so it must not be reported to the
+     * host as a stall.
+     */
+    var partyAwayReturning by mutableStateOf(false)
+
+    /** The away members this host paused the party for, empty when it did not. */
+    var partyAutoPausedForAway by mutableStateOf<List<String>>(emptyList())
 
     var lastSyncedSettingsResizeMode: PlayerResizeMode? = null
     var lastResetPlaybackIdentity: String? = null

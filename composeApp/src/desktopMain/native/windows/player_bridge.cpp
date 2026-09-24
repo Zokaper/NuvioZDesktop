@@ -1188,6 +1188,31 @@ public:
         return flagProperty("eof-reached", false);
     }
 
+    /**
+     * mpv's own verdict about whether it can present media now, with no intent mixed into it.
+     *
+     * `isLoading` above cannot be used for this and must not be: its `idle && !paused` term means the
+     * instant Watch Together pauses a starving guest the guest stops reporting that it is empty, and
+     * the host's stall guard reads its own pause coming back as a recovery. That cost the party of
+     * 2026-09-19 its only source. These flags are the raw properties, each reported whether or not
+     * playback has been asked for; the Kotlin side maps them, so the meaning is testable without an
+     * engine and stays identical to the Android bridge's.
+     *
+     * Flag values are `NativeMpvReadinessFlags`, and are duplicated in the Linux and macOS bridges.
+     */
+    int engineReadinessFlags() {
+        int flags = 0;
+        if (flagProperty("paused-for-cache", false)) flags |= 1 << 0;
+        // A percentage of the cache-fill target, so anything under 100 is still filling. Absent
+        // (`-1` here) means mpv is not buffering to a target at all, which is not an empty cache.
+        long long cacheBuffering = int64Property("cache-buffering-state", -1);
+        if (cacheBuffering >= 0 && cacheBuffering < 100) flags |= 1 << 1;
+        if (flagProperty("pause", true)) flags |= 1 << 2;
+        if (flagProperty("seeking", false)) flags |= 1 << 3;
+        if (flagProperty("core-idle", true)) flags |= 1 << 4;
+        return flags;
+    }
+
     // Play-after-end restarts from zero only when the end is real. A stream that failed mid-file
     // also reports eof-reached, and restarting it threw away the position the user was recovering.
     // Same 90% threshold as PrematureEndOfStreamGuard on the Kotlin side.
@@ -2671,6 +2696,14 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_isEnded(JNIEnv *, jobject, jlong handle) {
     auto player = playerFromHandle(handle);
     return player && player->isEnded() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_engineReadinessFlags(JNIEnv *, jobject, jlong handle) {
+    auto player = playerFromHandle(handle);
+    // A dead handle is no source rather than an empty one: `core-idle` with nothing else set, which
+    // the Kotlin mapping reads as `NoSource` once the duration is zero too.
+    return player ? (jint)player->engineReadinessFlags() : (jint)(1 << 4);
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

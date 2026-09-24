@@ -66,6 +66,7 @@ data class WatchTogetherBridgeState(
     val incomingExpiresAtMs: Long = 0L,
     val guestsControl: Boolean = false,
     val pauseWhenBuffers: Boolean = true,
+    val pauseForAway: Boolean = false,
     val joinPolicyVisible: Boolean = false,
     /** 0 Direct, 1 Ask, 2 Off: the segment index. */
     val joinPolicy: Int = 1,
@@ -189,6 +190,7 @@ fun watchTogetherBridgeState(
                 memberCount = panel.people.size,
                 guestsControl = panel.settings?.guestsControlPlayback ?: false,
                 pauseWhenBuffers = panel.settings?.pauseWhenSomeoneBuffers ?: true,
+                pauseForAway = panel.settings?.pauseForAwayUsers ?: false,
                 joinPolicyVisible = policy != null,
                 joinPolicy = policy?.selected?.segmentIndex() ?: 1,
                 joinPolicyExplanation = policy?.explanation.orEmpty(),
@@ -243,6 +245,8 @@ data class PartyStatusBridgeState(
     val visible: Boolean = false,
     val kind: String = "",
     val text: String = "",
+    /** The second line, when the row has one. Empty for every row that does not. */
+    val detail: String = "",
     /** neutral | waiting | warning | error */
     val tone: String = "neutral",
     val action: String = "",
@@ -258,6 +262,7 @@ fun partyStatusBridgeState(line: PartyStatusLine?, suppressed: Boolean = false):
         visible = true,
         kind = line.kind.name,
         text = line.text,
+        detail = line.detail.orEmpty(),
         tone = when (line.tone) {
             PartyStatusTone.Neutral -> "neutral"
             PartyStatusTone.Waiting -> "waiting"

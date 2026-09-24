@@ -1,6 +1,209 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-17
+Last updated: 2026-09-22
+
+## Phase 7 closeout: desktop release hardening (2026-09-22)
+
+**Complete.** Desktop retains `0.1.23-alpha-z6` / release serial `131`, stable upgrade UUID
+`7b1f2c94-53ad-4c1e-9f6a-2d8e0b45c7f1`, MSI ProductVersion `2.0.<serial>`, the existing updater
+repository and tag lineage. It was deliberately not renumbered to match mobile.
+
+`Build Desktop Release` now separates real artifact-producing `build-only`/`dry-run` from draft and
+publish, requires `Dev` for promotion, refuses an incomplete Windows/macOS stable set, clears stale
+outputs, verifies exact artifact names/counts and checksums, requires notes and an unused tag, and
+checks that the version bump is the final application change. Signing/notarization hooks are ready;
+the current live unsigned-Mac path remains available only with an explicit publish acknowledgement.
+The stable updater continues to reject prereleases/debug tags and now fails closed on malformed
+serials. Downgrade/rollback remains a forward release with a greater serial.
+
+Verified: pure suites **8/8, 778 tests**; `:composeApp:desktopTest` **2427 / 0 failures**; local debug
+MSI `Nuvio-Z-Debug-Windows-x64-0.1.23-alpha-z6.61.msi` at ProductVersion `1.45.61`; local stable MSI
+`Nuvio-Z-Windows-x64-0.1.23-alpha-z6.msi` at ProductVersion `2.0.131`; build-only CI run
+`35666931626` produced and verified the Windows x64 MSI plus arm64 and x86_64 DMGs and consolidated
+checksums. Its publish job was skipped. No stable release or tag was created. Canonical policy and
+procedures are in `nuvio-z/Docs/RELEASES.md`.
+
+## Phase 6 closed; one mobile fix desktop still lacks (2026-09-21)
+
+**The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 6 closeout". Phase 6 closed as DONE WITH
+NON-BLOCKING QA DEBT. The desktop -> mobile parity audit found nothing desktop has that mobile lacks.
+No desktop code changed.
+
+**One fix went the other way and is not here.** `PlayerScreenRuntimeUi` picks the in-player social
+card's notification with a filter that skips join requests, but the card's Accept / Decline / Join
+handler acts on the *first* unread notification that has any actions. With a join request pending,
+Accept on a friend request's card therefore lets the requester into the party. Mobile fixed this by
+resolving both through `inPlayerSocialCardNotification` and acting by id. Bring that across on the
+next desktop touch, by merge rather than by copy.
+
+## Mobile UI pass, stages 5-10: shared lobby and Social phone layouts (2026-09-21)
+
+**The canonical write-up is `nuvio-z/STATUS.md`** under the same heading. Six mobile commits arrived
+here by cherry-pick (`d79c88d6`, `d098792d`, `7692602a`, `91a0ff21`, `e296258f`, `93537c00`), all
+clean. `c757619e` adds `WatchPartyLobbyRenderHarness` and moves `SocialRenderHarness` onto the real
+`SocialFeed`, with phone scenes. **Desktop is visually unchanged:** every desktop Social scene is
+byte-identical before and after, and the lobby's two-pane and tablet branches are the old code moved
+verbatim into `PartyLobbyContent`. `:composeApp:desktopTest` 2425 / 0 failures.
+
+## Away return: the Android half, fixed on evidence and verified on the phone (2026-09-21)
+
+**The canonical write-up is `nuvio-z/STATUS.md`** under the same heading, with the adb capture that
+diagnosed it. Cherry-picked from mobile `94505408`. Published here as
+**`debug-v0.1.23-alpha-z6.61`** (MSI ProductVersion 1.45.61) against Android
+**`0.4.13-z1.40`** - debug channel only, the release line and stable updater untouched.
+
+**This changes nothing this app runs.** `PartyLifecycleMonitor.android.kt` is carried here and not
+built; the shared rule in `PartyPresence.kt` gains a `resumed` parameter that only the Android
+adapter passes. It is in this repo so the shared files stay converged.
+
+Worth knowing on this side anyway, because the desktop is the other end of every one of these
+parties: a guest whose phone was locked could sit `away=true` on the roster indefinitely - the
+`USER_PRESENT` broadcast is dropped to a cached process, and the `ON_START` keyguard re-read that
+was meant to cover that fires during the dismiss animation and reads the lock as still up. The
+return now hangs on `ON_RESUME`, which cannot be dropped and cannot be misread. On a host with
+"Pause when someone is away" enabled, that member was holding the party for everyone.
+
+**Verified on hardware** (the mobile write-up has the log): two lock/unlock cycles, two returns,
+`away roster []` both times - so this host saw them come back.
+
+**The starve-recovery policy from z6.59/z1.38 was confirmed on the same run**, which is what it was
+cut for: `action=TEMPORARY_SPEED ... starveRecovery=true`, the gap closing 806 -> 108ms, no seek and
+no loop.
+
+**Verified here.** 8/8 pure groups; `:composeApp:desktopTest` - see the run below.
+
+## The z1.38/z6.59 run: the unlock race, and the seek that was eating the buffer (2026-09-21)
+
+**The canonical write-up is `nuvio-z/STATUS.md`** under the same heading. Both findings are in
+shared code and arrived here by cherry-pick from `mobile/claude/phase-6-convergence-linear`
+(`2e86bdb8`); every Kotlin file auto-merged, which is the converged state doing its job.
+
+Published here as **`debug-v0.1.23-alpha-z6.60`** (MSI ProductVersion 1.45.60) against Android
+**`0.4.13-z1.39`**. Debug channel only - `-Pnuvio.desktop.debugChannel=true`, GitHub prerelease,
+its own upgrade UUID and data directory. **The release line and the stable updater were not
+touched.** Only `DEBUG_BUILD=60` moved to cut it.
+
+**The one that is desktop-facing is the second.** The buffer -> seek -> buffer loop was watched from
+this side: a Windows host with an Android guest on a struggling source, the host taking a couple of
+seconds to react and the loop never breaking. It is not a detection limit. A guest seeks once it is
+`WatchPartySeekThresholdMs` (1s) behind, but the host - this app - only holds the party after
+`WatchPartyGuestBufferingGraceMs` (2.5s) of *continuous* buffering, so every rebuffer in between
+forced the guest into a seek that discarded its freshly rebuilt buffer while this host was still
+deciding whether to wait. The host's hold never fired to break the loop because no single rebuffer
+lasted long enough.
+
+The fix is a bounded recent-starvation recovery policy in `DriftTracker`, described in full in the
+mobile write-up. **The host's 2.5s hold is untouched**, and the new 3s seek override sits
+deliberately just above it so the two mechanisms hand the problem over instead of both standing
+down - `theStarveOverrideStaysAboveTheHostsBufferingGrace` asserts that ordering.
+
+The first finding (an unlock that cleared Away only sometimes, because `ON_START` re-read the
+keyguard that `USER_PRESENT` had just refused to) is Android lifecycle, so it changes nothing this
+app runs - `PartyLifecycleMonitor.android.kt` is carried here but not built. It is in this repo so
+the shared files stay byte-identical.
+
+**Verified here.** 8/8 pure groups; `:composeApp:desktopTest` - see the run recorded below.
+
+**Not verified.** No desktop host has watched a guest recover from a rebuffer with this policy in
+place, and the loop has not been re-run on hardware. See the list in `nuvio-z/STATUS.md`.
+
+## Phase 6 Away hardware run: the source-change bypass was the desktop's (2026-09-21)
+
+**The canonical write-up is `nuvio-z/STATUS.md`** under the 2026-09-21 heading: three defects found
+on the `0.4.13-z1.37` / `z6.58` run, two of them Android lifecycle and one of them this repo's.
+Published here as **`debug-v0.1.23-alpha-z6.59`** (MSI ProductVersion 1.45.59) against Android
+**`0.4.13-z1.38`**, from `claude/heartbeat-session-renewal`. Debug channel only -
+`-Pnuvio.desktop.debugChannel=true`, GitHub prerelease, "Nuvio Z Debug" with its own upgrade UUID
+and data directory. **The release line and the stable updater were not touched.** The only change
+in the cut itself is `DEBUG_BUILD=59`; no fix logic moved.
+
+The one that is desktop-facing: a **host changing source from the native/HTML player controls told
+nobody.** `"selectSource"` called `switchToSource(stream)`, which is the internal switch that
+deliberately says nothing to the party; the Compose panel calls `switchToUserSelectedSource(stream)`,
+which publishes and advances `sourceGeneration`. The host loaded and played its new source and every
+guest stayed on the old one, still syncing its timeline against it. Since the desktop draws the
+sources panel with the native controls, this was the shipped behaviour of Change Source for every
+desktop host.
+
+The native consent continuation had the same bypass for a P2P pick, and the Compose path had the
+inverse defect - it published before the consent dialog, so cancelling moved the party onto a source
+nobody started. Both now publish exactly when the pick takes effect.
+
+The two Android-side defects (a screen-lock return that never cleared Away, and an away flag that
+outlived its party and made every peer publish say `away=true`) are shared code and are in this repo
+too. `PartyPresence.kt`, `PartyLifecycleMonitor.android.kt` and `PlayerWatchPartyEffect.kt` are
+byte-identical with mobile.
+
+**Verified here.** 8/8 pure groups; `:composeApp:desktopTest` **2397 tests, 0 failures**.
+`PlayerSourcePickRoutingTest` lives in `desktopTest` here and in `androidHostTest` on mobile - the
+one deliberate divergence in this change, since neither repo can run the other's source set.
+
+**Not verified.** No desktop host has changed source with `z6.59`, through either panel, and no
+P2P consent dialog has been accepted or cancelled in a live party. That is what this package and
+Android `z1.38` were cut for; the hardware list is in `nuvio-z/STATUS.md`.
+
+## Phase 6 Away lifecycle cut for hardware - z6.58 (2026-09-20)
+
+`f7bec859` on `claude/heartbeat-session-renewal`, the desktop half of the Away/lifecycle work.
+**The canonical write-up is `nuvio-z/STATUS.md`** under the Away heading, with the log grep lines
+for the device run and the list of what a device can still contradict. Ledger: **S10** in
+`nuvio-z/Docs/Z-FEATURES.md`.
+
+Published here as **`debug-v0.1.23-alpha-z6.58`** against Android **`0.4.13-z1.37`**. Debug channel
+only - `-Pnuvio.desktop.debugChannel=true`, GitHub prerelease, "Nuvio Z Debug" with its own upgrade
+UUID and data directory. **The release line and the stable updater were not touched.** The only
+change in this cut is `DEBUG_BUILD=58`; no Away logic moved.
+
+**Unverified on hardware.** Nothing in this chunk has run on a phone or against a real desktop
+party yet; that is what these two builds are for.
+
+## Phase 6 Watch Together playback/source stabilization - DONE WITH NON-BLOCKING QA DEBT (2026-09-20)
+
+Closed, and published on this side as **`debug-v0.1.23-alpha-z6.57`** against Android
+`0.4.13-z1.36`. **The canonical write-up is `nuvio-z/STATUS.md`** under the same heading; it lists
+the whole chunk - engine-native starvation and readiness, the watchdog's viability rule, the seek
+positive-readiness barrier and its four named exits, timeline-safe host/guest source failover, the
+source-resolution UX states, and explicit host `EquivalentMedia` manual source authority - together
+with the ledger row, **S9** in `nuvio-z/Docs/Z-FEATURES.md`.
+
+Hardware-verified in both directions on 2026-09-20. **Every observed barrier resume was
+`reason=all-ready`**; the 12 s ceiling never fired and **stays at 12 s**. Desktop-host waits were
+3.7 s, 3.9 s and 8.5 s.
+
+**Non-blocking QA debt:** a natural host source failure, a natural guest compatible fallback and a
+natural guest incompatible / no-compatible-fallback case are all still unverified on hardware. They
+cannot be forced reliably and are trial by fire from normal usage. Not blockers.
+
+## Phase 6 hardware run passed; manual host source pick now advances the party (2026-09-20)
+
+`ccac89fe` on `claude/heartbeat-session-renewal`, cherry-picked from mobile `2b81383d9` on
+`claude/phase-6-convergence-linear`. **The canonical write-up is `nuvio-z/STATUS.md`** - this entry
+carries only the desktop-specific half.
+
+The run was captured on desktop `debug-v0.1.23-alpha-z6.56` (installed 1.45.56) against Android
+`0.4.13-z1.35`. Both seek directions held the readiness barrier and resumed together. **Every
+resume on this side was `reason=all-ready`; the 12 s ceiling never fired.** Desktop-host waits were
+3.7 s, 3.9 s and 8.5 s - the 8.5 s is 71% of the budget, which is the evidence for leaving the
+ceiling where it is. Desktop debug logs for the run are in
+`%APPDATA%\Nuvio Z Debug\logs\nuvio-debug-20260920-16*.log`.
+
+The change itself: an explicit **host** pick from the sources panel now narrows the duplicate test
+to `PartySameReleaseTiers`, so a deliberately chosen `EquivalentMedia` look-alike advances the
+authoritative party source instead of being refused as a duplicate. Re-picking the party's own
+release is still refused, automatic paths keep the full test, and a guest's pick keeps it too.
+
+Verified here: `:composeApp:desktopTest` **2348 tests, 0 failures** (full suite, results directory
+cleared and `--rerun-tasks`). The three known flaky suites - `WatchedItemsStoreTest`,
+`DesktopDownloadQueueE2ETest` and `NativePlayerControllerTeardownTest` - all passed on this run.
+
+**Mirror note.** `git merge mobile/<branch>` was attempted first, per `AGENTS.md`, and **aborted**:
+the merge base is far enough back that it pulled in the whole fork gap, conflicting in 19 files
+including `AppUpdater.kt` and `MetaDetailsScreen.kt`, both on the never-copy list. Every Phase 6
+shared commit before this one crossed as a separate commit for the same reason (`8044f0b1`/
+`7ff3a02b`, `95ebc494`/`84c3ec5c`), so this one was cherry-picked with `-x`. After it, the two
+repos' copies of `PartySourceSwitch.kt` and the new test are byte-identical and
+`PlayerScreenRuntimeSourceActions.kt` differs only by the two blank lines it already differed by.
+**Merging these branches is not currently viable and wants an upstream reconciliation first.**
 
 ## Official Desktop Release — 0.1.23-alpha-z2 (2026-09-17)
 

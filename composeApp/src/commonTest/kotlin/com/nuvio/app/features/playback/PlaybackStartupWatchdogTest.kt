@@ -433,20 +433,151 @@ class PlaybackStartupWatchdogTest {
     // `onFatalPlaybackError` ran, and the guest was failed over and popped back to the source list -
     // out of a party that was working.
 
+    // ---------------------------------------------------------------- A hold is not immortality
+    //
+    // The other half of the same mechanism, reproduced on an Android host on 2026-09-20 and the
+    // reason `hasProvenViability` exists. The party pinned one candidate; its URL served a 21 KB
+    // placeholder claiming 59.4 GB; the host's own start gate held it at WAITING_FOR_PARTICIPANTS
+    // while it waited for the guest, and the guest waited for the host. Because every deadline was
+    // frozen by the hold, nothing in this file could ever end it: the source could not fail, so the
+    // chain could not run, so the party could not move. Seven minutes, and it was still going when
+    // the run was stopped by hand.
+
     @Test
-    fun `a slow start held at the party gate is not abandoned`() {
-        // Nothing has arrived yet and the party is holding: past NO_PROGRESS_DEADLINE_MS, past
-        // EVIDENCE_OF_LIFE_DEADLINE_MS, past MAX_STARTUP_MS. None of them may fire.
+    fun `a start held at the party gate with nothing behind it still reaches its deadline`() {
+        // Nothing has arrived and the party is holding - the exact shape of the placeholder above.
+        // The hold does not stop a clock this source has not earned the right to stop.
         var state = PlaybackStartupWatchdog.initial()
         var elapsedMs = 0L
-        while (elapsedMs < PlaybackStartupWatchdog.MAX_STARTUP_MS * 2) {
+        while (state.verdict == Verdict.Waiting && elapsedMs < MAX_STARTUP_CEILING_PROBE_MS) {
             elapsedMs += PlaybackStartupWatchdog.POLL_INTERVAL_MS
             state = PlaybackStartupWatchdog.observe(state, sample(elapsedMs = elapsedMs, isHeld = true))
         }
 
+        assertEquals(Verdict.Abandon, state.verdict)
+        assertEquals(Reason.NeverStarted, state.reason)
+        assertEquals(
+            PlaybackStartupWatchdog.NO_PROGRESS_DEADLINE_MS,
+            elapsedMs,
+            "the ordinary deadline, not a longer one: a party is no reason to wait longer for nothing",
+        )
+        assertEquals(0L, state.holdMs, "an unproven source is charged the time, not excused it")
+    }
+
+    @Test
+    fun `a held source with a header but no media still reaches the evidence deadline`() {
+        // What the dead candidate really looked like from here: a duration parsed out of the
+        // container and a probe that answered, and not one millisecond of media behind either. Both
+        // are evidence of life, so it gets the longer deadline - and it does get to the end of it.
+        var state = PlaybackStartupWatchdog.initial()
+        var elapsedMs = 0L
+        while (state.verdict == Verdict.Waiting && elapsedMs < MAX_STARTUP_CEILING_PROBE_MS) {
+            elapsedMs += PlaybackStartupWatchdog.POLL_INTERVAL_MS
+            state = PlaybackStartupWatchdog.observe(
+                state,
+                sample(
+                    elapsedMs = elapsedMs,
+                    durationMs = 7_500_000L,
+                    hasExternalEvidenceOfLife = true,
+                    isHeld = true,
+                ),
+            )
+        }
+
+        assertEquals(Verdict.Abandon, state.verdict)
+        assertEquals(Reason.NeverStarted, state.reason)
+        assertEquals(PlaybackStartupWatchdog.EVIDENCE_OF_LIFE_DEADLINE_MS, elapsedMs)
+    }
+
+    @Test
+    fun `a party seek under a hold cannot buy an unproven source more time`() {
+        // The two mechanisms together: the party parks the client *and* keeps aligning it, which is
+        // every few seconds a fresh baseline. The rebase makes each jump measure zero progress, so
+        // the source stays unproven and the deadline stays running.
+        var state = PlaybackStartupWatchdog.initial()
+        var elapsedMs = 0L
+        var commandedMs = 0L
+        while (state.verdict == Verdict.Waiting && elapsedMs < MAX_STARTUP_CEILING_PROBE_MS) {
+            elapsedMs += PlaybackStartupWatchdog.POLL_INTERVAL_MS
+            commandedMs += 30_000L
+            state = PlaybackStartupWatchdog.observe(
+                state,
+                sample(
+                    elapsedMs = elapsedMs,
+                    positionMs = commandedMs,
+                    baselineMs = commandedMs,
+                    isHeld = true,
+                ),
+            )
+        }
+
+        assertEquals(Verdict.Abandon, state.verdict)
+        assertEquals(Reason.NeverStarted, state.reason)
+        assertEquals(PlaybackStartupWatchdog.NO_PROGRESS_DEADLINE_MS, elapsedMs)
+    }
+
+    @Test
+    fun `one millisecond of real media buys the hold protection back`() {
+        // The line between the two halves. A source that delivers anything at all is proven from
+        // then on, and from then on the party may hold it for as long as it likes - which is the
+        // guest case above, and must keep working exactly as it did.
+        var state = PlaybackStartupWatchdog.initial()
+        var elapsedMs = PlaybackStartupWatchdog.POLL_INTERVAL_MS
+        state = PlaybackStartupWatchdog.observe(
+            state,
+            sample(elapsedMs = elapsedMs, bufferedPositionMs = 1L, isHeld = true),
+        )
+        assertTrue(state.hasProvenViability, "a millisecond of buffer is media")
+
+        val heldUntilMs = elapsedMs + PlaybackStartupWatchdog.MAX_STARTUP_MS * 3
+        while (elapsedMs < heldUntilMs) {
+            elapsedMs += PlaybackStartupWatchdog.POLL_INTERVAL_MS
+            state = PlaybackStartupWatchdog.observe(
+                state,
+                sample(elapsedMs = elapsedMs, bufferedPositionMs = 1L, isHeld = true),
+            )
+        }
+
         assertEquals(Verdict.Waiting, state.verdict)
         assertNull(state.reason)
-        assertEquals(0L, state.effectiveElapsedMs, "a held player has been given no time at all")
+        assertEquals(
+            0L,
+            state.effectiveElapsedMs,
+            "the proving sample was itself held, so even its own interval was time nobody waited in",
+        )
+    }
+
+    @Test
+    fun `proof earned after the hold began protects the source from then on`() {
+        // Ordering, because the flag is sticky rather than a property of the current sample: held
+        // from the first poll, nothing for a while, then the first bytes arrive *while still held*.
+        // The time before the proof stays charged; the time after it does not.
+        var state = PlaybackStartupWatchdog.initial()
+        var elapsedMs = 0L
+        repeat(5) {
+            elapsedMs += PlaybackStartupWatchdog.POLL_INTERVAL_MS
+            state = PlaybackStartupWatchdog.observe(state, sample(elapsedMs = elapsedMs, isHeld = true))
+        }
+        val chargedBeforeProofMs = state.effectiveElapsedMs
+        assertEquals(elapsedMs, chargedBeforeProofMs, "nothing had been proved, so nothing was excused")
+
+        elapsedMs += PlaybackStartupWatchdog.POLL_INTERVAL_MS
+        state = PlaybackStartupWatchdog.observe(
+            state,
+            sample(elapsedMs = elapsedMs, bufferedPositionMs = 2_400L, isHeld = true),
+        )
+        val chargedAtProofMs = state.effectiveElapsedMs
+
+        repeat(120) {
+            elapsedMs += PlaybackStartupWatchdog.POLL_INTERVAL_MS
+            state = PlaybackStartupWatchdog.observe(
+                state,
+                sample(elapsedMs = elapsedMs, bufferedPositionMs = 2_400L, isHeld = true),
+            )
+        }
+
+        assertEquals(Verdict.Waiting, state.verdict)
+        assertEquals(chargedAtProofMs, state.effectiveElapsedMs, "held time after the proof is free")
     }
 
     @Test
@@ -604,6 +735,179 @@ class PlaybackStartupWatchdogTest {
         assertEquals(0L, state.holdMs)
         assertEquals(elapsedMs, state.effectiveElapsedMs)
     }
+
+    // ---------------------------------------------------------------------------------------
+    // A playhead moved by Watch Together is not progress this source made.
+    //
+    // The S25 run of 2026-09-19, reproduced below: a guest starving on a 4K remux was aligned by
+    // the host from 4339ms to 12012ms, the engine reported the target immediately, and the jump
+    // read as 12012ms of progress. That moved the play off the patient no-progress deadline and
+    // onto STALL_DEADLINE_MS, which then ran out against a position only the host could move. The
+    // party's only candidate was abandoned as Stalled.
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    fun `a party seek to a later position counts as no progress at all`() {
+        var state = PlaybackStartupWatchdog.initial()
+        // Real progress first: the guest genuinely reached 4339ms on its own.
+        state = PlaybackStartupWatchdog.observe(
+            state,
+            sample(elapsedMs = 2_000L, positionMs = 4_339L, bufferedPositionMs = 4_339L),
+        )
+        assertEquals(4_339L, state.bestProgressMs)
+
+        // The host aligns everyone to 12012ms. The engine reports the target at once, with no
+        // buffer beyond it, and the baseline moves with the command.
+        state = PlaybackStartupWatchdog.observe(
+            state,
+            sample(
+                elapsedMs = 3_000L,
+                positionMs = 12_012L,
+                bufferedPositionMs = 12_012L,
+                baselineMs = 12_012L,
+            ),
+        )
+        assertEquals(Verdict.Waiting, state.verdict)
+        assertEquals(0L, state.bestProgressMs)
+    }
+
+    @Test
+    fun `a party seek does not hand the source a fresh startup`() {
+        // The deadline that matters after a rebase is the no-progress one, and it is absolute in
+        // effective elapsed time. Seeking at the last moment must not buy a single millisecond.
+        var state = PlaybackStartupWatchdog.initial()
+        state = PlaybackStartupWatchdog.observe(
+            state,
+            sample(elapsedMs = 2_000L, positionMs = 4_339L, bufferedPositionMs = 4_339L),
+        )
+        state = PlaybackStartupWatchdog.observe(
+            state,
+            sample(
+                elapsedMs = PlaybackStartupWatchdog.EVIDENCE_OF_LIFE_DEADLINE_MS - 1L,
+                positionMs = 12_012L,
+                bufferedPositionMs = 12_012L,
+                baselineMs = 12_012L,
+            ),
+        )
+        assertEquals(Verdict.Waiting, state.verdict)
+
+        state = PlaybackStartupWatchdog.observe(
+            state,
+            sample(
+                elapsedMs = PlaybackStartupWatchdog.EVIDENCE_OF_LIFE_DEADLINE_MS,
+                positionMs = 12_012L,
+                bufferedPositionMs = 12_012L,
+                baselineMs = 12_012L,
+            ),
+        )
+        assertEquals(Verdict.Abandon, state.verdict)
+        assertEquals(Reason.NeverStarted, state.reason)
+    }
+
+    @Test
+    fun `repeated party seeks cannot extend the watchdog indefinitely`() {
+        // A party correcting a guest every second must not be able to keep it alive forever. The
+        // ceiling is absolute, so it ends the play whatever the corrections do.
+        var state = PlaybackStartupWatchdog.initial()
+        var elapsedMs = 0L
+        var targetMs = 0L
+        while (state.verdict == Verdict.Waiting && elapsedMs < MAX_STARTUP_CEILING_PROBE_MS) {
+            elapsedMs += PlaybackStartupWatchdog.POLL_INTERVAL_MS
+            targetMs += 5_000L
+            state = PlaybackStartupWatchdog.observe(
+                state,
+                sample(
+                    elapsedMs = elapsedMs,
+                    positionMs = targetMs,
+                    bufferedPositionMs = targetMs,
+                    baselineMs = targetMs,
+                ),
+            )
+        }
+        assertEquals(Verdict.Abandon, state.verdict)
+        assertTrue(
+            elapsedMs <= PlaybackStartupWatchdog.MAX_STARTUP_MS,
+            "a seek every poll kept the play alive to ${elapsedMs}ms",
+        )
+    }
+
+    @Test
+    fun `real advancement past a party seek target still counts`() {
+        var state = PlaybackStartupWatchdog.initial()
+        state = PlaybackStartupWatchdog.observe(
+            state,
+            sample(elapsedMs = 2_000L, positionMs = 4_339L, bufferedPositionMs = 4_339L),
+        )
+        state = PlaybackStartupWatchdog.observe(
+            state,
+            sample(
+                elapsedMs = 3_000L,
+                positionMs = 12_012L,
+                bufferedPositionMs = 12_012L,
+                baselineMs = 12_012L,
+            ),
+        )
+        assertEquals(0L, state.bestProgressMs)
+
+        // The source refills past the commanded target: ordinary progress, measured from it.
+        state = PlaybackStartupWatchdog.observe(
+            state,
+            sample(
+                elapsedMs = 4_000L,
+                positionMs = 12_012L,
+                bufferedPositionMs = 15_000L,
+                baselineMs = 12_012L,
+            ),
+        )
+        assertEquals(Verdict.Waiting, state.verdict)
+        assertEquals(15_000L - 12_012L, state.bestProgressMs)
+
+        // And that advance restarts the stall clock, so the guest is not abandoned for the
+        // seconds it spent frozen before the party moved it.
+        state = PlaybackStartupWatchdog.observe(
+            state,
+            sample(
+                elapsedMs = 4_000L + PlaybackStartupWatchdog.STALL_DEADLINE_MS - 1L,
+                positionMs = 12_012L,
+                bufferedPositionMs = 15_000L,
+                baselineMs = 12_012L,
+            ),
+        )
+        assertEquals(Verdict.Waiting, state.verdict)
+    }
+
+    @Test
+    fun `a party seek leaves held time excluded exactly as before`() {
+        // The rebase must not disturb the hold accounting, which is a separate mechanism that a
+        // party exercises at the same moments.
+        var state = PlaybackStartupWatchdog.initial()
+        state = PlaybackStartupWatchdog.observe(
+            state,
+            sample(elapsedMs = 1_000L, positionMs = 4_339L, bufferedPositionMs = 4_339L),
+        )
+        // Held for ten seconds across the alignment, exactly as a stall hold does it.
+        state = PlaybackStartupWatchdog.observe(state, sample(elapsedMs = 2_000L, isHeld = true))
+        state = PlaybackStartupWatchdog.observe(
+            state,
+            sample(
+                elapsedMs = 12_000L,
+                positionMs = 12_012L,
+                bufferedPositionMs = 12_012L,
+                baselineMs = 12_012L,
+                isHeld = true,
+            ),
+        )
+        // 11s charged to the hold, not 10: the interval a hold *begins* in is charged too, because
+        // the buffer had already stopped for part of it. That is the pre-existing rule and the
+        // rebase must not have touched it.
+        assertEquals(11_000L, state.holdMs)
+        assertEquals(1_000L, state.effectiveElapsedMs)
+        assertEquals(Verdict.Waiting, state.verdict)
+        assertEquals(0L, state.bestProgressMs)
+    }
+
+    /** Comfortably past [PlaybackStartupWatchdog.MAX_STARTUP_MS], so the loop above terminates. */
+    private val MAX_STARTUP_CEILING_PROBE_MS = PlaybackStartupWatchdog.MAX_STARTUP_MS * 3
 
     private fun sample(
         elapsedMs: Long,

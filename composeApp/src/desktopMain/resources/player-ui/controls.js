@@ -62,6 +62,7 @@ const openingRelease = document.getElementById("openingRelease");
 const openingManualButton = document.getElementById("openingManualButton");
 const partyBanner = document.getElementById("partyBanner");
 const partyBannerText = document.getElementById("partyBannerText");
+const partyBannerDetail = document.getElementById("partyBannerDetail");
 const partyBannerAvatars = document.getElementById("partyBannerAvatars");
 const partyBannerAction = document.getElementById("partyBannerAction");
 const partyBannerSecondary = document.getElementById("partyBannerSecondary");
@@ -100,6 +101,7 @@ const wtCopyInviteCodeButton = document.getElementById("wtCopyInviteCodeButton")
 const wtSettingsSection = document.getElementById("wtSettingsSection");
 const wtGuestControlSwitch = document.getElementById("wtGuestControlSwitch");
 const wtWaitSwitch = document.getElementById("wtWaitSwitch");
+const wtAwaySwitch = document.getElementById("wtAwaySwitch");
 const wtPolicySection = document.getElementById("wtPolicySection");
 const wtPolicySegments = document.getElementById("wtPolicySegments");
 const wtPolicyExplanation = document.getElementById("wtPolicyExplanation");
@@ -350,7 +352,7 @@ let state = {
   openingManualEscapeLabel: "",
   openingProviderLine: "",
   openingReleaseName: "",
-  partyStatus: { visible: false, text: "", tone: "neutral", action: "", actionLabel: "", secondaryAction: "", secondaryActionLabel: "", people: [] },
+  partyStatus: { visible: false, text: "", detail: "", tone: "neutral", action: "", actionLabel: "", secondaryAction: "", secondaryActionLabel: "", people: [] },
   watchTogether: {
     open: false, state: "idle", badge: "none", memberCount: 0, buttonLabel: "Watch Together",
     people: [], inviteTargets: [], joinPolicy: 1,
@@ -2171,6 +2173,10 @@ const renderPartyBanner = suppress => {
     return;
   }
   partyBannerText.textContent = messageText;
+  // The second line: what happened is the headline, what is being done about it is subordinate.
+  const detailText = String(status.detail || "").trim();
+  partyBannerDetail.textContent = detailText;
+  partyBannerDetail.hidden = detailText.length === 0;
   partyBanner.dataset.tone = String(status.tone || "neutral");
   partyBanner.classList.toggle("compact", !state.controlsVisible);
   const people = Array.isArray(status.people) ? status.people.slice(0, 2) : [];
@@ -2348,6 +2354,11 @@ const renderPartyPanel = suppress => {
   wtWaitSwitch.setAttribute("aria-checked", wt.pauseWhenBuffers ? "true" : "false");
   wtWaitSwitch.dataset.wtCommand = "wtSetWaitForEveryone";
   wtWaitSwitch.dataset.wtValue = wt.pauseWhenBuffers ? "0" : "1";
+  // Its own switch beside the one it is most likely to be confused with. A stalled stream and a
+  // person who has stepped away are different problems with different right answers.
+  wtAwaySwitch.setAttribute("aria-checked", wt.pauseForAway ? "true" : "false");
+  wtAwaySwitch.dataset.wtCommand = "wtSetPauseForAway";
+  wtAwaySwitch.dataset.wtValue = wt.pauseForAway ? "0" : "1";
 
   wtPolicySection.hidden = !wt.joinPolicyVisible;
   wtPolicySegments.classList.toggle("saving", Boolean(wt.joinPolicySaving));

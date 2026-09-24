@@ -133,6 +133,24 @@ data class PartyTick(
      * wire, and ignored by builds that predate it; the protocol version does not move.
      */
     val hold: List<String> = emptyList(),
+    /**
+     * Every member the host currently believes is away, itself included.
+     *
+     * The host is the aggregator because it is the only client that hears from everybody: a guest
+     * reports its own away on the peer plane, and the host folds those together with its own and
+     * republishes the roster here. Without it a guest could only ever know about members whose
+     * broadcasts it happened to receive, and two guests would disagree about who was in the room.
+     *
+     * Carried beside [hold] rather than inside it on purpose. [hold] is *who the party is waiting
+     * for*, which is a decision; this is *who is not watching*, which is a fact - and a member can
+     * be either without the other. Intersecting the two is what lets a guest say "Waiting for Riyad
+     * to return" instead of "Waiting for Riyad to buffer".
+     *
+     * Peer plane only, optional on the wire, absent from every build before this one and read as
+     * "nobody is away" there - which is exactly the behaviour those builds already have. The
+     * protocol version does not move.
+     */
+    val away: List<String> = emptyList(),
 ) {
     /**
      * Where the party is at [partyNowMs].
@@ -213,6 +231,41 @@ const val WatchPartyFallbackSeekThresholdMs = 4_000L
  */
 const val WatchPartyFallbackSeekLeadMs = 2_500L
 
+/**
+ * How long after a starve a guest closes an ordinary gap by rate alone.
+ *
+ * A corrective seek is the one correction that costs the stream its buffer, and a stream that has
+ * just finished starving is exactly the one that can least afford to pay it. Without this the two
+ * halves of the feature fought each other: a guest seeks once it is [WatchPartySeekThresholdMs]
+ * behind, the host only holds the party after [WatchPartyGuestBufferingGraceMs] of *continuous*
+ * buffering, so every rebuffer lasting between one and two and a half seconds put the guest
+ * straight into a seek while the host was still deciding whether to wait - and the seek threw away
+ * the buffer that had just been rebuilt, which starved it again. Self-sustaining, and reported
+ * from hardware 2026-09-21 as the laptop keeping "the buffer -> sync ahead -> buffer loop going".
+ *
+ * Sized so the nudge can actually finish the job: at [WatchPartyMaxNudgeRate] a guest closes 10% of
+ * real time, so absorbing the worst gap in that band - the ~2.5s the host tolerates before it holds
+ * - takes about twenty-five seconds of nudging. Bounded on purpose. A guest that is still behind
+ * when this runs out has a gap the nudge is not closing, and the seek it then takes is the right
+ * answer rather than a symptom.
+ */
+const val WatchPartyStarveRecoverySeekSuppressionMs = 20_000L
+
+/**
+ * The gap past which a just-recovered guest seeks anyway, however fresh the starve.
+ *
+ * Nudging is only sensible while it converges in a time a viewer would accept: at
+ * [WatchPartyMaxNudgeRate] this much drift already takes half a minute to close, and anything
+ * beyond it is a guest that has fallen out of the party rather than one absorbing a rebuffer.
+ *
+ * Deliberately just above [WatchPartyGuestBufferingGraceMs], so the two mechanisms hand the problem
+ * over instead of overlapping: a gap this wide means the guest starved for longer than the host
+ * tolerates, so the host's own hold is the thing that should have caught it, and suppressing the
+ * seek as well would leave nobody acting. The pair being ordered the *wrong* way round is the whole
+ * bug this policy exists for, so their relationship is stated here rather than left to coincidence.
+ */
+const val WatchPartyStarveRecoverySeekOverrideMs = 3_000L
+
 enum class DriftCorrectionKind { NONE, TEMPORARY_SPEED, SEEK }
 
 data class DriftCorrection(
@@ -279,18 +332,46 @@ internal fun partyNudgeSpeed(driftMs: Long, sharedSpeed: Float): Float {
  * Carries the one thing a correction decision cannot read off a single sample: whether the gap is
  * still there.
  */
-data class DriftTracker(val seekStreak: Int = 0, val nudging: Boolean = false) {
+data class DriftTracker(
+    val seekStreak: Int = 0,
+    val nudging: Boolean = false,
+    /**
+     * When this guest was last seen starved, on the local clock; 0 for never.
+     *
+     * Recorded rather than inferred, because by the time a gap is measurable the starve that opened
+     * it is over: the correction runs on a player that has finished loading, and a player that is
+     * still loading is not one this can measure at all.
+     */
+    val starvedAtMs: Long = 0L,
+) {
+    /** Records a starve. The engine is buffering, so there is no position worth correcting yet. */
+    fun starved(nowMs: Long): DriftTracker = copy(starvedAtMs = nowMs)
+
+    /** Whether a seek would land on a buffer this guest has only just finished rebuilding. */
+    fun recoveringFromStarve(nowMs: Long): Boolean =
+        starvedAtMs > 0L && nowMs - starvedAtMs < WatchPartyStarveRecoverySeekSuppressionMs
+
     /**
      * The correction for this tick, with the seek held back until the gap has been seen twice.
      *
      * A gap wide enough to seek for that closes on its own by the next tick was a measurement, not
      * a drift, and seeking for it costs the stream its buffer for nothing.
      *
+     * **Ordinary drift only.** A commanded seek, a host scrub, a source-generation change and an
+     * Away return are not corrections and never arrive here: they are scheduled through
+     * [partySeekPlan] against the barrier, and the caller has already returned by the time this
+     * runs. Nothing below can suppress one, which is why the starve policy can be this blunt.
+     *
      * A member rather than an extension, so a caller cannot reach it without the receiver and
      * cannot resolve `next` to something else entirely - which is exactly what a missing import
      * made the compiler do the first time this was written.
      */
-    fun next(localPositionMs: Long, expectedPositionMs: Long, sharedSpeed: Float): DriftOutcome {
+    fun next(
+        localPositionMs: Long,
+        expectedPositionMs: Long,
+        sharedSpeed: Float,
+        nowMs: Long = 0L,
+    ): DriftOutcome {
         val correction = partyDriftCorrection(
             localPositionMs = localPositionMs,
             expectedPositionMs = expectedPositionMs,
@@ -300,10 +381,27 @@ data class DriftTracker(val seekStreak: Int = 0, val nudging: Boolean = false) {
         if (correction.kind != DriftCorrectionKind.SEEK) {
             return DriftOutcome(
                 correction = correction,
-                tracker = DriftTracker(
+                tracker = copy(
                     seekStreak = 0,
                     nudging = correction.kind == DriftCorrectionKind.TEMPORARY_SPEED,
                 ),
+            )
+        }
+        val magnitude = abs(expectedPositionMs - localPositionMs)
+        // A buffer this guest has just rebuilt is worth more than the second of alignment a seek
+        // would buy, so the gap is nudged away instead - unless it is wide enough that nudging is
+        // no longer a plausible way to close it, or the window has run out.
+        if (recoveringFromStarve(nowMs) && magnitude < WatchPartyStarveRecoverySeekOverrideMs) {
+            return DriftOutcome(
+                correction = DriftCorrection(
+                    kind = DriftCorrectionKind.TEMPORARY_SPEED,
+                    targetPositionMs = expectedPositionMs,
+                    temporarySpeed = partyNudgeSpeed(expectedPositionMs - localPositionMs, sharedSpeed),
+                    restoreSpeed = sharedSpeed,
+                ),
+                // The streak is not carried while the gap is nudged rather than confirmed, so the
+                // window running out costs one more tick of confirmation and not an instant seek.
+                tracker = copy(seekStreak = 0, nudging = true),
             )
         }
         val streak = seekStreak + 1
@@ -317,13 +415,14 @@ data class DriftTracker(val seekStreak: Int = 0, val nudging: Boolean = false) {
                     temporarySpeed = partyNudgeSpeed(expectedPositionMs - localPositionMs, sharedSpeed),
                     restoreSpeed = sharedSpeed,
                 ),
-                tracker = DriftTracker(seekStreak = streak, nudging = true),
+                tracker = copy(seekStreak = streak, nudging = true),
             )
         }
         // The seek restores the shared speed on the way through, so the next pass starts from a
         // player that is not nudging - saying otherwise would hand it the narrow release band for a
-        // correction it is not making.
-        return DriftOutcome(correction, DriftTracker(seekStreak = 0, nudging = false))
+        // correction it is not making. The starve is cleared with it: the buffer it was protecting
+        // is the one this seek just spent.
+        return DriftOutcome(correction, DriftTracker(seekStreak = 0, nudging = false, starvedAtMs = 0L))
     }
 }
 
@@ -361,3 +460,17 @@ fun partyFallbackDriftCorrection(
         )
     }
 }
+
+/**
+ * The party's nominal speed while the engine runs at [actual] to close a drift gap, or null when
+ * the two are the same - that is, when there is no correction for the rest of the player to hide.
+ *
+ * Anything that shows or shares a speed reads the nominal one. On 2026-09-18 the engine's corrected
+ * rate reached the S25's speed control as `1.0035x`, and the same value went out as the party speed
+ * on any command a guest sent mid-correction.
+ */
+fun partyCorrectionNominalSpeed(actual: Float, nominal: Float): Float? =
+    nominal.takeIf { kotlin.math.abs(actual - nominal) >= PartySpeedEpsilon }
+
+/** Rates closer than this are the same rate. */
+const val PartySpeedEpsilon = 0.001f

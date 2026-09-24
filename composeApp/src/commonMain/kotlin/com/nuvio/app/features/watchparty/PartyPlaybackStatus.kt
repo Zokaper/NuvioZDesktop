@@ -15,6 +15,14 @@ package com.nuvio.app.features.watchparty
  */
 
 enum class PartyStatusKind {
+    /**
+     * One of the [PartySourceActivity] states, which are the source-work ones.
+     *
+     * A single kind rather than one per activity: the activity is already carried, and the kind's
+     * job here is the debounce identity and the renderer's choice of shape. Its own transitions are
+     * visible because the text changes with them.
+     */
+    SourceActivity,
     SourceNotFound,
     VersionTooShort,
     SwitchingEpisode,
@@ -22,6 +30,8 @@ enum class PartyStatusKind {
     HostChoosingSource,
     WaitingForSources,
     WaitingForBuffering,
+    /** The party is stopped because somebody stepped away, not because anything is loading. */
+    WaitingForAway,
     EveryoneWaitingOnYou,
     HostBuffering,
     WaitingForHostStart,
@@ -51,9 +61,29 @@ data class PartyStatusLine(
     val action: PartyStatusAction? = null,
     val secondaryAction: PartyStatusAction? = null,
     val tone: PartyStatusTone = PartyStatusTone.Neutral,
+    /**
+     * The second line: what is being done about what [text] says happened.
+     *
+     * Null for every row that was here before this existed, which is most of them - "Waiting for
+     * Ahmed to buffer" is already a whole sentence. The source rows are the ones that were losing
+     * half their meaning to a single line; see [PartySourceMessage].
+     */
+    val detail: String? = null,
 ) {
-    /** Two lines with the same identity update in place instead of re-running the debounce. */
-    val identity: String get() = "${kind.name}:${people.firstOrNull()?.profileId.orEmpty()}"
+    /**
+     * Two lines with the same identity update in place instead of re-running the debounce.
+     *
+     * The text is part of it for a source row, because [PartyStatusKind.SourceActivity] covers
+     * several situations: matching after a host change and resolving the result of it are one kind
+     * and two different things to be told, and a debounce that treats them as the same line would
+     * show the first and swallow the second.
+     */
+    val identity: String
+        get() = if (kind == PartyStatusKind.SourceActivity) {
+            "${kind.name}:$text"
+        } else {
+            "${kind.name}:${people.firstOrNull()?.profileId.orEmpty()}"
+        }
 }
 
 /** The viewer's own party source work, as far as the status line needs it. */
@@ -67,6 +97,12 @@ const val PartyStatusReconnectVisibleMs = 3_000L
 
 data class PartyPlaybackStatusInputs(
     val inParty: Boolean,
+    /**
+     * What this client is doing about a source, which the rows below prefer over their own wording.
+     *
+     * [PartySourceActivity.None] leaves every pre-existing row exactly as it was.
+     */
+    val sourceActivity: PartySourceActivity = PartySourceActivity.None,
     val isHost: Boolean,
     /** The host as named by the durable snapshot. Null outside a party. */
     val host: PartyStatusPerson? = null,
@@ -90,6 +126,15 @@ data class PartyPlaybackStatusInputs(
     val stallHoldOthers: List<PartyStatusPerson> = emptyList(),
     /** This viewer is the one a stall hold is waiting on. */
     val selfHeld: Boolean = false,
+    /**
+     * Other members the party is stopped for because they are **away**, named.
+     *
+     * Deliberately a separate input from [stallHoldOthers] rather than a flag on it. They are
+     * different waits with different wording and different advice - one ends when a buffer fills,
+     * the other when a person comes back - and folding them together is how "Waiting for Riyad to
+     * buffer" got shown about a phone that was in a pocket.
+     */
+    val awayHoldOthers: List<PartyStatusPerson> = emptyList(),
     val hostBuffering: Boolean = false,
     val timelinePlaying: Boolean = false,
     /** How long a barrier park or pending seek has been holding this player, 0 when not. */
@@ -131,13 +176,49 @@ fun projectPartyPlaybackStatus(inputs: PartyPlaybackStatusInputs): PartyStatusLi
             tone = PartyStatusTone.Warning,
         )
     }
-    // 3.
+    // 3. An episode handoff is still its own sentence: the content changed, not the source.
+    if (inParty && realizationChangesEpisode &&
+        realization in setOf(PartyRealizationPhase.Matching, PartyRealizationPhase.Resolving)
+    ) {
+        return PartyStatusLine(
+            PartyStatusKind.SwitchingEpisode,
+            "Switching to ${possessive(hostName)} episode…",
+            hostPeople,
+            tone = PartyStatusTone.Waiting,
+        )
+    }
+    // 3b. Everything else about a source says which situation it is, rather than "Matching source".
+    // ⚠ **This row replaces the generic one and must stay above the buffering rows**: a client that
+    // has no source open yet is not buffering, and calling it that is how "the party stopped and the
+    // app says nothing about why" happened.
+    partySourceMessage(sourceActivity, isHost = isHost, hostName = host?.name)?.let { message ->
+        return PartyStatusLine(
+            kind = PartyStatusKind.SourceActivity,
+            text = message.headline,
+            detail = message.detail,
+            people = if (sourceActivity == PartySourceActivity.HostSourceChangedMatching ||
+                sourceActivity == PartySourceActivity.HostSourceChangedResolving ||
+                sourceActivity == PartySourceActivity.InitialPartyMatch
+            ) hostPeople else emptyList(),
+            // The one source state a person has to act on keeps the action it has always had.
+            action = if (sourceActivity == PartySourceActivity.PartySourceUnmatched) {
+                PartyStatusAction.ChooseSource
+            } else {
+                null
+            },
+            tone = message.tone,
+        )
+    }
+    // 3c. The row this replaced, kept as the answer for a caller that has not derived an activity.
+    // A projector that drops a row because one of its inputs defaulted is worse than a generic
+    // sentence: the party would say nothing at all while a member matched a source.
     if (inParty && realization in setOf(PartyRealizationPhase.Matching, PartyRealizationPhase.Resolving)) {
-        return if (realizationChangesEpisode) {
-            PartyStatusLine(PartyStatusKind.SwitchingEpisode, "Switching to ${possessive(hostName)} episode…", hostPeople, tone = PartyStatusTone.Waiting)
-        } else {
-            PartyStatusLine(PartyStatusKind.MatchingSource, "Matching ${possessive(hostName)} source…", hostPeople, tone = PartyStatusTone.Waiting)
-        }
+        return PartyStatusLine(
+            PartyStatusKind.MatchingSource,
+            "Matching ${possessive(hostName)} source…",
+            hostPeople,
+            tone = PartyStatusTone.Waiting,
+        )
     }
     // 4. Only the others: the host choosing knows they are.
     if (guest && waitingForHostSource) {
@@ -156,6 +237,20 @@ fun projectPartyPlaybackStatus(inputs: PartyPlaybackStatusInputs): PartyStatusLi
         return PartyStatusLine(
             PartyStatusKind.WaitingForSources, text, awaitingSource,
             action = PartyStatusAction.StartAnyway, tone = PartyStatusTone.Waiting,
+        )
+    }
+    // 5b. Away outranks every buffering row below it: when both are true the party is stopped for
+    // the person, and telling the others to wait for a buffer that is not the reason is worse than
+    // saying nothing. It sits under the source rows for the ordinary reason - a member with no
+    // source open is not watching *or* away, they are still getting ready.
+    if (inParty && awayHoldOthers.isNotEmpty()) {
+        return PartyStatusLine(
+            PartyStatusKind.WaitingForAway,
+            partyAwayHoldHeadline(awayHoldOthers.map { it.name }),
+            awayHoldOthers,
+            // The same escape the stall hold has, and the host is the only one who can take it.
+            action = if (isHost) PartyStatusAction.DontWait else null,
+            tone = PartyStatusTone.Waiting,
         )
     }
     // 6b before 6: the held member reads about themselves, even if someone else is held too.

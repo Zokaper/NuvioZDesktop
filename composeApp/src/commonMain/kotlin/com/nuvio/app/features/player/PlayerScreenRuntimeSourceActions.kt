@@ -14,6 +14,9 @@ import com.nuvio.app.features.p2p.P2pStreamingEngine
 import com.nuvio.app.core.network.NetworkQualityRepository
 import com.nuvio.app.core.network.NetworkThroughputMeter
 import com.nuvio.app.features.streams.StreamItem
+import co.touchlab.kermit.Logger
+import com.nuvio.app.features.watchparty.PartySourceDescriptorV2
+import com.nuvio.app.features.watchparty.WatchPartyState
 import com.nuvio.app.features.watchparty.shouldPublishPartySourceChange
 import com.nuvio.app.features.watchparty.matchesPlayback
 import com.nuvio.app.features.watchparty.WatchPartyRepository
@@ -300,14 +303,42 @@ internal fun PlayerScreenRuntime.matchesActiveSource(stream: StreamItem): Boolea
 }
 
 /**
- * A source the *user* picked from the sources panel.
+ * A source the *user* picked from a sources panel.
  *
- * Only this refunds the credential-refresh budget. [switchToSource] itself must not: it also
- * serves in-player source changes and re-entrant debrid resolution, so refunding there would hand
- * an automatic retry of a dying source a fresh budget every attempt - which is the shape of the
- * loop this budget exists to stop.
+ * **Both** panels, and that is the point of it being one function. The Compose panel and the
+ * native/HTML controls draw the same list for the same person, so a pick in either is the same
+ * event and has to reach the party the same way; the native one called [switchToSource] instead,
+ * and a host changing source moved nobody but itself. See the call sites in
+ * `PlayerScreenRuntimeUi.kt`, and `PlayerSourcePickRoutingTest`, which asserts they agree.
  */
 internal fun PlayerScreenRuntime.switchToUserSelectedSource(stream: StreamItem) {
+    markSourceUserSelected()
+    // A pick that stops at the P2P consent dialog has not happened yet. Publishing here would
+    // move the whole party onto a source this member may be about to cancel, and cancelling
+    // leaves nothing behind to withdraw it with. The continuation publishes it instead, once the
+    // dialog is answered - see [switchToUserSelectedSourceAfterP2pConsent].
+    if (userSelectedSourceAwaitsP2pConsent(stream)) {
+        pendingP2pSwitch = PendingPlayerP2pSwitch(
+            stream = stream,
+            episode = null,
+            isAutoPlay = false,
+            userSelected = true,
+        )
+        return
+    }
+    publishPartySourceChange(stream)
+    switchToSource(stream)
+}
+
+/**
+ * The bookkeeping every explicit pick does, whichever panel it came from.
+ *
+ * Only a user pick refunds the credential-refresh budget. [switchToSource] itself must not: it
+ * also serves in-player source changes and re-entrant debrid resolution, so refunding there would
+ * hand an automatic retry of a dying source a fresh budget every attempt - which is the shape of
+ * the loop this budget exists to stop.
+ */
+private fun PlayerScreenRuntime.markSourceUserSelected() {
     credentialRefreshesUsed = 0
     credentialRefreshAttemptedSourceUrl = null
     // An explicit pick retires the automatic chain. Without this the eight-second watchdog
@@ -316,8 +347,37 @@ internal fun PlayerScreenRuntime.switchToUserSelectedSource(stream: StreamItem) 
     nextEpisodeFallbacks = emptyList()
     // A hand-picked source: "Prefer built-in subtitles" steps aside for the rest of this player.
     activeSourceAutoPicked = false
+}
+
+/**
+ * Whether picking [stream] will stop at the P2P consent dialog rather than change the source.
+ *
+ * Deliberately the same four facts [shouldRequestP2pConsentForPlayerControls] asks, so the two
+ * panels cannot drift into disagreeing about which picks are deferred.
+ */
+internal fun PlayerScreenRuntime.userSelectedSourceAwaitsP2pConsent(stream: StreamItem): Boolean =
+    shouldRequestP2pConsentForPlayerControls(
+        isP2pStream = isP2pStream(stream),
+        shouldResolveToPlayableStream = DirectDebridPlaybackResolver.shouldResolveToPlayableStream(stream),
+        p2pSettingsVisible = P2pSettingsRepository.isVisible,
+        p2pEnabled = P2pSettingsRepository.uiState.value.p2pEnabled,
+    )
+
+/**
+ * A user pick resumed on the far side of the P2P consent dialog.
+ *
+ * The party hears about it *here* rather than where it was picked, because until the dialog was
+ * answered there was nothing to hear: a member that cancels has not changed source, and a party
+ * told otherwise would have moved every guest onto a stream nobody started.
+ *
+ * Only reached when the pending switch was flagged [PendingPlayerP2pSwitch.userSelected]. The
+ * automatic chain reaches the same dialog - [switchToP2pSourceStream] parks its own pending
+ * switch - and must stay local when that one is answered, exactly as it does everywhere else.
+ */
+internal fun PlayerScreenRuntime.switchToUserSelectedSourceAfterP2pConsent(stream: StreamItem) {
+    markSourceUserSelected()
     publishPartySourceChange(stream)
-    switchToSource(stream)
+    switchToP2pSourceStream(stream)
 }
 
 /**
@@ -333,6 +393,12 @@ internal fun PlayerScreenRuntime.switchToUserSelectedSource(stream: StreamItem) 
  * members picking at the same instant produce one advance and one rejection rather than two
  * advances. `partyPublishedSourceGeneration` is the local half of the same guarantee: a retry or a
  * recomposition of the same pick cannot advance it twice.
+ *
+ * For the **host**, a pick of a different release advances the party even when the two look alike
+ * enough to score `EquivalentMedia`. That tier is the one the automatic paths must treat as a
+ * duplicate and the one a person cannot have meant: the host opened the panel and chose another
+ * release, and the party's timeline is whatever the host is watching. Re-picking the release the
+ * party is already on is still refused, for either member.
  */
 private fun PlayerScreenRuntime.publishPartySourceChange(stream: StreamItem) {
     val party = WatchPartyRepository.uiState.value.party
@@ -345,6 +411,12 @@ private fun PlayerScreenRuntime.publishPartySourceChange(stream: StreamItem) {
             profileId = WatchPartyRepository.uiState.value.activeProfileId,
             picked = picked,
             publishedSourceGeneration = partyPublishedSourceGeneration,
+            // Only this call site sets it, and only because only this one is a person. The guard's
+            // duplicate test cannot tell a host deliberately changing release from a realization
+            // that flapped onto a look-alike, so for the host it narrows to the party's own
+            // release: re-picking what is playing is still refused, picking a different release is
+            // now the authoritative change the sources panel says it is.
+            explicitHostSelection = true,
         )
     ) return
     partyPublishedSourceGeneration = party.sourceGeneration
@@ -360,6 +432,60 @@ private fun PlayerScreenRuntime.publishPartySourceChange(stream: StreamItem) {
             // stands as an alternate, and the authoritative source is whatever the party says it
             // is: releasing both latches lets the next snapshot decide, including by handing this
             // player back to a source it has just left.
+            partyPublishedSourceGeneration = null
+            partyHandledSourceGeneration = null
+        }
+    }
+}
+
+/** The same tag the party effect logs under, so a realignment reads in sequence with the gate. */
+private val sourceActionsPartyLog = Logger.withTag("WatchPartyPlayer")
+
+/**
+ * Moves the party onto the release the *host* has ended up on, after its own chain moved it there.
+ *
+ * The automatic chain is local by design and stays local for everything that produces another URL
+ * for the same bytes - see `partySourceTimelineDecision`. This is the one case it cannot be: the
+ * host defines the party's timeline, so a host on a different release has already changed what the
+ * shared timestamp means, and the only honest thing left is to say so. The party then does what it
+ * does for a hand-picked source: the generation advances, the start gate closes, every guest
+ * re-realizes against the new descriptor, and the readiness barrier starts everyone together.
+ *
+ * Guarded exactly as the deliberate pick is - `shouldPublishPartySourceChange` refuses a
+ * republication of the source the party is already on, and `partyPublishedSourceGeneration` refuses
+ * a second advance for the same generation - because a realization that flaps must not turn into a
+ * party that re-realizes on every flap.
+ */
+internal fun PlayerScreenRuntime.publishHostPartySourceRealignment(
+    party: WatchPartyState,
+    descriptor: PartySourceDescriptorV2,
+    timelineChanged: Boolean = false,
+) {
+    if (
+        !shouldPublishPartySourceChange(
+            party = party,
+            profileId = WatchPartyRepository.uiState.value.activeProfileId,
+            picked = descriptor,
+            publishedSourceGeneration = partyPublishedSourceGeneration,
+            // The caller's verdict, which is stronger than the duplicate heuristic and is the
+            // only thing that reaches this function: `AdvancePartySource`. Without it the guard
+            // refuses a re-cut file as a duplicate descriptor and a look-alike release as an
+            // equivalent, and the party keeps a timeline the host has already left - the same
+            // silent divergence this path exists to end, arriving by the one door left open.
+            timelineChanged = timelineChanged,
+        )
+    ) return
+    partyPublishedSourceGeneration = party.sourceGeneration
+    partyHandledSourceGeneration = party.sourceGeneration + 1
+    sourceActionsPartyLog.i {
+        "host source realignment party=${party.id} generation=${party.sourceGeneration} " +
+            "release=${descriptor.releaseFingerprint}"
+    }
+    scope.launch {
+        WatchPartyRepository.selectSource(
+            fingerprint = descriptor,
+            expectedSourceGeneration = party.sourceGeneration,
+        ).onFailure {
             partyPublishedSourceGeneration = null
             partyHandledSourceGeneration = null
         }

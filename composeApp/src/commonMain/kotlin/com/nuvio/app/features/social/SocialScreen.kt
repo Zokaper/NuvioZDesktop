@@ -1,10 +1,7 @@
 package com.nuvio.app.features.social
 
-import com.nuvio.app.features.watchparty.currentEpochMs
-import com.nuvio.app.features.watchparty.WatchPartyStatus
-import com.nuvio.app.features.watchparty.WatchPartyRepository
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -22,17 +19,24 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -45,7 +49,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
@@ -65,16 +72,22 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.text.lerp
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -84,10 +97,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.NuvioAsyncImage
 import com.nuvio.app.core.ui.NuvioTokens
+import com.nuvio.app.core.ui.nuvioSafeBottomPadding
+import com.nuvio.app.core.ui.nuvioWindowClass
 import com.nuvio.app.features.profiles.parseHexColor
+import com.nuvio.app.features.watchparty.WatchPartyRepository
+import com.nuvio.app.features.watchparty.WatchPartyStatus
+import com.nuvio.app.features.watchparty.currentEpochMs
 import com.nuvio.app.features.watchprogress.ContinueWatchingPreferencesRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -124,6 +143,13 @@ internal data class SocialFeedback(val message: String, val tone: SocialFeedback
 @Composable
 fun SocialScreen(
     modifier: Modifier = Modifier,
+    /**
+     * The tablet floating top bar's height, when there is one.
+     *
+     * Every other tab takes this and this screen did not, so on a tablet its header sat under the
+     * floating bar. Null on a phone, where the status-bar inset below is the whole answer.
+     */
+    topChromePadding: Dp? = null,
     scrollToTopRequests: Flow<Unit> = emptyFlow(),
     onOpenContent: (contentType: String, contentId: String, title: String) -> Unit = { _, _, _ -> },
     onJoinParty: (inviteCode: String) -> Unit = {},
@@ -245,12 +271,148 @@ fun SocialScreen(
         scrollToTopRequests.collect { listState.animateScrollToItem(0) }
     }
 
+    SocialFeed(
+        model = SocialFeedModel(
+            state = state,
+            handle = handle,
+            handleMessage = handleMessage,
+            search = search,
+            searchResults = searchResults,
+            feedback = feedback,
+            isSearching = isSearching,
+            partyCode = partyCode,
+            shareWatching = shareWatching,
+            shareRecent = shareRecent,
+            defaultJoinPolicy = defaultJoinPolicy,
+            activityGroups = activityGroups,
+            activityBuckets = activityBuckets,
+            activityNowMs = activityNowMs,
+            joinAffordance = { watching ->
+                if (state.capabilities.watchPartyEnabled) {
+                    watchingNowJoinAffordance(watching, outgoingRequest, heldParty)
+                } else {
+                    WatchingNowJoinAffordance.None
+                }
+            },
+        ),
+        actions = SocialFeedActions(
+            onRefresh = { scope.launch { SocialRepository.refresh() } },
+            onHandleChange = { handle = normalizeSocialHandle(it).take(24) },
+            onSaveHandle = {
+                scope.launch {
+                    // The result was discarded here, so a handle that never saved looked exactly
+                    // like one that did - which is how an empty database went unnoticed while the
+                    // screen appeared to work.
+                    SocialRepository.setupHandle(handle)
+                        .onFailure { error -> handleMessage = error.message ?: "Could not save that handle" }
+                        .onSuccess { handleMessage = null }
+                }
+            },
+            onPartyCodeChange = { partyCode = it.trim().uppercase().take(32) },
+            onJoinParty = { onJoinParty(partyCode) },
+            onRespondRequest = { id, accept -> scope.launch { SocialRepository.respondFriendRequest(id, accept) } },
+            onJoinInvitedParty = onJoinInvitedParty,
+            onNotificationAction = onNotificationAction,
+            onOpenContent = onOpenContent,
+            onStartParty = onStartParty,
+            onCancelJoinRequest = onCancelJoinRequest,
+            onSearchChange = { search = normalizeSocialHandle(it).take(24) },
+            onRunSearch = runSearch,
+            onSendRequest = sendFriendRequest,
+            onRemoveFriend = { id -> scope.launch { SocialRepository.removeFriend(id) } },
+            onSelectFriend = SocialRepository::selectFriend,
+            onShareWatching = {
+                shareWatching = it
+                scope.launch { SocialRepository.setPrivacy(shareWatching, shareRecent) }
+            },
+            onShareRecent = {
+                shareRecent = it
+                scope.launch { SocialRepository.setPrivacy(shareWatching, shareRecent) }
+            },
+            onDefaultJoinPolicy = { policy ->
+                defaultJoinPolicy = policy
+                scope.launch { SocialRepository.setDefaultJoinPolicy(policy) }
+            },
+        ),
+        listState = listState,
+        topChromePadding = topChromePadding,
+        modifier = modifier,
+    )
+}
+
+/**
+ * Everything the Social tab draws, already gathered.
+ *
+ * [SocialScreen] reads the repositories and owns every piece of remembered state; [SocialFeed]
+ * only lays it out. The split exists so the render harness composes the real layout - the real
+ * `BoxWithConstraints`, the real metrics call, the real list - instead of a hand-built replica that
+ * silently stops describing the screen the first time the screen changes.
+ */
+internal data class SocialFeedModel(
+    val state: SocialUiState,
+    val handle: String = "",
+    val handleMessage: String? = null,
+    val search: String = "",
+    val searchResults: List<SocialProfileSummary> = emptyList(),
+    val feedback: SocialFeedback? = null,
+    val isSearching: Boolean = false,
+    val partyCode: String = "",
+    val shareWatching: Boolean = true,
+    val shareRecent: Boolean = true,
+    val defaultJoinPolicy: WatchJoinPolicy = WatchJoinPolicy.approval,
+    val activityGroups: List<FriendActivityGroup> = emptyList(),
+    val activityBuckets: List<Pair<FriendActivityBucket, List<FriendActivityGroup>>> = emptyList(),
+    val activityNowMs: Long = 0L,
+    val joinAffordance: (WatchingNowItem) -> WatchingNowJoinAffordance = { WatchingNowJoinAffordance.None },
+)
+
+/** The Social tab's callbacks, exactly as [SocialScreen] defines them. */
+internal class SocialFeedActions(
+    val onRefresh: () -> Unit = {},
+    val onHandleChange: (String) -> Unit = {},
+    val onSaveHandle: () -> Unit = {},
+    val onPartyCodeChange: (String) -> Unit = {},
+    val onJoinParty: () -> Unit = {},
+    val onRespondRequest: (String, Boolean) -> Unit = { _, _ -> },
+    val onJoinInvitedParty: (String) -> Unit = {},
+    val onNotificationAction: (SocialNotification, SocialNotificationAction) -> Unit = { _, _ -> },
+    val onOpenContent: (contentType: String, contentId: String, title: String) -> Unit = { _, _, _ -> },
+    val onStartParty: (WatchingNowItem) -> Unit = {},
+    val onCancelJoinRequest: () -> Unit = {},
+    val onSearchChange: (String) -> Unit = {},
+    val onRunSearch: () -> Unit = {},
+    val onSendRequest: (SocialProfileSummary) -> Unit = {},
+    val onRemoveFriend: (String) -> Unit = {},
+    val onSelectFriend: (String?) -> Unit = {},
+    val onShareWatching: (Boolean) -> Unit = {},
+    val onShareRecent: (Boolean) -> Unit = {},
+    val onDefaultJoinPolicy: (WatchJoinPolicy) -> Unit = {},
+)
+
+@Composable
+internal fun SocialFeed(
+    model: SocialFeedModel,
+    actions: SocialFeedActions,
+    listState: LazyListState,
+    topChromePadding: Dp? = null,
+    modifier: Modifier = Modifier,
+) {
+    val state = model.state
     // Screens here are hosted directly rather than inside a Surface, so LocalContentColor falls back
     // to black - the app's other screens compensate by naming a colour at every call site. The port
     // from mobile did not, which left every bare Text and Icon black on the dark background: the
     // search button was invisible rather than broken. Providing it once covers the whole screen.
     CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
-        BoxWithConstraints(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        // ⚠ **Horizontal insets belong here, above the metrics.** A display cutout in landscape
+        // is a *side* inset, and `socialFeedMetrics` divides `maxWidth` into columns - so consuming
+        // the cutout after the division would have sized the cards from width the screen does not
+        // own. Applying it on the constraint source means the column count and the cards agree.
+        BoxWithConstraints(
+            modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
+            contentAlignment = Alignment.TopCenter,
+        ) {
             // Below this the friends rail cannot hold a search field and a roster side by side with
             // the feed, so it folds back into the feed as a final section - which is also the phone
             // layout, since this screen is shared with mobile.
@@ -264,7 +426,56 @@ fun SocialScreen(
             // separate numbers and they disagreed: the columns were chosen from the full window
             // minus the rail, and then spent inside a list capped at 600dp. See [socialFeedMetrics].
             val railVisible = wideDashboard && state.capabilities.socialEnabled && !state.needsHandleSetup
-            val feed = socialFeedMetrics(maxWidth, railVisible)
+            val feed = socialFeedMetrics(maxWidth, railVisible, maxHeight)
+
+            // The phone header slims once the feed is scrolled. Latched rather than derived straight
+            // from the offset: collapsing the header grows the list's viewport, and on a list that
+            // only just scrolls that can pull the offset back under the threshold - which would
+            // expand it again, and loop. It only reopens when the list is back at its very top.
+            //
+            // ⚠ Not `LocalNuvioNavBarScrollState`: that moves only under the Adaptive nav style, so
+            // the header would have collapsed for some users and sat frozen for others.
+            var scrolledPastTop by remember(listState) { mutableStateOf(false) }
+            LaunchedEffect(listState) {
+                snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+                    .collect { (index, offset) ->
+                        if (index > 0 || offset > 48) {
+                            scrolledPastTop = true
+                        } else if (index == 0 && offset == 0) {
+                            scrolledPastTop = false
+                        }
+                    }
+            }
+            // A window too short to stack - a landscape phone - keeps the header collapsed for good:
+            // ~60dp of fixed chrome out of 411 is a seventh of the screen spent on a name.
+            val shortSurface = nuvioWindowClass().isShortSurface
+            val headerCollapse by animateFloatAsState(
+                targetValue = if (feed.phone && (shortSurface || scrolledPastTop)) 1f else 0f,
+                animationSpec = tween(220),
+                label = "social-header-collapse",
+            )
+
+            val friendsPanel: @Composable () -> Unit = {
+                SocialFriendsPanel(
+                    compact = feed.phone,
+                    state = state,
+                    search = model.search,
+                    onSearchChange = actions.onSearchChange,
+                    onRunSearch = actions.onRunSearch,
+                    isSearching = model.isSearching,
+                    feedback = model.feedback,
+                    searchResults = model.searchResults,
+                    onSendRequest = actions.onSendRequest,
+                    onRemoveFriend = actions.onRemoveFriend,
+                    onSelectFriend = actions.onSelectFriend,
+                    shareWatching = model.shareWatching,
+                    shareRecent = model.shareRecent,
+                    defaultJoinPolicy = model.defaultJoinPolicy,
+                    onShareWatching = actions.onShareWatching,
+                    onShareRecent = actions.onShareRecent,
+                    onDefaultJoinPolicy = actions.onDefaultJoinPolicy,
+                )
+            }
 
             // ⚠ `fillMaxSize()` here, and the cap below it never applied: filling sets the minimum
             // width to the parent's, which `widthIn(max = …)` cannot then go under. So the dashboard
@@ -273,6 +484,7 @@ fun SocialScreen(
             // width is capped and the parent centres what is left.
             Column(Modifier.fillMaxHeight().widthIn(max = SocialDashboardMaxWidth)) {
                 SocialIdentityHeader(
+                    topChromePadding = topChromePadding,
                     me = state.me,
                     friendCount = state.friends.size,
                     watchingCount = state.watchingNow.size,
@@ -283,11 +495,13 @@ fun SocialScreen(
                     showJoinField = wideDashboard &&
                         state.capabilities.watchPartyEnabled &&
                         !state.needsHandleSetup,
-                    partyCode = partyCode,
-                    onPartyCodeChange = { partyCode = it.trim().uppercase().take(32) },
-                    onJoinParty = { onJoinParty(partyCode) },
+                    partyCode = model.partyCode,
+                    onPartyCodeChange = actions.onPartyCodeChange,
+                    onJoinParty = actions.onJoinParty,
                     isRefreshing = state.isLoading,
-                    onRefresh = { scope.launch { SocialRepository.refresh() } },
+                    onRefresh = actions.onRefresh,
+                    phone = feed.phone,
+                    collapse = headerCollapse,
                 )
 
                 Row(Modifier.fillMaxSize()) {
@@ -295,13 +509,17 @@ fun SocialScreen(
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.widthIn(max = feed.feedWidth).fillMaxWidth().fillMaxHeight(),
+                        // ⚠ Was a flat `110.dp`, which is neither the navigation bar nor the
+                        // floating nav pill but a guess that happened to cover both on one device.
+                        // `nuvioSafeBottomPadding` is the shared answer every other scrollable
+                        // screen already uses, and it tracks the pill's real height.
                         contentPadding = PaddingValues(
-                            start = SocialFeedHorizontalPadding,
-                            end = SocialFeedHorizontalPadding,
-                            top = 16.dp,
-                            bottom = 110.dp,
+                            start = feed.horizontalPadding,
+                            end = feed.horizontalPadding,
+                            top = if (feed.phone) 6.dp else 16.dp,
+                            bottom = nuvioSafeBottomPadding(extra = 12.dp),
                         ),
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(feed.itemSpacing),
                     ) {
                         when {
                             !state.capabilities.socialEnabled -> item {
@@ -311,23 +529,10 @@ fun SocialScreen(
                             state.needsHandleSetup -> {
                                 item {
                                     SocialHandleSetup(
-                                        handle = handle,
-                                        onHandleChange = { handle = normalizeSocialHandle(it).take(24) },
-                                        message = handleMessage,
-                                        onSave = {
-                                            scope.launch {
-                                                // The result was discarded here, so a handle that
-                                                // never saved looked exactly like one that did -
-                                                // which is how an empty database went unnoticed
-                                                // while the screen appeared to work.
-                                                SocialRepository.setupHandle(handle)
-                                                    .onFailure { error ->
-                                                        handleMessage = error.message
-                                                            ?: "Could not save that handle"
-                                                    }
-                                                    .onSuccess { handleMessage = null }
-                                            }
-                                        },
+                                        handle = model.handle,
+                                        onHandleChange = actions.onHandleChange,
+                                        message = model.handleMessage,
+                                        onSave = actions.onSaveHandle,
                                     )
                                 }
                             }
@@ -340,8 +545,11 @@ fun SocialScreen(
                                     item { SocialNotice(error, MaterialTheme.colorScheme.error) }
                                 }
 
-                                if (!wideDashboard && state.capabilities.watchPartyEnabled) {
+                                if (!wideDashboard && !feed.phone && state.capabilities.watchPartyEnabled) {
                                     // The counterpart to the header dropping the field when narrow.
+                                    // A phone gets it as a one-line disclosure at the end instead:
+                                    // it is the action most visits never take, and it sat above
+                                    // Watching Now, which is the reason to open the tab.
                                     item {
                                         SocialPanel {
                                             Text(
@@ -355,21 +563,19 @@ fun SocialScreen(
                                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                             ) {
                                                 OutlinedTextField(
-                                                    value = partyCode,
-                                                    onValueChange = {
-                                                        partyCode = it.trim().uppercase().take(32)
-                                                    },
+                                                    value = model.partyCode,
+                                                    onValueChange = actions.onPartyCodeChange,
                                                     modifier = Modifier.weight(1f),
                                                     singleLine = true,
                                                     label = { Text("Invite code") },
                                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                                                     keyboardActions = KeyboardActions(
-                                                        onGo = { if (partyCode.isNotBlank()) onJoinParty(partyCode) },
+                                                        onGo = { if (model.partyCode.isNotBlank()) actions.onJoinParty() },
                                                     ),
                                                 )
                                                 Button(
-                                                    onClick = { onJoinParty(partyCode) },
-                                                    enabled = partyCode.isNotBlank(),
+                                                    onClick = actions.onJoinParty,
+                                                    enabled = model.partyCode.isNotBlank(),
                                                 ) { Text("Join") }
                                             }
                                         }
@@ -378,11 +584,10 @@ fun SocialScreen(
 
                                 socialInbox(
                                     state = state,
-                                    onRespond = { id, accept ->
-                                        scope.launch { SocialRepository.respondFriendRequest(id, accept) }
-                                    },
-                                    onJoinInvitedParty = onJoinInvitedParty,
-                                    onNotificationAction = onNotificationAction,
+                                    onRespond = actions.onRespondRequest,
+                                    onJoinInvitedParty = actions.onJoinInvitedParty,
+                                    onNotificationAction = actions.onNotificationAction,
+                                    compactHeaders = feed.phone,
                                 )
 
                                 item {
@@ -390,6 +595,7 @@ fun SocialScreen(
                                         stringResource(Res.string.social_watching_now),
                                         state.watchingNow.size.takeIf { it > 0 },
                                         live = state.watchingNow.isNotEmpty(),
+                                        compact = feed.phone,
                                     )
                                 }
                                 if (state.watchingNow.isEmpty()) {
@@ -405,32 +611,32 @@ fun SocialScreen(
                                     ) { watching, cardModifier ->
                                         SocialWatchingNowCard(
                                             item = watching,
-                                            affordance = if (state.capabilities.watchPartyEnabled) {
-                                                watchingNowJoinAffordance(watching, outgoingRequest, heldParty)
-                                            } else {
-                                                WatchingNowJoinAffordance.None
-                                            },
+                                            affordance = model.joinAffordance(watching),
                                             onOpen = {
-                                                onOpenContent(
+                                                actions.onOpenContent(
                                                     watching.contentType,
                                                     watching.contentId,
                                                     watching.title,
                                                 )
                                             },
-                                            onJoin = { onStartParty(watching) },
-                                            onCancelRequest = onCancelJoinRequest,
+                                            onJoin = { actions.onStartParty(watching) },
+                                            onCancelRequest = actions.onCancelJoinRequest,
                                             modifier = cardModifier,
                                             artworkWidth = feed.watchingNowArtworkWidth,
                                             stacked = feed.watchingNowStacked,
+                                            compact = feed.phone,
                                         )
                                     }
                                 }
 
-                                item { Spacer(Modifier.height(6.dp)) }
+                                if (!feed.phone) item { Spacer(Modifier.height(6.dp)) }
                                 item {
-                                    SocialSectionHeader(stringResource(Res.string.social_recently_watched))
+                                    SocialSectionHeader(
+                                        stringResource(Res.string.social_recently_watched),
+                                        compact = feed.phone,
+                                    )
                                 }
-                                if (activityGroups.isEmpty()) {
+                                if (model.activityGroups.isEmpty()) {
                                     item {
                                         if (state.isLoading) {
                                             SocialSkeletonCard()
@@ -439,7 +645,7 @@ fun SocialScreen(
                                         }
                                     }
                                 } else {
-                                    activityBuckets.forEach { (bucket, groups) ->
+                                    model.activityBuckets.forEach { (bucket, groups) ->
                                         item(key = "activity-bucket:${bucket.name}") {
                                             Text(
                                                 bucket.label.uppercase(),
@@ -447,7 +653,7 @@ fun SocialScreen(
                                                 fontWeight = FontWeight.SemiBold,
                                                 letterSpacing = 0.8.sp,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.padding(top = 4.dp),
+                                                modifier = Modifier.padding(top = if (feed.phone) 2.dp else 4.dp),
                                             )
                                         }
                                         socialGridItems(
@@ -457,8 +663,8 @@ fun SocialScreen(
                                         ) { group, cellModifier ->
                                             FriendActivityRow(
                                                 group = group,
-                                                nowMs = activityNowMs,
-                                                onOpen = { onOpenContent(group.contentType, group.contentId, group.title) },
+                                                nowMs = model.activityNowMs,
+                                                onOpen = { actions.onOpenContent(group.contentType, group.contentId, group.title) },
                                                 modifier = cellModifier.height(FriendActivityRowHeight),
                                             )
                                         }
@@ -475,40 +681,15 @@ fun SocialScreen(
                                 }
 
                                 if (!wideDashboard) {
-                                    item { Spacer(Modifier.height(6.dp)) }
-                                    item {
-                                        SocialFriendsPanel(
-                                            state = state,
-                                            search = search,
-                                            onSearchChange = { search = normalizeSocialHandle(it).take(24) },
-                                            onRunSearch = runSearch,
-                                            isSearching = isSearching,
-                                            feedback = feedback,
-                                            searchResults = searchResults,
-                                            onSendRequest = sendFriendRequest,
-                                            onRemoveFriend = { id ->
-                                                scope.launch { SocialRepository.removeFriend(id) }
-                                            },
-                                            onSelectFriend = SocialRepository::selectFriend,
-                                            shareWatching = shareWatching,
-                                            shareRecent = shareRecent,
-                                            defaultJoinPolicy = defaultJoinPolicy,
-                                            onShareWatching = {
-                                                shareWatching = it
-                                                scope.launch {
-                                                    SocialRepository.setPrivacy(shareWatching, shareRecent)
-                                                }
-                                            },
-                                            onShareRecent = {
-                                                shareRecent = it
-                                                scope.launch {
-                                                    SocialRepository.setPrivacy(shareWatching, shareRecent)
-                                                }
-                                            },
-                                            onDefaultJoinPolicy = { policy ->
-                                                defaultJoinPolicy = policy
-                                                scope.launch { SocialRepository.setDefaultJoinPolicy(policy) }
-                                            },
+                                    if (!feed.phone) item { Spacer(Modifier.height(6.dp)) }
+                                    item { friendsPanel() }
+                                }
+                                if (feed.phone && state.capabilities.watchPartyEnabled) {
+                                    item(key = "join-by-code") {
+                                        SocialJoinByCode(
+                                            partyCode = model.partyCode,
+                                            onPartyCodeChange = actions.onPartyCodeChange,
+                                            onJoinParty = actions.onJoinParty,
                                         )
                                     }
                                 }
@@ -525,35 +706,10 @@ fun SocialScreen(
                             Modifier.width(SocialFriendsRailWidth)
                                 .fillMaxSize()
                                 .verticalScroll(rememberScrollState())
-                                .padding(start = 4.dp, end = 24.dp, top = 4.dp, bottom = 110.dp),
+                                .padding(start = 4.dp, end = 24.dp, top = 4.dp)
+                                .padding(bottom = nuvioSafeBottomPadding(extra = 12.dp)),
                         ) {
-                            SocialFriendsPanel(
-                                state = state,
-                                search = search,
-                                onSearchChange = { search = normalizeSocialHandle(it).take(24) },
-                                onRunSearch = runSearch,
-                                isSearching = isSearching,
-                                feedback = feedback,
-                                searchResults = searchResults,
-                                onSendRequest = sendFriendRequest,
-                                onRemoveFriend = { id -> scope.launch { SocialRepository.removeFriend(id) } },
-                                onSelectFriend = SocialRepository::selectFriend,
-                                shareWatching = shareWatching,
-                                shareRecent = shareRecent,
-                                defaultJoinPolicy = defaultJoinPolicy,
-                                onShareWatching = {
-                                    shareWatching = it
-                                    scope.launch { SocialRepository.setPrivacy(shareWatching, shareRecent) }
-                                },
-                                onShareRecent = {
-                                    shareRecent = it
-                                    scope.launch { SocialRepository.setPrivacy(shareWatching, shareRecent) }
-                                },
-                                onDefaultJoinPolicy = { policy ->
-                                    defaultJoinPolicy = policy
-                                    scope.launch { SocialRepository.setDefaultJoinPolicy(policy) }
-                                },
-                            )
+                            friendsPanel()
                         }
                     }
                 }
@@ -570,6 +726,7 @@ fun SocialScreen(
  */
 @Composable
 private fun SocialIdentityHeader(
+    topChromePadding: Dp?,
     me: SocialProfileSummary?,
     friendCount: Int,
     watchingCount: Int,
@@ -579,10 +736,27 @@ private fun SocialIdentityHeader(
     onJoinParty: () -> Unit,
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
+    phone: Boolean = false,
+    /** 0 at rest, 1 once the phone feed is scrolled. Ignored off the phone. */
+    collapse: Float = 0f,
 ) {
     // A horizontal gradient here left two hard edges - one mid-width where it reached transparent,
     // one across the bottom where the Box ended - which read as a mis-drawn panel rather than as a
     // header. Fading downward has no edge to see.
+    // ⚠ **The inset goes on the Row, not on the Box.** The gradient is the header, and a screen
+    // running edge-to-edge wants it to reach up behind the status bar rather than to start below
+    // it - padding the Box would leave a hard-edged band of bare background above the tint, which
+    // is the edge this gradient was reshaped to avoid in the first place.
+    //
+    // `safeDrawing` rather than `statusBars`: it is the same value wherever there is no cutout,
+    // and it is the larger one where there is. This screen is shared with desktop, where both are
+    // zero, so it costs that build nothing.
+    val topInset = topChromePadding
+        ?: WindowInsets.safeDrawing.only(WindowInsetsSides.Top).asPaddingValues().calculateTopPadding()
+    if (phone) {
+        SocialIdentityHeaderPhone(topInset, me, friendCount, watchingCount, isRefreshing, onRefresh, collapse)
+        return
+    }
     Box(
         Modifier.fillMaxWidth().background(
             Brush.verticalGradient(
@@ -592,7 +766,9 @@ private fun SocialIdentityHeader(
         ),
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp),
+            Modifier.fillMaxWidth()
+                .padding(top = topInset)
+                .padding(horizontal = 24.dp, vertical = 18.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -651,6 +827,142 @@ private fun SocialIdentityHeader(
 }
 
 /**
+ * The header at phone density, and the one piece of chrome on the tab that does not scroll.
+ *
+ * The desktop header is a 56dp avatar in 18dp of padding a side - ~92dp of fixed chrome, which on a
+ * phone is the tallest thing on screen. Here it is 44dp at rest, and once the feed is scrolled it
+ * slims to a single 30dp-avatar line: the handle and counts fold away (height and alpha together,
+ * so nothing jumps), the name steps down a size, and refresh stays reachable throughout.
+ */
+@Composable
+private fun SocialIdentityHeaderPhone(
+    topInset: Dp,
+    me: SocialProfileSummary?,
+    friendCount: Int,
+    watchingCount: Int,
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
+    collapse: Float,
+) {
+    val open = 1f - collapse.coerceIn(0f, 1f)
+    Box(
+        Modifier.fillMaxWidth().background(
+            Brush.verticalGradient(
+                0f to MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                1f to Color.Transparent,
+            ),
+        ),
+    ) {
+        Row(
+            Modifier.fillMaxWidth()
+                .padding(top = topInset)
+                .padding(start = 16.dp, end = 4.dp, top = 4.dp + 6.dp * open, bottom = 4.dp + 6.dp * open),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (me != null) {
+                SocialAvatar(me.displayName, me.avatarUrl, me.avatarColorHex, 30.dp + 14.dp * open)
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        me.displayName,
+                        style = lerp(MaterialTheme.typography.titleMedium, MaterialTheme.typography.titleLarge, open),
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (open > 0f) {
+                        Text(
+                            "@${me.handle} · $friendCount ${if (friendCount == 1) "friend" else "friends"}" +
+                                if (watchingCount > 0) " · $watchingCount watching" else "",
+                            modifier = Modifier
+                                .clipToBounds()
+                                .layout { measurable, constraints ->
+                                    val placeable = measurable.measure(constraints)
+                                    layout(placeable.width, (placeable.height * open).roundToInt()) {
+                                        placeable.placeRelative(0, 0)
+                                    }
+                                }
+                                .graphicsLayer { alpha = open },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            } else {
+                Text(
+                    stringResource(Res.string.social_title),
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            IconButton(onClick = onRefresh, enabled = !isRefreshing) {
+                if (isRefreshing) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Rounded.Refresh, "Refresh")
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Joining a party by code, as the last line of the phone feed.
+ *
+ * It was a whole panel around one text field at the top of the tab. Same state, same callback, same
+ * keyboard action - it just waits to be asked for. Opens by itself when a code is already typed, so
+ * a rotation or a return to the tab never hides what somebody was entering.
+ */
+@Composable
+private fun SocialJoinByCode(
+    partyCode: String,
+    onPartyCodeChange: (String) -> Unit,
+    onJoinParty: () -> Unit,
+) {
+    var open by rememberSaveable { mutableStateOf(partyCode.isNotBlank()) }
+    SocialPanel {
+        Row(
+            Modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(NuvioTokens.Radius.sm))
+                .clickable { open = !open },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Icon(Icons.Rounded.Groups, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "Join with an invite code",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Icon(
+                if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                contentDescription = if (open) "Hide" else "Show",
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (open) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = partyCode,
+                    onValueChange = onPartyCodeChange,
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    label = { Text("Invite code") },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                    keyboardActions = KeyboardActions(onGo = { if (partyCode.isNotBlank()) onJoinParty() }),
+                )
+                Button(onClick = onJoinParty, enabled = partyCode.isNotBlank()) { Text("Join") }
+            }
+        }
+    }
+}
+
+/**
  * The tab's own route into handle setup.
  *
  * ⚠ **A frame around [SocialIdentityBody], not a second copy of it.** This screen and the setup
@@ -682,12 +994,13 @@ private fun LazyListScope.socialInbox(
     onRespond: (String, Boolean) -> Unit,
     onJoinInvitedParty: (String) -> Unit,
     onNotificationAction: (SocialNotification, SocialNotificationAction) -> Unit,
+    compactHeaders: Boolean = false,
 ) {
     if (state.capabilities.partyContractVersion >= 2) {
         val actionable = state.notifications.filter { it.availableActions.isNotEmpty() }
         if (actionable.isEmpty()) return
         item {
-            SocialSectionHeader(stringResource(Res.string.social_inbox), state.unreadCount)
+            SocialSectionHeader(stringResource(Res.string.social_inbox), state.unreadCount, compact = compactHeaders)
         }
         items(actionable, key = { "notification:${it.id}" }) { notification ->
             SocialPanel(accent = notification.readAt == null) {
@@ -731,7 +1044,7 @@ private fun LazyListScope.socialInbox(
     }
     if (state.requests.isEmpty() && state.partyInvites.isEmpty()) return
     item {
-        SocialSectionHeader(stringResource(Res.string.social_inbox), state.unreadCount)
+        SocialSectionHeader(stringResource(Res.string.social_inbox), state.unreadCount, compact = compactHeaders)
     }
     items(state.requests, key = { "request:${it.id}" }) { request ->
         SocialPanel(accent = true) {
@@ -818,6 +1131,8 @@ internal fun SocialFriendsPanel(
     onShareWatching: (Boolean) -> Unit,
     onShareRecent: (Boolean) -> Unit,
     onDefaultJoinPolicy: (WatchJoinPolicy) -> Unit,
+    /** Phone density: roster first and folded, search under it, privacy behind a disclosure. */
+    compact: Boolean = false,
 ) {
     // What each friend is watching, so the roster answers the same question the feed does rather
     // than listing names next to nothing.
@@ -829,6 +1144,30 @@ internal fun SocialFriendsPanel(
             compareByDescending<SocialProfileSummary> { watchingByProfile.containsKey(it.profileId) }
                 .thenBy { it.displayName.lowercase() },
         )
+    }
+
+    if (compact) {
+        SocialFriendsPanelCompact(
+            state = state,
+            friends = friends,
+            watchingByProfile = watchingByProfile,
+            search = search,
+            onSearchChange = onSearchChange,
+            onRunSearch = onRunSearch,
+            isSearching = isSearching,
+            feedback = feedback,
+            searchResults = searchResults,
+            onSendRequest = onSendRequest,
+            onRemoveFriend = onRemoveFriend,
+            onSelectFriend = onSelectFriend,
+            privacy = {
+                SocialPrivacyControls(
+                    shareWatching, shareRecent, defaultJoinPolicy,
+                    onShareWatching, onShareRecent, onDefaultJoinPolicy,
+                )
+            },
+        )
+        return
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -948,30 +1287,223 @@ internal fun SocialFriendsPanel(
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            PrivacyToggle(stringResource(Res.string.social_share_watching), shareWatching, onShareWatching)
-            PrivacyToggle(stringResource(Res.string.social_share_recent), shareRecent, onShareRecent)
-            Text(
-                "Who can join new playback",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            SocialPrivacyControls(
+                shareWatching, shareRecent, defaultJoinPolicy,
+                onShareWatching, onShareRecent, onDefaultJoinPolicy,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                WatchJoinPolicy.entries.forEach { policy ->
-                    FilterChip(
-                        selected = defaultJoinPolicy == policy,
-                        onClick = { onDefaultJoinPolicy(policy) },
-                        label = {
-                            Text(
-                                when (policy) {
-                                    WatchJoinPolicy.direct -> "Direct"
-                                    WatchJoinPolicy.approval -> "Ask first"
-                                    WatchJoinPolicy.disabled -> "Off"
-                                },
-                            )
+        }
+    }
+}
+
+/** The two sharing switches and the default join policy - one body for both panel forms. */
+@Composable
+private fun SocialPrivacyControls(
+    shareWatching: Boolean,
+    shareRecent: Boolean,
+    defaultJoinPolicy: WatchJoinPolicy,
+    onShareWatching: (Boolean) -> Unit,
+    onShareRecent: (Boolean) -> Unit,
+    onDefaultJoinPolicy: (WatchJoinPolicy) -> Unit,
+) {
+    PrivacyToggle(stringResource(Res.string.social_share_watching), shareWatching, onShareWatching)
+    PrivacyToggle(stringResource(Res.string.social_share_recent), shareRecent, onShareRecent)
+    Text(
+        "Who can join new playback",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        WatchJoinPolicy.entries.forEach { policy ->
+            FilterChip(
+                selected = defaultJoinPolicy == policy,
+                onClick = { onDefaultJoinPolicy(policy) },
+                label = {
+                    Text(
+                        when (policy) {
+                            WatchJoinPolicy.direct -> "Direct"
+                            WatchJoinPolicy.approval -> "Ask first"
+                            WatchJoinPolicy.disabled -> "Off"
                         },
+                    )
+                },
+            )
+        }
+    }
+}
+
+/** Friends folded to three before "Show all" - the roster is looked at more than it is searched. */
+private const val SocialCompactRosterPreview = 3
+
+/**
+ * [SocialFriendsPanel] at phone density.
+ *
+ * The same roster, search and privacy controls with the same callbacks, reordered for a phone:
+ * who you have comes first and folds to three, one card around it instead of a card per friend;
+ * the handle search - which is how you *add* someone, the rarer act - moves under it; and privacy,
+ * set once and rarely revisited, waits behind a disclosure instead of costing ~200dp every visit.
+ */
+@Composable
+private fun SocialFriendsPanelCompact(
+    state: SocialUiState,
+    friends: List<SocialProfileSummary>,
+    watchingByProfile: Map<String, WatchingNowItem>,
+    search: String,
+    onSearchChange: (String) -> Unit,
+    onRunSearch: () -> Unit,
+    isSearching: Boolean,
+    feedback: SocialFeedback?,
+    searchResults: List<SocialProfileSummary>,
+    onSendRequest: (SocialProfileSummary) -> Unit,
+    onRemoveFriend: (String) -> Unit,
+    onSelectFriend: (String?) -> Unit,
+    privacy: @Composable ColumnScope.() -> Unit,
+) {
+    var showAll by rememberSaveable { mutableStateOf(false) }
+    var privacyOpen by rememberSaveable { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SocialSectionHeader(
+            stringResource(Res.string.social_friends),
+            state.friends.size.takeIf { it > 0 },
+            compact = true,
+        )
+
+        if (state.selectedFriendId != null) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().clickable { onSelectFriend(null) },
+                shape = RoundedCornerShape(NuvioTokens.Radius.chip),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+            ) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Showing only " + (
+                            state.friends.firstOrNull { it.profileId == state.selectedFriendId }?.displayName
+                                ?: "one friend"
+                            ),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Icon(Icons.Rounded.Close, "Show everyone", Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+        }
+
+        if (friends.isEmpty()) {
+            SocialEmptyState("No friends yet", "Search a handle below to send the first request.")
+        } else {
+            val visible = if (showAll) friends else friends.take(SocialCompactRosterPreview)
+            SocialPanel {
+                visible.forEach { friend ->
+                    val watching = watchingByProfile[friend.profileId]
+                    SocialPersonRow(
+                        profile = friend,
+                        subtitle = watching?.title ?: "@${friend.handle}",
+                        live = watching != null,
+                        plain = true,
+                        onClick = { onSelectFriend(friend.profileId.takeIf { it != state.selectedFriendId }) },
+                    ) {
+                        IconButton(onClick = { onRemoveFriend(friend.profileId) }) {
+                            Icon(
+                                Icons.Rounded.DeleteOutline,
+                                stringResource(Res.string.social_remove_friend),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                if (friends.size > SocialCompactRosterPreview) {
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(NuvioTokens.Radius.sm))
+                            .clickable { showAll = !showAll }
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            if (showAll) "Show fewer" else "Show all ${friends.size}",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Icon(
+                            if (showAll) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                            null,
+                            Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedTextField(
+                value = search,
+                onValueChange = onSearchChange,
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                label = { Text(stringResource(Res.string.social_search_handle)) },
+                prefix = { Text("@") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { onRunSearch() }),
+            )
+            IconButton(onClick = onRunSearch, enabled = !isSearching) {
+                if (isSearching) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Rounded.Search, "Search handles")
+                }
+            }
+        }
+        feedback?.let { entry ->
+            Text(
+                entry.message,
+                style = MaterialTheme.typography.bodySmall,
+                color = when (entry.tone) {
+                    SocialFeedbackTone.Positive -> SocialLiveColor
+                    SocialFeedbackTone.Negative -> MaterialTheme.colorScheme.error
+                    SocialFeedbackTone.Neutral -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        }
+        searchResults.forEach { profile ->
+            SocialPersonRow(profile = profile, subtitle = "@${profile.handle}", onClick = null) {
+                IconButton(onClick = { onSendRequest(profile) }) {
+                    Icon(
+                        Icons.Rounded.PersonAdd,
+                        stringResource(Res.string.social_add_friend),
+                        tint = MaterialTheme.colorScheme.primary,
                     )
                 }
             }
+        }
+
+        SocialPanel {
+            Row(
+                Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(NuvioTokens.Radius.sm))
+                    .clickable { privacyOpen = !privacyOpen },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Icon(Icons.Rounded.Lock, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "Privacy & joining",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Icon(
+                    if (privacyOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    contentDescription = if (privacyOpen) "Hide" else "Show",
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (privacyOpen) privacy()
         }
     }
 }
@@ -1014,7 +1546,47 @@ private fun SocialPulsingDot(color: Color) {
 }
 
 @Composable
-private fun SocialSectionHeader(title: String, count: Int? = null, live: Boolean = false) {
+private fun SocialSectionHeader(
+    title: String,
+    count: Int? = null,
+    live: Boolean = false,
+    /**
+     * Phone density: a label, not a headline. Three `titleLarge` headings and uppercase bucket labels
+     * were three competing sizes; on a phone the sections become labels in the buckets' own voice,
+     * and the gap above them does the separating.
+     */
+    compact: Boolean = false,
+) {
+    if (compact) {
+        Row(
+            Modifier.padding(top = 10.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                title.uppercase(),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.2.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            count?.let {
+                Surface(
+                    shape = RoundedCornerShape(NuvioTokens.Radius.chip),
+                    color = if (live) SocialLiveColor.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Text(
+                        it.toString(),
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (live) SocialLiveColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        return
+    }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         count?.let {
@@ -1130,16 +1702,18 @@ private fun SocialPersonRow(
     profile: SocialProfileSummary,
     subtitle: String,
     live: Boolean = false,
+    /** No surface of its own: a row inside a panel that already has one. */
+    plain: Boolean = false,
     onClick: (() -> Unit)? = null,
     actions: @Composable () -> Unit,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
         shape = RoundedCornerShape(NuvioTokens.Radius.compactCard),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
+        color = if (plain) Color.Transparent else MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(10.dp),
+            Modifier.fillMaxWidth().padding(if (plain) PaddingValues(vertical = 2.dp) else PaddingValues(10.dp)),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {

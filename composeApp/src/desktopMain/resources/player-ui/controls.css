@@ -587,11 +587,27 @@ button:disabled {
 .party-banner-avatar + .party-banner-avatar { margin-left: -9px; }
 .party-banner-avatar img { width: 100%; height: 100%; object-fit: cover; }
 
+.party-banner-lines {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
 .party-banner-text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.party-banner-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85em;
+  opacity: 0.72;
 }
 
 .party-banner-action {

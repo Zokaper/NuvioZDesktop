@@ -23,14 +23,27 @@ on:
           - macos
           - linux
           - windows-macos
-        default: all
+        default: windows-macos
+      macos_signing:
+        description: Build unsigned DMGs or exercise signing and notarization
+        required: true
+        type: choice
+        options:
+          - unsigned
+          - notarized
+        default: unsigned
+      acknowledge_unsigned_macos:
+        description: Required for publish when macOS signing remains unsigned
+        required: true
+        type: boolean
+        default: false
       exclude_commits:
         description: Optional comma-separated commit hashes to omit from the notes
         required: false
         type: string
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: read
 
 concurrency:
@@ -72,17 +85,37 @@ jobs:
           RELEASE_REF_TYPE: ${{ github.ref_type }}
           RELEASE_MODE: ${{ inputs.mode }}
           RELEASE_TARGET: ${{ inputs.target }}
+          RELEASE_BRANCH: ${{ github.ref_name }}
+          MACOS_SIGNING: ${{ inputs.macos_signing }}
+          ACKNOWLEDGE_UNSIGNED_MACOS: ${{ inputs.acknowledge_unsigned_macos }}
         run: |
           if [[ "${RELEASE_REF_TYPE}" != "branch" ]]; then
             echo "Releases must be dispatched from a branch, not ${RELEASE_REF_TYPE}." >&2
             exit 1
           fi
 
-          # A narrowed target is allowed for real releases so a Windows-only
-          # release can be published without Apple signing credentials. The
-          # release is assembled from whichever artifacts were produced.
-          if [[ "${RELEASE_MODE}" != "build-only" && "${RELEASE_TARGET}" != "all" ]]; then
-            echo "::warning::Publishing a ${RELEASE_TARGET}-only release; other platforms will not be attached."
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "Release automation requires a clean checkout." >&2
+            exit 1
+          fi
+
+          if [[ "${RELEASE_MODE}" != "build-only" && "${RELEASE_BRANCH}" != "Dev" ]]; then
+            echo "${RELEASE_MODE} must be dispatched from Dev, not ${RELEASE_BRANCH}." >&2
+            exit 1
+          fi
+
+          if [[ "${RELEASE_MODE}" != "build-only" \
+             && "${RELEASE_TARGET}" != "windows-macos" \
+             && "${RELEASE_TARGET}" != "all" ]]; then
+            echo "${RELEASE_MODE} must build the complete Windows + macOS stable family." >&2
+            exit 1
+          fi
+
+          if [[ "${RELEASE_MODE}" == "publish" \
+             && "${MACOS_SIGNING}" != "notarized" \
+             && "${ACKNOWLEDGE_UNSIGNED_MACOS}" != "true" ]]; then
+            echo "Publishing unsigned macOS artifacts requires acknowledge_unsigned_macos=true." >&2
+            exit 1
           fi
 
           if [[ "${RELEASE_MODE}" != "build-only" ]]; then
@@ -115,31 +148,26 @@ jobs:
           CURRENT_BUMP: ${{ steps.release.outputs.current_bump }}
           EXCLUDE_COMMITS: ${{ inputs.exclude_commits }}
         run: |
-          cat << 'EOF' > release-notes.md
-          ### Highlights
-
-          - Updating on Windows works again: the downloaded installer now actually installs, instead of silently doing nothing
-          - Updates install on their own after you press install, with just a progress bar and one Windows permission prompt, then Nuvio Z reopens
-          - Updates keep Nuvio Z in the folder you installed it to, instead of moving it to Program Files
-
-          *Official Nuvio Z Desktop release for Windows (x64 MSI) and macOS (Apple Silicon arm64 & Intel x86_64 DMGs).*
-
-          ### Changes
-
-          EOF
-
           ./scripts/generate-release-notes.sh \
             --from "${PREVIOUS_BUMP}" \
             --to "${CURRENT_BUMP}" \
             --repository "${GITHUB_REPOSITORY}" \
             --repository-history \
             --exclude "${EXCLUDE_COMMITS}" \
-            >> release-notes.md
+            > generated-release-notes.md
 
-          if [[ ! -s release-notes.md ]]; then
+          if [[ ! -s generated-release-notes.md ]]; then
             echo "No desktop repository release-note commits were found." >&2
             exit 1
           fi
+
+          {
+            echo "Official Nuvio Z Desktop release for Windows (x64 MSI) and macOS (Apple Silicon arm64 and Intel x86_64 DMGs)."
+            echo
+            echo "### Changes"
+            echo
+            cat generated-release-notes.md
+          } > release-notes.md
 
           {
             echo "## ${{ steps.release.outputs.version }} desktop release notes"
@@ -158,7 +186,7 @@ jobs:
 
   macos:
     name: macOS ${{ matrix.arch }}
-    if: inputs.mode != 'dry-run' && (inputs.target == 'all' || inputs.target == 'macos' || inputs.target == 'windows-macos')
+    if: inputs.target == 'all' || inputs.target == 'macos' || inputs.target == 'windows-macos'
     needs: metadata
     runs-on: ${{ matrix.runner }}
     environment: desktop-release
@@ -171,7 +199,7 @@ jobs:
           - runner: macos-15-intel
             arch: x86_64
     env:
-      MACOS_NOTARIZATION_ENABLED: 'false'
+      MACOS_NOTARIZATION_ENABLED: ${{ inputs.macos_signing == 'notarized' }}
       LOCAL_PROPERTIES_BASE64: ${{ secrets.NUVIO_DESKTOP_LOCAL_PROPERTIES_BASE64 }}
       MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -356,6 +384,7 @@ jobs:
         env:
           MACOS_ARCH: ${{ matrix.arch }}
         run: |
+          rm -rf composeApp/build/compose/release-dmgs
           tasks=(:composeApp:notarizeReleaseDmgWithKeychain)
           if [[ -n "${SENTRY_AUTH_TOKEN}" ]]; then
             tasks+=(:desktopSentry:sentryUploadSourceBundleJava)
@@ -374,6 +403,7 @@ jobs:
           NUVIO_MACOS_NOTARY_KEYCHAIN_PROFILE: ''
           NUVIO_MACOS_SIGNING_IDENTITY: ''
         run: |
+          rm -rf composeApp/build/compose/release-dmgs
           tasks=(:composeApp:packageReleaseDmg)
           if [[ -n "${SENTRY_AUTH_TOKEN}" ]]; then
             tasks+=(:desktopSentry:sentryUploadSourceBundleJava)
@@ -436,7 +466,7 @@ jobs:
 
   windows:
     name: Windows x64
-    if: inputs.mode != 'dry-run' && (inputs.target == 'all' || inputs.target == 'windows' || inputs.target == 'windows-macos')
+    if: inputs.target == 'all' || inputs.target == 'windows' || inputs.target == 'windows-macos'
     needs: metadata
     runs-on: windows-2022
     environment: desktop-release
@@ -603,6 +633,7 @@ jobs:
       - name: Build MSI
         shell: pwsh
         run: |
+          Remove-Item -Recurse -Force "composeApp\build\compose\release-msis" -ErrorAction SilentlyContinue
           $tasks = @(':composeApp:packageReleaseMsi')
           if (-not [string]::IsNullOrWhiteSpace($env:SENTRY_AUTH_TOKEN)) {
             $tasks += ':desktopSentry:sentryUploadSourceBundleJava'
@@ -722,7 +753,7 @@ jobs:
 
   linux_flatpak:
     name: Linux x64 - Flatpak
-    if: inputs.mode != 'dry-run' && (inputs.target == 'all' || inputs.target == 'linux')
+    if: inputs.target == 'all' || inputs.target == 'linux'
     needs: metadata
     runs-on: ubuntu-latest
     environment: desktop-release
@@ -855,7 +886,7 @@ jobs:
 
   linux_deb:
     name: Linux x64 - DEB
-    if: inputs.mode != 'dry-run' && (inputs.target == 'all' || inputs.target == 'linux')
+    if: inputs.target == 'all' || inputs.target == 'linux'
     needs:
       - metadata
     runs-on: ubuntu-latest
@@ -938,7 +969,7 @@ jobs:
 
   linux_rpm:
     name: Linux x64 - RPM
-    if: inputs.mode != 'dry-run' && (inputs.target == 'all' || inputs.target == 'linux')
+    if: inputs.target == 'all' || inputs.target == 'linux'
     needs:
       - metadata
     runs-on: ubuntu-latest
@@ -1021,7 +1052,7 @@ jobs:
 
   linux_appimage:
     name: Linux x64 - AppImage
-    if: inputs.mode != 'dry-run' && (inputs.target == 'all' || inputs.target == 'linux')
+    if: inputs.target == 'all' || inputs.target == 'linux'
     needs:
       - metadata
     runs-on: ubuntu-latest
@@ -1156,6 +1187,55 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  verify_desktop:
+    name: Verify complete Windows + macOS artifact family
+    if: >-
+      always()
+      && (inputs.target == 'windows-macos' || inputs.target == 'all')
+      && needs.metadata.result == 'success'
+      && needs.macos.result == 'success'
+      && needs.windows.result == 'success'
+    needs:
+      - metadata
+      - macos
+      - windows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows and macOS artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: nuvio-desktop-${{ needs.metadata.outputs.version }}-*
+          path: verify
+          merge-multiple: true
+      - name: Verify exact stable artifact set
+        env:
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+          RELEASE_MODE: ${{ inputs.mode }}
+        run: |
+          required=(
+            "verify/Nuvio-Z-Windows-x64-${RELEASE_VERSION}.msi"
+            "verify/Nuvio-Z-macOS-arm64-${RELEASE_VERSION}.dmg"
+            "verify/Nuvio-Z-macOS-x86_64-${RELEASE_VERSION}.dmg"
+          )
+          for asset in "${required[@]}"; do
+            [[ -f "${asset}" ]] || { echo "Missing required desktop artifact: ${asset}" >&2; exit 1; }
+          done
+          shopt -s nullglob
+          installers=(verify/*.msi verify/*.dmg)
+          [[ "${#installers[@]}" -eq 3 ]] || { echo "Expected exactly three desktop installers, found ${#installers[@]}." >&2; exit 1; }
+          if [[ "${RELEASE_MODE}" != "build-only" && ! -s verify/release-notes.md ]]; then
+            echo "Release notes are missing from the rehearsed release." >&2
+            exit 1
+          fi
+          (cd verify && sha256sum Nuvio-Z-Windows-*.msi Nuvio-Z-macOS-*.dmg > SHA256SUMS-Windows-macOS.txt)
+      - name: Retain verification manifest
+        uses: actions/upload-artifact@v7
+        with:
+          name: verified-desktop-${{ needs.metadata.outputs.version }}
+          path: verify/SHA256SUMS-Windows-macOS.txt
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     name: Create ${{ inputs.mode }} release
     # always() so a platform job that was skipped by a narrowed target does not
@@ -1166,9 +1246,9 @@ jobs:
       && inputs.mode != 'build-only'
       && inputs.mode != 'dry-run'
       && needs.metadata.result == 'success'
-      && needs.macos.result != 'failure' && needs.macos.result != 'cancelled'
-      && needs.windows.result != 'failure' && needs.windows.result != 'cancelled'
-      && (inputs.target != 'windows-macos' || (needs.macos.result == 'success' && needs.windows.result == 'success'))
+      && needs.verify_desktop.result == 'success'
+      && needs.macos.result == 'success'
+      && needs.windows.result == 'success'
     needs:
       - metadata
       - macos
@@ -1177,7 +1257,10 @@ jobs:
       - linux_deb
       - linux_rpm
       - linux_appimage
+      - verify_desktop
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       GH_TOKEN: ${{ github.token }}
       RELEASE_MODE: ${{ inputs.mode }}
@@ -1195,8 +1278,6 @@ jobs:
 
       - name: Create checksums
         run: |
-          # Collect whatever the platform jobs produced rather than a fixed
-          # list, so a narrowed target still yields a valid release.
           shopt -s nullglob
           candidate_assets=(
             release/Nuvio-Z-macOS-*-"${RELEASE_VERSION}".dmg
@@ -1213,10 +1294,17 @@ jobs:
               release_assets+=("${asset}")
             fi
           done
-          if (( ${#release_assets[@]} == 0 )); then
-            echo "No installers were produced for ${RELEASE_VERSION}." >&2
-            exit 1
-          fi
+          required_assets=(
+            "release/Nuvio-Z-Windows-x64-${RELEASE_VERSION}.msi"
+            "release/Nuvio-Z-macOS-arm64-${RELEASE_VERSION}.dmg"
+            "release/Nuvio-Z-macOS-x86_64-${RELEASE_VERSION}.dmg"
+          )
+          for asset in "${required_assets[@]}"; do
+            if [[ ! -f "${asset}" ]]; then
+              echo "Required stable desktop artifact is missing: ${asset}" >&2
+              exit 1
+            fi
+          done
           if [[ ! -s release/release-notes.md ]]; then
             echo "Release notes are missing." >&2
             exit 1

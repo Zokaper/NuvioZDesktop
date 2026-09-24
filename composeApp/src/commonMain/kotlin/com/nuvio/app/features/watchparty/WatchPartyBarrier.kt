@@ -347,15 +347,26 @@ fun pendingPartySeek(
  * one stall produce a pause, a resume, and another stall a moment later - the guest was parked on
  * the right frame and not yet running, which is neither.
  *
- * "Ready" is `playing` for a member the party is not holding, and `playing` **or** `paused` for one
- * it is. That second case is not a loosening, it is the only reading that terminates: holding a
- * member pauses the party, the member obeys, and it then reports `paused` for as long as the hold
- * lasts. Demanding `playing` of a member the host has just stopped is a condition it cannot meet,
- * and the 2026-09-10 two-client run is what that costs - the guest finished buffering, said so, and
- * the party sat paused until somebody pressed play. `paused` is safe to read as ready here because
- * a member that is still starved says `buffering` instead: `partyStatusFor` tests the engine's
- * `isLoading` before it tests the transport, so `paused` means parked and full, never parked and
- * empty.
+ * "Ready" is `playing` for a member the party is not holding, and `playing` **or** a *full* `paused`
+ * for one it is. That second case is not a loosening, it is the only reading that terminates:
+ * holding a member pauses the party, the member obeys, and it then reports `paused` for as long as
+ * the hold lasts. Demanding `playing` of a member the host has just stopped is a condition it cannot
+ * meet, and the 2026-09-10 two-client run is what that costs - the guest finished buffering, said
+ * so, and the party sat paused until somebody pressed play.
+ *
+ * ⚠ **"Full" is [PartyPeerStatusMessage.starved], and it has to be, because `paused` on its own is
+ * not evidence of anything.** This doc used to claim a starving member says `buffering` instead,
+ * since `partyStatusFor` tests `isLoading` before the transport. That is false, and the S25 run of
+ * 2026-09-19 is the proof: `isLoading` is starvation measured *against an intent to play*, so the
+ * moment the host's own stall hold pauses a starving guest, the guest stops reporting `buffering`
+ * and reports `paused` - full or empty alike. The host then read its own command coming back as
+ * recovery. It held for 1.27 s, resumed onto a guest still frozen at 12012 ms, spent the one hold
+ * its budget allowed, and played on for another 26 s while the guest's watchdog gave up and threw
+ * away the party's only source.
+ *
+ * So a hold may not end on a status the hold itself produced. `starved` is buffer occupancy, which
+ * no command can change, and a `paused` member that is still empty stays counted as buffering here -
+ * it is released by recovery or by [WatchPartyStallHoldMaxMs], never by obedience.
  */
 data class GuestBufferingWatch(
     val bufferingSinceByProfile: Map<String, Long> = emptyMap(),
@@ -370,8 +381,26 @@ data class GuestBufferingWatch(
     /** Members the host is holding the party for right now. */
     val holdingProfiles: List<String> get() = heldSinceByProfile.keys.sorted()
 
-    fun observe(profileId: String, status: WatchPartyStatus, partyNowMs: Long): GuestBufferingWatch =
-        when (status) {
+    /**
+     * Folds one member's report in.
+     *
+     * [starved] is the engine's own "nothing left to play", independent of [status] and of any
+     * command in flight. A `paused` that is still starved is not a recovery and is not a person
+     * pressing pause: it is a stall wearing the party's own pause, and it is counted as the stall
+     * it is. Every other status means what it always meant; see the class doc for why this one
+     * fact had to come over the wire rather than be inferred here.
+     */
+    fun observe(
+        profileId: String,
+        status: WatchPartyStatus,
+        partyNowMs: Long,
+        starved: Boolean = false,
+    ): GuestBufferingWatch =
+        // Normalised once, at the edge, so every branch below reads a status that means what it
+        // says. Folding the test into the `paused` branch instead would leave a starved member out
+        // of `bufferingSinceByProfile`, and a stall the guard can never see start is a stall it can
+        // never hold for.
+        when (if (status == WatchPartyStatus.paused && starved) WatchPartyStatus.buffering else status) {
             WatchPartyStatus.buffering -> copy(
                 bufferingSinceByProfile = if (bufferingSinceByProfile.containsKey(profileId)) {
                     bufferingSinceByProfile
@@ -384,13 +413,14 @@ data class GuestBufferingWatch(
                 bufferingSinceByProfile = bufferingSinceByProfile - profileId,
                 readySinceByProfile = markReady(profileId, partyNowMs),
             )
-            // `paused` is two different facts depending on who caused it.
+            // A `paused` that reached here is a *full* one - a starved one was read as the stall it
+            // is above - and it is still two different facts depending on who caused it.
             //
             // From a member the party is holding, it is the party's own pause arriving back: the
             // host stopped everyone for this member, so demanding that it start playing again
             // before the hold may end is asking it to disobey the command that is holding it. It
-            // has stopped buffering - that is what `paused` rather than `buffering` means - so the
-            // recovery clock starts here and the hold ends on the ordinary settle.
+            // has a buffer again, which is the fact the hold was waiting for, so the recovery clock
+            // starts here and the hold ends on the ordinary settle.
             //
             // From a member nobody is holding, it is a person who pressed pause, and it is neither
             // a stall nor a recovery. Any hold that is standing stays standing on its own timer.
@@ -421,7 +451,8 @@ data class GuestBufferingWatch(
 
     /**
      * Promotes stalls that have outlasted the grace into holds, and releases holds that have
-     * recovered - or that have gone quiet for so long that holding for them is just a dead party.
+     * recovered - or that have outlasted [WatchPartyStallHoldMaxMs], whether the member went quiet
+     * or simply never refilled. Past that ceiling, holding for them is just a dead party.
      */
     fun advance(partyNowMs: Long): GuestBufferingWatch {
         val next = heldSinceByProfile.toMutableMap()
@@ -433,24 +464,48 @@ data class GuestBufferingWatch(
             if (partyNowMs - stallSince < WatchPartyGuestBufferingGraceMs) continue
             if (!next.containsKey(profileId)) next[profileId] = partyNowMs
         }
-        val released = next.keys.filter { profileId ->
+        // ⚠ **The ceiling has to outrank "still stalling", or a member that never recovers holds
+        // the party for the rest of the film.** It used to be reachable only by a member that had
+        // stopped reporting a stall, which was survivable while a starving guest fell out of
+        // `bufferingSinceByProfile` the moment the hold paused it - by the bug that made the hold
+        // release itself. Now that a starved member correctly stays in that window, nothing else
+        // would ever let go of it. The party is worth more than one client that cannot recover,
+        // whether it is silent or merely empty.
+        val abandoned = next.keys.filter { profileId ->
+            partyNowMs - (next[profileId] ?: partyNowMs) >= WatchPartyStallHoldMaxMs
+        }
+        val released = abandoned + next.keys.filter { profileId ->
+            if (profileId in abandoned) return@filter false
             if (bufferingSinceByProfile.containsKey(profileId)) return@filter false
             val readySince = readySinceByProfile[profileId]
-            val settled = readySince != null && partyNowMs - readySince >= WatchPartyStallRecoverySettleMs
-            // A member that answers nothing at all cannot be waited for forever; the party is worth
-            // more than one silent client.
-            val abandoned = partyNowMs - (next[profileId] ?: partyNowMs) >= WatchPartyStallHoldMaxMs
-            settled || abandoned
+            readySince != null && partyNowMs - readySince >= WatchPartyStallRecoverySettleMs
         }
         released.forEach { next.remove(it) }
+        // A member given up on keeps no stall window, or the next `advance` would promote it
+        // straight back into the hold it was just released from and the party would flap once per
+        // poll. Starting its clock again is correct - a later stall is a new fact - and how often
+        // a host may act on one is `StallHoldBudget`'s decision, not this one's.
+        val stalls = if (abandoned.isEmpty()) {
+            bufferingSinceByProfile
+        } else {
+            bufferingSinceByProfile - abandoned.toSet()
+        }
         val grace = startupGraceUntilByProfile.filterValues { until ->
             // Kept one ordinary grace past its end, because `stallSince` above still reads it then.
             partyNowMs - until < WatchPartyGuestBufferingGraceMs
         }
-        return if (next == heldSinceByProfile && grace == startupGraceUntilByProfile) {
+        return if (
+            next == heldSinceByProfile &&
+            grace == startupGraceUntilByProfile &&
+            stalls == bufferingSinceByProfile
+        ) {
             this
         } else {
-            copy(heldSinceByProfile = next, startupGraceUntilByProfile = grace)
+            copy(
+                bufferingSinceByProfile = stalls,
+                heldSinceByProfile = next,
+                startupGraceUntilByProfile = grace,
+            )
         }
     }
 
@@ -508,15 +563,67 @@ data class GuestBufferingWatch(
 const val WatchPartyStartupStallGraceMs = 10_000L
 
 /**
- * The longest the start barrier waits, after every member has a source, for them to be able to play.
+ * The longest a coordinated barrier waits for the members it moved to be able to play.
  *
- * `ready` means the member's file opened and has a duration - not that it can start. In the physical
- * run the gate released on exactly that and the guest's first real frame was still seconds away,
- * which is why the party's first act after the hold was another hold. Bounded, because a member whose
- * player never reports itself parked must not keep the party stopped: after this the barrier releases
- * on durable readiness alone, exactly as it did before, and the start-up grace absorbs the rest.
+ * Two callers, one clock. At the start, `ready` means the member's file opened and has a duration -
+ * not that it can start; in the physical run the gate released on exactly that and the guest's first
+ * real frame was still seconds away, which is why the party's first act after the hold was another
+ * hold. After a seek it is the same question about the same members, asked about a position the
+ * party itself has just moved them to.
+ *
+ * Bounded, because a member whose player never reports itself parked must not keep the party
+ * stopped: past this the barrier goes on without them - at the start on durable readiness alone,
+ * exactly as it did before, and after a seek by resuming anyway and leaving the rest to the stall
+ * guard, which is the mechanism for buffering nobody asked for.
  */
 const val WatchPartyStartPlaybackReadyMaxWaitMs = 12_000L
+
+/**
+ * A seek whose resume is waiting for the party to be able to play again.
+ *
+ * Held rather than awaited inline because the wait outlives the gesture: the seek is issued with
+ * `playAfter = false`, every member lands on the frame and stays there, and the resume is a second
+ * command issued when - and only when - they have all said they can play it.
+ *
+ * [issuedAtPartyMs] is the seek's own barrier instant, and it is what makes a report an answer:
+ * see the `freshSincePartyMs` argument of [partyStartPlaybackRelease].
+ */
+data class PartyPendingResume(
+    val generationKey: String,
+    val targetPositionMs: Long,
+    val issuedAtPartyMs: Long,
+)
+
+/**
+ * Why a seek's resume happened, which is the only thing that tells the four of them apart.
+ *
+ * All four end the same way - the party plays again at the seek target - so a log that says only
+ * that cannot answer the question the ceiling exists to raise: whether it ever fires at all, and on
+ * whom. [logCode] is what a run is grepped for; [playSource] carries the same word into the `play`
+ * line the transport already writes, so the two can be joined without a timestamp match.
+ */
+enum class PartyResumeReason(val logCode: String) {
+    /** Every member the seek moved reported it can play the frame it landed on. The intended path. */
+    AllReady("all-ready"),
+
+    /** The host said it was not waiting - the "Don't wait" action on the status pill. */
+    DontWait("dont-wait"),
+
+    /** [WatchPartyStartPlaybackReadyMaxWaitMs] passed with somebody still not ready. */
+    Ceiling("ceiling"),
+
+    /**
+     * There is no live peer plane, so there is no readiness to wait for.
+     *
+     * Not a failure of the barrier: a party on the durable path has no way to report readiness at
+     * all, and waiting for a report that cannot arrive would leave a scrub paused until the ceiling.
+     */
+    Degraded("degraded"),
+    ;
+
+    /** The `src=` on the resulting `play`, so the command and the reason are one grep apart. */
+    val playSource: String get() = "seek-readiness:" + logCode
+}
 
 /** Whether the start barrier may release, and who it is still waiting on when it may not. */
 data class PartyStartRelease(
@@ -526,15 +633,29 @@ data class PartyStartRelease(
 )
 
 /**
- * The start barrier's second condition: every member it waited on can actually play.
+ * Whether every member a coordinated barrier moved can actually play, and who it is waiting on.
  *
- * Called only once the durable gate has opened, so every connected member already has a source.
- * A member is playback-ready when its fresh peer status is `paused` or `playing`: `partyStatusFor`
- * reports `buffering` for as long as the engine is loading or has no first frame, so `paused` from a
- * member the party is holding means parked on a decoded frame. Members the barrier does not wait on:
- * the viewer, anyone disconnected, left or failed, and anyone who has never been in a player and says
- * nothing on the live plane - durable readiness is all there is to know about them. Without a live
- * plane there is no playback evidence to wait for, so the durable gate is the whole answer.
+ * The rule behind both barriers that wait for positive readiness rather than resuming on a timer:
+ *
+ *  - **The start**, once the durable gate has opened and every connected member has a source.
+ *    [freshSincePartyMs] is 0 there: any recent report answers, because the question is simply
+ *    whether that member's player is up.
+ *  - **A seek**, where the party has deliberately emptied everyone's buffer and the question is
+ *    whether they have refilled it. [freshSincePartyMs] is the seek's own barrier instant, so a
+ *    report from *before* the seek cannot answer a question the seek asked - which is the whole
+ *    difference between waiting for readiness and hoping the lead was long enough.
+ *
+ * A member is playback-ready when its fresh peer status is `paused` or `playing` **and it is not
+ * starved**. Both halves are load-bearing. `partyStatusFor` reports `buffering` for as long as the
+ * engine is loading, so `paused` from a member the party is holding means parked on a decoded frame -
+ * but only [PartyPeerTelemetry.starved] can tell that from a member parked on an empty engine,
+ * because pausing a starving player stops it reporting `buffering` at all. That is the 2026-09-19
+ * S25 failure in its other form: here it would release the barrier onto a member that cannot play.
+ *
+ * Members the barrier does not wait on: the viewer, anyone disconnected, left or failed, and anyone
+ * who has never been in a player and says nothing on the live plane - durable readiness is all there
+ * is to know about them. Without a live plane there is no playback evidence to wait for, so the
+ * durable gate is the whole answer.
  */
 fun partyStartPlaybackRelease(
     members: List<WatchPartyParticipant>,
@@ -543,6 +664,7 @@ fun partyStartPlaybackRelease(
     realtimeLive: Boolean,
     partyNowMs: Long,
     durablyReadyAtPartyMs: Long,
+    freshSincePartyMs: Long = 0L,
 ): PartyStartRelease {
     if (!realtimeLive) return PartyStartRelease(release = true, waitingOn = emptyList())
     val waiting = members.filter { member ->
@@ -551,11 +673,15 @@ fun partyStartPlaybackRelease(
             member.readyState == SourceResolutionState.failed ||
             member.readyState == SourceResolutionState.disconnected
         ) return@filter false
-        val status = peerTelemetry[member.profileId]
+        val telemetry = peerTelemetry[member.profileId]
             ?.takeIf { partyNowMs - it.receivedAtPartyMs <= WatchPartyClockStaleMs }
-            ?.status
-        when (status) {
-            WatchPartyStatus.paused, WatchPartyStatus.playing -> false
+            // A report the member sent before the operation describes it before it was moved. The
+            // sender's own stamp, not the receipt: the receipt of a report that crossed with the
+            // command would read as an answer to it.
+            ?.takeIf { it.reportedAtPartyMs >= freshSincePartyMs }
+        val starved = telemetry?.starved == true
+        when (telemetry?.status) {
+            WatchPartyStatus.paused, WatchPartyStatus.playing -> starved
             WatchPartyStatus.buffering -> true
             else -> member.clientLocation == WatchPartyClientLocation.player
         }

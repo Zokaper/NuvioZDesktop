@@ -3,6 +3,7 @@ package com.nuvio.app.features.watchparty
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.network.ZSessionBridge
 import com.nuvio.app.core.network.ZSupabaseProvider
+import com.nuvio.app.core.network.runWithZSession
 import com.nuvio.app.core.network.shouldReexchangeZSession
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
@@ -12,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -54,6 +56,20 @@ data class WatchPartyUiState(
      * for a party to persist it into yet.
      */
     val waitForEveryone: Boolean = true,
+    /**
+     * Whether the host holds the party while a member is **away**.
+     *
+     * A separate answer from [waitForEveryone], and it has to be. That one is about a stream that
+     * cannot keep up; this one is about a person who is not in the room. Wanting to wait out a bad
+     * connection says nothing about wanting the film to stop because somebody answered a message,
+     * and a single switch would force the host to accept both to get either.
+     *
+     * Defaults **off**, which is the least disruptive of the two behaviours: the party plays on and
+     * whoever comes back catches up through the timeline they were already following. Host-side and
+     * this session only, exactly like [waitForEveryone] - see `partyAwayHoldMembers` for the one
+     * case this switch does not govern, which is the host's own absence.
+     */
+    val pauseForAwayUsers: Boolean = false,
     /**
      * The source the host has chosen but has not started the party on yet.
      *
@@ -309,6 +325,12 @@ object WatchPartyRepository {
         if (_uiState.value.waitForEveryone == enabled) return
         log.i { "waitForEveryone=$enabled party=${_uiState.value.party?.id.shortId()}" }
         _uiState.value = _uiState.value.copy(waitForEveryone = enabled)
+    }
+
+    fun setPauseForAwayUsers(enabled: Boolean) {
+        if (_uiState.value.pauseForAwayUsers == enabled) return
+        log.i { "pauseForAwayUsers=$enabled party=${_uiState.value.party?.id.shortId()}" }
+        _uiState.value = _uiState.value.copy(pauseForAwayUsers = enabled)
     }
 
     suspend fun create(
@@ -786,8 +808,14 @@ object WatchPartyRepository {
         updateHealth(PartyHealthEvent.PollingChanged(running = true))
         WatchPartyDiagnostics.poll(_uiState.value.party?.id, running = true, api = "idle")
         pollJob = scope.launch {
+            val liveness = PartyPollLiveness()
+            var nextDelayMs = WatchPartySnapshotIntervalMs
             while (true) {
-                delay(WatchPartySnapshotIntervalMs)
+                val sleptFrom = currentEpochMs()
+                delay(nextDelayMs)
+                // Anything well past the requested delay means this loop could not get a thread,
+                // which the server sees exactly as it sees a dropped request.
+                val loopLagMs = (currentEpochMs() - sleptFrom - nextDelayMs).coerceAtLeast(0L)
                 val partyId = _uiState.value.party?.id ?: break
                 val profileId = _uiState.value.activeProfileId ?: break
                 val pollStartedAt = currentEpochMs()
@@ -797,41 +825,56 @@ object WatchPartyRepository {
                 // machines never agree on that to better than a second or two.
                 if (clockOffsetPartyId != partyId) {
                     clockOffsetPartyId = partyId
-                    runCatching { measureClockOffset() }
+                    runCatching { withTimeoutOrNull(PartyPollAttemptDeadlineMs) { measureClockOffset() } }
                 }
                 // Deliberately not routed through call(): a background poll must not flip the
-                // working flag or overwrite an error the user is still reading.
-                runCatching {
-                    // `party_heartbeat` with no position is `party_snapshot` plus a liveness stamp:
-                    // it refreshes last_seen_at for this member and expires anyone who has stopped
-                    // reporting. Only the player used to heartbeat, so a member sitting in the lobby
-                    // or on the source list looked disconnected after fifteen seconds - and a host
-                    // waiting on them to be ready would give up on them for no reason.
-                    val liveGeneration = _uiState.value.party?.partyGenerationKey()
-                    val telemetry = playbackTelemetry?.takeIf {
-                        liveGeneration != null && liveGeneration.accepts(it.generation) &&
-                            currentEpochMs() - it.capturedAtMs <= WatchPartySnapshotIntervalMs * 2
-                    }
-                    val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_heartbeat", buildJsonObject {
-                        put("p_party_id", partyId)
-                        put("p_profile_id", profileId)
-                        telemetry?.let { sample ->
-                            val agedPosition = if (sample.status == WatchPartyStatus.playing) {
-                                val age = (currentEpochMs() - sample.capturedAtMs)
-                                    .coerceIn(0L, WatchPartySnapshotIntervalMs)
-                                sample.positionMs + (age.toDouble() * sample.playbackSpeed.toDouble()).toLong()
-                            } else {
-                                sample.positionMs
-                            }
-                            put("p_position_ms", agedPosition)
-                            put("p_duration_ms", sample.durationMs)
-                            put("p_playback_speed", sample.playbackSpeed)
-                            put("p_status", sample.status.name)
+                // working flag or overwrite an error the user is still reading. It does need what
+                // call() does for the session, though: without it an expired Z token failed every
+                // heartbeat from then on, and the server read the silence as the host leaving.
+                val attempt = withTimeoutOrNull(PartyPollAttemptDeadlineMs) {
+                    runWithZSession(
+                        ensure = { ZSessionBridge.ensureSession(profileId) },
+                        reexchange = { ZSessionBridge.reexchange(profileId) },
+                    ) {
+                        // `party_heartbeat` with no position is `party_snapshot` plus a liveness stamp:
+                        // it refreshes last_seen_at for this member and expires anyone who has stopped
+                        // reporting. Only the player used to heartbeat, so a member sitting in the lobby
+                        // or on the source list looked disconnected after fifteen seconds - and a host
+                        // waiting on them to be ready would give up on them for no reason.
+                        val liveGeneration = _uiState.value.party?.partyGenerationKey()
+                        val telemetry = playbackTelemetry?.takeIf {
+                            liveGeneration != null && liveGeneration.accepts(it.generation) &&
+                                currentEpochMs() - it.capturedAtMs <= WatchPartySnapshotIntervalMs * 2
                         }
-                    }).decodeAs<WatchPartyState>()
-                    installSnapshot(snapshot)
-                }.onSuccess {
+                        val snapshot = ZSupabaseProvider.client.postgrest.rpc("party_heartbeat", buildJsonObject {
+                            put("p_party_id", partyId)
+                            put("p_profile_id", profileId)
+                            telemetry?.let { sample ->
+                                val agedPosition = if (sample.status == WatchPartyStatus.playing) {
+                                    val age = (currentEpochMs() - sample.capturedAtMs)
+                                        .coerceIn(0L, WatchPartySnapshotIntervalMs)
+                                    sample.positionMs + (age.toDouble() * sample.playbackSpeed.toDouble()).toLong()
+                                } else {
+                                    sample.positionMs
+                                }
+                                put("p_position_ms", agedPosition)
+                                put("p_duration_ms", sample.durationMs)
+                                put("p_playback_speed", sample.playbackSpeed)
+                                put("p_status", sample.status.name)
+                            }
+                        }).decodeAs<WatchPartyState>()
+                        installSnapshot(snapshot)
+                    }
+                } ?: Result.failure(PartyPollAttemptTimeoutException())
+                attempt.onSuccess {
                     val now = currentEpochMs()
+                    nextDelayMs = partyPollDelayAfter(succeeded = true)
+                    liveness.onSuccess(now)?.let { silenceMs ->
+                        log.w {
+                            "poll recovered party=${partyId.shortId()} profile=${profileId.shortId()} " +
+                                "silentMs=$silenceMs"
+                        }
+                    }
                     lastSuccessfulContactEpochMs = now
                     lastLoggedPollFailure = null
                     updateHealth(PartyHealthEvent.DurableSucceeded(now, heartbeat = true))
@@ -850,6 +893,16 @@ object WatchPartyRepository {
                         durationMs = (currentEpochMs() - pollStartedAt).coerceAtLeast(0L),
                     )
                     val now = currentEpochMs()
+                    nextDelayMs = partyPollDelayAfter(succeeded = false)
+                    liveness.onFailure(now)?.let { silenceMs ->
+                        // Class only: a message can carry a URL or a response body.
+                        log.w {
+                            "poll silent party=${partyId.shortId()} profile=${profileId.shortId()} " +
+                                "silentMs=$silenceMs failedAttempts=${liveness.failuresSinceSuccess} " +
+                                "lastFailure=${cause::class.simpleName} attemptMs=${now - pollStartedAt} " +
+                                "loopLagMs=$loopLagMs"
+                        }
+                    }
                     updateHealth(
                         if (cause is PostgrestRestException) PartyHealthEvent.DurableRejected(now)
                         else PartyHealthEvent.DurableFailed(now),

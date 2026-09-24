@@ -62,11 +62,42 @@ data class WatchPartySyncState(
     val tickHold: List<String> = emptyList(),
     val holdingProfiles: List<String> = emptyList(),
     val peerTelemetry: Map<String, PartyPeerTelemetry> = emptyMap(),
+    /**
+     * Every member this client believes is away right now, the local viewer included.
+     *
+     * On the host it is built from the guests' peer reports plus its own presence, and it is what
+     * the host publishes on its tick. On a guest it is the host's roster from that tick, plus the
+     * guest's own presence - which is authoritative about itself and arrives a round trip before
+     * the host could echo it back.
+     */
+    val awayProfileIds: Set<String> = emptySet(),
 )
 
 data class PartyPeerTelemetry(
     val status: WatchPartyStatus,
     val receivedAtPartyMs: Long,
+    /**
+     * The engine's own "nothing left to play", carried beside the status because the status cannot
+     * express it: a member the party has paused reports `paused` whether it is full or empty. Comes
+     * over the wire already - see `PartyPeerStatusMessage.starved` - and is what stops a readiness
+     * barrier releasing onto a member parked on an empty engine.
+     */
+    val starved: Boolean = false,
+    /**
+     * The party instant the *sender* stamped on this report, which is the only clock that can say
+     * whether it answers a question the party asked after it. [receivedAtPartyMs] cannot: a report
+     * that crossed with the command on the wire is received after it and describes the member
+     * before it.
+     */
+    val reportedAtPartyMs: Long = 0L,
+    /**
+     * This member is in the party and deliberately not watching. See `PartyPresence.kt`.
+     *
+     * Beside [starved] for the same reason [starved] is beside [status]: a backgrounded member and
+     * a member who pressed pause both report `paused`, and the party has to be able to tell a
+     * person who has stepped away from a person who is sitting there watching a still frame.
+     */
+    val away: Boolean = false,
 )
 
 /**

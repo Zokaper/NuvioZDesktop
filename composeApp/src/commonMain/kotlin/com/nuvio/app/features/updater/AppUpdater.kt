@@ -112,12 +112,11 @@ internal object VersionUtils {
      */
     fun parseReleaseSerial(raw: String?): Int? {
         if (raw.isNullOrBlank()) return null
-        val marker = raw.lastIndexOf('+')
-        if (marker < 0) return null
-        return raw.substring(marker + 1)
-            .trim()
-            .takeWhile { it.isDigit() }
-            .toIntOrNull()
+        return Regex("""^[^+]+\+(\d+)$""")
+            .find(raw.trim())
+            ?.groupValues
+            ?.get(1)
+            ?.toIntOrNull()
     }
 
     /**
@@ -163,6 +162,28 @@ internal object VersionUtils {
         }
         return false
     }
+}
+
+/** What channel selection needs to know about one GitHub release. */
+internal data class ChannelReleaseFacts(
+    val tag: String?,
+    val draft: Boolean,
+    val prerelease: Boolean,
+    val matchesBranch: Boolean = true,
+)
+
+/**
+ * Whether a release belongs to [source]'s channel.
+ *
+ * Stable installs accept only published, non-prerelease, non-debug releases. Debug installs
+ * accept only published prereleases whose tag uses the `debug-v` prefix. Keeping this policy in
+ * one predicate makes malformed or partially published releases fail closed.
+ */
+internal fun isChannelEligible(release: ChannelReleaseFacts, source: AppUpdateReleaseSource): Boolean {
+    if (release.draft) return false
+    val debugRelease = release.tag?.trim()?.startsWith(debugChannelTagPrefix, ignoreCase = true) == true
+    if (source.debugChannel) return release.prerelease && debugRelease
+    return release.matchesBranch && !debugRelease && (source.includePrereleases || !release.prerelease)
 }
 
 /** One published release, for the What's New screen's version history. */
@@ -226,23 +247,18 @@ private object AppUpdaterRepository {
         runCatching {
             val source = AppUpdaterPlatform.releaseSource
             val releases = fetchReleases()
-        // The two channels cannot see each other, and each half of that matters. A debug build
-        // takes only `debug-v*` prereleases, so it never installs the release app over itself.
-        // A release build rejects them outright rather than relying on `includePrereleases`,
-        // because this repository's Android build sets that flag true and would otherwise be
-        // offered a desktop MSI it has no asset for.
-        val release = if (source.debugChannel) {
-            releases.firstOrNull { !it.draft && it.prerelease && it.isDebugChannelRelease() }
-                ?: throw NoChannelReleaseException()
-        } else {
-            releases.firstOrNull { release ->
-                release.matchesRequestedChannel() &&
-                    !release.draft &&
-                    !release.isDebugChannelRelease() &&
-                    (source.includePrereleases || !release.prerelease)
-            }
-                ?: throw NoChannelReleaseException()
-        }
+        // The two channels cannot see each other; see isChannelEligible.
+        val release = releases.firstOrNull { release ->
+            isChannelEligible(
+                ChannelReleaseFacts(
+                    tag = release.tagName,
+                    draft = release.draft,
+                    prerelease = release.prerelease,
+                    matchesBranch = release.matchesRequestedChannel(),
+                ),
+                source,
+            )
+        } ?: throw NoChannelReleaseException()
 
         val tag = release.tagName?.takeIf { it.isNotBlank() }
             ?: release.name?.takeIf { it.isNotBlank() }

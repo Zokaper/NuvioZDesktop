@@ -324,6 +324,80 @@ class WatchPartyTimelineTest {
         assertEquals(DriftCorrectionKind.NONE, second.correction.kind)
         assertEquals(0, second.tracker.seekStreak)
     }
+
+    // --- Recovering from a starve -------------------------------------------------------------
+    //
+    // The buffer -> seek -> buffer loop, reported from hardware 2026-09-21. A guest seeks once it
+    // is WatchPartySeekThresholdMs (1s) behind, but the host only holds the party after
+    // WatchPartyGuestBufferingGraceMs (2.5s) of continuous buffering - so a rebuffer anywhere in
+    // between put the guest into a seek that discarded the buffer it had just rebuilt, which
+    // starved it again, while the host was still deciding whether to wait. These pin the handover.
+
+    /** The case from the device: a ~2s rebuffer, recovered, now ~2s behind. Nudge, do not seek. */
+    @Test fun aModerateGapAfterARebufferIsNudgedRatherThanSeeked() {
+        val starved = DriftTracker().starved(nowMs = 1_000)
+        assertTrue(starved.recoveringFromStarve(nowMs = 1_100))
+
+        // Twice, because two consecutive sightings is all it used to take to spend the buffer.
+        val first = starved.next(0, 2_000, 1f, nowMs = 1_100)
+        assertEquals(DriftCorrectionKind.TEMPORARY_SPEED, first.correction.kind)
+        val second = first.tracker.next(0, 2_000, 1f, nowMs = 1_600)
+        assertEquals(DriftCorrectionKind.TEMPORARY_SPEED, second.correction.kind)
+        // Still closing the gap while it declines to seek for it.
+        assertTrue((second.correction.temporarySpeed ?: 1f) > 1f)
+    }
+
+    /** Bounded. A guest still behind when the window runs out takes the seek after all. */
+    @Test fun theStarveSuppressionExpires() {
+        val starved = DriftTracker().starved(nowMs = 1_000)
+        val afterWindow = 1_000 + WatchPartyStarveRecoverySeekSuppressionMs + 1
+        assertFalse(starved.recoveringFromStarve(nowMs = afterWindow))
+
+        val first = starved.next(0, 2_000, 1f, nowMs = afterWindow)
+        assertEquals(DriftCorrectionKind.TEMPORARY_SPEED, first.correction.kind)
+        val second = first.tracker.next(0, 2_000, 1f, nowMs = afterWindow + 500)
+        assertEquals(DriftCorrectionKind.SEEK, second.correction.kind)
+    }
+
+    /** A gap the nudge would take half a minute to close is not a rebuffer to absorb. */
+    @Test fun aLargeGapSeeksEvenWhileRecovering() {
+        val starved = DriftTracker().starved(nowMs = 1_000)
+        val wide = WatchPartyStarveRecoverySeekOverrideMs + 500
+        val first = starved.next(0, wide, 1f, nowMs = 1_100)
+        assertEquals(DriftCorrectionKind.TEMPORARY_SPEED, first.correction.kind)
+        val second = first.tracker.next(0, wide, 1f, nowMs = 1_200)
+        assertEquals(DriftCorrectionKind.SEEK, second.correction.kind)
+        // The seek spent the buffer the policy was protecting, so the starve goes with it.
+        assertEquals(0L, second.tracker.starvedAtMs)
+    }
+
+    /**
+     * The override sits above the host's own grace on purpose.
+     *
+     * If it were below, a guest could suppress its seek for a gap the host had already stopped
+     * waiting for and nobody would act. The two constants being ordered the wrong way round is the
+     * whole bug, so the ordering is asserted rather than left to whoever edits them next.
+     */
+    @Test fun theStarveOverrideStaysAboveTheHostsBufferingGrace() {
+        assertTrue(WatchPartyStarveRecoverySeekOverrideMs > WatchPartyGuestBufferingGraceMs)
+    }
+
+    /**
+     * A commanded seek is not a drift correction and never reaches this policy.
+     *
+     * Host scrubs, source-generation changes and Away returns are all scheduled through
+     * `partySeekPlan` against the barrier, which the caller honours before the tracker is consulted
+     * at all. The guard is structural, so what is pinned here is that the scheduler still produces
+     * a seek for a freshly starved guest - the tracker has no say in it.
+     */
+    @Test fun aCommandedSeekIsUnaffectedByAStarve() {
+        val commanded = tick(positionMs = 60_000, capturedAtPartyMs = 10_000)
+        val plan = partySeekPlan(commanded, partyNowMs = 10_000)
+        assertTrue(plan.resumeAtPartyMs > 10_000)
+        // The freshly starved tracker is not consulted, and the scheduled target is unchanged.
+        assertTrue(DriftTracker().starved(nowMs = 10_000).recoveringFromStarve(nowMs = 10_000))
+        assertEquals(plan.seekToMs, partySeekPlan(commanded, partyNowMs = 10_000).seekToMs)
+    }
 }
 
 class WatchPartyBarrierTest {
@@ -498,8 +572,8 @@ class WatchPartyBarrierTest {
      * A held member reports `paused`, because the hold *is* a party pause and it obeyed: demanding
      * `playing` of it is asking it to disobey the command holding it, and the 2026-09-10 two-client
      * run is what that cost - the guest finished buffering, said so, and the party sat paused until
-     * somebody pressed play. `paused` is only ever "parked and full" here, since a member still
-     * starved reports `buffering`.
+     * somebody pressed play. A `paused` that ends a hold has to be a *full* one, which is what
+     * `starved = false` states; see [aHostHoldDoesNotReleaseItselfWhenTheGuestObeysIt].
      */
     @Test fun aHoldEndsOnceTheHeldGuestIsFullAgain() {
         val held = GuestBufferingWatch()
@@ -507,7 +581,12 @@ class WatchPartyBarrierTest {
             .advance(WatchPartyGuestBufferingGraceMs)
         assertEquals(listOf("guest"), held.holdingProfiles)
 
-        val full = held.observe("guest", WatchPartyStatus.paused, partyNowMs = WatchPartyGuestBufferingGraceMs)
+        val full = held.observe(
+            "guest",
+            WatchPartyStatus.paused,
+            partyNowMs = WatchPartyGuestBufferingGraceMs,
+            starved = false,
+        )
         assertEquals(
             listOf("guest"),
             full.advance(WatchPartyGuestBufferingGraceMs + WatchPartyStallRecoverySettleMs - 1).holdingProfiles,
@@ -545,6 +624,156 @@ class WatchPartyBarrierTest {
             .observe("guest", WatchPartyStatus.buffering, partyNowMs = 100)
             .advance(100 + WatchPartyGuestBufferingGraceMs)
         assertEquals(listOf("guest"), held.holdingProfiles)
+    }
+
+    /**
+     * ⚠ **A host hold must not be released by the guest obeying it.** The S25 run of 2026-09-19,
+     * step for step.
+     *
+     * The guest was starving on a 4K remux. The host's stall guard paused the party for it. The
+     * guest obeyed, and a paused player stops reporting `buffering` - `isLoading` is starvation
+     * measured against an intent to play, and the pause removes the intent - so it reported
+     * `paused` while still holding nothing. The host read its own command coming back as recovery,
+     * resumed 1.27 s after pausing onto a guest frozen at 12012 ms, and spent the single hold its
+     * budget allowed. It then played on for 26 s while the guest's startup watchdog gave up and
+     * threw away the party's only candidate.
+     *
+     * `starved` is buffer occupancy, which no command can change, and it is what keeps the hold.
+     */
+    @Test fun aHostHoldDoesNotReleaseItselfWhenTheGuestObeysIt() {
+        // 1-2. The guest is playing, then genuinely starts buffering.
+        var watch = GuestBufferingWatch()
+            .observe("guest", WatchPartyStatus.playing, partyNowMs = 0, starved = false)
+            .observe("guest", WatchPartyStatus.buffering, partyNowMs = 1_000, starved = true)
+
+        // 3. The grace expires and the host takes the hold.
+        val heldAtMs = 1_000 + WatchPartyGuestBufferingGraceMs
+        watch = watch.advance(heldAtMs)
+        assertEquals(listOf("guest"), watch.holdingProfiles)
+
+        // 4-5. The guest obeys the host's pause and reports `paused` - while still empty.
+        watch = watch.observe("guest", WatchPartyStatus.paused, partyNowMs = heldAtMs + 200, starved = true)
+
+        // 6. The host MUST remain held, however long the settle is given.
+        assertEquals(
+            listOf("guest"),
+            watch.advance(heldAtMs + 200 + WatchPartyStallRecoverySettleMs).holdingProfiles,
+            "the host resumed on its own pause coming back",
+        )
+        // Not a slow release either: still held well past the settle, short of the abandon ceiling.
+        assertEquals(
+            listOf("guest"),
+            watch.advance(heldAtMs + WatchPartyStallHoldMaxMs - 1).holdingProfiles,
+        )
+
+        // 7. The guest actually recovers: same `paused`, but it has a buffer now.
+        val recoveredAtMs = heldAtMs + 2_000
+        val recovered = watch.observe(
+            "guest",
+            WatchPartyStatus.paused,
+            partyNowMs = recoveredAtMs,
+            starved = false,
+        )
+
+        // 8. Only now does the settle begin, and only after it does the host resume.
+        assertEquals(
+            listOf("guest"),
+            recovered.advance(recoveredAtMs + WatchPartyStallRecoverySettleMs - 1).holdingProfiles,
+        )
+        assertEquals(
+            emptyList(),
+            recovered.advance(recoveredAtMs + WatchPartyStallRecoverySettleMs).holdingProfiles,
+        )
+    }
+
+    /**
+     * A starved `paused` is a stall the guard can *start* on, not merely one it refuses to end.
+     *
+     * Normalising only inside the release check would leave the member out of the buffering window
+     * entirely, and a stall the guard never sees begin is a stall it can never hold for - which is
+     * the same party playing on over a frozen guest, reached by a different route.
+     */
+    @Test fun aStarvedPausedGuestIsStalledEvenBeforeAnyHoldExists() {
+        val watch = GuestBufferingWatch()
+            .observe("guest", WatchPartyStatus.paused, partyNowMs = 0, starved = true)
+        assertEquals(emptyList(), watch.advance(WatchPartyGuestBufferingGraceMs - 1).holdingProfiles)
+        assertEquals(listOf("guest"), watch.advance(WatchPartyGuestBufferingGraceMs).holdingProfiles)
+    }
+
+    /**
+     * An ordinary user pause is not a stall, and must never become one.
+     *
+     * The distinction is buffer occupancy, so a person pausing a healthy stream - which keeps its
+     * buffer, it simply stops draining it - stays exactly what it was before this fix existed.
+     */
+    @Test fun anOrdinaryUserPauseIsStillNotAStall() {
+        val watch = GuestBufferingWatch()
+            .observe("guest", WatchPartyStatus.playing, partyNowMs = 0, starved = false)
+            .observe("guest", WatchPartyStatus.paused, partyNowMs = 1_000, starved = false)
+        assertEquals(
+            emptyList(),
+            watch.advance(1_000 + WatchPartyStallHoldMaxMs).holdingProfiles,
+            "a person pausing a full stream was read as a stall",
+        )
+        assertEquals(emptyMap(), watch.bufferingSinceByProfile)
+    }
+
+    /**
+     * A barrier or corrective seek must still not create a stall.
+     *
+     * This is the protection the 2026-09-02 run bought and it is the thing most at risk from
+     * reading starvation more eagerly: a guest parked for a barrier publishes nothing at all
+     * (`partyHoldingForBarrier` suppresses the publish), so the host sees the `playing` either
+     * side of it and no window is ever opened. Asserted here because the property belongs to the
+     * watch, not only to the publisher that feeds it.
+     */
+    @Test fun aBarrierParkCreatesNoStall() {
+        val watch = GuestBufferingWatch()
+            .observe("guest", WatchPartyStatus.playing, partyNowMs = 0, starved = false)
+            // The barrier park and its corrective seek happen here, publishing nothing.
+            .observe("guest", WatchPartyStatus.playing, partyNowMs = 2_000, starved = false)
+        assertEquals(emptyList(), watch.advance(2_000 + WatchPartyGuestBufferingGraceMs).holdingProfiles)
+        assertEquals(emptyMap(), watch.bufferingSinceByProfile)
+    }
+
+    /**
+     * A silent guest is still abandoned, so one dead client cannot stop the film forever.
+     *
+     * The hold now survives obedience, which makes the ceiling the only thing that ends a hold for
+     * a member that never comes back. It has to keep working.
+     */
+    @Test fun aGuestThatNeverRecoversIsStillAbandonedOnTheCeiling() {
+        val heldAtMs = WatchPartyGuestBufferingGraceMs
+        val watch = GuestBufferingWatch()
+            .observe("guest", WatchPartyStatus.buffering, partyNowMs = 0, starved = true)
+            .advance(heldAtMs)
+            .observe("guest", WatchPartyStatus.paused, partyNowMs = heldAtMs + 100, starved = true)
+        assertEquals(listOf("guest"), watch.advance(heldAtMs + WatchPartyStallHoldMaxMs - 1).holdingProfiles)
+        assertEquals(emptyList(), watch.advance(heldAtMs + WatchPartyStallHoldMaxMs).holdingProfiles)
+    }
+
+    /**
+     * Genuine buffering after a legitimate recovery obeys the hold budget, not this watch.
+     *
+     * The watch has no anti-flap policy of its own and must not grow one: `StallHoldBudget` owns
+     * how often a host may stop the party, and a second genuine stall has to reach it to be
+     * counted. Asserted so a future "just suppress the second hold here" cannot pass silently.
+     */
+    @Test fun aSecondGenuineStallIsStillOfferedToTheHoldBudget() {
+        val firstHeldAtMs = WatchPartyGuestBufferingGraceMs
+        val recoveredAtMs = firstHeldAtMs + 100
+        val released = GuestBufferingWatch()
+            .observe("guest", WatchPartyStatus.buffering, partyNowMs = 0, starved = true)
+            .advance(firstHeldAtMs)
+            .observe("guest", WatchPartyStatus.paused, partyNowMs = recoveredAtMs, starved = false)
+            .advance(recoveredAtMs + WatchPartyStallRecoverySettleMs)
+        assertEquals(emptyList(), released.holdingProfiles)
+
+        val stalledAgainAtMs = recoveredAtMs + WatchPartyStallRecoverySettleMs + 5_000
+        val again = released
+            .observe("guest", WatchPartyStatus.buffering, partyNowMs = stalledAgainAtMs, starved = true)
+            .advance(stalledAgainAtMs + WatchPartyGuestBufferingGraceMs)
+        assertEquals(listOf("guest"), again.holdingProfiles)
     }
 
     /**
@@ -729,10 +958,75 @@ class WatchPartySyncProtocolTest {
             PartyClockPingMessage("party", "guest", exchangeId = "x1", sentAtMs = 10),
             PartyClockPongMessage("party", "host", toProfileId = "guest", exchangeId = "x1", sentAtMs = 10, hostAtMs = 4_010),
             PartyPeerStatusMessage("party", "guest", WatchPartyStatus.buffering, atPartyMs = 500, rttMs = 42),
+            // Away, which reports `paused` with a full buffer - byte-for-byte what a person
+            // pressing pause reports - so the flag is the only thing carrying the difference.
+            PartyPeerStatusMessage(
+                "party",
+                "guest",
+                WatchPartyStatus.paused,
+                atPartyMs = 600,
+                rttMs = 42,
+                away = true,
+            ),
+            // The host's roster of who is away, which is how a guest learns about the other guests.
+            PartyTickMessage(
+                "host",
+                tick(positionMs = 1_234, capturedAtPartyMs = 99_000).copy(
+                    hold = listOf("ana"),
+                    away = listOf("ana", "ben"),
+                ),
+            ),
         )
         messages.forEach { message ->
             assertEquals(message, decodePartySyncMessage(encodePartySyncMessage(message)))
         }
+    }
+
+    /**
+     * A build that predates Away reads exactly what it always did, and this build reads its silence
+     * as "nobody is away" - which is that build's actual behaviour rather than a guess about it.
+     *
+     * The protocol version deliberately does not move for either field: both are optional and both
+     * are absent from the wire unless they say something, so an ordinary tick between an old client
+     * and a new one is unchanged in both directions. Bumping the version would instead make every
+     * message from the newer build undecodable by the older one, which is the opposite of what an
+     * additive field is for.
+     */
+    @Test fun awayIsAbsentFromTheWireUntilSomebodyIsAway() {
+        val ordinaryTick = encodePartySyncMessage(PartyTickMessage("host", tick(0, 0)))
+        assertNull(ordinaryTick["away"])
+        val ordinaryPeer = encodePartySyncMessage(
+            PartyPeerStatusMessage("party", "guest", WatchPartyStatus.playing, atPartyMs = 1),
+        )
+        // The peer status always carries it, like `st`: it is one boolean on a message that is sent
+        // only on a change, not a list on a message that goes out twice a second.
+        assertEquals(false, ordinaryPeer["aw"]?.let { (it as kotlinx.serialization.json.JsonPrimitive).content.toBoolean() })
+
+        val olderTick = kotlinx.serialization.json.buildJsonObject {
+            ordinaryTick.forEach { (key, value) -> if (key != "away") put(key, value) }
+        }
+        val decodedTick = decodePartySyncMessage(olderTick) as PartyTickMessage
+        assertEquals(emptyList(), decodedTick.tick.away)
+
+        val olderPeer = kotlinx.serialization.json.buildJsonObject {
+            ordinaryPeer.forEach { (key, value) -> if (key != "aw") put(key, value) }
+        }
+        val decodedPeer = decodePartySyncMessage(olderPeer) as PartyPeerStatusMessage
+        assertEquals(false, decodedPeer.away)
+    }
+
+    /** A malformed roster costs the tick its roster, never the position everything else needs. */
+    @Test fun aMalformedAwayRosterDoesNotDropTheTick() {
+        val encoded = encodePartySyncMessage(
+            PartyTickMessage("host", tick(positionMs = 4_000, capturedAtPartyMs = 9_000)),
+        )
+        val broken = kotlinx.serialization.json.buildJsonObject {
+            encoded.forEach { (key, value) -> put(key, value) }
+            put("away", kotlinx.serialization.json.JsonPrimitive("ana"))
+        }
+        val decoded = decodePartySyncMessage(broken) as PartyTickMessage
+        assertEquals(4_000L, decoded.tick.positionMs)
+        assertEquals(emptyList(), decoded.tick.away)
     }
 
     /**

@@ -69,7 +69,12 @@ class PlayerUiGallery {
             ),
             incomingRequest = incoming.takeIf { withIncoming },
             settings = if (role == WatchTogetherRole.Host) {
-                WatchTogetherHostSettings(false, true, JoinPolicyControl(WatchJoinPolicy.approval))
+                WatchTogetherHostSettings(
+                    guestsControlPlayback = false,
+                    pauseWhenSomeoneBuffers = true,
+                    pauseForAwayUsers = false,
+                    joinPolicy = JoinPolicyControl(WatchJoinPolicy.approval),
+                )
             } else {
                 null
             },

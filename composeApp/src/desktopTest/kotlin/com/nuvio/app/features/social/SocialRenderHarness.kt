@@ -31,6 +31,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.foundation.lazy.rememberLazyListState
+import com.nuvio.app.core.ui.LocalNuvioBottomNavigationOverlayPadding
 import com.nuvio.app.core.ui.AppTheme
 import com.nuvio.app.core.ui.NuvioTheme
 import com.nuvio.app.core.ui.desktopUiScaleForWindow
@@ -362,104 +365,93 @@ class SocialRenderHarness {
     }
 
     /**
-     * The Social tab's feed **in the constraint stack the screen actually builds**: the dashboard's
-     * own width cap, the friends rail beside it, and the feed capped to the width its column count
-     * was derived from.
+     * The Social tab **as `SocialScreen` composes it**: [SocialFeed], the stateless layout the screen
+     * hands its gathered state to, with a fixture model in place of the repositories.
+     *
+     * ⚠ This used to be `SocialFeedSceneBody`, a hand-rebuilt replica of the screen's constraint
+     * stack - the `LazyColumn`, its padding, the rail and the metrics call, copied out. It was honest
+     * only for as long as it happened to match, and the phone redesign restructures exactly that
+     * stack. Now there is one description of the layout and this file composes it.
      */
     @Composable
-    private fun SocialFeedScene() {
-        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) { SocialFeedSceneBody() }
+    private fun SocialFeedScene(state: SocialUiState = feedState) {
+        val groups = groupFriendActivity(state.activity)
+        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+            SocialFeed(
+                model = SocialFeedModel(
+                    state = state,
+                    activityGroups = groups,
+                    activityBuckets = bucketFriendActivity(groups, renderNowMs),
+                    activityNowMs = renderNowMs,
+                    joinAffordance = ::affordanceFor,
+                ),
+                actions = SocialFeedActions(),
+                listState = rememberLazyListState(),
+            )
+        }
     }
 
-    @Composable
-    private fun SocialFeedSceneBody() {
-        // ⚠ **The window size is not the width the feed divides.** `NuvioTheme` scales the density,
-        // so a 1920x1080 window is about 1458 *composition* dp - and the screen reads `maxWidth`
-        // from its own `BoxWithConstraints`, not from the window. Deriving the metrics out in the
-        // test from the platform size was the same two-numbers mistake in miniature; it happened to
-        // agree at every size on the ladder, which is exactly how the first one survived too.
-        BoxWithConstraints(
-            Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
-            contentAlignment = Alignment.TopCenter,
-        ) {
-            val railVisible = maxWidth >= 1040.dp
-            val feed = socialFeedMetrics(maxWidth, railVisible)
-            Column(Modifier.fillMaxHeight().widthIn(max = SocialDashboardMaxWidth)) {
-                Row(Modifier.fillMaxSize()) {
-                    Box(Modifier.weight(1f).fillMaxHeight()) {
-                        LazyColumn(
-                            Modifier.widthIn(max = feed.feedWidth).fillMaxWidth().fillMaxHeight(),
-                            contentPadding = PaddingValues(
-                                start = SocialFeedHorizontalPadding,
-                                end = SocialFeedHorizontalPadding,
-                                top = 16.dp,
-                                bottom = 24.dp,
-                            ),
-                            verticalArrangement = Arrangement.spacedBy(14.dp),
-                        ) {
-                            item { SectionLabel("Watching Now") }
-                            socialGridItems(
-                                orderWatchingNowForDisplay(watchingNow),
-                                feed.watchingNowColumns,
-                                { "w:${it.sessionId}" },
-                            ) { item, m ->
-                                SocialWatchingNowCard(
-                                    item,
-                                    affordance = affordanceFor(item),
-                                    onOpen = {},
-                                    onJoin = {},
-                                    onCancelRequest = {},
-                                    modifier = m,
-                                    artworkWidth = feed.watchingNowArtworkWidth,
-                                    stacked = feed.watchingNowStacked,
-                                )
-                            }
-                            item { SectionLabel("Friends Recently Watched") }
-                            bucketFriendActivity(groupFriendActivity(activityRuns), renderNowMs).forEach { (bucket, groups) ->
-                                item { Text(bucket.label.uppercase(), style = MaterialTheme.typography.labelSmall) }
-                                socialGridItems(groups, feed.activityColumns, FriendActivityGroup::contentId) { group, m ->
-                                    FriendActivityRow(group, renderNowMs, onOpen = {}, modifier = m.height(FriendActivityRowHeight))
-                                }
-                            }
-                            item { WatchingNowEmptyLine() }
-                        }
-                    }
-                    if (railVisible) {
-                        // The real roster, in the real rail modifiers, because the physical run
-                        // showed its right edge clipped at 2000px and an empty box cannot clip.
-                        Column(
-                            Modifier.width(SocialFriendsRailWidth)
-                                .fillMaxSize()
-                                .verticalScroll(rememberScrollState())
-                                .padding(start = 4.dp, end = 24.dp, top = 4.dp, bottom = 110.dp),
-                        ) {
-                            SocialFriendsPanel(
-                                state = SocialUiState(
-                                    capabilities = SocialCapabilities(socialEnabled = true, watchPartyEnabled = true),
-                                    friends = friends,
-                                    watchingNow = watchingNow,
-                                ),
-                                search = "",
-                                onSearchChange = {},
-                                onRunSearch = {},
-                                isSearching = false,
-                                feedback = null,
-                                searchResults = emptyList(),
-                                onSendRequest = {},
-                                onRemoveFriend = {},
-                                onSelectFriend = {},
-                                shareWatching = true,
-                                shareRecent = true,
-                                defaultJoinPolicy = WatchJoinPolicy.approval,
-                                onShareWatching = {},
-                                onShareRecent = {},
-                                onDefaultJoinPolicy = {},
-                            )
-                        }
-                    }
+    private val feedState = SocialUiState(
+        capabilities = SocialCapabilities(socialEnabled = true, watchPartyEnabled = true),
+        activeProfileId = "p-zokaper",
+        me = profile("big z", "zokaper"),
+        friends = friends,
+        watchingNow = watchingNow,
+        activity = activityRuns,
+    )
+
+    /** The ordinary phone case: one friend watching, a few rows of history, three friends. */
+    private val typicalState = feedState.copy(
+        watchingNow = watchingNow.take(1),
+        friends = friends.take(3),
+    )
+
+    /**
+     * The phone scenes, at a phone's own scale: density 2, no desktop UI scale, a font scale of 1,
+     * and the bottom-nav pill's measured reserve (79dp expanded) in the overlay padding, so the
+     * list's end clears where the pill would be. Insets are zero here - device checks own those.
+     */
+    @Test
+    fun renderTheSocialTabAtPhoneSizes() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        val sizes = listOf(411 to 914, 891 to 411, 360 to 780, 320 to 600, 800 to 1280)
+        for ((w, h) in sizes) {
+            renderPhone("phone-social-typical-${w}x$h", w, h, failures) { SocialFeedScene(typicalState) }
+            renderPhone("phone-social-full-${w}x$h", w, h, failures) { SocialFeedScene() }
+        }
+        renderPhone("phone-social-empty-411x914", 411, 914, failures) {
+            SocialFeedScene(feedState.copy(watchingNow = emptyList(), activity = emptyList(), friends = emptyList()))
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
+    private fun renderPhone(
+        name: String,
+        widthDp: Int,
+        heightDp: Int,
+        failures: MutableList<String>,
+        content: @Composable () -> Unit,
+    ) {
+        runCatching {
+            val scene = ImageComposeScene(width = widthDp * 2, height = heightDp * 2, density = Density(2f)) {
+                NuvioTheme(darkTheme = true, appTheme = AppTheme.WHITE, amoled = false, desktopUiScale = 1f) {
+                    val d = LocalDensity.current
+                    CompositionLocalProvider(
+                        LocalDensity provides Density(d.density, 1f),
+                        LocalNuvioBottomNavigationOverlayPadding provides 79.dp,
+                    ) { content() }
                 }
             }
-        }
+            try {
+                scene.render(0L)
+                val image = scene.render(16_000_000L)
+                val data = image.encodeToData(EncodedImageFormat.PNG) ?: error("encodeToData returned null")
+                File(outputDir, "$name.png").writeBytes(data.bytes)
+            } finally {
+                scene.close()
+            }
+        }.onFailure { error -> failures += "$name: ${error::class.simpleName}: ${error.message}" }
     }
 
     @Composable
