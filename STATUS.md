@@ -1,6 +1,49 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-22
+Last updated: 2026-09-24
+
+## Phase 8 shared convergence, on a branch and not on `Dev` (2026-09-24)
+
+**The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 8 closeout". Phase 8 (iOS bring-up) is
+closed on mobile. **No stable mobile release follows it.** Downloads Redesign is now Phase 9, and TV
+moved to Phase 10 (`ROADMAP.md`).
+
+Branch `claude/phase-8-shared-convergence`, cut from `codex/phase-7-release-engineering`. It carries
+the Phase 8 shared Kotlin (mobile `cd08ca322..223443bf1`, `commonMain`/`commonTest`, plus the unbuilt
+`androidMain`/`iosMain` copies), applied 3-way. Every file except two was byte-identical to mobile's
+pre-Phase-8 state, so it applied clean. The two exceptions:
+- `strings.xml` keeps this repo's keys and adds only Phase 8's Z block;
+- `MetaDetailsScreen.kt` is never copied. The whole-title season-scope fix is ported by hand to
+  both title-level Download call sites (desktop hero and phone layout).
+
+New `DownloadsPlatformDownloader.desktop.kt` actuals: `maxConcurrentTransfers =
+DownloadsRepository.MAX_CONCURRENT_TRANSFERS` (2), `ownsTransferLiveness = false`, and no-op
+`schedulingDeferredToPlatform`, `requestTransferInventory` (answers `null`), `suspendTransfer` and
+`cancelTransfer`. With these values the iOS-only paths in `DownloadsRepository` stay off on
+desktop: the parked in-order release, the watchdog suppression and inventory-held scheduling. The
+shared batch-attention changes **do** apply here and are unobserved on desktop:
+- uncached debrid sources go to **Choose source manually** instead of being approved;
+- a known-uncached download fails at once;
+- Choose source manually opens the download-intent list.
+
+**Not merged to `Dev`, deliberately.** The shared `.43` navigation change moves Downloads under
+Library, and that also takes Downloads out of the **desktop sidebar**. That was never reviewed for
+desktop, and desktop is live. It waits for Phase 9 §J (Library ↔ Downloads). Also still pending:
+`codex/phase-7-release-engineering` itself (the Phase 7 release hardening) has never been merged to
+`Dev`.
+
+**The convergence found one real regression, and it is fixed on both sides.** Mobile's `.44`
+`prepareUpcomingTransfers` resolved queued sources ahead of their slots on every platform, including
+while offline. `DesktopDownloadQueueE2ETest` "unresolved sources wait for slots and never resolve
+while offline" failed deterministically. It now runs only where `ownsTransferLiveness` is set (iOS):
+mobile `4b172884c`, carried here.
+
+Verified (JBR SDK, results dir deleted, `--rerun-tasks`):
+- pure suites, 8 groups, **780 / 780**;
+- `:composeApp:compileKotlinDesktop`;
+- `:composeApp:desktopTest` **2,512 / 2,512** (the E2E class alone: 38 / 38).
+
+No MSI was built and nothing was published.
 
 ## Phase 7 closeout: desktop release hardening (2026-09-22)
 

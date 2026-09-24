@@ -47,6 +47,22 @@ internal actual object DownloadsPlatformDownloader {
     // it waits there until the app is restarted.
     actual val recoversSystemPauses: Boolean = false
 
+    // Desktop runs its own transfers in-process, so the queue's limit is the real one and
+    // the queue keeps its silence watchdog. The rest is the iOS background-session seam,
+    // which has nothing to answer for here.
+    actual val maxConcurrentTransfers: Int = DownloadsRepository.MAX_CONCURRENT_TRANSFERS
+    actual val ownsTransferLiveness: Boolean = false
+
+    actual fun schedulingDeferredToPlatform(): Boolean = false
+
+    actual fun requestTransferInventory(
+        onResult: (List<IosBackgroundTransferReconciler.LiveTransfer>?) -> Unit,
+    ) = onResult(null)
+
+    actual fun suspendTransfer(downloadId: String) = Unit
+
+    actual fun cancelTransfer(downloadId: String) = Unit
+
     private val downloadsDir: File
         get() = File(DesktopStorage.rootDir.resolve("downloads").also { it.createDirectories() }.toUri())
 
