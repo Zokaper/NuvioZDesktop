@@ -57,6 +57,7 @@ class DesktopDownloadQueueE2ETest {
     private lateinit var server: FaultyMediaServer
     private lateinit var defaultResolver: suspend (StreamItem, Int?, Int?) -> DownloadSourceResolution
     private lateinit var defaultIsMetered: () -> Boolean
+    private val defaultActiveOwner: () -> Int = DownloadStore.activeOwner
 
     @BeforeTest
     fun setUp() {
@@ -95,6 +96,14 @@ class DesktopDownloadQueueE2ETest {
         DownloadsRepository.isMeteredNetwork = defaultIsMetered
         DownloadsRepository.updateDeviceSettings { DownloadDeviceSettings() }
         DownloadsRepository.restoreConnectivityFeedAfterTests()
+        // The engine is device-wide: a download another profile left behind would keep a slot.
+        for (profile in 1..3) {
+            DownloadStore.activeOwner = { profile }
+            DownloadsRepository.onProfileChanged()
+            DownloadsRepository.deleteDownloadsForTitle(META_ID)
+        }
+        DownloadStore.activeOwner = defaultActiveOwner
+        DownloadsRepository.onProfileChanged()
     }
 
     @Test
@@ -935,6 +944,94 @@ class DesktopDownloadQueueE2ETest {
         // Wi-Fi comes back with no other queue event: the recheck must notice on its own.
         metered = false
         awaitQueueDrained()
+    }
+
+    @Test
+    fun `each profile sees its own downloads while one engine runs them all`() {
+        val first = publishEpisode(1)
+        val second = publishEpisode(2)
+        enqueue(first)
+        DownloadStore.activeOwner = { 2 }
+        DownloadsRepository.onProfileChanged()
+        enqueue(second)
+
+        assertEquals(
+            listOf("$META_ID:1:2"),
+            DownloadsRepository.uiState.value.items.filter { it.parentMetaId == META_ID }.map { it.videoId },
+            "profile 2 sees only its own download",
+        )
+        // Switching profiles must not stop profile 1's transfer: both finish.
+        awaitDevice("both profiles' downloads to finish") { items ->
+            items.count { it.parentMetaId == META_ID && it.status == DownloadStatus.Completed } == 2
+        }
+        assertEquals(
+            mapOf("$META_ID:1:1" to 1, "$META_ID:1:2" to 2),
+            DownloadsRepository.deviceItems.value.filter { it.parentMetaId == META_ID }
+                .associate { it.videoId to it.ownerProfileId },
+        )
+
+        DownloadStore.activeOwner = { 1 }
+        DownloadsRepository.onProfileChanged()
+        assertEquals(
+            listOf("$META_ID:1:1"),
+            DownloadsRepository.uiState.value.items.filter { it.parentMetaId == META_ID }.map { it.videoId },
+        )
+    }
+
+    @Test
+    fun `desktop's per-profile payloads migrate into one device store and stay on disk`() {
+        val storage = DesktopStorage.store("nuvio_downloads")
+        fun legacy(id: String, episode: Int) = DownloadItem(
+            id = id,
+            contentType = "series",
+            parentMetaId = META_ID,
+            parentMetaType = "series",
+            videoId = "$META_ID:1:$episode",
+            title = "Harness",
+            seasonNumber = 1,
+            episodeNumber = episode,
+            streamTitle = "legacy",
+            providerName = "Harness",
+            fileName = "$id.mkv",
+            status = DownloadStatus.Paused,
+            pauseReason = DownloadPauseReason.User,
+            activity = DownloadActivity.USER_PAUSED,
+            createdAtEpochMs = 0L,
+            updatedAtEpochMs = 0L,
+        )
+        fun payload(item: DownloadItem) =
+            DownloadsCodec.encode(listOf(item), DownloadSourcePolicy(), emptyList(), DownloadPreset.BuiltIns)
+
+        DownloadsRepository.clearLocalState()
+        storage.remove("downloads_device")
+        storage.putString("downloads_1", payload(legacy("legacy-a", 1)))
+        storage.putString("downloads_2", payload(legacy("legacy-b", 2)))
+        try {
+            DownloadsRepository.ensureLoaded()
+            assertEquals(
+                mapOf("legacy-a" to 1, "legacy-b" to 2),
+                DownloadsRepository.deviceItems.value.filter { it.parentMetaId == META_ID }
+                    .associate { it.id to it.ownerProfileId },
+            )
+            assertEquals(
+                listOf("legacy-a"),
+                DownloadsRepository.uiState.value.items.filter { it.parentMetaId == META_ID }.map { it.id },
+            )
+            assertNotNull(storage.getString("downloads_device"), "the merged store was written")
+            assertNotNull(storage.getString("downloads_1"), "the per-profile payloads are left in place")
+        } finally {
+            storage.remove("downloads_1")
+            storage.remove("downloads_2")
+        }
+    }
+
+    private fun awaitDevice(description: String, condition: (List<DownloadItem>) -> Boolean) {
+        val deadline = System.currentTimeMillis() + 60_000L
+        while (System.currentTimeMillis() < deadline) {
+            if (condition(DownloadsRepository.deviceItems.value)) return
+            Thread.sleep(POLL_INTERVAL_MS)
+        }
+        fail("Timed out waiting for $description: ${DownloadsRepository.deviceItems.value.map { "${it.videoId}/${it.ownerProfileId}/${it.status}" }}")
     }
 
     @Test

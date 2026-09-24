@@ -42,26 +42,10 @@ private val desktopDownloadHttpClient: HttpClient = HttpClient.newBuilder()
     .build()
 
 internal actual object DownloadsPlatformDownloader {
-    // Nothing on desktop pauses the queue on the system's behalf, so nothing resumes
-    // it either. An item that reaches that state has to be taken back by the queue or
-    // it waits there until the app is restarted.
-    actual val recoversSystemPauses: Boolean = false
-
-    // Desktop runs its own transfers in-process, so the queue's limit is the real one and
-    // the queue keeps its silence watchdog. The rest is the iOS background-session seam,
-    // which has nothing to answer for here.
-    actual val maxConcurrentTransfers: Int = DownloadsRepository.MAX_CONCURRENT_TRANSFERS
-    actual val ownsTransferLiveness: Boolean = false
-
-    actual fun schedulingDeferredToPlatform(): Boolean = false
-
-    actual fun requestTransferInventory(
-        onResult: (List<IosBackgroundTransferReconciler.LiveTransfer>?) -> Unit,
-    ) = onResult(null)
-
-    actual fun suspendTransfer(downloadId: String) = Unit
-
-    actual fun cancelTransfer(downloadId: String) = Unit
+    // Desktop runs its own transfers in-process: the slot count is the device's downloads-at-once
+    // setting and the queue keeps its silence watchdog. Nothing on desktop pauses the queue on the
+    // system's behalf, so nothing resumes it either - the queue takes such items back itself.
+    actual val transferHost: TransferHost = TransferHost.InProcess(recoversSystemPauses = false)
 
     private val downloadsDir: File
         get() = File(DesktopStorage.rootDir.resolve("downloads").also { it.createDirectories() }.toUri())
@@ -121,7 +105,10 @@ internal actual object DownloadsPlatformDownloader {
                     // Nothing reads this body, and an unread one holds its connection open.
                     runCatching { response.body().close() }
 
-                    if (reportedTotal != null && tempFile.length() == reportedTotal) {
+                    if (
+                        rangeNotSatisfiableOutcome(reportedTotal, tempFile.length()) ==
+                        RangeNotSatisfiableOutcome.PartialIsComplete
+                    ) {
                         val finalized = finalizePartialFile(tempFile, destination)
                         if (finalized == null) {
                             listener.onFailed(
@@ -154,7 +141,8 @@ internal actual object DownloadsPlatformDownloader {
                     return@launch
                 }
 
-                val isPartialResume = attemptedRangeRequest && response.statusCode() == 206 && resumeFromBytes > 0L
+                val isPartialResume =
+                    responseAppendsToPartial(attemptedRangeRequest, response.statusCode(), resumeFromBytes)
                 val appendToTemp = isPartialResume
                 val startingBytes = if (appendToTemp) resumeFromBytes else 0L
                 // A 200 answer to a range request means the server either ignores ranges or
