@@ -19,6 +19,11 @@ and "Download what fits (7 of 22)" wrapping inside the button on phones; fixed i
 Verification: `desktopTest` **2,620 / 2,620** (results dir deleted, `--rerun`, JBR SDK); pure
 **890 / 890**. No MSI built; nothing physical yet.
 
+**Stage 7 - Downloads screen + attention (2026-09-25):** mobile `301137be4`, `b6e23a9a6` and the iOS
+`toSortedMap` fix cherry-picked clean. New `DownloadsScreenRenderHarness` ->
+`composeApp/build/downloads-screen-render/`. `desktopTest` **2,638 / 2,638**. Desktop's Downloads
+still lives where it did (sidebar); moving it under Library is plan §J, not done.
+
 ## Phase 8 shared convergence, on a branch and not on `Dev` (2026-09-24)
 
 **The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 8 closeout". Phase 8 (iOS bring-up) is
