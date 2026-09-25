@@ -165,7 +165,7 @@ class DownloadsScreenRenderHarness {
         val unfinished = items.filter {
             it.status != DownloadStatus.Completed && DownloadPresenter.item(it, now).phase != DownloadUserPhase.NEEDS_YOU
         }
-        val queue = DownloadQueueGrouping.group(unfinished, completed, now)
+        val queue = DownloadQueueGrouping.group(unfinished, items, batches, now)
         NuvioScreen(topPadding = 0.dp) {
             stickyHeader {
                 Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {

@@ -17,6 +17,7 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.net.http.HttpTimeoutException
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -35,11 +36,28 @@ private const val TRANSFER_BUFFER_BYTES = 64 * 1024
  * `BodyHandlers.ofInputStream` the response arrives as soon as the headers do.
  * Every byte after that is read from a stream with no deadline of its own, which
  * is why the transfer loop runs its own stall watchdog.
+ *
+ * **A client per attempt, not one for the app (`.52`).** Debrid links reach the CDN through one
+ * resolver host that speaks HTTP/2, so every episode of a season shared a single connection for
+ * its first hop. On Android that connection died silently and every request after it - retries
+ * included - waited out the full deadline for twenty minutes while a fresh process fetched the
+ * same links in two seconds. `java.net.http` pools the same way and has no HTTP/2 ping to notice,
+ * so a transfer gets connections of its own and they close with it.
  */
-private val desktopDownloadHttpClient: HttpClient = HttpClient.newBuilder()
+private fun newTransferClient(): HttpClient = HttpClient.newBuilder()
     .connectTimeout(Duration.ofSeconds(60))
     .followRedirects(HttpClient.Redirect.NORMAL)
     .build()
+
+/**
+ * `shutdownNow`, not `close`: `close` waits for exchanges still in flight, and after a timeout
+ * this attempt no longer cares about any of them.
+ */
+private fun HttpClient.closeQuietly() {
+    runCatching { shutdownNow() }
+}
+
+private const val NO_RESPONSE_MESSAGE = "This source isn't answering. Try again, or pick another source."
 
 internal actual object DownloadsPlatformDownloader {
     // Desktop runs its own transfers in-process: the slot count is the device's downloads-at-once
@@ -87,12 +105,22 @@ internal actual object DownloadsPlatformDownloader {
             val destination = File(downloadsDir, request.destinationFileName)
             val tempFile = File(downloadsDir, "${request.destinationFileName}.part")
             var downloadedBytes = 0L
+            val client = newTransferClient()
+            val startedAtNs = System.nanoTime()
+            // Whether the server answered at all. A timeout before it did is `NoResponse`.
+            var opened = false
 
             try {
                 var resumeFromBytes = tempFile.takeIf { it.exists() }?.length()?.coerceAtLeast(0L) ?: 0L
                 downloadedBytes = resumeFromBytes
                 var attemptedRangeRequest = resumeFromBytes > 0L
-                var response = sendDownloadRequest(request, if (attemptedRangeRequest) resumeFromBytes else null)
+                var response = sendDownloadRequest(client, request, if (attemptedRangeRequest) resumeFromBytes else null)
+                opened = true
+                DownloadDiagnostics.http(
+                    request.downloadId,
+                    "http_response",
+                    "code=${response.statusCode()} proto=${response.version()} ms=${(System.nanoTime() - startedAtNs) / 1_000_000L}",
+                )
                 lastByteAtEpochMs.set(DownloadsClock.nowEpochMs())
 
                 if (attemptedRangeRequest && response.statusCode() == 416) {
@@ -126,7 +154,7 @@ internal actual object DownloadsPlatformDownloader {
                     resumeFromBytes = 0L
                     downloadedBytes = 0L
                     attemptedRangeRequest = false
-                    response = sendDownloadRequest(request, null)
+                    response = sendDownloadRequest(client, request, null)
                     lastByteAtEpochMs.set(DownloadsClock.nowEpochMs())
                 }
 
@@ -274,6 +302,20 @@ internal actual object DownloadsPlatformDownloader {
                         currentPartialBytes(tempFile, downloadedBytes),
                     )
 
+                    // Nothing came back at all - see `DownloadFailureReason.NoResponse`.
+                    error is HttpTimeoutException && !opened -> {
+                        DownloadDiagnostics.http(
+                            request.downloadId,
+                            "http_failed",
+                            "error=${error::class.simpleName} ms=${(System.nanoTime() - startedAtNs) / 1_000_000L}",
+                        )
+                        listener.onFailed(
+                            DownloadFailureReason.NoResponse,
+                            NO_RESPONSE_MESSAGE,
+                            currentPartialBytes(tempFile, downloadedBytes),
+                        )
+                    }
+
                     else -> listener.onFailed(
                         DownloadFailureReason.Transient,
                         error.message ?: "Download failed",
@@ -283,6 +325,7 @@ internal actual object DownloadsPlatformDownloader {
             } finally {
                 watchdog.cancel()
                 handle.detachStream()
+                client.closeQuietly()
             }
         }
 
@@ -334,12 +377,14 @@ internal actual object DownloadsPlatformDownloader {
     }
 
     private fun sendDownloadRequest(
+        client: HttpClient,
         request: DownloadPlatformRequest,
         rangeStart: Long?,
     ): HttpResponse<java.io.InputStream> {
         val builder = HttpRequest.newBuilder()
             .uri(URI(request.sourceUrl))
-            .timeout(Duration.ofSeconds(60))
+            // The stall deadline, so the harness can shorten it like every other one.
+            .timeout(Duration.ofMillis(DownloadsTiming.stallTimeoutMs))
             .GET()
         request.sourceHeaders.forEach { (key, value) ->
             if (key.isNotBlank() && value.isNotBlank()) {
@@ -355,7 +400,7 @@ internal actual object DownloadsPlatformDownloader {
                 builder.header("If-Range", it)
             }
         }
-        return desktopDownloadHttpClient.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream())
+        return client.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream())
     }
 }
 

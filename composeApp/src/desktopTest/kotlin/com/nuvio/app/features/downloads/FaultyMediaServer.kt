@@ -48,6 +48,13 @@ internal class FaultyMediaServer : AutoCloseable {
          */
         data class GoSilent(val bytesBeforeSilence: Long) : Behavior
 
+        /**
+         * Read the request and never answer it: no status, no headers.
+         *
+         * What `.52` saw on a dead pooled connection - every request sent, none answered.
+         */
+        data object NeverAnswer : Behavior
+
         /** Serve correctly, but slowly enough for queue controls to interrupt it. */
         data class Throttle(val delayPerChunkMs: Long) : Behavior
 
@@ -226,6 +233,12 @@ internal class FaultyMediaServer : AutoCloseable {
 
             is Behavior.GoSilent -> {
                 writeBody(output, content, effectiveRangeStart, limit = behavior.bytesBeforeSilence)
+                while (running && !client.isClosed) {
+                    Thread.sleep(50L)
+                }
+            }
+
+            is Behavior.NeverAnswer -> {
                 while (running && !client.isClosed) {
                     Thread.sleep(50L)
                 }

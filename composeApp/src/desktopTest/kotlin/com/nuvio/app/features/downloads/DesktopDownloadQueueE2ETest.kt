@@ -28,6 +28,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -363,6 +364,46 @@ class DesktopDownloadQueueE2ETest {
             server.rangeStarts(episode.path).any { it == 0L },
             "the restart did not fetch from the beginning",
         )
+    }
+
+    /**
+     * `.52`, Lanterns episode 3: one real mid-body stall, then four requests nobody answered. The
+     * budget ran out, the restart-from-zero rule fired, and 2.47 GB went - though a request that is
+     * never answered cannot be the partial file's fault. Now the download fails with its partial
+     * file intact, says the source is not answering, and a retry carries on from where it was.
+     */
+    @Test
+    fun `requests nobody answers keep the partial file and a retry resumes it`() {
+        val episode = publishEpisode(1)
+        server.failNextRequests(
+            episode.path,
+            FaultyMediaServer.Behavior.DropConnection(bytesBeforeDrop = episode.content.size / 3L),
+            // The drop spends attempt one; these spend the rest of the budget and no more.
+            *Array(MAX_DOWNLOAD_ATTEMPTS - 1) { FaultyMediaServer.Behavior.NeverAnswer },
+        )
+
+        enqueue(episode)
+        awaitCondition(STALLED_GIVE_UP_TIMEOUT_MS, "the download to give up") { items ->
+            items.firstOrNull { it.episodeNumber == episode.number }?.status == DownloadStatus.Failed
+        }
+
+        val failed = itemFor(episode)
+        assertFalse(failed.restartedFromZero, "an unanswered request must not throw the partial file away")
+        // What reached the disk before the drop - less than was sent, since the reset discards
+        // whatever the client had not read yet - and nothing has been taken away since.
+        val partial = DownloadsPlatformDownloader.partialFileBytes(failed.fileName)
+        assertTrue(partial > 0L, "the partial file is gone")
+        assertEquals(partial, failed.downloadedBytes)
+        assertEquals("This source isn't answering. Try again, or pick another source.", failed.errorMessage)
+        assertTrue(server.rangeStarts(episode.path).drop(1).all { it > 0L }, "nothing may have fetched from zero")
+
+        DownloadsRepository.retryDownload(failed.id)
+        awaitQueueDrained()
+
+        val item = itemFor(episode)
+        assertEquals(DownloadStatus.Completed, item.status)
+        assertContentOnDisk(item, episode.content)
+        assertEquals(partial, server.rangeStarts(episode.path).last(), "the retry should have resumed")
     }
 
     @Test
