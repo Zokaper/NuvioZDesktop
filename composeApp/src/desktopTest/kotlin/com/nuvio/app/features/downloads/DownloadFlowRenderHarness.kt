@@ -197,7 +197,7 @@ class DownloadFlowRenderHarness {
 
     private fun picked(bytes: Long) = SourceSelectionResult.Selected(
         streamUrl = "https://a/x.mkv",
-        facts = SourceFacts(resolution = VideoResolution.FULL_HD_1080, sizeBytes = bytes),
+        facts = SourceFacts(resolution = VideoResolution.FULL_HD_1080, sizeBytes = bytes, releaseQuality = "WEB-DL"),
         addonKey = AddonSourceKey("a", "u"),
         calculatedCapBytes = 0L,
     )
