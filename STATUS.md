@@ -24,6 +24,12 @@ Verification: `desktopTest` **2,620 / 2,620** (results dir deleted, `--rerun`, J
 `composeApp/build/downloads-screen-render/`. `desktopTest` **2,638 / 2,638**. Desktop's Downloads
 still lives where it did (sidebar); moving it under Library is plan §J, not done.
 
+**Stage 9 - What's New (2026-09-25):** mobile `3889e237e` + `cae97f859` cherry-picked (conflicts only in this repo's
+pointer `AGENTS.md` and its unused `android-release.yml` - kept ours). Desktop-only: `WhatsNewStorage.desktop.kt` now
+reports desktop's identity (`DESKTOP_VERSION_NAME`, desktop `RELEASE_SERIAL` 131, debug number from the fourth
+version component) and stores the ack; `desktop-release.yml` runs `scripts/check-changelog.py` (desktop 132 has notes)
+and leads the body with them; `DesktopChangelogTest`. `desktopTest` **2,671 / 2,671**. Debug MSI **64** carries stages 8+9.
+
 **Stage 8 - wizard + settings (2026-09-25):** mobile `1ebb6da97` cherry-picked as `aaf98b2b3` (one conflict: this repo's
 unbuilt `androidMain/MainActivity.kt`, resolved by adding only the new import and init line). Made here and cherry-picked
 to mobile: `8997cffcd`. Desktop-only: `DeviceSetupStorage.desktop.kt` (`DesktopStorage`) and the harness additions
