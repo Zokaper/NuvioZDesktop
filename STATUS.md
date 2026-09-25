@@ -24,6 +24,10 @@ Verification: `desktopTest` **2,620 / 2,620** (results dir deleted, `--rerun`, J
 `composeApp/build/downloads-screen-render/`. `desktopTest` **2,638 / 2,638**. Desktop's Downloads
 still lives where it did (sidebar); moving it under Library is plan §J, not done.
 
+**Stage 7 final polish + size telemetry (2026-09-25):** the polish was made here (`41f0d6e0b`, fixture `3a1da754d`)
+and cherry-picked to mobile; mobile `575f247eb` (debug-only `DownloadSizeTelemetry`) cherry-picked here. `desktopTest`
+**2,645 / 2,645** (results deleted, `--rerun-tasks`). Debug MSI **63** carries it. Details in `nuvio-z/STATUS.md`.
+
 **Stage 7 composition pass (2026-09-25):** made here, `8fc71cb03` (shared, cherry-picked to mobile as
 `de8038613`) + `cb51188ce` (render harnesses: generated artwork via Coil's preview handler, realistic fixtures,
 the screen rendered through the production `downloadsRootContent` in `NuvioScreen`). Desktop gets a centred 880dp
