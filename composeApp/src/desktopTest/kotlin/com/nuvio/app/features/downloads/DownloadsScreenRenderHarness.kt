@@ -206,6 +206,26 @@ class DownloadsScreenRenderHarness {
         }
     }
 
+    /** Settings -> Downloads (stage 8): an unanswered mode on a derived Assisted, device defaults. */
+    @Composable
+    private fun Settings() {
+        NuvioScreen(topPadding = 0.dp) {
+            stickyHeader {
+                Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
+                    NuvioScreenHeader(title = "Downloads")
+                }
+            }
+            downloadsSettingsContent(
+                addons = emptyList(),
+                policy = DownloadSourcePolicy(),
+                downloadPolicy = DownloadPolicy(),
+                effectiveMode = DownloadMode.ASSISTED,
+                deviceSettings = DownloadDeviceSettings(),
+                onOpenFolder = {},
+            )
+        }
+    }
+
     @Test
     fun renderTheDownloadsScreen() {
         outputDir.mkdirs()
@@ -214,6 +234,7 @@ class DownloadsScreenRenderHarness {
             val phone = size.first < 600
             render("screen-$sizeName", size.first, if (phone) (size.second * 2.4).toInt() else (size.second * 1.9).toInt(), failures) { Screen() }
             render("detail-$sizeName", size.first, 520, failures) { Detail() }
+            render("settings-$sizeName", size.first, if (phone) 1500 else 1300, failures) { Settings() }
         }
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
     }

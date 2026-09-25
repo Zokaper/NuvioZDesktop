@@ -1,7 +1,15 @@
 package com.nuvio.app.features.setup
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
@@ -12,6 +20,9 @@ import com.nuvio.app.core.language.SubtitleLanguageOption
 import com.nuvio.app.core.ui.AppTheme
 import com.nuvio.app.core.ui.NuvioTheme
 import com.nuvio.app.core.ui.desktopUiScaleForWindow
+import com.nuvio.app.core.ui.nuvio
+import com.nuvio.app.features.downloads.DownloadMode
+import com.nuvio.app.features.downloads.DownloadPolicy
 import com.nuvio.app.features.details.MetaEpisodeCardStyle
 import com.nuvio.app.features.details.MetaScreenBackgroundMode
 import com.nuvio.app.features.downloads.DynamicRangePolicy
@@ -136,6 +147,14 @@ class SetupWizardRenderHarness {
             renderDesktopSteps(widthDp, heightDp, failures)
         }
 
+        // Phase 9's two download steps on phones, in every run that shows them: the full wizard at
+        // each Download Mode, an upgrade (no Welcome in front, so its subtitle says why it is
+        // here) and a device run (mobile data only). Drawn as the stacked panel lays them out -
+        // band, header, body - because a phone is where four controls have to fit.
+        for ((widthDp, heightDp) in listOf(360 to 780, 420 to 900)) {
+            renderPhoneDownloadSteps(widthDp, heightDp, failures)
+        }
+
         // The bands for steps 2-8, at the settings each one can be asked to draw. The band is
         // pure with respect to its parameters, which is what makes this exhaustive rather than a
         // sample - see the header of `SetupSpecimen.kt`.
@@ -149,6 +168,9 @@ class SetupWizardRenderHarness {
         // first, which is the rule the whole specimen file is built on.
         for (mode in PlaybackMode.entries) {
             renderStoryboard(mode, failures)
+        }
+        for (mode in DownloadMode.entries) {
+            renderDownloadStoryboard(mode, failures)
         }
 
         if (failures.isNotEmpty()) {
@@ -177,10 +199,12 @@ class SetupWizardRenderHarness {
         //
         // Classic is included precisely because it has *no* playback-setup step: what it proves is
         // that the flow reads correctly without one.
+        // Each run also carries a Download Mode, so all three download-setup variants a desktop can
+        // show are drawn: Assisted, Automatic, and Manual (which drops the step on desktop).
         val runs = listOf(
-            SetupRun("streamlined", PlaybackMode.STREAMLINED, socialEnabled = true),
-            SetupRun("instant", PlaybackMode.INSTANT, socialEnabled = true),
-            SetupRun("classic-social-off", PlaybackMode.CLASSIC, socialEnabled = false),
+            SetupRun("streamlined", PlaybackMode.STREAMLINED, socialEnabled = true, downloadMode = DownloadMode.ASSISTED),
+            SetupRun("instant", PlaybackMode.INSTANT, socialEnabled = true, downloadMode = DownloadMode.AUTOMATIC),
+            SetupRun("classic-social-off", PlaybackMode.CLASSIC, socialEnabled = false, downloadMode = DownloadMode.MANUAL),
         )
 
         for (run in runs) {
@@ -188,6 +212,8 @@ class SetupWizardRenderHarness {
                 playbackModeName = run.mode.name,
                 socialEnabled = run.socialEnabled,
                 offerSocialIdentity = true,
+                downloadModeName = run.downloadMode.name,
+                isPhone = false,
             )
             val steps = setupWizardSteps(plan).filter { it != SetupStep.Welcome }
 
@@ -264,6 +290,9 @@ class SetupWizardRenderHarness {
                             sources = SetupSourcesState(),
                             existingSourceName = if (step == SetupStep.Sources) "Existing Streams" else null,
                             sourcesActions = SetupSourcesActions(),
+                            downloadMode = run.downloadMode,
+                            downloadPolicy = DownloadPolicy(mode = run.downloadMode),
+                            downloadSetupVariant = downloadSetupVariant(plan),
                         )
                     }
                 }
@@ -276,7 +305,140 @@ class SetupWizardRenderHarness {
         val label: String,
         val mode: PlaybackMode,
         val socialEnabled: Boolean,
+        val downloadMode: DownloadMode = DownloadMode.MANUAL,
     )
+
+    private fun renderPhoneDownloadSteps(widthDp: Int, heightDp: Int, failures: MutableList<String>) {
+        val cases = listOf(
+            Triple("full-automatic", SetupWizardPlan(downloadModeName = "AUTOMATIC"), DownloadMode.AUTOMATIC),
+            Triple("full-assisted", SetupWizardPlan(downloadModeName = "ASSISTED"), DownloadMode.ASSISTED),
+            Triple("full-manual", SetupWizardPlan(downloadModeName = "MANUAL"), DownloadMode.MANUAL),
+            Triple(
+                "upgrade-automatic",
+                SetupWizardPlan(downloadModeName = "AUTOMATIC", run = SetupWizardRun.Upgrade, fromRevision = 9),
+                DownloadMode.AUTOMATIC,
+            ),
+            Triple(
+                "device",
+                SetupWizardPlan(downloadModeName = "ASSISTED", run = SetupWizardRun.Device, fromRevision = 10),
+                DownloadMode.ASSISTED,
+            ),
+        )
+        for ((label, plan, mode) in cases) {
+            val steps = setupWizardSteps(plan).filter { it == SetupStep.DownloadMode || it == SetupStep.DownloadSetup }
+            // The upgrade's two steps are the full run's two steps; only its first one differs.
+            val drawn = if (plan.run == SetupWizardRun.Upgrade) steps.take(1) else steps
+            for (step in drawn) {
+                render(
+                    name = "phone-$label-${step.name.lowercase()}-${widthDp}x$heightDp",
+                    widthDp = widthDp,
+                    heightDp = heightDp,
+                    theme = AppTheme.WHITE,
+                    amoled = false,
+                    failures = failures,
+                ) {
+                    val tokens = MaterialTheme.nuvio
+                    Column(Modifier.fillMaxSize().background(tokens.colors.surface)) {
+                        SetupSpecimenBand(
+                            specimen = SetupSpecimen.Diagram,
+                            step = step,
+                            playbackMode = PlaybackMode.STREAMLINED,
+                            height = SetupSpecimen.Diagram.preferredHeight,
+                            contentPaddingTop = 0.dp,
+                            posterWidthDp = 126,
+                            posterCornerRadiusDp = 8,
+                            landscapeCards = false,
+                            showCardTitles = true,
+                            heroEnabled = true,
+                            continueWatchingStyle = ContinueWatchingSectionStyle.Card,
+                            useEpisodeThumbnails = true,
+                            blurNextUp = false,
+                            backgroundMode = MetaScreenBackgroundMode.Cinematic,
+                            episodeCardStyle = MetaEpisodeCardStyle.Horizontal,
+                            blurUnwatchedEpisodes = false,
+                            tabLayout = false,
+                            nextUpLabel = "Next episode",
+                            modifier = Modifier.fillMaxWidth(),
+                            downloadModeName = plan.downloadModeName,
+                        )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 22.dp, vertical = 18.dp),
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                        ) {
+                            SetupPanelHeader(
+                                step = step,
+                                plan = plan,
+                                playbackMode = PlaybackMode.STREAMLINED,
+                                dismissible = plan.run != SetupWizardRun.Full,
+                                onDismiss = {},
+                            )
+                            SetupStepBody(
+                                step = step,
+                                goingForward = true,
+                                playbackMode = PlaybackMode.STREAMLINED,
+                                languageStrictness = LanguageStrictness.REQUIRE,
+                                dynamicRangePolicy = DynamicRangePolicy.ANY,
+                                qualityCeilingMbps = 0,
+                                preferredAudioLanguage = AudioLanguageOption.DEVICE,
+                                preferredSubtitleLanguage = SubtitleLanguageOption.NONE,
+                                posterWidthDp = 126,
+                                landscapeCards = false,
+                                selectedTheme = AppTheme.WHITE,
+                                amoledEnabled = false,
+                                socialEnabled = false,
+                                socialProbeUnknown = false,
+                                socialSignedIn = false,
+                                socialHandle = "",
+                                socialHandleBusy = false,
+                                socialHandleMessage = null,
+                                onSocialEnabledChange = {},
+                                onSocialHandleChange = {},
+                                onSaveSocialHandle = {},
+                                sources = SetupSourcesState(),
+                                existingSourceName = null,
+                                sourcesActions = SetupSourcesActions(),
+                                downloadMode = mode,
+                                downloadPolicy = DownloadPolicy(mode = mode),
+                                downloadSetupVariant = downloadSetupVariant(plan),
+                                askMobileData = true,
+                                showNotificationNote = true,
+                            )
+                            SetupAdvanceButton(step = step, plan = plan, onAdvance = {})
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun renderDownloadStoryboard(mode: DownloadMode, failures: MutableList<String>) {
+        val frames = downloadStoryboardFrames(mode.name)
+        var elapsedMillis = 0L
+        frames.forEachIndexed { index, frame ->
+            val sampleAt = elapsedMillis + (frame.holdMillis / 2)
+            render(
+                name = "download-storyboard-${mode.name.lowercase()}-$index-${frame.stage.name.lowercase()}",
+                widthDp = 420,
+                heightDp = 260,
+                theme = AppTheme.WHITE,
+                amoled = false,
+                failures = failures,
+                nanoTime = sampleAt * 1_000_000L,
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    SetupDiagram(
+                        step = SetupStep.DownloadMode,
+                        playbackMode = PlaybackMode.STREAMLINED,
+                        downloadModeName = mode.name,
+                    )
+                }
+            }
+            elapsedMillis += frame.holdMillis
+        }
+    }
 
     private fun renderBands(widthDp: Int, failures: MutableList<String>) {
         val variants = listOf<Pair<String, BandSettings>>(
