@@ -12,6 +12,7 @@ import java.io.File
 import java.net.URI
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -1140,6 +1141,88 @@ class DesktopDownloadQueueE2ETest {
         awaitQueueDrained()
         assertTrue(server.rangeStarts(episode.path).any { it > 0L }, "resume did not use the partial file")
         assertContentOnDisk(itemFor(episode), episode.content)
+    }
+
+    /**
+     * The long-pause contract (Phase 9): the link a download was using is disposable, its partial
+     * file is not. A pause long enough for the debrid link to expire resumes on a freshly minted
+     * link with a range request from the bytes already on disk.
+     */
+    @Test
+    fun `a long pause whose link expired resumes on a fresh link from the partial file`() {
+        val episode = publishEpisode(1)
+        val freshPath = "/fresh/${episode.path.trimStart('/')}"
+        server.publish(freshPath, episode.content)
+        server.failNextRequests(episode.path, FaultyMediaServer.Behavior.Throttle(delayPerChunkMs = 8L))
+        val expired = AtomicBoolean(false)
+        val mintsAfterExpiry = AtomicInteger()
+        DownloadsRepository.resolvePlayableStream = { stream, _, _ ->
+            if (expired.get()) {
+                mintsAfterExpiry.incrementAndGet()
+                DownloadSourceResolution.Ready(stream.copy(url = server.urlFor(freshPath)))
+            } else {
+                DownloadSourceResolution.Ready(stream)
+            }
+        }
+
+        enqueue(episode, withOrigin = true)
+        awaitProgress(episode)
+        DownloadsRepository.pauseDownload(itemFor(episode).id)
+        awaitUserPaused(episode)
+        Thread.sleep(500L) // the cancelled transfer's last write lands before the file is measured
+        val pausedAt = DownloadsPlatformDownloader.partialFileBytes(itemFor(episode).fileName)
+        assertTrue(pausedAt in 1 until episode.content.size.toLong(), "no partial file to resume ($pausedAt)")
+
+        // Hours pass: the old link now answers 403 for good, and the provider mints new ones.
+        expired.set(true)
+        server.failNextRequests(episode.path, *Array(20) { FaultyMediaServer.Behavior.Reject(statusCode = 403) })
+        val oldLinkRequestsWhilePaused = server.requestCount(episode.path)
+
+        DownloadsRepository.resumeDownload(itemFor(episode).id)
+        awaitQueueDrained()
+
+        assertTrue(mintsAfterExpiry.get() > 0, "resume did not ask the source for a fresh link")
+        assertEquals(oldLinkRequestsWhilePaused, server.requestCount(episode.path), "the expired link was replayed")
+        assertEquals(
+            pausedAt,
+            server.responseRangeStarts(freshPath).firstOrNull(),
+            "the fresh link did not continue from the partial file",
+        )
+        assertTrue(0L !in server.responseRangeStarts(freshPath), "the partial file was discarded")
+        assertContentOnDisk(itemFor(episode), episode.content)
+    }
+
+    /**
+     * A link that cannot be minted again and has expired during a pause ends the download as
+     * failed - but an expired link says nothing about the bytes on disk, so they stay for a later
+     * Retry instead of being thrown away by the stall rule's restart from zero.
+     */
+    @Test
+    fun `an expired link that cannot be re-minted keeps the partial file`() {
+        val episode = publishEpisode(1)
+        server.failNextRequests(episode.path, FaultyMediaServer.Behavior.Throttle(delayPerChunkMs = 8L))
+        enqueue(episode)
+        awaitProgress(episode)
+        DownloadsRepository.pauseDownload(itemFor(episode).id)
+        awaitUserPaused(episode)
+        Thread.sleep(500L) // the cancelled transfer's last write lands before the file is measured
+        val pausedAt = DownloadsPlatformDownloader.partialFileBytes(itemFor(episode).fileName)
+        assertTrue(pausedAt > 0L, "no partial file to keep")
+
+        server.failNextRequests(episode.path, *Array(20) { FaultyMediaServer.Behavior.Reject(statusCode = 403) })
+        val requestsBeforeResume = server.requestCount(episode.path)
+        DownloadsRepository.resumeDownload(itemFor(episode).id)
+        awaitCondition(20_000L, "the dead link to fail the download") { items ->
+            items.firstOrNull { it.episodeNumber == episode.number }?.status == DownloadStatus.Failed
+        }
+        Thread.sleep(1_000L)
+
+        assertEquals(DownloadStatus.Failed, itemFor(episode).status)
+        assertEquals(pausedAt, DownloadsPlatformDownloader.partialFileBytes(itemFor(episode).fileName))
+        assertTrue(
+            server.rangeStarts(episode.path).drop(requestsBeforeResume).none { it == 0L },
+            "the download started over from zero on a link that cannot work",
+        )
     }
 
     @Test
