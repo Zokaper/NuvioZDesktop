@@ -2,14 +2,18 @@ package com.nuvio.app.features.downloads
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.AppTheme
+import com.nuvio.app.core.ui.NuvioScreen
+import com.nuvio.app.core.ui.NuvioScreenHeader
 import com.nuvio.app.core.ui.NuvioTheme
 import com.nuvio.app.core.ui.desktopUiScaleForWindow
 import org.jetbrains.skia.EncodedImageFormat
@@ -18,21 +22,25 @@ import kotlin.test.Test
 import kotlin.test.fail
 
 /**
- * Renders the Phase 9 stage 7 Downloads screen pieces - storage bar, Needs you cards, the watched
- * cleanup suggestion, the queue with a season as one row, a lone film row and the detail sheet -
- * into `composeApp/build/downloads-screen-render/`, at two phone sizes and two desktop windows.
+ * Renders the Phase 9 stage 7 Downloads screen - storage, the watched-cleanup suggestion, Needs
+ * you, the queue with a season as one row, a preparing batch and On this device - plus the detail
+ * sheet, into `composeApp/build/downloads-screen-render/`, at two phone sizes and two desktop
+ * windows.
  *
  * ```
  * ./gradlew :composeApp:desktopTest --tests "*DownloadsScreenRenderHarness"
  * ```
  *
- * The pieces are the production composables; only the LazyColumn around them is the harness's,
- * in the screen's order. What to look for: every status line is plain words (no retry counters, no
- * engine names outside the detail), nothing wraps inside a button, the season row reads as one row.
+ * The screen body is the production `downloadsRootContent` inside the production `NuvioScreen`,
+ * so the width cap and the section order are the app's. The data is a plausible library with
+ * generated artwork ([DownloadRenderArt]). What to look for: rows lead with artwork; warning colour
+ * sits on icons, not paragraphs; on desktop the column stops growing and centres; "Download now
+ * anyway" reads as part of its episode.
  */
 class DownloadsScreenRenderHarness {
     private val outputDir = File("build/downloads-screen-render")
     private val gb = 1_000_000_000L
+    private val mb = 1_000_000L
     private val now = 1_000_000L
 
     private val sizes = listOf(
@@ -44,32 +52,37 @@ class DownloadsScreenRenderHarness {
 
     private fun item(
         id: String,
-        episode: Int?,
+        slug: String,
+        title: String,
         status: DownloadStatus,
+        season: Int? = null,
+        episode: Int? = null,
+        episodeTitle: String? = null,
         activity: DownloadActivity? = null,
         downloaded: Long = 0L,
         total: Long? = null,
         position: Long = 0L,
-        title: String = "The Remarkably Long-Named Chronicles of Everything",
-        parent: String = "tt1",
         failure: DownloadFailureKind? = null,
-        sizeApproval: Boolean = false,
         pause: DownloadPauseReason? = null,
         attempts: Int = 0,
         retryAt: Long? = null,
         error: String? = null,
+        stream: String = "WEB-DL 1080p",
     ) = DownloadItem(
         id = id,
         ownerProfileId = 1,
         contentType = if (episode != null) "series" else "movie",
-        parentMetaId = parent,
+        parentMetaId = "tt-$slug",
         parentMetaType = if (episode != null) "series" else "movie",
-        videoId = "$parent:$episode",
+        videoId = "tt-$slug:${season ?: 0}:${episode ?: 0}",
         title = title,
-        seasonNumber = episode?.let { 2 },
+        poster = DownloadRenderArt.poster(slug),
+        background = DownloadRenderArt.backdrop(slug),
+        seasonNumber = season,
         episodeNumber = episode,
-        episodeTitle = episode?.let { "An episode title that goes on for a while, number $it" },
-        streamTitle = "Show.S02E0$episode.1080p.WEB-DL.x265-GROUP",
+        episodeTitle = episodeTitle,
+        episodeThumbnail = episode?.let { DownloadRenderArt.still(slug, it) },
+        streamTitle = "$title ${season?.let { "S0${it}E0$episode " }.orEmpty()}$stream x265",
         providerName = "Torrentio",
         fileName = "$id.mkv",
         status = status,
@@ -79,7 +92,6 @@ class DownloadsScreenRenderHarness {
         downloadedBytes = downloaded,
         totalBytes = total,
         queuePosition = position,
-        sizeApprovalRequired = sizeApproval,
         attemptCount = attempts,
         nextRetryAtEpochMs = retryAt,
         errorMessage = error,
@@ -87,69 +99,97 @@ class DownloadsScreenRenderHarness {
         updatedAtEpochMs = 0L,
     )
 
+    private val severance = "Severance"
     private val queueItems = listOf(
-        item("e3", 3, DownloadStatus.Downloading, DownloadActivity.TRANSFERRING, downloaded = 900_000_000L, total = 2_100_000_000L, position = 0),
-        item("e4", 4, DownloadStatus.Queued, DownloadActivity.RETRY_BACKOFF, position = 1, attempts = 2, retryAt = now + 4_000, error = "HTTP 503"),
-        item("e5", 5, DownloadStatus.Queued, DownloadActivity.WAITING_FOR_WIFI, position = 2),
-        item("e6", 6, DownloadStatus.Paused, DownloadActivity.USER_PAUSED, pause = DownloadPauseReason.User, downloaded = 300_000_000L, total = 2_000_000_000L, position = 3),
-        item("m", null, DownloadStatus.Queued, DownloadActivity.WAITING_FOR_CONNECTION, position = 4, title = "A Film", parent = "tt9"),
+        item("sv3", "severance", severance, DownloadStatus.Downloading, 2, 3, "Who Is Alive?", DownloadActivity.TRANSFERRING, downloaded = 1_240 * mb, total = 2_100 * mb, position = 0),
+        item("sv4", "severance", severance, DownloadStatus.Queued, 2, 4, "Woe's Hollow", DownloadActivity.RETRY_BACKOFF, position = 1, attempts = 2, retryAt = now + 4_000, error = "HTTP 503"),
+        item("sv5", "severance", severance, DownloadStatus.Queued, 2, 5, "Trojan's Horse", DownloadActivity.WAITING_FOR_WIFI, position = 2),
+        item("sv6", "severance", severance, DownloadStatus.Paused, 2, 6, "Attila", DownloadActivity.USER_PAUSED, pause = DownloadPauseReason.User, downloaded = 610 * mb, total = 1_950 * mb, position = 3),
+        item("dune", "dune-part-two", "Dune: Part Two", DownloadStatus.Queued, activity = DownloadActivity.WAITING_FOR_CONNECTION, position = 4),
     )
     private val completed = listOf(
-        item("e1", 1, DownloadStatus.Completed, total = 2 * gb),
-        item("e2", 2, DownloadStatus.Completed, total = 2 * gb),
+        item("sv1", "severance", severance, DownloadStatus.Completed, 2, 1, "Hello, Ms. Cobel", total = 2_050 * mb),
+        item("sv2", "severance", severance, DownloadStatus.Completed, 2, 2, "Goodbye, Mrs. Selvig", total = 1_980 * mb),
+        item("mf1", "modern-family", "Modern Family", DownloadStatus.Completed, 3, 1, "Dude Ranch", total = 1_850 * mb),
+        item("mf2", "modern-family", "Modern Family", DownloadStatus.Completed, 3, 2, "When Good Kids Go Bad", total = 1_870 * mb),
+        item("mf3", "modern-family", "Modern Family", DownloadStatus.Completed, 3, 3, "Phil on Wire", total = 1_900 * mb),
+        item("eeaao", "everything-everywhere", "Everything Everywhere All at Once", DownloadStatus.Completed, total = 9_400 * mb),
     )
 
-    private fun entry(ep: Int, state: DownloadBatchEntryState, decision: DownloadEntryDecisionKind?, usable: Boolean? = true) =
+    private fun entry(ep: Int, name: String, state: DownloadBatchEntryState, decision: DownloadEntryDecisionKind?, usable: Boolean? = true, bytes: Long = 5_500 * mb / 2) =
         DownloadBatchEntry(
-            id = "e$ep", videoId = "tt5:$ep", title = "Episode $ep with a long title", season = 1, episode = ep,
+            id = "bear$ep", videoId = "tt-the-bear:3:$ep", title = name, season = 3, episode = ep,
             state = state, decision = decision, hasUsableSources = usable,
             selection = if (state == DownloadBatchEntryState.APPROVAL_NEEDED) {
-                SourceSelectionResult.ApprovalNeeded("https://a/$ep.mkv", SourceFacts(sizeBytes = 3 * gb), AddonSourceKey("a", "u"), 0L, "r")
+                SourceSelectionResult.ApprovalNeeded("https://a/$ep.mkv", SourceFacts(sizeBytes = bytes), AddonSourceKey("a", "u"), 0L, "r")
             } else {
                 null
             },
         )
 
-    private val batch = DownloadBatch(
-        id = "b", ownerProfileId = 1, scope = DownloadScope.Season(1), contentType = "series",
-        parentMetaId = "tt5", parentMetaType = "series", title = "Another Show",
+    private val bear = DownloadBatch(
+        id = "bear", ownerProfileId = 1, scope = DownloadScope.Season(3), contentType = "series",
+        parentMetaId = "tt-the-bear", parentMetaType = "series", title = "The Bear",
+        poster = DownloadRenderArt.poster("the-bear"), background = DownloadRenderArt.backdrop("the-bear"),
         sourcePolicySnapshot = DownloadSourcePolicy(), createdAtEpochMs = 0L,
         entries = listOf(
-            entry(1, DownloadBatchEntryState.APPROVAL_NEEDED, DownloadEntryDecisionKind.OVER_LIMIT),
-            entry(2, DownloadBatchEntryState.APPROVAL_NEEDED, DownloadEntryDecisionKind.OVER_LIMIT),
-            entry(3, DownloadBatchEntryState.SKIPPED, DownloadEntryDecisionKind.NOTHING_CACHED, usable = false),
+            entry(1, "Tomorrow", DownloadBatchEntryState.APPROVAL_NEEDED, DownloadEntryDecisionKind.OVER_LIMIT),
+            entry(2, "Next", DownloadBatchEntryState.APPROVAL_NEEDED, DownloadEntryDecisionKind.OVER_LIMIT),
+            entry(3, "Doors", DownloadBatchEntryState.SKIPPED, DownloadEntryDecisionKind.NOTHING_CACHED, usable = false),
         ),
     )
 
+    private val slowHorses = DownloadBatch(
+        id = "sh", ownerProfileId = 1, scope = DownloadScope.Season(4), contentType = "series",
+        parentMetaId = "tt-slow-horses", parentMetaType = "series", title = "Slow Horses",
+        poster = DownloadRenderArt.poster("slow-horses"),
+        sourcePolicySnapshot = DownloadSourcePolicy(), createdAtEpochMs = 0L,
+        entries = (1..6).map { ep ->
+            DownloadBatchEntry(
+                id = "sh$ep", videoId = "tt-slow-horses:4:$ep", title = "Episode $ep", season = 4, episode = ep,
+                state = if (ep <= 2) DownloadBatchEntryState.READY else DownloadBatchEntryState.DISCOVERING,
+            )
+        },
+    )
+
     private val attentionItems = listOf(
-        item("s", null, DownloadStatus.Failed, failure = DownloadFailureKind.STORAGE, title = "A Very Large Film", parent = "tt7"),
-        item("g", null, DownloadStatus.Failed, attempts = 5, title = "The Film That Would Not Download", parent = "tt6", error = "HTTP 403"),
+        item("opp", "oppenheimer", "Oppenheimer", DownloadStatus.Failed, failure = DownloadFailureKind.STORAGE, total = 31 * gb),
+        item("pl", "past-lives", "Past Lives", DownloadStatus.Failed, attempts = 5, error = "HTTP 403"),
     )
 
     @Composable
     private fun Screen() {
-        val attention = AttentionGrouping.group(attentionItems, listOf(batch), now)
-        val queue = DownloadQueueGrouping.group(queueItems, completed, now)
-        LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-            item { DownloadStorageBar(DownloadStorageSummary(usedBytes = 42 * gb, freeBytes = 118 * gb)) }
-            item { DownloadSectionTitle("Needs you") }
-            attention.forEach { card -> item { DownloadAttentionCard(card, onAction = {}, onChooseMember = {}) } }
-            item { DownloadWatchedCleanupCard(WatchedCleanup(completed, 4 * gb), onReview = {}) }
-            item { DownloadSectionTitle("Downloading") }
-            queue.forEachIndexed { index, group ->
-                item {
-                    if (group.isSeason) {
-                        DownloadQueueGroupRow(
-                            group = group,
-                            controls = DownloadGroupControls({}, {}, {}, null, if (index < queue.lastIndex) ({}) else null),
-                            onOpenItem = {}, onPauseItem = {}, onResumeItem = {},
-                            initiallyExpanded = true,
-                        )
-                    } else {
-                        DownloadQueueItemRow(group.items.single(), group.presentations.single(), now, {}, {}, {})
-                    }
+        val items = queueItems + completed + attentionItems
+        val batches = listOf(bear, slowHorses)
+        val attention = AttentionGrouping.group(items, batches, now)
+        val unfinished = items.filter {
+            it.status != DownloadStatus.Completed && DownloadPresenter.item(it, now).phase != DownloadUserPhase.NEEDS_YOU
+        }
+        val queue = DownloadQueueGrouping.group(unfinished, completed, now)
+        NuvioScreen(topPadding = 0.dp) {
+            stickyHeader {
+                Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
+                    NuvioScreenHeader(modifier = Modifier.downloadsContentWidth(), title = "Downloads")
                 }
             }
+            downloadsRootContent(
+                uiState = DownloadsUiState(items),
+                batches = batches,
+                storage = DownloadStorageSummary(usedBytes = 42 * gb, freeBytes = 118 * gb),
+                attention = attention,
+                queue = queue,
+                cleanup = WatchedCleanup(completed.filter { it.parentMetaId == "tt-modern-family" }, 5_620 * mb),
+                nowEpochMs = now,
+                onOpenDownload = {},
+                onOpenShow = { _, _ -> },
+                onRequestTitleDeletion = {},
+                onAttentionAction = { _, _ -> },
+                onChooseMember = {},
+                onOpenDetail = {},
+                onReviewCleanup = {},
+                onCancelGroup = {},
+                initiallyExpandedGroups = true,
+            )
         }
     }
 
@@ -171,7 +211,8 @@ class DownloadsScreenRenderHarness {
         outputDir.mkdirs()
         val failures = mutableListOf<String>()
         for ((sizeName, size) in sizes) {
-            render("screen-$sizeName", size.first, size.second * 2, failures) { Screen() }
+            val phone = size.first < 600
+            render("screen-$sizeName", size.first, if (phone) (size.second * 2.4).toInt() else (size.second * 1.9).toInt(), failures) { Screen() }
             render("detail-$sizeName", size.first, 520, failures) { Detail() }
         }
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
@@ -192,13 +233,15 @@ class DownloadsScreenRenderHarness {
                     amoled = false,
                     desktopUiScale = if (phone) 1f else desktopUiScaleForWindow(widthDp.toFloat(), heightDp.toFloat()),
                 ) {
-                    // Full width, as NuvioScreen draws it: no cap in production, so none here.
-                    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) { content() }
+                    WithFixtureArt {
+                        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) { content() }
+                    }
                 }
             }
             try {
                 scene.render(0L)
-                val image = scene.render(16_000_000L)
+                scene.render(16_000_000L)
+                val image = scene.render(600_000_000L)
                 val data = image.encodeToData(EncodedImageFormat.PNG) ?: error("encodeToData returned null")
                 File(outputDir, "$name.png").writeBytes(data.bytes)
             } finally {

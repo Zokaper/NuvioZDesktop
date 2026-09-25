@@ -54,21 +54,28 @@ class DownloadFlowRenderHarness {
         "desktop-fhd" to (1920 to 1080),
     )
 
-    private val title = DownloadTitleRef(
-        parentMetaId = "tt1",
-        parentMetaType = "series",
-        contentType = "series",
-        title = "The Remarkably Long-Named Chronicles of Everything",
+    private fun ref(slug: String, name: String, type: String = "series") = DownloadTitleRef(
+        parentMetaId = "tt-$slug",
+        parentMetaType = type,
+        contentType = type,
+        title = name,
+        poster = DownloadRenderArt.poster(slug),
+        background = DownloadRenderArt.backdrop(slug),
     )
+
+    // A show watched through season 2 and part of season 3.
+    private val title = ref("modern-family", "Modern Family")
+    private val bear = ref("the-bear", "The Bear")
+    private val dune = ref("dune-part-two", "Dune: Part Two", type = "movie")
 
     private val seasons = listOf(
         DownloadFlowRules.SeasonChoice(0, 4, 4),
-        DownloadFlowRules.SeasonChoice(1, 22, 0),
-        DownloadFlowRules.SeasonChoice(2, 22, 0),
-        DownloadFlowRules.SeasonChoice(3, 22, 9),
-        DownloadFlowRules.SeasonChoice(4, 22, 22),
-        DownloadFlowRules.SeasonChoice(5, 22, 22),
-        DownloadFlowRules.SeasonChoice(6, 22, 22),
+        DownloadFlowRules.SeasonChoice(1, 24, 0),
+        DownloadFlowRules.SeasonChoice(2, 24, 0),
+        DownloadFlowRules.SeasonChoice(3, 24, 9),
+        DownloadFlowRules.SeasonChoice(4, 24, 24),
+        DownloadFlowRules.SeasonChoice(5, 24, 24),
+        DownloadFlowRules.SeasonChoice(6, 24, 24),
         DownloadFlowRules.SeasonChoice(7, 22, 22),
         DownloadFlowRules.SeasonChoice(8, 22, 22),
         DownloadFlowRules.SeasonChoice(9, 22, 22),
@@ -86,18 +93,18 @@ class DownloadFlowRenderHarness {
             )
         },
         "finding" to {
-            DownloadFindingSourcesDialog(DownloadFlowStep.FindingSources(title, 8, 22), onDismiss = {})
+            DownloadFindingSourcesDialog(DownloadFlowStep.FindingSources(bear, 4, 10), onDismiss = {})
         },
         "resolution-single" to {
             DownloadResolutionDialog(
                 step = DownloadFlowStep.ChooseResolution(
-                    title = title,
-                    scope = DownloadScope.Episode(3, 4),
+                    title = dune,
+                    scope = DownloadScope.Movie,
                     targetCount = 1,
                     rows = listOf(
-                        DownloadResolutionRow(2160, 14_200_000_000L, 0, 1, 0, overLimit = true, detail = "HEVC · DV · Torrentio"),
-                        DownloadResolutionRow(1080, 1_900_000_000L, 0, 1, 0, overLimit = false, detail = "HEVC · Torrentio"),
-                        DownloadResolutionRow(720, 850_000_000L, 0, 1, 0, overLimit = false, detail = "AVC · MediaFusion"),
+                        DownloadResolutionRow(2160, 24_600_000_000L, 0, 1, 0, overLimit = true, detail = "HEVC · Dolby Vision · Torrentio"),
+                        DownloadResolutionRow(1080, 6_800_000_000L, 0, 1, 0, overLimit = false, detail = "HEVC · WEB-DL · Torrentio"),
+                        DownloadResolutionRow(720, 2_900_000_000L, 0, 1, 0, overLimit = false, detail = "AVC · WEB-DL · MediaFusion"),
                         DownloadResolutionRow(480, 0L, 1, 1, 0, overLimit = false, detail = null),
                     ),
                     preselectedHeight = 1080,
@@ -111,13 +118,13 @@ class DownloadFlowRenderHarness {
         "resolution-season" to {
             DownloadResolutionDialog(
                 step = DownloadFlowStep.ChooseResolution(
-                    title = title,
-                    scope = DownloadScope.Season(4),
-                    targetCount = 22,
+                    title = bear,
+                    scope = DownloadScope.Season(3),
+                    targetCount = 10,
                     rows = listOf(
-                        DownloadResolutionRow(2160, 180 * gb, 2, 18, 4, overLimit = true, detail = null),
-                        DownloadResolutionRow(1080, 24 * gb, 0, 22, 0, overLimit = false, detail = null),
-                        DownloadResolutionRow(720, 9 * gb, 0, 20, 2, overLimit = false, detail = null),
+                        DownloadResolutionRow(2160, 64 * gb, 2, 8, 2, overLimit = true, detail = null),
+                        DownloadResolutionRow(1080, 17 * gb, 0, 10, 0, overLimit = false, detail = null),
+                        DownloadResolutionRow(720, 7 * gb, 0, 9, 1, overLimit = false, detail = null),
                     ),
                     preselectedHeight = 1080,
                     offersChooseManually = false,
@@ -145,7 +152,7 @@ class DownloadFlowRenderHarness {
         },
         "free-space" to {
             DownloadFreeSpaceDialog(
-                DownloadFlowStep.NotEnoughSpace(title, neededBytes = 48 * gb, freeBytes = 17 * gb, fitCount = 7, totalCount = 22),
+                DownloadFlowStep.NotEnoughSpace(title, neededBytes = 48 * gb, freeBytes = 17 * gb, fitCount = 7, totalCount = 24),
                 onDownloadWhatFits = {},
                 onDismiss = {},
             )
@@ -154,13 +161,13 @@ class DownloadFlowRenderHarness {
             DownloadMobileDataDialog(onUseMobileData = {}, onWait = {}, onDismiss = {})
         },
         "delete-confirm" to {
-            DownloadDeleteConfirmDialog(what = "${title.title} · Season 4", onConfirm = {}, onDismiss = {})
+            DownloadDeleteConfirmDialog(what = "${title.title} · Season 3", onConfirm = {}, onDismiss = {})
         },
         "choose-sources" to {
             val batch = chooseSourcesBatch()
-            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
-                ChooseSourcesSummary(batch, onPickTheRest = {})
-                batch.entries.forEach { ChooseSourcesRow(it, onPick = {}) }
+            // As the screen draws it: the screen's gutter, then the capped content column.
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp)) {
+                ChooseSourcesContent(batch, onPickTheRest = {}, onPick = {}, modifier = Modifier.downloadsContentWidth(720.dp))
             }
         },
         "source-list-uncached" to {
@@ -188,25 +195,40 @@ class DownloadFlowRenderHarness {
         },
     )
 
+    private fun picked(bytes: Long) = SourceSelectionResult.Selected(
+        streamUrl = "https://a/x.mkv",
+        facts = SourceFacts(resolution = VideoResolution.FULL_HD_1080, sizeBytes = bytes),
+        addonKey = AddonSourceKey("a", "u"),
+        calculatedCapBytes = 0L,
+    )
+
     private fun chooseSourcesBatch(): DownloadBatch {
-        val targets = (1..6).map { DownloadTarget("tt1:4:$it", "Episode title number $it, which runs a little long", "series", 4, it) }
+        val names = listOf("Anjin", "Servants of Two Masters", "Tomorrow Is Tomorrow", "The Eightfold Fence", "Broken to the Fist", "Ladies of the Willow World")
+        val targets = names.mapIndexed { index, name -> DownloadTarget("tt-shogun:1:${index + 1}", name, "series", 1, index + 1) }
         val entries = targets.mapIndexed { index, target ->
             when (index) {
                 0 -> DownloadBatchCoordinator.manualPickEntry(target).copy(
                     state = DownloadBatchEntryState.QUEUED,
-                    streamTitle = "Show.S04E01.1080p.WEB-DL.x265",
+                    streamTitle = "Shogun.S01E01.1080p.WEB-DL.x265",
+                    selection = picked(2_300_000_000L),
                 )
-                1 -> DownloadBatchCoordinator.manualPickEntry(target).copy(state = DownloadBatchEntryState.DISCOVERING)
+                1 -> DownloadBatchCoordinator.manualPickEntry(target).copy(
+                    state = DownloadBatchEntryState.QUEUED,
+                    streamTitle = "Shogun.S01E02.1080p.WEB-DL.x265",
+                    selection = picked(2_100_000_000L),
+                )
+                2 -> DownloadBatchCoordinator.manualPickEntry(target).copy(state = DownloadBatchEntryState.DISCOVERING)
                 else -> DownloadBatchCoordinator.manualPickEntry(target)
             }
         }
         return DownloadBatch(
             id = "b",
-            scope = DownloadScope.Season(4),
+            scope = DownloadScope.Season(1),
             contentType = "series",
-            parentMetaId = "tt1",
+            parentMetaId = "tt-shogun",
             parentMetaType = "series",
-            title = title.title,
+            title = "Shōgun",
+            poster = DownloadRenderArt.poster("shogun"),
             sourcePolicySnapshot = DownloadSourcePolicy(),
             entries = entries,
             createdAtEpochMs = 0L,
@@ -219,7 +241,8 @@ class DownloadFlowRenderHarness {
         val failures = mutableListOf<String>()
         for ((sceneName, content) in scenes) {
             for ((sizeName, size) in sizes) {
-                render("$sceneName-$sizeName", size.first, size.second, failures, content)
+                // Choose sources is a screen, not a dialog: full width, top-aligned, no dialog cap.
+                render("$sceneName-$sizeName", size.first, size.second, failures, isScreen = sceneName == "choose-sources", content = content)
             }
         }
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
@@ -230,6 +253,7 @@ class DownloadFlowRenderHarness {
         widthDp: Int,
         heightDp: Int,
         failures: MutableList<String>,
+        isScreen: Boolean = false,
         content: @Composable () -> Unit,
     ) {
         val phone = widthDp < 600
@@ -246,7 +270,11 @@ class DownloadFlowRenderHarness {
                     amoled = false,
                     desktopUiScale = if (phone) 1f else desktopUiScaleForWindow(widthDp.toFloat(), heightDp.toFloat()),
                 ) {
-                    CompositionLocalProvider(LocalDownloadFlowInline provides true) {
+                    CompositionLocalProvider(LocalDownloadFlowInline provides true) { WithFixtureArt {
+                        if (isScreen) {
+                            Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) { content() }
+                            return@WithFixtureArt
+                        }
                         Box(
                             Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(if (phone) 24.dp else 0.dp),
                             contentAlignment = Alignment.Center,
@@ -254,12 +282,13 @@ class DownloadFlowRenderHarness {
                             // A dialog is at most 560dp wide in the app (BasicAlertDialog's own cap).
                             Box(Modifier.widthIn(max = 560.dp)) { content() }
                         }
-                    }
+                    } }
                 }
             }
             try {
                 scene.render(0L)
-                val image = scene.render(16_000_000L)
+                scene.render(16_000_000L)
+                val image = scene.render(600_000_000L)
                 val data = image.encodeToData(EncodedImageFormat.PNG) ?: error("encodeToData returned null")
                 File(outputDir, "$name.png").writeBytes(data.bytes)
             } finally {
