@@ -24,6 +24,13 @@ Verification: `desktopTest` **2,620 / 2,620** (results dir deleted, `--rerun`, J
 `composeApp/build/downloads-screen-render/`. `desktopTest` **2,638 / 2,638**. Desktop's Downloads
 still lives where it did (sidebar); moving it under Library is plan §J, not done.
 
+**Stage 8 - wizard + settings (2026-09-25):** mobile `1ebb6da97` cherry-picked as `aaf98b2b3` (one conflict: this repo's
+unbuilt `androidMain/MainActivity.kt`, resolved by adding only the new import and init line). Made here and cherry-picked
+to mobile: `8997cffcd`. Desktop-only: `DeviceSetupStorage.desktop.kt` (`DesktopStorage`) and the harness additions
+(`e9d3d0f90`) - `setup-wizard-render/` draws the download steps (desktop x3 sizes, phone pass, download storyboards),
+`downloads-screen-render/settings-*` draws Settings -> Downloads. Desktop never gets a device run (no mobile-data rule).
+`desktopTest` **2,660 / 2,660** (results deleted, `--rerun-tasks`). Not in debug 63.
+
 **Stage 7 final polish + size telemetry (2026-09-25):** the polish was made here (`41f0d6e0b`, fixture `3a1da754d`)
 and cherry-picked to mobile; mobile `575f247eb` (debug-only `DownloadSizeTelemetry`) cherry-picked here. `desktopTest`
 **2,645 / 2,645** (results deleted, `--rerun-tasks`). Debug MSI **63** carries it. Details in `nuvio-z/STATUS.md`.
