@@ -1,6 +1,23 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-24
+Last updated: 2026-09-25
+
+## Phase 9 on desktop (branch `claude/phase-9-downloads`)
+
+**The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 9 - Downloads Redesign". Shared commits
+reach this repo by cherry-pick of the mobile commit, plus desktop-only actuals.
+
+**Stage 6 - flows UI (2026-09-25):** mobile `7a99073aa` + `c6b501ecb` cherry-picked. Conflicts:
+`strings.xml` (kept this repo's "right-click" escape-hatch line, took the new download line) and
+`MetaDetailsScreen.kt` (never copied - the title-level Download at **both** desktop call sites now
+asks for seasons, and both season-delete call sites confirm, ported by hand).
+`MainAppContent.kt` merged clean: `DownloadFlowHost` is mounted at the shell and the flow's
+navigation opens the download source list / Choose sources route.
+New `desktopTest` **`DownloadFlowRenderHarness`** renders every stage 6 surface at 360, 420, 1280
+and 1920 wide into `composeApp/build/download-flow-render/`. It caught "Continue · 181 episodes"
+and "Download what fits (7 of 22)" wrapping inside the button on phones; fixed in `c6b501ecb`.
+Verification: `desktopTest` **2,620 / 2,620** (results dir deleted, `--rerun`, JBR SDK); pure
+**890 / 890**. No MSI built; nothing physical yet.
 
 ## Phase 8 shared convergence, on a branch and not on `Dev` (2026-09-24)
 
