@@ -24,6 +24,13 @@ Verification: `desktopTest` **2,620 / 2,620** (results dir deleted, `--rerun`, J
 `composeApp/build/downloads-screen-render/`. `desktopTest` **2,638 / 2,638**. Desktop's Downloads
 still lives where it did (sidebar); moving it under Library is plan §J, not done.
 
+**Stage 7 composition pass (2026-09-25):** made here, `8fc71cb03` (shared, cherry-picked to mobile as
+`de8038613`) + `cb51188ce` (render harnesses: generated artwork via Coil's preview handler, realistic fixtures,
+the screen rendered through the production `downloadsRootContent` in `NuvioScreen`). Desktop gets a centred 880dp
+Downloads column and a 720dp Choose sources column. Details and the render-set location are in
+`nuvio-z/STATUS.md`. `desktopTest` 2,641 run / 2,640 pass; the failure is the load-sensitive
+`NetworkQualityPlatformDesktopTest` timing assertion (passes alone here and at `890518221`).
+
 ## Phase 8 shared convergence, on a branch and not on `Dev` (2026-09-24)
 
 **The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 8 closeout". Phase 8 (iOS bring-up) is
