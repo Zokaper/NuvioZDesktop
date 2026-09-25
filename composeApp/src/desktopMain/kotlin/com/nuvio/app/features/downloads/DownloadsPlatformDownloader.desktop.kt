@@ -51,10 +51,12 @@ private fun newTransferClient(): HttpClient = HttpClient.newBuilder()
 
 /**
  * `shutdownNow`, not `close`: `close` waits for exchanges still in flight, and after a timeout
- * this attempt no longer cares about any of them.
+ * this attempt no longer cares about any of them. Reflective because the build compiles against
+ * JDK 17, where it does not exist (JDK 21+); the app runs on a newer bundled runtime. On 17 the
+ * client is left to idle out with its connections.
  */
 private fun HttpClient.closeQuietly() {
-    runCatching { shutdownNow() }
+    runCatching { HttpClient::class.java.getMethod("shutdownNow").invoke(this) }
 }
 
 private const val NO_RESPONSE_MESSAGE = "This source isn't answering. Try again, or pick another source."
