@@ -233,6 +233,10 @@
         {
           "build": 56,
           "text": "Assisted seasons can be given a quality with Choose now while sources are still being found, from clearly labelled size estimates."
+        },
+        {
+          "build": 57,
+          "text": "After Choose now the season stays on the Downloads screen and in the Live Activity while its sources are checked; the Library and Downloads tabs no longer shift. iPhone transfers are the same as 56 (baseline for the comparison builds)."
         }
       ]
     },
@@ -330,6 +334,10 @@
         {
           "build": 67,
           "text": "Assisted seasons can be given a quality with Choose now while sources are still being found, from clearly labelled size estimates."
+        },
+        {
+          "build": 68,
+          "text": "Downloads is back in the sidebar as its own page, laid out in two panes on wide windows; after Choose now the season stays visible while its sources are checked."
         }
       ]
     }
