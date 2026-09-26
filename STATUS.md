@@ -7,6 +7,12 @@ Last updated: 2026-09-26
 **The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 9 - Downloads Redesign". Shared commits
 reach this repo by cherry-pick of the mobile commit, plus desktop-only actuals.
 
+**Size levels calibrated + shown with their numbers (2026-09-26):** mobile `fc270bbd1` (calibrated table, Medium shown
+as "Standard", preset migration to the smallest level admitting the preset) and `330f3b464` (each size chip shows GB/h at
+1080p and 4K, and a 20-min / hour-long / film line) cherry-picked clean as `4b684f600` and `9615a0aab`. The dataset
+came from a local desktop debug run here (`-Pnuvio.desktop.debugChannel=true`). Desktop policy/flow/telemetry suites
+pass; wizard and settings renders read. Details in `nuvio-z/STATUS.md`.
+
 **iOS transfer decision + size telemetry fix (2026-09-26):** the maintainer confirmed the `.57` iOS model as final and
 rejected experiments 10a/10b (evidence in `nuvio-z/STATUS.md`); nothing desktop-side changes. Mobile `3a8933e78` (Settings
 search skips "Downloads at once" on iOS; a no-op here) and `4523292af` (debug `size_sample` lines sample the whole candidate
