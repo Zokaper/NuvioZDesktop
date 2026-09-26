@@ -7,6 +7,14 @@ Last updated: 2026-09-26
 **The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 9 - Downloads Redesign". Shared commits
 reach this repo by cherry-pick of the mobile commit, plus desktop-only actuals.
 
+**iOS gate fix, paused notification, Assisted "Choose now" (2026-09-26):** mobile `f2bfbf475` (launch overlay never covers
+a gating wizard - the iOS `.54` profile-loading hang; harmless here, desktop renders main content inline), `65b94b458` (Android
+paused-queue notification; policy only here) and `ff2ef1715` (Choose now) cherry-picked clean as `19190b5c8`, `832bca85d`,
+`b69eaaff7`; `22b201950` = mobile `4908e540c` (the estimate sheet becomes the exact one) + desktop
+`AssistedChoiceFlowTest` +8 Choose now cases + render fixtures `finding-chosen`, `resolution-estimated`,
+`resolution-estimate-unavailable`. `desktopTest` **2,723 / 2,723** (results deleted, `--rerun`, JBR SDK). Debug MSI **67**
+(run `36212103659`). Details in `nuvio-z/STATUS.md`.
+
 **Long-pause contract + Assisted "choose when ready" (2026-09-26):** mobile `f623e6796` (expired link keeps the
 partial) as `1491a44b3`, + desktop E2E `716b9db19` (two long-pause cases; the no-origin one fails on the old rule).
 Mobile `cecfdce2f` (Assisted background discovery) and its render fix cherry-picked clean (`MainAppContent.kt` merged
