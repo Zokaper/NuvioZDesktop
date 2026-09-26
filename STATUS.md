@@ -13,7 +13,7 @@ Mobile `cecfdce2f` (Assisted background discovery) and its render fix cherry-pic
 without conflict). Desktop-only: `DownloadsLiveStatusPlatform.desktop.kt` - always "on screen", so the ready prompt is
 always in-app and no notification is posted; discovery needs no keep-alive. New `AssistedChoiceFlowTest` (8, real
 controller + store); render fixtures for the finding / ready rows and the background / refreshing finding sheet.
-`desktopTest` **2,703 / 2,703** (results deleted, `--rerun-tasks`, JBR SDK). Details in `nuvio-z/STATUS.md`.
+`desktopTest` **2,703 / 2,703** (results deleted, `--rerun-tasks`, JBR SDK). Debug MSI **66** (run `36203717889`) carries it. Details in `nuvio-z/STATUS.md`.
 
 **Stage 6 - flows UI (2026-09-25):** mobile `7a99073aa` + `c6b501ecb` cherry-picked. Conflicts:
 `strings.xml` (kept this repo's "right-click" escape-hatch line, took the new download line) and
