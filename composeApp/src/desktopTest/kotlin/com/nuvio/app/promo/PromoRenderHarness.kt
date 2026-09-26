@@ -283,11 +283,12 @@ class PromoRenderHarness {
             val total = 150
             var done = 0f
             render(
-                "desktop-home-scroll", 1920, 1080, Kind.Desktop, 1f, failures, frames = total,
+                "desktop-home-scroll", 1920, 1080, Kind.Desktop, 1.5f, failures, frames = total,
                 beforeFrame = { i ->
                     val p = i / (total - 1f)
                     val eased = if (p < 0.5f) 4 * p * p * p else 1 - Math.pow((-2.0 * p + 2), 3.0).toFloat() / 2
-                    val target = eased * 1000f
+                    // Pixels at this density: 1000dp of scroll.
+                    val target = eased * 1000f * 1.5f
                     state.dispatchRawDelta(target - done)
                     done = target
                 },
@@ -365,7 +366,7 @@ class PromoRenderHarness {
             val total = 90
             val progress = androidx.compose.runtime.mutableFloatStateOf(0f)
             render(
-                "phone-downloads-run", 411, 914, Kind.Phone, 2f, failures, frames = total,
+                "phone-downloads-run", 411, 914, Kind.Phone, 3f, failures, frames = total,
                 beforeFrame = { i -> progress.floatValue = i / (total - 1f) },
             ) { PhoneShell(AppScreenTab.Library, statusInset = true) { PhoneDownloads(progress.floatValue) } }
         }
@@ -966,7 +967,7 @@ class PromoRenderHarness {
         val items = listOf(
             dl(sintel, DownloadStatus.Downloading, 3_100 * mb, 0.38f + 0.22f * run, DownloadActivity.TRANSFERRING, 0),
             dl(PromoCatalog.spring, DownloadStatus.Downloading, 1_450 * mb, 0.12f + 0.25f * run, DownloadActivity.TRANSFERRING, 1),
-            dl(PromoCatalog.cosmos, DownloadStatus.Queued, 2_300 * mb, 0f, null, 2),
+            dl(PromoCatalog.tearsOfSteel, DownloadStatus.Queued, 1_900 * mb, 0f, null, 2),
             dl(PromoCatalog.charge, DownloadStatus.Completed, 610 * mb),
             dl(PromoCatalog.bigBuckBunny, DownloadStatus.Completed, 1_280 * mb, quality = "1080p BluRay x264"),
             dl(PromoCatalog.metropolis, DownloadStatus.Completed, 4_900 * mb, quality = "1080p BluRay x264"),
