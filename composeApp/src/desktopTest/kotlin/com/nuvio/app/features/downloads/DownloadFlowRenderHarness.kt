@@ -95,6 +95,13 @@ class DownloadFlowRenderHarness {
         "finding" to {
             DownloadFindingSourcesDialog(DownloadFlowStep.FindingSources(bear, 4, 10), onDismiss = {})
         },
+        // Assisted "choose when ready": a season's discovery runs in the background.
+        "finding-background" to {
+            DownloadFindingSourcesDialog(DownloadFlowStep.FindingSources(bear, 7, 22, batchId = "b"), onDismiss = {})
+        },
+        "finding-refreshing" to {
+            DownloadFindingSourcesDialog(DownloadFlowStep.FindingSources(bear, 2, 22, batchId = "b", refreshing = true), onDismiss = {})
+        },
         "resolution-single" to {
             DownloadResolutionDialog(
                 step = DownloadFlowStep.ChooseResolution(

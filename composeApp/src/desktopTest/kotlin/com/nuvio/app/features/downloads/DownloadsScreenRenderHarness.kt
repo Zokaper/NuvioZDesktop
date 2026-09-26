@@ -152,6 +152,24 @@ class DownloadsScreenRenderHarness {
         },
     )
 
+    /** Assisted "choose when ready": one season still finding its sources, one ready to choose. */
+    private fun choiceBatch(id: String, slug: String, title: String, season: Int, episodes: Int, found: Int) = DownloadBatch(
+        id = id, ownerProfileId = 1, scope = DownloadScope.Season(season), contentType = "series",
+        parentMetaId = "tt-$slug", parentMetaType = "series", title = title,
+        poster = DownloadRenderArt.poster(slug),
+        sourcePolicySnapshot = DownloadSourcePolicy(), createdAtEpochMs = 0L,
+        awaitsQualityChoice = true,
+        entries = (1..episodes).map { ep ->
+            DownloadBatchEntry(
+                id = "$id$ep", videoId = "tt-$slug:$season:$ep", title = "Episode $ep", season = season, episode = ep,
+                state = if (ep <= found) DownloadBatchEntryState.AWAITING_CHOICE else DownloadBatchEntryState.DISCOVERING,
+            )
+        },
+    )
+
+    private val lanterns = choiceBatch("ln", "lanterns", "Lanterns", 1, episodes = 8, found = 8)
+    private val pluribus = choiceBatch("pb", "pluribus", "Pluribus", 1, episodes = 22, found = 7)
+
     private val attentionItems = listOf(
         item("opp", "oppenheimer", "Oppenheimer", DownloadStatus.Failed, failure = DownloadFailureKind.STORAGE, total = 31 * gb),
         item("pl", "past-lives", "Past Lives", DownloadStatus.Failed, attempts = 5, error = "HTTP 403"),
@@ -160,7 +178,7 @@ class DownloadsScreenRenderHarness {
     @Composable
     private fun Screen() {
         val items = queueItems + completed + attentionItems
-        val batches = listOf(bear, slowHorses)
+        val batches = listOf(bear, slowHorses, lanterns, pluribus)
         val attention = AttentionGrouping.group(items, batches, now)
         val unfinished = items.filter {
             it.status != DownloadStatus.Completed && DownloadPresenter.item(it, now).phase != DownloadUserPhase.NEEDS_YOU

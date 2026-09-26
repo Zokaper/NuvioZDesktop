@@ -1,11 +1,19 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-25
+Last updated: 2026-09-26
 
 ## Phase 9 on desktop (branch `claude/phase-9-downloads`)
 
 **The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 9 - Downloads Redesign". Shared commits
 reach this repo by cherry-pick of the mobile commit, plus desktop-only actuals.
+
+**Long-pause contract + Assisted "choose when ready" (2026-09-26):** mobile `f623e6796` (expired link keeps the
+partial) as `1491a44b3`, + desktop E2E `716b9db19` (two long-pause cases; the no-origin one fails on the old rule).
+Mobile `cecfdce2f` (Assisted background discovery) and its render fix cherry-picked clean (`MainAppContent.kt` merged
+without conflict). Desktop-only: `DownloadsLiveStatusPlatform.desktop.kt` - always "on screen", so the ready prompt is
+always in-app and no notification is posted; discovery needs no keep-alive. New `AssistedChoiceFlowTest` (8, real
+controller + store); render fixtures for the finding / ready rows and the background / refreshing finding sheet.
+`desktopTest` **2,703 / 2,703** (results deleted, `--rerun-tasks`, JBR SDK). Details in `nuvio-z/STATUS.md`.
 
 **Stage 6 - flows UI (2026-09-25):** mobile `7a99073aa` + `c6b501ecb` cherry-picked. Conflicts:
 `strings.xml` (kept this repo's "right-click" escape-hatch line, took the new download line) and
