@@ -7,6 +7,18 @@ Last updated: 2026-09-26
 **The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 9 - Downloads Redesign". Shared commits
 reach this repo by cherry-pick of the mobile commit, plus desktop-only actuals.
 
+**Downloads is a desktop destination again; two-pane layout; Choose-now visibility (2026-09-26):** mobile `5cdf0bbd9`
+(Choose-now batch stays visible while its sources are checked), `b013fd855` (stable phone tabs; `downloadsIsOwnDestination =
+isDesktop` - sidebar item, real `AppScreenTab.Downloads`, `openDownloads()` for every entry point; `DownloadsWideLayout` two
+panes from 1000dp) and the header-icon tint cherry-picked clean as `f6b9afc62`, `3454177df`, `f404a7a37`. Desktop-only
+`c350cf3f9`: `AssistedChoiceFlowTest` +2 (size check held open after Choose now: still a CHECKING Assisted row and still
+preparing; removing it then queues nothing), `DownloadsScreenRenderHarness` renders the production two-pane layout beside a
+68dp sidebar at 960 (one column) / 1280 / 1440 / 1920 (+ full height) with a "Checking sources" fixture, and the new
+`LibraryTabSwitcherRenderHarness` (production Library/Downloads screens at 360/420, chip bounds equal across tabs;
+mutation-checked). **The previous decision to keep Downloads inside Library on desktop is superseded** (maintainer,
+2026-09-26). Why the screen was narrow: its own 880dp cap, ~290dp dead each side at 1920. Renders:
+`Nuvio Z/render-review/phase-9-tabs-and-desktop/`. `desktopTest` **2,731 / 2,731** (results deleted, `--rerun`, JBR SDK). Desktop debug **68** (run `36238907396`) carries it; not physically verified.
+
 **iOS gate fix, paused notification, Assisted "Choose now" (2026-09-26):** mobile `f2bfbf475` (launch overlay never covers
 a gating wizard - the iOS `.54` profile-loading hang; harmless here, desktop renders main content inline), `65b94b458` (Android
 paused-queue notification; policy only here) and `ff2ef1715` (Choose now) cherry-picked clean as `19190b5c8`, `832bca85d`,
