@@ -154,10 +154,11 @@ class PromoRenderHarness {
         return f.get(owner) as MutableStateFlow<T>
     }
 
-    private fun seedProfile() {
-        val maya = NuvioProfile(id = "demo-1", profileIndex = 1, name = "Maya", avatarColorHex = "#7E57C2")
+    /** The signed-in profile the chrome shows (the nav bar's avatar): Maya, or Theo on his phone. */
+    private fun seedProfile(person: SocialProfileSummary = PromoPeople.maya) {
+        val profile = NuvioProfile(id = "demo-${person.handle}", profileIndex = 1, name = person.displayName, avatarColorHex = person.avatarColorHex)
         flow<ProfileState>(ProfileRepository, "_state").value =
-            ProfileState(profiles = listOf(maya), activeProfile = maya, isLoaded = true, hasEverSelectedProfile = true)
+            ProfileState(profiles = listOf(profile), activeProfile = profile, isLoaded = true, hasEverSelectedProfile = true)
         SocialFeaturePreferencesRepository.setEnabled(true)
     }
 
@@ -286,11 +287,11 @@ class PromoRenderHarness {
                 beforeFrame = { i ->
                     val p = i / (total - 1f)
                     val eased = if (p < 0.5f) 4 * p * p * p else 1 - Math.pow((-2.0 * p + 2), 3.0).toFloat() / 2
-                    val target = eased * 760f
+                    val target = eased * 1000f
                     state.dispatchRawDelta(target - done)
                     done = target
                 },
-            ) { DesktopShell(AppScreenTab.Home) { HomeComposition(state) } }
+            ) { DesktopShell(AppScreenTab.Home) { HomeComposition(state, cwBefore) } }
         }
         if (wants("phone-home")) {
             render("phone-home", 411, 914, Kind.Phone, 3f, failures) { PhoneShell(AppScreenTab.Home, statusInset = true) { HomeComposition() } }
@@ -329,6 +330,34 @@ class PromoRenderHarness {
         if (wants("phone-social")) {
             render("phone-social", 411, 914, Kind.Phone, 3f, failures) { PhoneShell(AppScreenTab.Social, statusInset = true) { Social() } }
         }
+        seedProfile(PromoPeople.theo)
+        if (wants("theo-social")) {
+            render("theo-social", 411, 914, Kind.Phone, 3f, failures) { TheoPhone(OutgoingJoinRequestState.Idle) }
+        }
+        if (wants("theo-requested")) {
+            // The tap: Ask to join becomes Requested and the dock comes in, over the app's own motion.
+            val outgoing = androidx.compose.runtime.mutableStateOf<OutgoingJoinRequestState>(OutgoingJoinRequestState.Idle)
+            render(
+                "theo-requested", 411, 914, Kind.Phone, 3f, failures, frames = 45,
+                beforeFrame = { i -> if (i == 1) outgoing.value = theoPending() },
+            ) { TheoPhone(outgoing.value) }
+        }
+        if (wants("theo-accepted")) {
+            val outgoing = androidx.compose.runtime.mutableStateOf<OutgoingJoinRequestState>(theoPending())
+            render(
+                "theo-accepted", 411, 914, Kind.Phone, 3f, failures, frames = 45,
+                beforeFrame = { i ->
+                    if (i == 1) {
+                        outgoing.value = OutgoingJoinRequestState.Accepted(
+                            theoBinding, mayaTarget, sintelRequestContent,
+                            party = party.copy(status = WatchPartyStatus.playing, stage = WatchPartyStage.playing),
+                            countdownDeadlineMs = com.nuvio.app.features.watchparty.currentEpochMs() + 3_000L,
+                        )
+                    }
+                },
+            ) { TheoPhone(outgoing.value) }
+        }
+        seedProfile()
         if (wants("phone-downloads")) {
             render("phone-downloads", 411, 914, Kind.Phone, 3f, failures) { PhoneShell(AppScreenTab.Library, statusInset = true) { PhoneDownloads(0f) } }
         }
@@ -407,31 +436,74 @@ class PromoRenderHarness {
                 durationMs = sintel.durationMs,
                 positionMs = 7 * 60_000L + 48_000L,
             )
-            val playing = party.copy(status = WatchPartyStatus.playing, stage = WatchPartyStage.playing)
-            val panel = com.nuvio.app.features.player.projectWatchTogetherPanel(
-                com.nuvio.app.features.player.WatchTogetherPanelInputs(
-                    shareable = true,
-                    playbackContentId = sintel.id,
-                    playbackVideoId = sintel.id,
-                    playbackTitle = sintel.name,
-                    viewerProfileId = PromoPeople.maya.profileId,
-                    party = playing,
-                    health = PartyHealthState(realtime = PartyRealtimeHealth.Live),
-                    nowMs = nowMs,
-                    members = PartyPresentationProjector.project(
-                        party = playing,
-                        selfProfileId = PromoPeople.maya.profileId,
-                        health = PartyHealthState(realtime = PartyRealtimeHealth.Live),
-                        realtime = WatchPartySyncState(clockLocked = true, bestRttMs = 38),
-                        partyNowMs = 0L,
-                    ).members,
+            // The storyline: Maya is watching alone; Theo asks to join from his phone; the request
+            // reaches her player; she lets him in. Every panel and pill below is the production
+            // projection of those inputs, exactly as PlayerScreenRuntimeUi computes them.
+            val health = PartyHealthState(realtime = PartyRealtimeHealth.Live)
+            val theo = PromoPeople.theo
+            val request = com.nuvio.app.features.player.IncomingJoinRequestRow(
+                requestId = "r-theo",
+                profileId = theo.profileId,
+                name = theo.displayName,
+                avatarUrl = null,
+                avatarColorHex = theo.avatarColorHex,
+                expiresAtMs = nowMs + 95_000L,
+            )
+            val together = party.copy(
+                status = WatchPartyStatus.playing,
+                stage = WatchPartyStage.playing,
+                members = listOf(
+                    member(PromoPeople.maya, SourceResolutionState.ready),
+                    member(theo, SourceResolutionState.ready),
                 ),
             )
-            val wt = com.nuvio.app.features.player.watchTogetherBridgeState(panel, open = true, inviteCode = "MX7Q4KRT2WLA")
+            fun panel(p: WatchPartyState?, incoming: com.nuvio.app.features.player.IncomingJoinRequestRow?) =
+                com.nuvio.app.features.player.projectWatchTogetherPanel(
+                    com.nuvio.app.features.player.WatchTogetherPanelInputs(
+                        shareable = true,
+                        playbackContentId = sintel.id,
+                        playbackVideoId = sintel.id,
+                        playbackTitle = sintel.name,
+                        viewerProfileId = PromoPeople.maya.profileId,
+                        party = p,
+                        health = health,
+                        nowMs = nowMs,
+                        incomingRequest = incoming,
+                        members = PartyPresentationProjector.project(
+                            party = p,
+                            selfProfileId = PromoPeople.maya.profileId,
+                            health = health,
+                            realtime = WatchPartySyncState(clockLocked = true, bestRttMs = 38),
+                            partyNowMs = 0L,
+                        ).members,
+                    ),
+                )
+            fun pill(incoming: Boolean, panelOpen: Boolean) = com.nuvio.app.features.player.partyStatusBridgeState(
+                com.nuvio.app.features.watchparty.projectPartyPlaybackStatus(
+                    com.nuvio.app.features.watchparty.PartyPlaybackStatusInputs(
+                        inParty = false,
+                        isHost = false,
+                        incomingRequester = if (incoming) {
+                            com.nuvio.app.features.watchparty.PartyStatusPerson(theo.profileId, theo.displayName, null, theo.avatarColorHex)
+                        } else {
+                            null
+                        },
+                        panelOpen = panelOpen,
+                    ),
+                ),
+            )
+            fun bridge(p: com.nuvio.app.features.player.WatchTogetherPanelState, open: Boolean) =
+                com.nuvio.app.features.player.watchTogetherBridgeState(p, open = open, inviteCode = "MX7Q4KRT2WLA")
+            val states = mapOf(
+                "watching" to base.copy(watchTogether = bridge(panel(null, null), open = false)),
+                "request" to base.copy(watchTogether = bridge(panel(null, request), open = false), partyStatus = pill(true, false)),
+                "request-open" to base.copy(watchTogether = bridge(panel(null, request), open = true), partyStatus = pill(true, true)),
+                "together" to base.copy(watchTogether = bridge(panel(together, null), open = true)),
+                "together-closed" to base.copy(watchTogether = bridge(panel(together, null), open = false)),
+            )
             val dir = File(outDir, "player").apply { mkdirs() }
-            File(dir, "plain.json").writeText(base.toControlsJson(isFullscreen = true))
-            File(dir, "party.json").writeText(base.copy(watchTogether = wt).toControlsJson(isFullscreen = true))
-            File(dir, "party-closed.json").writeText(base.copy(watchTogether = wt.copy(open = false)).toControlsJson(isFullscreen = true))
+            dir.listFiles { f -> f.name.endsWith(".json") }?.forEach(File::delete)
+            states.forEach { (name, state) -> File(dir, "$name.json").writeText(state.toControlsJson(isFullscreen = true)) }
         }.onFailure { e ->
             e.printStackTrace()
             failures += "player-state: ${e::class.simpleName}: ${e.message}"
@@ -495,13 +567,17 @@ class PromoRenderHarness {
 
     // --- Home ---------------------------------------------------------------------------------
 
-    private val continueWatching: List<ContinueWatchingItem> = listOf(
-        cw(sintel, 0.46f),
+    /** Before the story: Sintel is not in Continue Watching yet. */
+    private val cwBefore: List<ContinueWatchingItem> = listOf(
         cw(PromoCatalog.metropolis, 0.31f),
         cw(PromoCatalog.tearsOfSteel, 0.72f),
         cw(PromoCatalog.charade, 0.18f),
         cw(PromoCatalog.elephantsDream, 0.55f),
+        cw(PromoCatalog.theGeneral, 0.4f),
     )
+
+    /** After: where the party left off (the player shows 4:50; a little later, 5:10). */
+    private val cwAfter: List<ContinueWatchingItem> = listOf(cw(sintel, 310f / 888f)) + cwBefore.take(4)
 
     private fun cw(t: PromoTitle, fraction: Float) = ContinueWatchingItem(
         parentMetaId = t.id,
@@ -521,7 +597,7 @@ class PromoRenderHarness {
 
     /** `HomeScreen`'s list, section for section: hero, Continue Watching, Social, catalog rows. */
     @Composable
-    private fun HomeComposition(listState: LazyListState = rememberLazyListState()) {
+    private fun HomeComposition(listState: LazyListState = rememberLazyListState(), continueWatching: List<ContinueWatchingItem> = cwAfter) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val width = maxWidth
             val sectionPadding = homeSectionHorizontalPaddingForWidth(width.value)
@@ -779,6 +855,73 @@ class PromoRenderHarness {
                 ),
                 actions = SocialFeedActions(),
                 listState = rememberLazyListState(),
+            )
+        }
+    }
+
+    // --- Theo's side of Watch Together ---------------------------------------------------------
+
+    private val theoBinding = com.nuvio.app.features.social.JoinRequestBinding(PromoPeople.theo.profileId, 1)
+    private val mayaTarget = com.nuvio.app.features.social.JoinRequestTarget(
+        profileId = PromoPeople.maya.profileId,
+        displayName = PromoPeople.maya.displayName,
+        avatarColorHex = PromoPeople.maya.avatarColorHex,
+        sessionId = "s-maya",
+    )
+    private val sintelRequestContent = com.nuvio.app.features.social.JoinRequestContent(
+        contentId = sintel.id, videoId = sintel.id, title = sintel.name,
+        poster = PromoArt.poster(sintel.slug), background = PromoArt.backdrop(sintel.slug),
+    )
+    private fun theoPending() = OutgoingJoinRequestState.Pending(
+        theoBinding, mayaTarget, sintelRequestContent, "r-theo",
+        com.nuvio.app.features.watchparty.currentEpochMs() + 95_000L,
+    )
+
+    /** Maya, as her friends see her once she is watching: presence published, Ask to join. */
+    private val mayaWatching = WatchingNowItem(
+        profile = PromoPeople.maya, contentId = sintel.id, contentType = "movie", videoId = sintel.id,
+        title = sintel.name, poster = PromoArt.poster(sintel.slug), background = PromoArt.backdrop(sintel.slug),
+        sessionId = "s-maya", positionMs = 290_000L, durationMs = sintel.durationMs,
+        effectiveJoinPolicy = WatchJoinPolicy.approval, state = SocialPlaybackState.playing,
+        heartbeatAt = iso(nowMs - 10_000L),
+    )
+
+    /**
+     * Theo's Android phone: the Social tab with Maya in Watching Now, and the outgoing-request dock
+     * where `MainAppContent` puts it on a phone - top end, under the status bar.
+     */
+    @Composable
+    private fun TheoPhone(outgoing: OutgoingJoinRequestState) = Box(Modifier.fillMaxSize()) {
+        PhoneShell(AppScreenTab.Social, statusInset = true) {
+            val state = SocialUiState(
+                capabilities = SocialCapabilities(socialEnabled = true, watchPartyEnabled = true),
+                activeProfileId = PromoPeople.theo.profileId,
+                me = PromoPeople.theo,
+                friends = listOf(PromoPeople.maya, PromoPeople.ines, PromoPeople.jonah, PromoPeople.priya, PromoPeople.sam),
+                watchingNow = listOf(mayaWatching) + watchingNow.filter { it.profile.profileId != PromoPeople.theo.profileId },
+                activity = activity.filter { it.profile.profileId != PromoPeople.theo.profileId },
+            )
+            val groups = groupFriendActivity(state.activity)
+            Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                SocialFeed(
+                    model = SocialFeedModel(
+                        state = state,
+                        handle = "theo",
+                        activityGroups = groups,
+                        activityBuckets = bucketFriendActivity(groups, nowMs),
+                        activityNowMs = nowMs,
+                        joinAffordance = { item -> watchingNowJoinAffordance(item, outgoing, null) },
+                    ),
+                    actions = SocialFeedActions(),
+                    listState = rememberLazyListState(),
+                )
+            }
+        }
+        BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.TopEnd) {
+            com.nuvio.app.features.social.WatchTogetherDock(
+                state = outgoing,
+                windowWidth = maxWidth,
+                modifier = Modifier.padding(end = 16.dp, top = PhoneStatusBar + 12.dp),
             )
         }
     }
