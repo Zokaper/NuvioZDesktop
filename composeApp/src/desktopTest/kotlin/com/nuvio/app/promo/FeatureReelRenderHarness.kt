@@ -134,6 +134,15 @@ class FeatureReelRenderHarness {
                 promo.DesktopShell(AppScreenTab.Home) { promo.HomeComposition(remember { LazyListState(0, (760 * 3f).toInt()) }) }
             }
         }
+        // Continuity: the phone's Home before Sintel reaches its Continue Watching, and after.
+        for ((name, items) in listOf("before" to promo.cwBefore, "after" to null)) {
+            if (!wants("phone-home")) continue
+            promo.render("reel/phone-home-$name", 411, 914, Phone, 3f, failures) {
+                promo.PhoneShell(AppScreenTab.Home, statusInset = true) {
+                    if (items == null) promo.HomeComposition() else promo.HomeComposition(continueWatching = items)
+                }
+            }
+        }
         if (wants("social")) {
             promo.render("reel/social", 1920, 1080, Desktop, 2.5f, failures) {
                 promo.DesktopShell(AppScreenTab.Social) { promo.Social() }
