@@ -7,6 +7,13 @@ Last updated: 2026-09-26
 **The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 9 - Downloads Redesign". Shared commits
 reach this repo by cherry-pick of the mobile commit, plus desktop-only actuals.
 
+**iOS transfer decision + size telemetry fix (2026-09-26):** the maintainer confirmed the `.57` iOS model as final and
+rejected experiments 10a/10b (evidence in `nuvio-z/STATUS.md`); nothing desktop-side changes. Mobile `3a8933e78` (Settings
+search skips "Downloads at once" on iOS; a no-op here) and `4523292af` (debug `size_sample` lines sample the whole candidate
+list, `sample=spread`, instead of the first 80 - the biggest files) cherry-picked clean as `2e2cc7827` and `a7a13f47c`.
+`DownloadSizeTelemetryTest` 6/6 and `DownloadEngineSplitTest` 22/22 on desktop; full suite not re-run for these two.
+Size calibration's first pass (and why no numbers changed yet) is in `nuvio-z/STATUS.md`.
+
 **Downloads is a desktop destination again; two-pane layout; Choose-now visibility (2026-09-26):** mobile `5cdf0bbd9`
 (Choose-now batch stays visible while its sources are checked), `b013fd855` (stable phone tabs; `downloadsIsOwnDestination =
 isDesktop` - sidebar item, real `AppScreenTab.Downloads`, `openDownloads()` for every entry point; `DownloadsWideLayout` two
