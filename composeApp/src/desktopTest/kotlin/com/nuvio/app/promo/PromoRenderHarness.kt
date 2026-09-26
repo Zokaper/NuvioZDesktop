@@ -139,9 +139,9 @@ import kotlin.test.fail
  */
 class PromoRenderHarness {
 
-    private val outDir = File(PromoArt.promoRoot, "renders")
+    internal val outDir = File(PromoArt.promoRoot, "renders")
     /** The render's own clock, because Home's social rows format "2h ago" against the real one. */
-    private val nowMs = System.currentTimeMillis()
+    internal val nowMs = System.currentTimeMillis()
 
     private val sintel = PromoCatalog.sintel
 
@@ -155,7 +155,7 @@ class PromoRenderHarness {
     }
 
     /** The signed-in profile the chrome shows (the nav bar's avatar): Maya, or Theo on his phone. */
-    private fun seedProfile(person: SocialProfileSummary = PromoPeople.maya) {
+    internal fun seedProfile(person: SocialProfileSummary = PromoPeople.maya) {
         val profile = NuvioProfile(id = "demo-${person.handle}", profileIndex = 1, name = person.displayName, avatarColorHex = person.avatarColorHex)
         flow<ProfileState>(ProfileRepository, "_state").value =
             ProfileState(profiles = listOf(profile), activeProfile = profile, isLoaded = true, hasEverSelectedProfile = true)
@@ -163,7 +163,7 @@ class PromoRenderHarness {
     }
 
     /** Puts [meta] in `MetaDetailsRepository`'s own cache, so `fetch` and `load` both answer it. */
-    private fun seedMeta(meta: MetaDetails) {
+    internal fun seedMeta(meta: MetaDetails) {
         val repo = MetaDetailsRepository
         val cacheField = repo.javaClass.getDeclaredField("cachedMetaByRequestKey").apply { isAccessible = true }
         @Suppress("UNCHECKED_CAST")
@@ -182,14 +182,14 @@ class PromoRenderHarness {
 
     // --- rendering ----------------------------------------------------------------------------
 
-    private enum class Kind { Desktop, Phone }
+    internal enum class Kind { Desktop, Phone }
 
     /**
      * One scene. [frames] is how many PNGs to write; [beforeFrame] runs before each one and can
      * move state (a scroll, a progress figure). Time advances [frameNanos] per frame, so the app's
      * own animations run at their real speed.
      */
-    private fun render(
+    internal fun render(
         name: String,
         widthDp: Int,
         heightDp: Int,
@@ -396,126 +396,136 @@ class PromoRenderHarness {
      */
     private fun exportPlayerStates(failures: MutableList<String>) {
         runCatching {
-            var colors: com.nuvio.app.core.ui.NuvioColorTokens? = null
-            val scene = ImageComposeScene(8, 8, Density(1f)) {
-                NuvioTheme(darkTheme = true, appTheme = AppTheme.WHITE, amoled = false) {
-                    colors = MaterialTheme.nuvio.colors
-                }
-            }
-            scene.render(0L)
-            scene.close()
-            val c = colors ?: error("theme colours were not read")
-            val base = com.nuvio.app.features.player.PlayerControlsState(
-                title = sintel.name,
-                streamTitle = "Sintel.2010.2160p.WEB-DL.HEVC.AAC.5.1",
-                providerName = "Open Movie Archive",
-                pauseOverlayEpisodeInfo = "Open Movie Archive",
-                pauseOverlayDescription = sintel.description,
-                themeAccentColor = c.accent.css(),
-                themeAccentStrongColor = c.accentStrong.css(),
-                themeOnAccentColor = c.onAccent.css(),
-                themeFocusColor = c.focusRing.css(),
-                themeSelectedSurfaceColor = c.accent.copy(alpha = 0.24f).css(),
-                themeSelectedSurfaceHoverColor = c.accent.copy(alpha = 0.34f).css(),
-                themeSelectedRingColor = c.accent.copy(alpha = 0.35f).css(),
-                themeTimelineFillColor = c.playerTimelineFill.css(),
-                themeTimelineTrackColor = c.playerTimelineTrack.css(),
-                themeBufferingColor = c.playerBuffering.css(),
-                themeBufferingTrackColor = c.playerBuffering.copy(alpha = 0.28f).css(),
-                themeControlForegroundColor = c.playerControlsForeground.css(),
-                themeSurfaceElevatedColor = c.surfaceElevated.css(),
-                themeSurfaceCardColor = c.surfaceCard.css(),
-                themeSurfacePopoverColor = c.surfacePopover.css(),
-                themeTextPrimaryColor = c.textPrimary.css(),
-                themeTextSecondaryColor = c.textSecondary.css(),
-                themeTextMutedColor = c.textMuted.css(),
-                themeBorderDefaultColor = c.borderDefault.css(),
-                isPlaying = true,
-                controlsVisible = true,
-                showSources = true,
-                showWatchTogether = true,
-                durationMs = sintel.durationMs,
-                positionMs = 7 * 60_000L + 48_000L,
-            )
-            // The storyline: Maya is watching alone; Theo asks to join from his phone; the request
-            // reaches her player; she lets him in. Every panel and pill below is the production
-            // projection of those inputs, exactly as PlayerScreenRuntimeUi computes them.
-            val health = PartyHealthState(realtime = PartyRealtimeHealth.Live)
-            val theo = PromoPeople.theo
-            val request = com.nuvio.app.features.player.IncomingJoinRequestRow(
-                requestId = "r-theo",
-                profileId = theo.profileId,
-                name = theo.displayName,
-                avatarUrl = null,
-                avatarColorHex = theo.avatarColorHex,
-                expiresAtMs = nowMs + 95_000L,
-            )
-            val together = party.copy(
-                status = WatchPartyStatus.playing,
-                stage = WatchPartyStage.playing,
-                members = listOf(
-                    member(PromoPeople.maya, SourceResolutionState.ready),
-                    member(theo, SourceResolutionState.ready),
-                ),
-            )
-            fun panel(p: WatchPartyState?, incoming: com.nuvio.app.features.player.IncomingJoinRequestRow?) =
-                com.nuvio.app.features.player.projectWatchTogetherPanel(
-                    com.nuvio.app.features.player.WatchTogetherPanelInputs(
-                        shareable = true,
-                        playbackContentId = sintel.id,
-                        playbackVideoId = sintel.id,
-                        playbackTitle = sintel.name,
-                        viewerProfileId = PromoPeople.maya.profileId,
-                        party = p,
-                        health = health,
-                        nowMs = nowMs,
-                        incomingRequest = incoming,
-                        members = PartyPresentationProjector.project(
-                            party = p,
-                            selfProfileId = PromoPeople.maya.profileId,
-                            health = health,
-                            realtime = WatchPartySyncState(clockLocked = true, bestRttMs = 38),
-                            partyNowMs = 0L,
-                        ).members,
-                    ),
-                )
-            fun pill(incoming: Boolean, panelOpen: Boolean) = com.nuvio.app.features.player.partyStatusBridgeState(
-                com.nuvio.app.features.watchparty.projectPartyPlaybackStatus(
-                    com.nuvio.app.features.watchparty.PartyPlaybackStatusInputs(
-                        inParty = false,
-                        isHost = false,
-                        incomingRequester = if (incoming) {
-                            com.nuvio.app.features.watchparty.PartyStatusPerson(theo.profileId, theo.displayName, null, theo.avatarColorHex)
-                        } else {
-                            null
-                        },
-                        panelOpen = panelOpen,
-                    ),
-                ),
-            )
-            fun bridge(p: com.nuvio.app.features.player.WatchTogetherPanelState, open: Boolean) =
-                com.nuvio.app.features.player.watchTogetherBridgeState(p, open = open, inviteCode = "MX7Q4KRT2WLA")
-            val states = mapOf(
-                "watching" to base.copy(watchTogether = bridge(panel(null, null), open = false)),
-                "request" to base.copy(watchTogether = bridge(panel(null, request), open = false), partyStatus = pill(true, false)),
-                "request-open" to base.copy(watchTogether = bridge(panel(null, request), open = true), partyStatus = pill(true, true)),
-                "together" to base.copy(watchTogether = bridge(panel(together, null), open = true)),
-                "together-closed" to base.copy(watchTogether = bridge(panel(together, null), open = false)),
-            )
-            val dir = File(outDir, "player").apply { mkdirs() }
-            dir.listFiles { f -> f.name.endsWith(".json") }?.forEach(File::delete)
-            states.forEach { (name, state) -> File(dir, "$name.json").writeText(state.toControlsJson(isFullscreen = true)) }
+            val base = playerBase()
+            exportPlayerStatesFrom(base)
         }.onFailure { e ->
             e.printStackTrace()
             failures += "player-state: ${e::class.simpleName}: ${e.message}"
         }
     }
 
+    /** The playing-Sintel controls state every exported player shot starts from, themed as `PlayerScreenRuntimeUi` themes it. */
+    internal fun playerBase(): com.nuvio.app.features.player.PlayerControlsState {
+        var colors: com.nuvio.app.core.ui.NuvioColorTokens? = null
+        val scene = ImageComposeScene(8, 8, Density(1f)) {
+            NuvioTheme(darkTheme = true, appTheme = AppTheme.WHITE, amoled = false) {
+                colors = MaterialTheme.nuvio.colors
+            }
+        }
+        scene.render(0L)
+        scene.close()
+        val c = colors ?: error("theme colours were not read")
+        val base = com.nuvio.app.features.player.PlayerControlsState(
+            title = sintel.name,
+            streamTitle = "Sintel.2010.2160p.WEB-DL.HEVC.AAC.5.1",
+            providerName = "Open Movie Archive",
+            pauseOverlayEpisodeInfo = "Open Movie Archive",
+            pauseOverlayDescription = sintel.description,
+            themeAccentColor = c.accent.css(),
+            themeAccentStrongColor = c.accentStrong.css(),
+            themeOnAccentColor = c.onAccent.css(),
+            themeFocusColor = c.focusRing.css(),
+            themeSelectedSurfaceColor = c.accent.copy(alpha = 0.24f).css(),
+            themeSelectedSurfaceHoverColor = c.accent.copy(alpha = 0.34f).css(),
+            themeSelectedRingColor = c.accent.copy(alpha = 0.35f).css(),
+            themeTimelineFillColor = c.playerTimelineFill.css(),
+            themeTimelineTrackColor = c.playerTimelineTrack.css(),
+            themeBufferingColor = c.playerBuffering.css(),
+            themeBufferingTrackColor = c.playerBuffering.copy(alpha = 0.28f).css(),
+            themeControlForegroundColor = c.playerControlsForeground.css(),
+            themeSurfaceElevatedColor = c.surfaceElevated.css(),
+            themeSurfaceCardColor = c.surfaceCard.css(),
+            themeSurfacePopoverColor = c.surfacePopover.css(),
+            themeTextPrimaryColor = c.textPrimary.css(),
+            themeTextSecondaryColor = c.textSecondary.css(),
+            themeTextMutedColor = c.textMuted.css(),
+            themeBorderDefaultColor = c.borderDefault.css(),
+            isPlaying = true,
+            controlsVisible = true,
+            showSources = true,
+            showWatchTogether = true,
+            durationMs = sintel.durationMs,
+            positionMs = 7 * 60_000L + 48_000L,
+        )
+        return base
+    }
+
+    private fun exportPlayerStatesFrom(base: com.nuvio.app.features.player.PlayerControlsState) {
+        // The storyline: Maya is watching alone; Theo asks to join from his phone; the request
+        // reaches her player; she lets him in. Every panel and pill below is the production
+        // projection of those inputs, exactly as PlayerScreenRuntimeUi computes them.
+        val health = PartyHealthState(realtime = PartyRealtimeHealth.Live)
+        val theo = PromoPeople.theo
+        val request = com.nuvio.app.features.player.IncomingJoinRequestRow(
+            requestId = "r-theo",
+            profileId = theo.profileId,
+            name = theo.displayName,
+            avatarUrl = null,
+            avatarColorHex = theo.avatarColorHex,
+            expiresAtMs = nowMs + 95_000L,
+        )
+        val together = party.copy(
+            status = WatchPartyStatus.playing,
+            stage = WatchPartyStage.playing,
+            members = listOf(
+                member(PromoPeople.maya, SourceResolutionState.ready),
+                member(theo, SourceResolutionState.ready),
+            ),
+        )
+        fun panel(p: WatchPartyState?, incoming: com.nuvio.app.features.player.IncomingJoinRequestRow?) =
+            com.nuvio.app.features.player.projectWatchTogetherPanel(
+                com.nuvio.app.features.player.WatchTogetherPanelInputs(
+                    shareable = true,
+                    playbackContentId = sintel.id,
+                    playbackVideoId = sintel.id,
+                    playbackTitle = sintel.name,
+                    viewerProfileId = PromoPeople.maya.profileId,
+                    party = p,
+                    health = health,
+                    nowMs = nowMs,
+                    incomingRequest = incoming,
+                    members = PartyPresentationProjector.project(
+                        party = p,
+                        selfProfileId = PromoPeople.maya.profileId,
+                        health = health,
+                        realtime = WatchPartySyncState(clockLocked = true, bestRttMs = 38),
+                        partyNowMs = 0L,
+                    ).members,
+                ),
+            )
+        fun pill(incoming: Boolean, panelOpen: Boolean) = com.nuvio.app.features.player.partyStatusBridgeState(
+            com.nuvio.app.features.watchparty.projectPartyPlaybackStatus(
+                com.nuvio.app.features.watchparty.PartyPlaybackStatusInputs(
+                    inParty = false,
+                    isHost = false,
+                    incomingRequester = if (incoming) {
+                        com.nuvio.app.features.watchparty.PartyStatusPerson(theo.profileId, theo.displayName, null, theo.avatarColorHex)
+                    } else {
+                        null
+                    },
+                    panelOpen = panelOpen,
+                ),
+            ),
+        )
+        fun bridge(p: com.nuvio.app.features.player.WatchTogetherPanelState, open: Boolean) =
+            com.nuvio.app.features.player.watchTogetherBridgeState(p, open = open, inviteCode = "MX7Q4KRT2WLA")
+        val states = mapOf(
+            "watching" to base.copy(watchTogether = bridge(panel(null, null), open = false)),
+            "request" to base.copy(watchTogether = bridge(panel(null, request), open = false), partyStatus = pill(true, false)),
+            "request-open" to base.copy(watchTogether = bridge(panel(null, request), open = true), partyStatus = pill(true, true)),
+            "together" to base.copy(watchTogether = bridge(panel(together, null), open = true)),
+            "together-closed" to base.copy(watchTogether = bridge(panel(together, null), open = false)),
+        )
+        val dir = File(outDir, "player").apply { mkdirs() }
+        dir.listFiles { f -> f.name.endsWith(".json") }?.forEach(File::delete)
+        states.forEach { (name, state) -> File(dir, "$name.json").writeText(state.toControlsJson(isFullscreen = true)) }
+    }
+
     // --- shells -------------------------------------------------------------------------------
 
     /** `MainTabsDestination` on a desktop window: the content inset by the collapsed rail, the rail over it. */
     @Composable
-    private fun DesktopShell(tab: AppScreenTab, content: @Composable () -> Unit) {
+    internal fun DesktopShell(tab: AppScreenTab, content: @Composable () -> Unit) {
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             Box(Modifier.fillMaxSize().padding(start = DesktopSidebarCollapsedWidth)) { content() }
             DesktopHoverSidebar(
@@ -534,7 +544,7 @@ class PromoRenderHarness {
      * screens that pad a header below it (a hero draws under it, so Home does not).
      */
     @Composable
-    private fun PhoneShell(tab: AppScreenTab, statusInset: Boolean = false, content: @Composable () -> Unit) {
+    internal fun PhoneShell(tab: AppScreenTab, statusInset: Boolean = false, content: @Composable () -> Unit) {
         val haze = rememberHazeState()
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             Box(
@@ -569,7 +579,7 @@ class PromoRenderHarness {
     // --- Home ---------------------------------------------------------------------------------
 
     /** Before the story: Sintel is not in Continue Watching yet. */
-    private val cwBefore: List<ContinueWatchingItem> = listOf(
+    internal val cwBefore: List<ContinueWatchingItem> = listOf(
         cw(PromoCatalog.metropolis, 0.31f),
         cw(PromoCatalog.tearsOfSteel, 0.72f),
         cw(PromoCatalog.charade, 0.18f),
@@ -598,7 +608,7 @@ class PromoRenderHarness {
 
     /** `HomeScreen`'s list, section for section: hero, Continue Watching, Social, catalog rows. */
     @Composable
-    private fun HomeComposition(listState: LazyListState = rememberLazyListState(), continueWatching: List<ContinueWatchingItem> = cwAfter) {
+    internal fun HomeComposition(listState: LazyListState = rememberLazyListState(), continueWatching: List<ContinueWatchingItem> = cwAfter) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val width = maxWidth
             val sectionPadding = homeSectionHorizontalPaddingForWidth(width.value)
@@ -652,7 +662,7 @@ class PromoRenderHarness {
     // --- details and sources ------------------------------------------------------------------
 
     @Composable
-    private fun Details() {
+    internal fun Details() {
         MetaDetailsScreen(
             type = "movie",
             id = sintel.id,
@@ -663,7 +673,7 @@ class PromoRenderHarness {
         )
     }
 
-    private fun stream(name: String, filename: String, sizeBytes: Long) = StreamItem(
+    internal fun stream(name: String, filename: String, sizeBytes: Long) = StreamItem(
         name = name,
         description = null,
         url = "https://example.invalid/$filename",
@@ -673,7 +683,7 @@ class PromoRenderHarness {
     )
 
     @Composable
-    private fun QualitySheet() {
+    internal fun QualitySheet() {
         val context = PlaybackSelectionContext(runtimeMinutes = sintel.runtimeMin, isEpisode = false, preferredEmbeddedSubtitleLanguage = "en")
         val options = remember {
             PlaybackQualityOptions.build(
@@ -834,7 +844,7 @@ class PromoRenderHarness {
     ).filter { r -> PromoCatalog.all.any { it.id == r.contentId } }
 
     @Composable
-    private fun Social() {
+    internal fun Social() {
         val state = SocialUiState(
             capabilities = SocialCapabilities(socialEnabled = true, watchPartyEnabled = true),
             activeProfileId = PromoPeople.maya.profileId,
@@ -873,7 +883,7 @@ class PromoRenderHarness {
         contentId = sintel.id, videoId = sintel.id, title = sintel.name,
         poster = PromoArt.poster(sintel.slug), background = PromoArt.backdrop(sintel.slug),
     )
-    private fun theoPending() = OutgoingJoinRequestState.Pending(
+    internal fun theoPending() = OutgoingJoinRequestState.Pending(
         theoBinding, mayaTarget, sintelRequestContent, "r-theo",
         com.nuvio.app.features.watchparty.currentEpochMs() + 95_000L,
     )
@@ -892,7 +902,7 @@ class PromoRenderHarness {
      * where `MainAppContent` puts it on a phone - top end, under the status bar.
      */
     @Composable
-    private fun TheoPhone(outgoing: OutgoingJoinRequestState) = Box(Modifier.fillMaxSize()) {
+    internal fun TheoPhone(outgoing: OutgoingJoinRequestState) = Box(Modifier.fillMaxSize()) {
         PhoneShell(AppScreenTab.Social, statusInset = true) {
             val state = SocialUiState(
                 capabilities = SocialCapabilities(socialEnabled = true, watchPartyEnabled = true),
