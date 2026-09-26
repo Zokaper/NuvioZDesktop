@@ -32,7 +32,7 @@ class AssistedChoiceFlowTest {
         id = META_ID,
         type = "series",
         name = "Lanterns",
-        videos = (1..EPISODES).map { MetaVideo(id = "$META_ID:1:$it", title = "E$it", season = 1, episode = it, released = "2001-01-01") },
+        videos = (1..EPISODES).map { MetaVideo(id = "$META_ID:1:$it", title = "E$it", season = 1, episode = it, released = "2001-01-01", runtime = 45) },
     )
 
     private val notices = object : DownloadFlowNotices {
@@ -43,6 +43,7 @@ class AssistedChoiceFlowTest {
         override fun needsAttention() { log += "attention" }
         override fun nothingNew() { log += "nothing" }
         override fun qualityReady(title: String, season: Int?, onChoose: () -> Unit) { log += "ready:$title:$season" }
+        override fun qualityChosenEarly(height: Int) { log += "early:$height" }
     }
     private val systemNotices = mutableListOf<DownloadChoiceNotice>()
     private var foreground = true
@@ -102,6 +103,8 @@ class AssistedChoiceFlowTest {
         DownloadsRepository.isMeteredNetwork = { true }
         DownloadsRepository.updateDeviceSettings { DownloadDeviceSettings() }
         DownloadBatchCoordinator.contextOverride = { _, policy -> context(policy) }
+        // "Choose now" decides as Automatic does, which HEAD-checks a direct source's size.
+        DownloadBatchCoordinator.verifySizeOverride = { it }
         DownloadBatchCoordinator.discoverOverride = { target ->
             gate.await()
             discoveries.incrementAndGet()
@@ -113,6 +116,7 @@ class AssistedChoiceFlowTest {
     fun tearDown() {
         DownloadBatchCoordinator.discoverOverride = null
         DownloadBatchCoordinator.contextOverride = null
+        DownloadBatchCoordinator.verifySizeOverride = null
         DownloadFlowController.modeProvider = defaults.mode
         DownloadFlowController.policyProvider = defaults.policy
         DownloadFlowController.isMeteredNow = defaults.metered
@@ -278,6 +282,144 @@ class AssistedChoiceFlowTest {
         gate.complete(Unit)
         Thread.sleep(300L)
         assertTrue(notices.log.isEmpty() && systemNotices.isEmpty(), "a removed batch never announces itself")
+    }
+
+    // --- "Choose now": a quality from estimates while the sources are still being found --------
+
+    private fun items() = DownloadsRepository.uiState.value.items.filter { it.parentMetaId == META_ID }
+
+    private fun chooseEarly(height: Int): String {
+        val batchId = startSeason()
+        DownloadFlowController.chooseNow()
+        val sheet = assertIs<DownloadFlowStep.ChooseResolution>(DownloadFlowController.step.value)
+        assertTrue(sheet.estimated)
+        DownloadFlowController.chooseResolution(height)
+        return batchId
+    }
+
+    @Test
+    fun chooseNowShowsEstimatesAndRecordsTheChoiceWithoutStartingAnything() {
+        val batchId = startSeason()
+        DownloadFlowController.chooseNow()
+        val sheet = assertIs<DownloadFlowStep.ChooseResolution>(DownloadFlowController.step.value)
+        assertTrue(sheet.estimated)
+        assertEquals(listOf(2160, 1080, 720), sheet.rows.map { it.height })
+        assertEquals(1080, sheet.preselectedHeight)
+        // 4 episodes x 45 min = 3 h at 1080p Medium (1-2 GB/h), not a single exact figure.
+        assertEquals(3 * gb..6 * gb, sheet.rows.first { it.height == 1080 }.estimate)
+        assertTrue(sheet.rows.all { it.totalBytes == 0L }, "no row pretends to know the real size")
+
+        DownloadFlowController.chooseResolution(1080)
+        assertEquals(DownloadFlowStep.Idle, DownloadFlowController.step.value)
+        val chosen = assertNotNull(batch())
+        assertEquals(1080, chosen.earlyResolutionHeight)
+        assertTrue(chosen.awaitsQualityChoice)
+        assertTrue(AssistedDiscovery.isRunning(batchId))
+        assertTrue(items().isEmpty(), "nothing starts before its source is found")
+        assertEquals(listOf("early:1080"), notices.log)
+    }
+
+    @Test
+    fun noLimitMeansNoEstimateRatherThanAMadeUpOne() {
+        DownloadFlowController.policyProvider = { DownloadPolicy(sizeLevel = DownloadSizeLevel.ANY) }
+        startSeason()
+        DownloadFlowController.chooseNow()
+        val sheet = assertIs<DownloadFlowStep.ChooseResolution>(DownloadFlowController.step.value)
+        assertTrue(sheet.rows.all { it.estimate == null })
+    }
+
+    @Test
+    fun whenTheSourcesAreInTheEarlyChoiceStartsWithoutAskingAgain() {
+        val batchId = chooseEarly(1080)
+        gate.complete(Unit)
+        await("the season to be queued") { items().size == EPISODES }
+
+        assertTrue(items().all { it.expectedSizeBytes == 2 * gb }, "the 1080p sources, at their real sizes")
+        val settled = assertNotNull(batch())
+        assertEquals(batchId, settled.id)
+        assertFalse(settled.awaitsQualityChoice)
+        assertTrue(notices.log.none { it.startsWith("ready:") }, "never asked for the same quality twice")
+        assertTrue(systemNotices.isEmpty())
+        assertEquals(listOf("early:1080", "many:$EPISODES"), notices.log)
+        assertNull(AssistedDiscovery.candidates(batchId))
+    }
+
+    @Test
+    fun theSheetOpenWhenDiscoveryEndsClosesInsteadOfOfferingTheChoiceAgain() {
+        val batchId = chooseEarly(720)
+        DownloadFlowController.chooseQuality(batchId) // tapping the row: progress, and what was chosen
+        val finding = assertIs<DownloadFlowStep.FindingSources>(DownloadFlowController.step.value)
+        assertEquals(720, finding.chosenHeight)
+        gate.complete(Unit)
+        await("the season to be queued") { items().size == EPISODES }
+        assertEquals(DownloadFlowStep.Idle, DownloadFlowController.step.value)
+        assertTrue(items().all { it.expectedSizeBytes == 1 * gb })
+    }
+
+    @Test
+    fun aMissingResolutionFollowsTheFallbackAndAskIsTheGroupedDecision() {
+        chooseEarly(2160) // nobody has 4K; the default fallback is Ask
+        gate.complete(Unit)
+        await("the batch to settle") { batch()?.awaitsQualityChoice == false && batch()?.entries?.none { it.state == DownloadBatchEntryState.AWAITING_CHOICE } == true }
+
+        assertTrue(items().isEmpty())
+        assertTrue(assertNotNull(batch()).entries.all { it.decision == DownloadEntryDecisionKind.RESOLUTION_MISSING })
+        assertTrue(
+            AttentionGrouping.group(emptyList(), DownloadsRepository.batches.value, 0L).any { it.parentMetaId == META_ID },
+            "one Needs you card with Use nearest",
+        )
+    }
+
+    @Test
+    fun aMissingResolutionWithFallbackLowerStartsTheNearestBelow() {
+        DownloadFlowController.policyProvider = { DownloadPolicy(resolutionFallback = DownloadResolutionFallback.LOWER) }
+        chooseEarly(2160)
+        gate.complete(Unit)
+        await("the season to be queued") { items().size == EPISODES }
+        assertTrue(items().all { it.expectedSizeBytes == 2 * gb }, "1080p, the nearest below 4K")
+    }
+
+    @Test
+    fun realSizesOverTheSizeRuleBecomeTheOverLimitDecision() {
+        // Small at 1080p for an hour is 1 GB; every 1080p source here is 2 GB.
+        DownloadFlowController.policyProvider = { DownloadPolicy(sizeLevel = DownloadSizeLevel.SMALL) }
+        chooseEarly(1080)
+        gate.complete(Unit)
+        await("the batch to settle") { batch()?.awaitsQualityChoice == false && batch()?.entries?.none { it.state == DownloadBatchEntryState.AWAITING_CHOICE } == true }
+
+        assertTrue(items().isEmpty(), "the estimate was not a promise: nothing over the rule starts")
+        assertTrue(assertNotNull(batch()).entries.all { it.decision == DownloadEntryDecisionKind.OVER_LIMIT })
+    }
+
+    @Test
+    fun anEarlyChoiceSurvivesAProcessDeath() {
+        val batchId = chooseEarly(720)
+        // The process dies before the sources are in: the batch and its choice are on disk.
+        AssistedDiscovery.resetForTests(Dispatchers.Default)
+        gate.complete(Unit)
+        assertEquals(720, assertNotNull(batch()).earlyResolutionHeight)
+        AssistedDiscovery.resumeInterrupted(DownloadsRepository.batches.value)
+        await("the season to be queued") { items().size == EPISODES }
+
+        assertTrue(items().all { it.expectedSizeBytes == 1 * gb })
+        assertTrue(notices.log.none { it.startsWith("ready:") })
+        assertTrue(systemNotices.isEmpty())
+        assertNull(AssistedDiscovery.candidates(batchId))
+    }
+
+    @Test
+    fun theEstimateSheetBecomesTheExactOneWhenTheSourcesArrive() {
+        startSeason()
+        DownloadFlowController.chooseNow()
+        gate.complete(Unit)
+        await("the exact sheet") {
+            (DownloadFlowController.step.value as? DownloadFlowStep.ChooseResolution)?.estimated == false
+        }
+        val exact = DownloadFlowController.step.value as DownloadFlowStep.ChooseResolution
+        assertEquals(EPISODES * 2 * gb, exact.rows.first { it.height == 1080 }.totalBytes)
+        assertTrue(notices.log.isEmpty() && systemNotices.isEmpty(), "the user is looking at it: nothing else to say")
+        DownloadFlowController.chooseResolution(1080)
+        await("the season to be queued") { items().size == EPISODES }
     }
 
     private companion object {

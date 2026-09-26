@@ -102,6 +102,47 @@ class DownloadFlowRenderHarness {
         "finding-refreshing" to {
             DownloadFindingSourcesDialog(DownloadFlowStep.FindingSources(bear, 2, 22, batchId = "b", refreshing = true), onDismiss = {})
         },
+        // Assisted "Choose now": the quality picked from estimates while sources are still found.
+        "finding-chosen" to {
+            DownloadFindingSourcesDialog(DownloadFlowStep.FindingSources(bear, 9, 22, batchId = "b", chosenHeight = 1080), onDismiss = {})
+        },
+        "resolution-estimated" to {
+            DownloadResolutionDialog(
+                step = DownloadFlowStep.ChooseResolution(
+                    title = bear,
+                    scope = DownloadScope.Season(3),
+                    targetCount = 22,
+                    rows = listOf(2160, 1080, 720).map { height ->
+                        DownloadResolutionRow(
+                            height, 0L, 0, 22, 0, overLimit = false, detail = null,
+                            estimate = DownloadSizeLevels.estimateBytes(DownloadSizeLevel.MEDIUM, height, List(22) { 34 }),
+                        )
+                    },
+                    preselectedHeight = 1080,
+                    offersChooseManually = false,
+                    estimated = true,
+                ),
+                onDownload = {},
+                onChooseManually = {},
+                onDismiss = {},
+            )
+        },
+        "resolution-estimate-unavailable" to {
+            DownloadResolutionDialog(
+                step = DownloadFlowStep.ChooseResolution(
+                    title = bear,
+                    scope = DownloadScope.Season(3),
+                    targetCount = 22,
+                    rows = listOf(2160, 1080, 720).map { DownloadResolutionRow(it, 0L, 0, 22, 0, overLimit = false, detail = null) },
+                    preselectedHeight = 2160,
+                    offersChooseManually = false,
+                    estimated = true,
+                ),
+                onDownload = {},
+                onChooseManually = {},
+                onDismiss = {},
+            )
+        },
         "resolution-single" to {
             DownloadResolutionDialog(
                 step = DownloadFlowStep.ChooseResolution(
