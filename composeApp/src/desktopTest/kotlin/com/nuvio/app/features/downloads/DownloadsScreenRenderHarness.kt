@@ -3,6 +3,10 @@ package com.nuvio.app.features.downloads
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
@@ -46,7 +50,9 @@ class DownloadsScreenRenderHarness {
     private val sizes = listOf(
         "phone" to (360 to 780),
         "large-phone" to (420 to 900),
+        "desktop-narrow" to (960 to 720),
         "desktop" to (1280 to 820),
+        "desktop-1440" to (1440 to 900),
         "desktop-fhd" to (1920 to 1080),
     )
 
@@ -153,22 +159,39 @@ class DownloadsScreenRenderHarness {
     )
 
     /** Assisted "choose when ready": one season still finding its sources, one ready to choose. */
-    private fun choiceBatch(id: String, slug: String, title: String, season: Int, episodes: Int, found: Int) = DownloadBatch(
+    private fun choiceBatch(
+        id: String,
+        slug: String,
+        title: String,
+        season: Int,
+        episodes: Int,
+        found: Int,
+        early: Int? = null,
+        checking: Boolean = false,
+    ) = DownloadBatch(
         id = id, ownerProfileId = 1, scope = DownloadScope.Season(season), contentType = "series",
         parentMetaId = "tt-$slug", parentMetaType = "series", title = title,
         poster = DownloadRenderArt.poster(slug),
         sourcePolicySnapshot = DownloadSourcePolicy(), createdAtEpochMs = 0L,
-        awaitsQualityChoice = true,
+        awaitsQualityChoice = !checking,
+        earlyResolutionHeight = early,
         entries = (1..episodes).map { ep ->
             DownloadBatchEntry(
                 id = "$id$ep", videoId = "tt-$slug:$season:$ep", title = "Episode $ep", season = season, episode = ep,
-                state = if (ep <= found) DownloadBatchEntryState.AWAITING_CHOICE else DownloadBatchEntryState.DISCOVERING,
+                state = when {
+                    checking && ep <= found -> DownloadBatchEntryState.READY
+                    checking -> DownloadBatchEntryState.RESOLVING
+                    ep <= found -> DownloadBatchEntryState.AWAITING_CHOICE
+                    else -> DownloadBatchEntryState.DISCOVERING
+                },
             )
         },
     )
 
     private val lanterns = choiceBatch("ln", "lanterns", "Lanterns", 1, episodes = 8, found = 8)
-    private val pluribus = choiceBatch("pb", "pluribus", "Pluribus", 1, episodes = 22, found = 7)
+    private val pluribus = choiceBatch("pb", "pluribus", "Pluribus", 1, episodes = 22, found = 7, early = 1080)
+    /** "Choose now", discovery done, the sources being checked (physical `.56`: this row was missing). */
+    private val shrinking = choiceBatch("sk", "shrinking", "Shrinking", 2, episodes = 12, found = 5, early = 720, checking = true)
 
     private val attentionItems = listOf(
         item("opp", "oppenheimer", "Oppenheimer", DownloadStatus.Failed, failure = DownloadFailureKind.STORAGE, total = 31 * gb),
@@ -176,20 +199,15 @@ class DownloadsScreenRenderHarness {
     )
 
     @Composable
-    private fun Screen() {
+    private fun Screen(wide: Boolean) {
         val items = queueItems + completed + attentionItems
-        val batches = listOf(bear, slowHorses, lanterns, pluribus)
+        val batches = listOf(bear, slowHorses, lanterns, pluribus, shrinking)
         val attention = AttentionGrouping.group(items, batches, now)
         val unfinished = items.filter {
             it.status != DownloadStatus.Completed && DownloadPresenter.item(it, now).phase != DownloadUserPhase.NEEDS_YOU
         }
         val queue = DownloadQueueGrouping.group(unfinished, items, batches, now)
-        NuvioScreen(topPadding = 0.dp) {
-            stickyHeader {
-                Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
-                    NuvioScreenHeader(modifier = Modifier.downloadsContentWidth(), title = "Downloads")
-                }
-            }
+        val content: LazyListScope.(DownloadsPart) -> Unit = { part ->
             downloadsRootContent(
                 uiState = DownloadsUiState(items),
                 batches = batches,
@@ -207,7 +225,27 @@ class DownloadsScreenRenderHarness {
                 onReviewCleanup = {},
                 onCancelGroup = {},
                 initiallyExpandedGroups = true,
+                part = part,
             )
+        }
+        if (wide) {
+            // The desktop window: its sidebar (collapsed, 68dp), then the production two-pane layout.
+            Row(Modifier.fillMaxSize()) {
+                Box(Modifier.width(68.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLow))
+                DownloadsWideLayout(
+                    header = { width -> NuvioScreenHeader(modifier = width, title = "Downloads") },
+                    content = content,
+                )
+            }
+        } else {
+            NuvioScreen(topPadding = 0.dp) {
+                stickyHeader {
+                    Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
+                        NuvioScreenHeader(modifier = Modifier.downloadsContentWidth(), title = "Downloads")
+                    }
+                }
+                content(DownloadsPart.All)
+            }
         }
     }
 
@@ -250,7 +288,10 @@ class DownloadsScreenRenderHarness {
         val failures = mutableListOf<String>()
         for ((sizeName, size) in sizes) {
             val phone = size.first < 600
-            render("screen-$sizeName", size.first, if (phone) (size.second * 2.4).toInt() else (size.second * 1.9).toInt(), failures) { Screen() }
+            // Desktop: the window's own height - the panes scroll, as they do in the app.
+            render("screen-$sizeName", size.first, if (phone) (size.second * 2.4).toInt() else size.second, failures) { Screen(wide = !phone && downloadsUsesWideLayout((size.first - 68).dp)) }
+            // The whole main pane, for review: the window above shows only what fits.
+            if (!phone) render("screen-$sizeName-full", size.first, (size.second * 2.4).toInt(), failures) { Screen(wide = downloadsUsesWideLayout((size.first - 68).dp)) }
             render("detail-$sizeName", size.first, 520, failures) { Detail() }
             render("settings-$sizeName", size.first, if (phone) 1500 else 1300, failures) { Settings() }
         }

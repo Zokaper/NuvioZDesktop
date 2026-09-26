@@ -319,6 +319,60 @@ class AssistedChoiceFlowTest {
         assertEquals(listOf("early:1080"), notices.log)
     }
 
+    /**
+     * Physical `.56` (iOS): after Choose now the screen was empty while the season was resolved.
+     * The claim cleared the batch's flag before the sizes were checked, one network check per
+     * episode, and for that whole pass the batch belonged to no row. Held open here.
+     */
+    @Test
+    fun whileTheSourcesFoundAreCheckedTheBatchKeepsItsRow() {
+        val checks = CompletableDeferred<Unit>()
+        val checking = AtomicInteger()
+        DownloadBatchCoordinator.verifySizeOverride = { candidate ->
+            checking.incrementAndGet()
+            checks.await()
+            candidate
+        }
+        val batchId = chooseEarly(1080)
+        gate.complete(Unit)
+        await("the size checks to start") { checking.get() > 0 }
+
+        val held = assertNotNull(DownloadsRepository.batches.value.firstOrNull { it.id == batchId })
+        assertFalse(held.awaitsQualityChoice)
+        assertTrue(held.showsAsChoiceRow, "the row the Downloads screen draws: ${held.entries.map { it.state }}")
+        assertTrue(held.isPreparing, "what the Live Activity and the Android summary read")
+        val status = assertNotNull(held.choiceStatus(refreshing = false))
+        assertEquals(DownloadChoicePhase.CHECKING, status.phase)
+        assertEquals(1080, status.chosenHeight)
+        assertEquals(EPISODES, status.total)
+        assertTrue(items().isEmpty())
+
+        checks.complete(Unit)
+        await("the season to be queued") { items().size == EPISODES && notices.log.size == 2 }
+        val done = assertNotNull(batch())
+        assertFalse(done.showsAsChoiceRow, "the downloads carry it from here")
+        assertEquals(listOf("early:1080", "many:$EPISODES"), notices.log)
+    }
+
+    @Test
+    fun removingABatchWhileItsSourcesAreCheckedStartsNothing() {
+        val checks = CompletableDeferred<Unit>()
+        val checking = AtomicInteger()
+        DownloadBatchCoordinator.verifySizeOverride = { candidate ->
+            checking.incrementAndGet()
+            checks.await()
+            candidate
+        }
+        val batchId = chooseEarly(1080)
+        gate.complete(Unit)
+        await("the size checks to start") { checking.get() > 0 }
+        DownloadFlowController.removeChoiceBatch(batchId)
+        checks.complete(Unit)
+        Thread.sleep(300L)
+        assertNull(batch())
+        assertTrue(items().isEmpty(), "a removed batch never queues")
+    }
+
     @Test
     fun noLimitMeansNoEstimateRatherThanAMadeUpOne() {
         DownloadFlowController.policyProvider = { DownloadPolicy(sizeLevel = DownloadSizeLevel.ANY) }
