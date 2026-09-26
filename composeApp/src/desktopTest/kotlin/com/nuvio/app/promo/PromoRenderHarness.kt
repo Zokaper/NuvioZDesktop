@@ -822,7 +822,7 @@ class PromoRenderHarness {
         heartbeatAt = iso(nowMs - 40_000L),
     )
 
-    private fun run(id: String, p: SocialProfileSummary, t: PromoTitle, hoursAgo: Int) = RecentActivityRun(
+    internal fun run(id: String, p: SocialProfileSummary, t: PromoTitle, hoursAgo: Int) = RecentActivityRun(
         runId = id, profile = p, contentId = t.id, contentType = "movie", videoId = t.id, title = t.name,
         poster = PromoArt.poster(t.slug),
         firstEventTime = iso(nowMs - hoursAgo * 3_600_000L - 1_800_000L),
@@ -831,7 +831,7 @@ class PromoRenderHarness {
 
     private fun iso(ms: Long) = java.time.Instant.ofEpochMilli(ms).toString()
 
-    private val activity = listOf(
+    internal val activity = listOf(
         run("a1", PromoPeople.priya, PromoCatalog.spring, 2),
         run("a2", PromoPeople.theo, PromoCatalog.nightOfTheLivingDead, 3),
         run("a3", PromoPeople.sam, PromoCatalog.nightOfTheLivingDead, 5),
@@ -844,7 +844,7 @@ class PromoRenderHarness {
     ).filter { r -> PromoCatalog.all.any { it.id == r.contentId } }
 
     @Composable
-    internal fun Social() {
+    internal fun Social(listState: LazyListState = rememberLazyListState(), activity: List<RecentActivityRun> = this.activity) {
         val state = SocialUiState(
             capabilities = SocialCapabilities(socialEnabled = true, watchPartyEnabled = true),
             activeProfileId = PromoPeople.maya.profileId,
@@ -865,7 +865,7 @@ class PromoRenderHarness {
                     joinAffordance = { item -> watchingNowJoinAffordance(item, OutgoingJoinRequestState.Idle, null) },
                 ),
                 actions = SocialFeedActions(),
-                listState = rememberLazyListState(),
+                listState = listState,
             )
         }
     }

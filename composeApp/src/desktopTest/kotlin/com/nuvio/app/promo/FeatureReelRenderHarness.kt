@@ -109,6 +109,25 @@ class FeatureReelRenderHarness {
         AddonStreamGroup("Free Film Library", "free-film-library", library),
     )
 
+    /**
+     * A few more weeks of the demo friends' watching, so the Social list is long enough to scroll the way
+     * a real one is. Fictional, like the rest; grouped by title, so some rows gain a second avatar.
+     */
+    private val longerHistory by lazy {
+        val c = PromoCatalog
+        val p = PromoPeople
+        promo.activity + listOf(
+            promo.run("b1", p.jonah, c.bigBuckBunny, 7),
+            promo.run("b2", p.sam, c.spring, 29),
+            promo.run("b3", p.theo, c.elephantsDream, 58),
+            promo.run("b4", p.priya, c.metropolis, 170),
+            promo.run("b5", p.jonah, c.charade, 196),
+            promo.run("b6", p.ines, c.tearsOfSteel, 228),
+            promo.run("b7", p.sam, c.sherlockJr, 262),
+            promo.run("b8", p.theo, c.spriteFright, 300),
+        ).filter { r -> c.all.any { it.id == r.contentId } }
+    }
+
     @Test
     fun renderReelSurfaces() {
         if (!PromoArt.available) {
@@ -147,6 +166,23 @@ class FeatureReelRenderHarness {
             promo.render("reel/social", 1920, 1080, Desktop, 2.5f, failures) {
                 promo.DesktopShell(AppScreenTab.Social) { promo.Social() }
             }
+        }
+        if (wants("social-scroll")) {
+            // The Social tab scrolled by its own list, as the trailer's Home scroll is: Watching Now down
+            // into Friends Recently Watched.
+            val state = LazyListState()
+            val total = 150
+            var done = 0f
+            promo.render(
+                "reel/social-scroll", 1920, 1080, Desktop, 1.5f, failures, frames = total,
+                beforeFrame = { i ->
+                    val p = i / (total - 1f)
+                    val eased = if (p < 0.5f) 4 * p * p * p else 1 - Math.pow((-2.0 * p + 2), 3.0).toFloat() / 2
+                    val target = eased * 560f * 1.5f * 1.32f // 560 dp of list, in pixels at this density and UI scale
+                    state.dispatchRawDelta(target - done)
+                    done = target
+                },
+            ) { promo.DesktopShell(AppScreenTab.Social) { promo.Social(state, longerHistory) } }
         }
         if (wants("quality")) {
             promo.render("reel/quality", 1920, 1080, Desktop, 2.5f, failures) {
