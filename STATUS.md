@@ -7,6 +7,18 @@ Last updated: 2026-09-27
 **The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 9 - Downloads Redesign". Shared commits
 reach this repo by cherry-pick of the mobile commit, plus desktop-only actuals.
 
+**Responsive wizard band; desktop debug 70 (2026-09-27):** `f59ef67d7` (the stacked/phone wizard band gives way,
+150 -> min 80 dp, when the panel would scroll - `SetupPanelFit` + pure `setupStackedBandHeightDp`, Diagram drawing
+scaled not clipped; carried to mobile as `c15249216`, byte-identical) and `818c967b2` (`SetupWizardRenderHarness` phone
+frames use the production rule, report `band / panel overflow` per frame and fail a frame that scrolls with the band
+above its minimum). The desktop two-pane wizard is untouched; a desktop window only reaches this path when dragged
+narrower than the two-pane threshold. Measured results, and two corrections to the polish pass's "fits at 393x852 / one
+row over at 360x780", are in `nuvio-z/STATUS.md`, "responsive wizard band". `features.setup.*` + `AppGate*` **153/153**
+(JBR SDK, `--rerun`). Renders: `Nuvio Z/render-review/phase-9-wizard-responsive-band/`.
+**Desktop debug 70** (`debug-v0.1.23-alpha-z6.70`, run ``36330864845``, commit `fb5d1c7e9`): published - `Nuvio-Z-Debug-Windows-x64-0.1.23-alpha-z6.70.msi` and `Nuvio-Z-Debug-macOS-arm64-0.1.23-alpha-z6.70.dmg`, prerelease. It carries the
+Downloads destination/two-pane layout, the wizard polish, the size-level UI, the wide-hero title Download and all shared
+Phase 9 work. Physical-QA build; not verified.
+
 **Wizard UX Polish Pass + title-level Download (2026-09-27):** made here first this time (the render harness lives here)
 and cherry-picked to mobile - write-up in `nuvio-z/STATUS.md`, "Wizard UX Polish Pass". Desktop commits: `27ae42e18`
 (shared wizard polish), `0162ebb8c` (details: the wide `DesktopDetailHero` had no title-level Download - it owns the
