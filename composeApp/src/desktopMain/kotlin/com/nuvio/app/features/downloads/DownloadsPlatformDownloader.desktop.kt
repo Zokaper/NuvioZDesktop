@@ -19,6 +19,9 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.net.http.HttpTimeoutException
 import java.time.Duration
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
@@ -30,12 +33,17 @@ private const val TRANSFER_BUFFER_BYTES = 64 * 1024
 // The interval now comes from `DownloadTransfer.kt`, shared with the Android watchdog.
 
 /**
- * `connectTimeout` and the per-request timeout below both stop short of the body.
+ * `connectTimeout` and the header deadline in [sendDownloadRequest] both stop short of the body.
+ * Every byte after the headers is read from a stream with no deadline of its own, which is why
+ * the transfer loop runs its own stall watchdog.
  *
- * `HttpRequest.timeout` bounds how long the *response* takes to arrive, and with
- * `BodyHandlers.ofInputStream` the response arrives as soon as the headers do.
- * Every byte after that is read from a stream with no deadline of its own, which
- * is why the transfer loop runs its own stall watchdog.
+ * ⚠ **Never `HttpRequest.timeout` (Phase 9, Modern Family on desktop).** On the Java 17 runtime
+ * the app ships, a request that follows a redirect keeps that timer armed for the whole body: at
+ * the deadline the read dies with `IOException: closed` (cause `HttpTimeoutException`) while
+ * bytes are still arriving. Debrid links always redirect (resolver -> CDN), so every transfer
+ * longer than 60 s was cut at 60.0 s, retried and resumed - "Retrying shortly" at ~60 % on each
+ * episode. JDK 25 does not do it and neither does 17 without a redirect, which is why the test
+ * JVM never saw it. The header deadline is enforced around `sendAsync` instead.
  *
  * **A client per attempt, not one for the app (`.52`).** Debrid links reach the CDN through one
  * resolver host that speaks HTTP/2, so every episode of a season shared a single connection for
@@ -378,15 +386,34 @@ internal actual object DownloadsPlatformDownloader {
         return openDirectoryWithPlatformCommand(directory)
     }
 
+    /**
+     * Sends [request] and waits for its headers for at most the stall deadline (so the harness can
+     * shorten it like every other one). Past it, throws `HttpTimeoutException` - the `NoResponse`
+     * path. The body is not bound by it; see the note on [newTransferClient].
+     */
     private fun sendDownloadRequest(
         client: HttpClient,
         request: DownloadPlatformRequest,
         rangeStart: Long?,
     ): HttpResponse<java.io.InputStream> {
+        val pending = client.sendAsync(buildDownloadRequest(request, rangeStart), HttpResponse.BodyHandlers.ofInputStream())
+        return try {
+            pending.get(DownloadsTiming.stallTimeoutMs, TimeUnit.MILLISECONDS)
+        } catch (error: TimeoutException) {
+            pending.cancel(true)
+            throw HttpTimeoutException("request timed out")
+        } catch (error: ExecutionException) {
+            throw error.cause ?: error
+        }
+    }
+
+    /** The download request. Deliberately no `timeout(...)` - see [newTransferClient]. */
+    internal fun buildDownloadRequest(
+        request: DownloadPlatformRequest,
+        rangeStart: Long?,
+    ): HttpRequest {
         val builder = HttpRequest.newBuilder()
             .uri(URI(request.sourceUrl))
-            // The stall deadline, so the harness can shorten it like every other one.
-            .timeout(Duration.ofMillis(DownloadsTiming.stallTimeoutMs))
             .GET()
         request.sourceHeaders.forEach { (key, value) ->
             if (key.isNotBlank() && value.isNotBlank()) {
@@ -402,7 +429,7 @@ internal actual object DownloadsPlatformDownloader {
                 builder.header("If-Range", it)
             }
         }
-        return client.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream())
+        return builder.build()
     }
 }
 
