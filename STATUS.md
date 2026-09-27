@@ -12,7 +12,8 @@ at a time, an offline title-metadata snapshot - write-up in `nuvio-z/STATUS.md`,
 Desktop: `ee74654b8` + `f9a9c5717` (cherry-picks of mobile `4cd57664e` / made here and carried back as `cbf992c63`),
 `79511b5d3` (`DownloadsStorage.desktop` title-metadata actual; `DownloadsScreenRenderHarness` gains a Modern Family
 library and `library-*` / `show-*` scenes, fixtures gain generated logos). Renders:
-`Nuvio Z/render-review/phase-9-downloaded-library/`. Full `desktopTest` not re-run.
+`Nuvio Z/render-review/phase-9-downloaded-library/`. Full `desktopTest` not re-run. **Desktop debug 71**
+(`debug-v0.1.23-alpha-z6.71`, run `36343625718`, commit `66f7a05b1`): published, MSI + DMG, prerelease - not yet looked at.
 
 **Responsive wizard band; desktop debug 70 (2026-09-27):** `f59ef67d7` (the stacked/phone wizard band gives way,
 150 -> min 80 dp, when the panel would scroll - `SetupPanelFit` + pure `setupStackedBandHeightDp`, Diagram drawing
