@@ -182,6 +182,7 @@ class SetupWizardRenderHarness {
             renderDownloadStoryboard(mode, failures)
         }
 
+        println("Phone frames:\n" + phoneFits.joinToString("\n"))
         if (failures.isNotEmpty()) {
             fail("Scenes failed to render:\n" + failures.joinToString("\n"))
         }
@@ -432,6 +433,11 @@ class SetupWizardRenderHarness {
             SetupStep.Theme -> SetupSpecimen.Theme
             else -> SetupSpecimen.Diagram
         }
+        // The production band rule, fed by the production measurement. It needs a second frame:
+        // the first lays the panel out and measures it, the second draws the band that answer asks
+        // for (production animates between the two; the harness shows where it lands).
+        val fit = SetupPanelFit()
+        var bandDp = 0f
         render(
             name = name,
             widthDp = widthDp,
@@ -439,15 +445,23 @@ class SetupWizardRenderHarness {
             theme = AppTheme.WHITE,
             amoled = false,
             failures = failures,
+            frames = 2,
         ) {
             val tokens = MaterialTheme.nuvio
+            val bandHeight = setupStackedBandHeight(
+                specimen = specimen,
+                windowHeight = heightDp.dp,
+                topInset = PhoneStatusBarInset,
+                fit = fit,
+            )
+            bandDp = bandHeight.value
             Column(Modifier.fillMaxSize().background(tokens.colors.background)) {
                 SetupSpecimenBand(
                     specimen = specimen,
                     step = step,
                     playbackMode = playbackMode,
-                    height = specimen.preferredHeight.coerceAtMost((heightDp * 0.5f).dp),
-                    contentPaddingTop = 40.dp,
+                    height = bandHeight,
+                    contentPaddingTop = PhoneStatusBarInset,
                     posterWidthDp = 126,
                     posterCornerRadiusDp = 8,
                     landscapeCards = false,
@@ -462,9 +476,13 @@ class SetupWizardRenderHarness {
                     tabLayout = false,
                     nextUpLabel = "Next episode",
                     modifier = Modifier.fillMaxWidth(),
+                    scale = if (specimen == SetupSpecimen.Diagram) setupDiagramScale(bandHeight.value) else 1f,
                     downloadModeName = plan.downloadModeName,
                 )
-                Box(Modifier.fillMaxWidth().height(1.dp).background(tokens.colors.borderSubtle.copy(alpha = 0.6f)))
+                Box(
+                    Modifier.fillMaxWidth().height(tokens.borders.hairline)
+                        .background(tokens.colors.borderSubtle.copy(alpha = 0.6f)),
+                )
                 SetupPanel(
                     step = step,
                     plan = plan,
@@ -476,6 +494,7 @@ class SetupWizardRenderHarness {
                     onBack = {},
                     onAdvance = {},
                     advance = setupAdvanceFor(step, SetupSourcesState(), sourcesStatus),
+                    fit = fit,
                     modifier = Modifier.weight(1f),
                 ) {
                     SetupStepBody(
@@ -513,7 +532,18 @@ class SetupWizardRenderHarness {
                 }
             }
         }
+        val overflowDp = (fit.contentPx - fit.viewportPx) / 2f
+        phoneFits += "$name: band ${bandDp}dp, panel overflow ${overflowDp}dp"
+        if (overflowDp > 1f && bandDp > SetupSpecimen.Diagram.minimumHeight.value) {
+            failures += "$name: the panel scrolls by ${overflowDp}dp while the band is still ${bandDp}dp"
+        }
     }
+
+    /** One line per phone frame: where the band landed and whether the panel still scrolls. */
+    private val phoneFits = mutableListOf<String>()
+
+    /** The status-bar inset the phone frames are drawn under. */
+    private val PhoneStatusBarInset = 40.dp
 
     private fun renderDownloadStoryboard(mode: DownloadMode, failures: MutableList<String>) {
         val frames = downloadStoryboardFrames(mode.name)
@@ -621,6 +651,7 @@ class SetupWizardRenderHarness {
         failures: MutableList<String>,
         nanoTime: Long = 0L,
         platformDensity: Float = 2f,
+        frames: Int = 1,
         content: @Composable () -> Unit,
     ) {
         val density = Density(platformDensity)
@@ -650,6 +681,7 @@ class SetupWizardRenderHarness {
                 }
             }
             try {
+                repeat(frames - 1) { scene.render(nanoTime) }
                 val image = scene.render(nanoTime)
                 val data = image.encodeToData(EncodedImageFormat.PNG)
                     ?: error("encodeToData returned null")
