@@ -1187,6 +1187,59 @@ class DesktopDownloadQueueE2ETest {
         }
     }
 
+    /**
+     * Review, closeout: Automatic and Choose-now queue from background work, maybe after a profile
+     * switch. The batch's owner is passed, so the profile on screen keeps its own finished copy and
+     * the new download belongs to the batch's profile.
+     */
+    @Test
+    fun `a download queued for another profile never replaces this profile's copy`() {
+        val episode = publishEpisode(1)
+        enqueue(episode)
+        awaitQueueDrained()
+        awaitOrganized()
+        val mine = itemFor(episode)
+        val other = DownloadStore.activeOwner() + 1
+
+        val result = DownloadsRepository.enqueueFromStream(
+            contentType = "series",
+            videoId = "$META_ID:1:1",
+            parentMetaId = META_ID,
+            parentMetaType = "series",
+            title = "Harness",
+            logo = null,
+            poster = null,
+            background = null,
+            seasonNumber = 1,
+            episodeNumber = 1,
+            episodeTitle = "Episode 1",
+            episodeThumbnail = null,
+            stream = StreamItem(
+                name = "Other profile's source",
+                url = server.urlFor(episode.path),
+                addonName = "Harness",
+                addonId = "addon:harness",
+                behaviorHints = StreamBehaviorHints(videoSize = episode.content.size.toLong()),
+            ),
+            ownerProfileId = other,
+        )
+
+        assertEquals(DownloadEnqueueResult.Started, result)
+        assertEquals(mine.id, itemFor(episode).id, "this profile's download was replaced")
+        assertContentOnDisk(itemFor(episode), episode.content)
+        val theirs = DownloadsRepository.deviceItems.value.single { it.parentMetaId == META_ID && it.ownerProfileId == other }
+        awaitDevice("the other profile's copy to finish") { items ->
+            items.any { it.id == theirs.id && it.status == DownloadStatus.Completed }
+        }
+        assertContentOnDisk(itemFor(episode), episode.content)
+    }
+
+    /** Review, closeout: desktop has no mobile-data rule, so a metered-flagged connection holds nothing. */
+    @Test
+    fun `desktop never holds a download for a metered connection`() {
+        assertFalse(defaultIsMetered(), "the desktop engine treated its connection as metered")
+    }
+
     private fun downloadsRoot(): File = DesktopStorage.rootDir.resolve("downloads").toFile()
 
     /** The finished files have been moved into the organized layout (a step after Completed). */

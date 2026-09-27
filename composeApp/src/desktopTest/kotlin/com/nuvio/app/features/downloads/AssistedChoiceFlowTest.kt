@@ -392,7 +392,8 @@ class AssistedChoiceFlowTest {
     fun whenTheSourcesAreInTheEarlyChoiceStartsWithoutAskingAgain() {
         val batchId = chooseEarly(1080)
         gate.complete(Unit)
-        await("the season to be queued") { items().size == EPISODES }
+        // The "started" notice is posted once queueBatch returns, just after the items appear.
+        await("the season to be queued and announced") { items().size == EPISODES && "many:$EPISODES" in notices.log }
 
         assertTrue(items().all { it.expectedSizeBytes == 2 * gb }, "the 1080p sources, at their real sizes")
         val settled = assertNotNull(batch())
@@ -402,6 +403,34 @@ class AssistedChoiceFlowTest {
         assertTrue(systemNotices.isEmpty())
         assertEquals(listOf("early:1080", "many:$EPISODES"), notices.log)
         assertNull(AssistedDiscovery.candidates(batchId))
+    }
+
+    /**
+     * Review, closeout: a profile switch while the sources are found must not drop an early choice,
+     * and the season is queued for the profile that chose, not the one on screen.
+     */
+    @Test
+    fun anEarlyChoiceIsAppliedForItsOwnerAfterAProfileSwitch() {
+        val owner = DownloadStore.activeOwner()
+        val batchId = chooseEarly(1080)
+        val defaultOwner = DownloadStore.activeOwner
+        try {
+            DownloadStore.activeOwner = { owner + 1 }
+            DownloadsRepository.onProfileChanged()
+            gate.complete(Unit)
+            await("the season to be queued for its owner") {
+                DownloadsRepository.deviceItems.value.count { it.parentMetaId == META_ID } == EPISODES
+            }
+            val queued = DownloadsRepository.deviceItems.value.filter { it.parentMetaId == META_ID }
+            assertTrue(queued.all { it.ownerProfileId == owner }, "queued for the profile on screen instead of its owner")
+            assertTrue(DownloadsRepository.uiState.value.items.none { it.parentMetaId == META_ID })
+            assertTrue(notices.log.none { it.startsWith("ready:") }, "the other profile was asked to choose")
+            assertTrue(systemNotices.isEmpty())
+            assertNull(AssistedDiscovery.candidates(batchId))
+        } finally {
+            DownloadStore.activeOwner = defaultOwner
+            DownloadsRepository.onProfileChanged()
+        }
     }
 
     @Test
