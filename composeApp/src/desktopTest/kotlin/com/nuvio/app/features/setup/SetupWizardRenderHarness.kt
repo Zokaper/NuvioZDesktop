@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -153,6 +154,14 @@ class SetupWizardRenderHarness {
         // band, header, body - because a phone is where four controls have to fit.
         for ((widthDp, heightDp) in listOf(360 to 780, 420 to 900)) {
             renderPhoneDownloadSteps(widthDp, heightDp, failures)
+        }
+
+        // Every step a phone shows, in the real stacked frame (band, header, scrolling body, pinned
+        // footer) with a status bar and a gesture bar's worth of inset, at the three phone sizes
+        // people actually hold: a small Android, an iPhone 15/16 and a Pixel. A body that does not
+        // fit shows as content cut off above the footer - read these for exactly that.
+        for ((widthDp, heightDp) in PhoneSizes) {
+            renderPhoneSteps(widthDp, heightDp, failures)
         }
 
         // The bands for steps 2-8, at the settings each one can be asked to draw. The band is
@@ -308,6 +317,8 @@ class SetupWizardRenderHarness {
         val downloadMode: DownloadMode = DownloadMode.MANUAL,
     )
 
+    private val PhoneSizes = listOf(360 to 780, 393 to 852, 412 to 915)
+
     private fun renderPhoneDownloadSteps(widthDp: Int, heightDp: Int, failures: MutableList<String>) {
         val cases = listOf(
             Triple("full-automatic", SetupWizardPlan(downloadModeName = "AUTOMATIC"), DownloadMode.AUTOMATIC),
@@ -329,86 +340,176 @@ class SetupWizardRenderHarness {
             // The upgrade's two steps are the full run's two steps; only its first one differs.
             val drawn = if (plan.run == SetupWizardRun.Upgrade) steps.take(1) else steps
             for (step in drawn) {
-                render(
+                renderPhoneFrame(
                     name = "phone-$label-${step.name.lowercase()}-${widthDp}x$heightDp",
                     widthDp = widthDp,
                     heightDp = heightDp,
-                    theme = AppTheme.WHITE,
-                    amoled = false,
+                    step = step,
+                    plan = plan,
+                    downloadMode = mode,
                     failures = failures,
+                )
+            }
+        }
+    }
+
+    /** One phone walk-through: every step of a Streamlined/Assisted run, plus the variants that differ. */
+    private fun renderPhoneSteps(widthDp: Int, heightDp: Int, failures: MutableList<String>) {
+        val streamlined = SetupWizardPlan(
+            playbackModeName = PlaybackMode.STREAMLINED.name,
+            socialEnabled = true,
+            offerSocialIdentity = true,
+            downloadModeName = DownloadMode.ASSISTED.name,
+            isPhone = true,
+        )
+        for (step in setupWizardSteps(streamlined).filter { it != SetupStep.Welcome }) {
+            renderPhoneFrame(
+                name = "phone-step-${step.name.lowercase()}-${widthDp}x$heightDp",
+                widthDp = widthDp,
+                heightDp = heightDp,
+                step = step,
+                plan = streamlined,
+                downloadMode = DownloadMode.ASSISTED,
+                failures = failures,
+            )
+        }
+        // Instant asks the same three questions under the opposite promise.
+        val instant = streamlined.copy(playbackModeName = PlaybackMode.INSTANT.name)
+        renderPhoneFrame(
+            name = "phone-step-playbacksetup-instant-${widthDp}x$heightDp",
+            widthDp = widthDp,
+            heightDp = heightDp,
+            step = SetupStep.PlaybackSetup,
+            plan = instant,
+            playbackMode = PlaybackMode.INSTANT,
+            downloadMode = DownloadMode.ASSISTED,
+            failures = failures,
+            dynamicRangePolicy = DynamicRangePolicy.REQUIRE_HDR,
+            qualityCeilingMbps = 35,
+        )
+        // Sources, in each starting state.
+        val sourcesCases = listOf(
+            Triple("none", SetupSourcesStatus.None, null),
+            Triple("custom", SetupSourcesStatus.Custom, "Torrentio"),
+            Triple("recommended", SetupSourcesStatus.Recommended, "Nuvio Z Recommended"),
+            Triple("attention", SetupSourcesStatus.NeedsAttention, null),
+        )
+        for ((label, status, existing) in sourcesCases) {
+            renderPhoneFrame(
+                name = "phone-sources-$label-${widthDp}x$heightDp",
+                widthDp = widthDp,
+                heightDp = heightDp,
+                step = SetupStep.Sources,
+                plan = streamlined,
+                downloadMode = DownloadMode.ASSISTED,
+                failures = failures,
+                sourcesStatus = status,
+                existingSourceName = existing,
+            )
+        }
+    }
+
+    /**
+     * The production stacked layout - `SetupSpecimenBand`, the hairline, `SetupPanel` with the real
+     * header, body and footer - with typical phone insets (a 40 dp status bar, a 24 dp gesture bar).
+     */
+    private fun renderPhoneFrame(
+        name: String,
+        widthDp: Int,
+        heightDp: Int,
+        step: SetupStep,
+        plan: SetupWizardPlan,
+        downloadMode: DownloadMode,
+        failures: MutableList<String>,
+        playbackMode: PlaybackMode = PlaybackMode.STREAMLINED,
+        sourcesStatus: SetupSourcesStatus = SetupSourcesStatus.None,
+        existingSourceName: String? = null,
+        dynamicRangePolicy: DynamicRangePolicy = DynamicRangePolicy.ANY,
+        qualityCeilingMbps: Int = 0,
+    ) {
+        val specimen = when (step) {
+            SetupStep.Look -> SetupSpecimen.Cards
+            SetupStep.Theme -> SetupSpecimen.Theme
+            else -> SetupSpecimen.Diagram
+        }
+        render(
+            name = name,
+            widthDp = widthDp,
+            heightDp = heightDp,
+            theme = AppTheme.WHITE,
+            amoled = false,
+            failures = failures,
+        ) {
+            val tokens = MaterialTheme.nuvio
+            Column(Modifier.fillMaxSize().background(tokens.colors.background)) {
+                SetupSpecimenBand(
+                    specimen = specimen,
+                    step = step,
+                    playbackMode = playbackMode,
+                    height = specimen.preferredHeight.coerceAtMost((heightDp * 0.5f).dp),
+                    contentPaddingTop = 40.dp,
+                    posterWidthDp = 126,
+                    posterCornerRadiusDp = 8,
+                    landscapeCards = false,
+                    showCardTitles = true,
+                    heroEnabled = true,
+                    continueWatchingStyle = ContinueWatchingSectionStyle.Card,
+                    useEpisodeThumbnails = true,
+                    blurNextUp = false,
+                    backgroundMode = MetaScreenBackgroundMode.Cinematic,
+                    episodeCardStyle = MetaEpisodeCardStyle.Horizontal,
+                    blurUnwatchedEpisodes = false,
+                    tabLayout = false,
+                    nextUpLabel = "Next episode",
+                    modifier = Modifier.fillMaxWidth(),
+                    downloadModeName = plan.downloadModeName,
+                )
+                Box(Modifier.fillMaxWidth().height(1.dp).background(tokens.colors.borderSubtle.copy(alpha = 0.6f)))
+                SetupPanel(
+                    step = step,
+                    plan = plan,
+                    playbackMode = playbackMode,
+                    dismissible = plan.run != SetupWizardRun.Full,
+                    onDismiss = {},
+                    maxPanelWidth = widthDp.dp,
+                    bottomInset = 24.dp,
+                    onBack = {},
+                    onAdvance = {},
+                    advance = setupAdvanceFor(step, SetupSourcesState(), sourcesStatus),
+                    modifier = Modifier.weight(1f),
                 ) {
-                    val tokens = MaterialTheme.nuvio
-                    Column(Modifier.fillMaxSize().background(tokens.colors.surface)) {
-                        SetupSpecimenBand(
-                            specimen = SetupSpecimen.Diagram,
-                            step = step,
-                            playbackMode = PlaybackMode.STREAMLINED,
-                            height = SetupSpecimen.Diagram.preferredHeight,
-                            contentPaddingTop = 0.dp,
-                            posterWidthDp = 126,
-                            posterCornerRadiusDp = 8,
-                            landscapeCards = false,
-                            showCardTitles = true,
-                            heroEnabled = true,
-                            continueWatchingStyle = ContinueWatchingSectionStyle.Card,
-                            useEpisodeThumbnails = true,
-                            blurNextUp = false,
-                            backgroundMode = MetaScreenBackgroundMode.Cinematic,
-                            episodeCardStyle = MetaEpisodeCardStyle.Horizontal,
-                            blurUnwatchedEpisodes = false,
-                            tabLayout = false,
-                            nextUpLabel = "Next episode",
-                            modifier = Modifier.fillMaxWidth(),
-                            downloadModeName = plan.downloadModeName,
-                        )
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .verticalScroll(rememberScrollState())
-                                .padding(horizontal = 22.dp, vertical = 18.dp),
-                            verticalArrangement = Arrangement.spacedBy(16.dp),
-                        ) {
-                            SetupPanelHeader(
-                                step = step,
-                                plan = plan,
-                                playbackMode = PlaybackMode.STREAMLINED,
-                                dismissible = plan.run != SetupWizardRun.Full,
-                                onDismiss = {},
-                            )
-                            SetupStepBody(
-                                step = step,
-                                goingForward = true,
-                                playbackMode = PlaybackMode.STREAMLINED,
-                                languageStrictness = LanguageStrictness.REQUIRE,
-                                dynamicRangePolicy = DynamicRangePolicy.ANY,
-                                qualityCeilingMbps = 0,
-                                preferredAudioLanguage = AudioLanguageOption.DEVICE,
-                                preferredSubtitleLanguage = SubtitleLanguageOption.NONE,
-                                posterWidthDp = 126,
-                                landscapeCards = false,
-                                selectedTheme = AppTheme.WHITE,
-                                amoledEnabled = false,
-                                socialEnabled = false,
-                                socialProbeUnknown = false,
-                                socialSignedIn = false,
-                                socialHandle = "",
-                                socialHandleBusy = false,
-                                socialHandleMessage = null,
-                                onSocialEnabledChange = {},
-                                onSocialHandleChange = {},
-                                onSaveSocialHandle = {},
-                                sources = SetupSourcesState(),
-                                existingSourceName = null,
-                                sourcesActions = SetupSourcesActions(),
-                                downloadMode = mode,
-                                downloadPolicy = DownloadPolicy(mode = mode),
-                                downloadSetupVariant = downloadSetupVariant(plan),
-                                askMobileData = true,
-                                showNotificationNote = true,
-                            )
-                            SetupAdvanceButton(step = step, plan = plan, onAdvance = {})
-                        }
-                    }
+                    SetupStepBody(
+                        step = step,
+                        goingForward = true,
+                        playbackMode = playbackMode,
+                        languageStrictness = LanguageStrictness.PREFER,
+                        dynamicRangePolicy = dynamicRangePolicy,
+                        qualityCeilingMbps = qualityCeilingMbps,
+                        preferredAudioLanguage = AudioLanguageOption.DEVICE,
+                        preferredSubtitleLanguage = SubtitleLanguageOption.NONE,
+                        posterWidthDp = 126,
+                        landscapeCards = false,
+                        selectedTheme = AppTheme.WHITE,
+                        amoledEnabled = false,
+                        socialEnabled = true,
+                        socialProbeUnknown = false,
+                        socialSignedIn = true,
+                        socialHandle = "big_z",
+                        socialHandleBusy = false,
+                        socialHandleMessage = null,
+                        onSocialEnabledChange = {},
+                        onSocialHandleChange = {},
+                        onSaveSocialHandle = {},
+                        sources = SetupSourcesState(),
+                        existingSourceName = existingSourceName,
+                        sourcesStatus = sourcesStatus,
+                        sourcesActions = SetupSourcesActions(),
+                        downloadMode = downloadMode,
+                        downloadPolicy = DownloadPolicy(mode = downloadMode),
+                        downloadSetupVariant = downloadSetupVariant(plan),
+                        askMobileData = true,
+                        showNotificationNote = true,
+                    )
                 }
             }
         }

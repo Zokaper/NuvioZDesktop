@@ -45,46 +45,95 @@ class SetupSourcesStepUiTest {
     private val outputDir = File("build/setup-wizard-render").also { it.mkdirs() }
 
     @Test
-    fun freshProfileIsAskedTheQuestionAndBothAnswersFire() {
+    fun freshProfileIsAskedToSetUpAndCanSkipFromTheFooter() {
         var recommended = 0
         var manual = 0
+        var advanced = 0
         scene(
             "question",
             SetupSourcesState(),
             existing = null,
+            status = SetupSourcesStatus.None,
             actions = SetupSourcesActions(onUseRecommended = { recommended++ }, onSetUpManually = { manual++ }),
+            onAdvance = { advanced++ },
         ) { scene ->
-            scene.node("Use the recommended Nuvio Z source setup?")
+            scene.node("Set up sources")
             scene.node("You can use your own plugin, but some features may not work as expected.")
+            assertTrue(scene.texts().none { it == "Next" }, "nothing is set up, so there is no Next to press unread")
             scene.click("Use recommended setup")
             scene.click("Set up manually")
-            assertEquals(1, recommended)
-            assertEquals(1, manual)
+            scene.click("Skip for now")
+            assertEquals(listOf(1, 1, 1), listOf(recommended, manual, advanced))
         }
     }
 
     @Test
-    fun installedStreamAddonIsDetectedAndOffersAllThreeWays() {
-        var keep = 0
+    fun theUsersOwnSourcesAreKeptWithNextAndTheRecommendedSetupIsOffered() {
         var recommended = 0
         var manual = 0
+        var advanced = 0
         scene(
             "existing",
             SetupSourcesState(),
             existing = "Torrentio",
-            actions = SetupSourcesActions(
-                onKeepExisting = { keep++ },
-                onUseRecommended = { recommended++ },
-                onSetUpManually = { manual++ },
-            ),
+            status = SetupSourcesStatus.Custom,
+            actions = SetupSourcesActions(onUseRecommended = { recommended++ }, onSetUpManually = { manual++ }),
+            onAdvance = { advanced++ },
         ) { scene ->
-            scene.node("Sources are already configured")
-            assertTrue(scene.texts().any { it.startsWith("Torrentio is installed") })
-            scene.click("Keep current sources")
-            scene.click("Use recommended setup instead")
-            scene.click("Manage manually")
-            assertEquals(listOf(1, 1, 1), listOf(keep, recommended, manual))
-            assertTrue(scene.texts().none { it == "Use the recommended Nuvio Z source setup?" })
+            scene.node("Your sources are already configured")
+            assertTrue(scene.texts().any { it.startsWith("Using Torrentio.") })
+            scene.node("Your current addons stay installed.")
+            scene.click("Use recommended setup")
+            scene.click("Add a source manually")
+            scene.click("Next")
+            assertEquals(listOf(1, 1, 1), listOf(recommended, manual, advanced))
+            assertTrue(scene.texts().none { it == "Skip for now" || it == "Use recommended setup instead" })
+        }
+    }
+
+    @Test
+    fun anActiveRecommendedSetupIsNotOfferedAgain() {
+        var manual = 0
+        var advanced = 0
+        scene(
+            "recommended-active",
+            SetupSourcesState(),
+            existing = "Nuvio Z Recommended",
+            status = SetupSourcesStatus.Recommended,
+            actions = SetupSourcesActions(onSetUpManually = { manual++ }),
+            onAdvance = { advanced++ },
+        ) { scene ->
+            scene.node("Recommended setup is already active")
+            assertTrue(scene.texts().any { it.startsWith("Nuvio Z Recommended is installed and ready") })
+            assertTrue(
+                scene.texts().none { it.startsWith("Use recommended setup") },
+                "the setup it already runs must not be offered as an alternative",
+            )
+            scene.click("Add a source manually")
+            scene.click("Next")
+            assertEquals(listOf(1, 1), listOf(manual, advanced))
+        }
+    }
+
+    @Test
+    fun brokenSourcesSayTheyNeedAttention() {
+        var recommended = 0
+        var advanced = 0
+        scene(
+            "attention",
+            SetupSourcesState(),
+            existing = null,
+            status = SetupSourcesStatus.NeedsAttention,
+            actions = SetupSourcesActions(onUseRecommended = { recommended++ }),
+            onAdvance = { advanced++ },
+        ) { scene ->
+            scene.node("Your sources need attention")
+            scene.click("Use recommended setup")
+            scene.click("Skip for now")
+            assertEquals(listOf(1, 1), listOf(recommended, advanced))
+        }
+        scene("checking", SetupSourcesState(), existing = null, status = SetupSourcesStatus.Checking) { scene ->
+            scene.node("Checking your sources…")
         }
     }
 
@@ -174,6 +223,8 @@ class SetupSourcesStepUiTest {
         state: SetupSourcesState,
         existing: String?,
         actions: SetupSourcesActions = SetupSourcesActions(),
+        status: SetupSourcesStatus = if (existing != null) SetupSourcesStatus.Custom else SetupSourcesStatus.None,
+        onAdvance: () -> Unit = {},
         block: (ImageComposeScene) -> Unit,
     ) {
         for ((widthDp, heightDp) in listOf(1280 to 820, 420 to 900)) {
@@ -186,7 +237,7 @@ class SetupSourcesStepUiTest {
                     amoled = false,
                     desktopUiScale = desktopUiScaleForWindow(widthDp.toFloat(), heightDp.toFloat()),
                 ) {
-                    Frame(state, existing, actions, compact = widthDp < 1000)
+                    Frame(state, existing, status, actions, onAdvance, compact = widthDp < 1000)
                 }
             }
             try {
@@ -205,7 +256,14 @@ class SetupSourcesStepUiTest {
     }
 
     @Composable
-    private fun Frame(state: SetupSourcesState, existing: String?, actions: SetupSourcesActions, compact: Boolean) {
+    private fun Frame(
+        state: SetupSourcesState,
+        existing: String?,
+        status: SetupSourcesStatus,
+        actions: SetupSourcesActions,
+        onAdvance: () -> Unit,
+        compact: Boolean,
+    ) {
         val body: @Composable () -> Unit = {
             SetupStepBody(
                 step = SetupStep.Sources,
@@ -231,6 +289,7 @@ class SetupSourcesStepUiTest {
                 onSaveSocialHandle = {},
                 sources = state,
                 existingSourceName = existing,
+                sourcesStatus = status,
                 sourcesActions = actions,
             )
         }
@@ -266,7 +325,8 @@ class SetupSourcesStepUiTest {
             topInset = 0.dp,
             bottomInset = 0.dp,
             onBack = {},
-            onAdvance = {},
+            onAdvance = onAdvance,
+            advance = setupAdvanceFor(SetupStep.Sources, state, status),
             modifier = Modifier.fillMaxSize(),
             body = body,
         )
