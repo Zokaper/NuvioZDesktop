@@ -1067,6 +1067,135 @@ class DesktopDownloadQueueE2ETest {
         }
     }
 
+    /** Phase 9 closeout: a finished file is filed as Title / Season XX / SxxEyy - Name. */
+    @Test
+    fun `a finished episode is filed under its show and season`() {
+        val episodes = (1..2).map { publishEpisode(it) }
+        episodes.forEach { enqueue(it) }
+        awaitQueueDrained()
+        awaitOrganized()
+
+        episodes.forEach { episode ->
+            val item = itemFor(episode)
+            assertEquals(
+                "Harness/Season 01/S01E0${episode.number} - Episode ${episode.number}.mp4",
+                DownloadsPlatformDownloader.relativePathOf(item.localFileUri),
+            )
+            assertContentOnDisk(item, episode.content)
+            assertFalse(File(downloadsRoot(), item.fileName).exists(), "the flat file was left behind")
+            assertFalse(File(downloadsRoot(), "${item.fileName}.part").exists())
+        }
+    }
+
+    /**
+     * An existing flat library (everything before the organized layout) moves on load, keeps
+     * playing, reloads from its new paths, and plays on offline in episode order. Deleting cleans
+     * up only folders it empties.
+     */
+    @Test
+    fun `a flat library migrates on load, survives a restart and plays on offline`() {
+        val storage = DesktopStorage.store("nuvio_downloads")
+        val root = downloadsRoot().apply { mkdirs() }
+        val owner = DownloadStore.activeOwner()
+        val contents = (1..3).associateWith { n -> ByteArray(EPISODE_BYTES) { index -> ((index + n) % 251).toByte() } }
+        val flat = contents.map { (n, bytes) ->
+            val file = File(root, "Harness S01E0${n} Episode ${n}_legacy.mkv").apply { writeBytes(bytes) }
+            DownloadItem(
+                id = "flat-$n",
+                ownerProfileId = owner,
+                contentType = "series",
+                parentMetaId = META_ID,
+                parentMetaType = "series",
+                videoId = "$META_ID:1:$n",
+                title = "Harness",
+                seasonNumber = 1,
+                episodeNumber = n,
+                episodeTitle = "Episode $n",
+                streamTitle = "legacy",
+                providerName = "Harness",
+                fileName = file.name,
+                localFileUri = file.toURI().toString(),
+                status = DownloadStatus.Completed,
+                downloadedBytes = bytes.size.toLong(),
+                totalBytes = bytes.size.toLong(),
+                createdAtEpochMs = 0L,
+                updatedAtEpochMs = 0L,
+            )
+        }
+        // A download still under way next to them: its partial file must not move.
+        val partial = File(root, "Harness S01E04 Episode 4_legacy.mkv.part").apply { writeBytes(ByteArray(1024)) }
+        val running = flat.first().copy(
+            id = "flat-4", videoId = "$META_ID:1:4", episodeNumber = 4, episodeTitle = "Episode 4",
+            fileName = partial.name.removeSuffix(".part"), localFileUri = null,
+            status = DownloadStatus.Paused, pauseReason = DownloadPauseReason.User,
+            activity = DownloadActivity.USER_PAUSED, downloadedBytes = 1024L, totalBytes = null,
+        )
+
+        DownloadsRepository.clearLocalState()
+        storage.putString(
+            "downloads_device",
+            DownloadsCodec.encode(flat + running, DownloadSourcePolicy(), emptyList(), DownloadPreset.BuiltIns),
+        )
+        DownloadsRepository.ensureLoaded()
+
+        fun migrated(n: Int) = DownloadsRepository.deviceItems.value.single { it.id == "flat-$n" }
+        contents.forEach { (n, bytes) ->
+            assertEquals("Harness/Season 01/S01E0$n - Episode $n.mkv", DownloadsPlatformDownloader.relativePathOf(migrated(n).localFileUri))
+            assertContentOnDisk(migrated(n), bytes)
+            assertFalse(File(root, flat[n - 1].fileName).exists(), "episode $n was left flat")
+        }
+        assertTrue(partial.exists(), "the paused download's partial file moved")
+        assertEquals(null, DownloadsRepository.deviceItems.value.single { it.id == "flat-4" }.localFileUri)
+
+        // A restart reloads the migrated paths and moves nothing again.
+        val paths = (1..3).map { migrated(it).localFileUri }
+        DownloadsRepository.clearLocalState()
+        DownloadsRepository.ensureLoaded()
+        assertEquals(paths, (1..3).map { migrated(it).localFileUri })
+
+        // Offline autoplay: episode 2 is the next one, found playable at its new path.
+        val next = assertNotNull(DownloadsRepository.findPlayableDownload(META_ID, seasonNumber = 1, episodeNumber = 2))
+        assertEquals(paths[1], next.localFileUri)
+        assertEquals(
+            listOf(2, 3),
+            OfflineEpisodeList.fromDownloads(DownloadsRepository.deviceItems.value, META_ID, 1, 1)
+                .map { it.episode }.filter { it!! > 1 },
+        )
+
+        // A missing file is still reported as missing, not as "not downloaded".
+        val season = File(root, "Harness/Season 01")
+        File(season, "S01E03 - Episode 3.mkv").renameTo(File(season, "moved-away.mkv"))
+        assertEquals(null, DownloadsRepository.findPlayableDownload(META_ID, seasonNumber = 1, episodeNumber = 3))
+        assertNotNull(DownloadsRepository.findCompletedDownload(META_ID, seasonNumber = 1, episodeNumber = 3))
+        File(season, "moved-away.mkv").delete()
+
+        // Deleting one episode removes its file and keeps the folders the others still use.
+        DownloadsRepository.cancelDownload("flat-1")
+        assertFalse(File(season, "S01E01 - Episode 1.mkv").exists())
+        assertTrue(File(season, "S01E02 - Episode 2.mkv").exists())
+        // Deleting the title removes the folders it emptied, and nothing beside them.
+        val bystander = File(root, "Harness-bystander.txt").apply { writeText("not ours") }
+        try {
+            DownloadsRepository.deleteDownloadsForTitle(META_ID)
+            assertFalse(season.exists(), "the empty season folder was left")
+            assertFalse(File(root, "Harness").exists(), "the empty title folder was left")
+            assertTrue(root.exists(), "the downloads folder itself went")
+            assertTrue(bystander.exists())
+        } finally {
+            bystander.delete()
+            partial.delete()
+        }
+    }
+
+    private fun downloadsRoot(): File = DesktopStorage.rootDir.resolve("downloads").toFile()
+
+    /** The finished files have been moved into the organized layout (a step after Completed). */
+    private fun awaitOrganized() {
+        awaitCondition(10_000L, "the finished files to be organized") { items ->
+            items.all { '/' in DownloadsPlatformDownloader.relativePathOf(it.localFileUri).orEmpty() }
+        }
+    }
+
     private fun awaitDevice(description: String, condition: (List<DownloadItem>) -> Boolean) {
         val deadline = System.currentTimeMillis() + 60_000L
         while (System.currentTimeMillis() < deadline) {
@@ -1728,7 +1857,13 @@ class DesktopDownloadQueueE2ETest {
     }
 
     private fun assertContentOnDisk(item: DownloadItem, expected: ByteArray) {
-        val uri = assertNotNull(item.localFileUri, "no file was recorded for ${item.fileName}")
+        assertNotNull(item.localFileUri, "no file was recorded for ${item.fileName}")
+        // Read the way playback reads it: a file being moved into the organized layout is found
+        // at its old place for the instant before the rename.
+        val uri = assertNotNull(
+            DownloadsPlatformDownloader.resolveLocalFileUri(item.localFileUri, item.fileName),
+            "${item.localFileUri} is missing",
+        )
         val file = File(URI(uri))
         assertTrue(file.exists(), "${file.absolutePath} is missing")
         assertEquals(expected.size.toLong(), file.length(), "${file.name} is the wrong size")
