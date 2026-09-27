@@ -103,6 +103,8 @@ import com.nuvio.app.core.ui.rememberHeroStretchState
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import com.nuvio.app.features.details.components.DetailActionButtons
+import com.nuvio.app.features.details.components.isSeriesLikeTitle
+import com.nuvio.app.features.details.components.titleDownloadSecondaryAction
 import com.nuvio.app.features.details.components.DetailSecondaryAction
 import com.nuvio.app.features.details.components.CommentDetailSheet
 import com.nuvio.app.features.details.components.DetailAdditionalInfoSection
@@ -1269,6 +1271,31 @@ fun MetaDetailsScreen(
                                         onWatchTogetherClick = onWatchTogether
                                             ?.takeIf { socialEnabled }
                                             ?.let { callback -> { callback(watchPartyContent) } },
+                                        // ⚠ Before this, the wide hero had no Download at all: it
+                                        // owns the ACTIONS section, which is where the stacked
+                                        // layout's Download lives (`TitleDownloadAction.kt`).
+                                        titleDownloadAction = titleDownloadSecondaryAction(
+                                            isSeriesLike = isSeriesLikeTitle(meta.type, hasEpisodes),
+                                            titleDownloadState = titleDownloadState,
+                                            onDownloadClick = {
+                                                presetDownloadScope = if (isSeriesLikeTitle(meta.type, hasEpisodes)) {
+                                                    DownloadScope.SelectedSeasons(emptySet())
+                                                } else {
+                                                    DownloadScope.Movie
+                                                }
+                                            },
+                                            onDownloadedItemManage = { item ->
+                                                manageDownloadTarget = ManageDownloadTarget(
+                                                    title = item.episodeTitle?.takeIf { it.isNotBlank() } ?: item.title,
+                                                    subtitle = localizedSeasonEpisodeCode(
+                                                        seasonNumber = item.seasonNumber,
+                                                        episodeNumber = item.episodeNumber,
+                                                    ),
+                                                    state = titleDownloadState.byLogicalKey[item.logicalContentKey]
+                                                        ?: ContentDownloadState.None,
+                                                )
+                                            },
+                                        ),
                                     )
                                 }
 
@@ -2658,39 +2685,15 @@ private fun ConfiguredMetaSections(
                 DetailActionButtons(
                     playLabel = playButtonLabel,
                     secondaryActions = buildList {
-                        run {
-                            val isSeriesLike = meta.type.lowercase() in setOf("series", "show", "tv", "tvshow") ||
-                                hasEpisodes
-                            val movieDownload = if (isSeriesLike) {
-                                ContentDownloadState.None
-                            } else {
-                                titleDownloadState.forMovie()
-                            }
-                            add(DetailSecondaryAction(
-                                label = when {
-                                    isSeriesLike -> stringResource(Res.string.download_preset_seasons)
-                                    movieDownload.presence == DownloadPresence.Completed ->
-                                        stringResource(Res.string.downloads_cd_state_downloaded)
-                                    movieDownload.presence.isActive ->
-                                        stringResource(Res.string.downloads_cd_state_downloading)
-                                    else -> stringResource(Res.string.download_preset_title)
-                                },
-                                icon = if (movieDownload.presence == DownloadPresence.Completed) {
-                                    Icons.Default.DownloadDone
-                                } else {
-                                    Icons.Default.Download
-                                },
-                                isActive = if (isSeriesLike) {
-                                    titleDownloadState.completedCount > 0
-                                } else {
-                                    movieDownload.presence.isEngaged
-                                },
-                                onClick = movieDownload.item
-                                    ?.takeIf { !isSeriesLike }
-                                    ?.let { item -> { onDownloadedItemManage(item) } }
-                                    ?: onDownloadClick,
-                            ))
-                        }
+                        // The same entry the wide desktop hero shows (`TitleDownloadAction.kt`).
+                        add(
+                            titleDownloadSecondaryAction(
+                                isSeriesLike = isSeriesLikeTitle(meta.type, hasEpisodes),
+                                titleDownloadState = titleDownloadState,
+                                onDownloadClick = onDownloadClick,
+                                onDownloadedItemManage = onDownloadedItemManage,
+                            ),
+                        )
                         add(DetailSecondaryAction(
                             label = if (isWatched) {
                                 stringResource(Res.string.hero_mark_unwatched)
