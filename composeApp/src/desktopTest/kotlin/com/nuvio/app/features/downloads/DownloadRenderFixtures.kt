@@ -55,6 +55,7 @@ internal object DownloadRenderArt {
     fun poster(slug: String) = "fixture://poster/$slug"
     fun backdrop(slug: String) = "fixture://backdrop/$slug"
     fun still(slug: String, episode: Int) = "fixture://still/$slug/$episode"
+    fun logo(slug: String) = "fixture://logo/$slug"
 
     private val cache = mutableMapOf<String, Image>()
 
@@ -75,6 +76,7 @@ internal object DownloadRenderArt {
         val parts = url.removePrefix("fixture://").split('/')
         val kind = parts[0]
         val slug = parts.getOrElse(1) { "" }
+        if (kind == "logo") return drawLogo(slug)
         val variant = parts.getOrNull(2)?.toIntOrNull() ?: 0
         val look = looks[slug] ?: Look(0xFF333333.toInt(), 0xFF111111.toInt(), 0xFF999999.toInt(), skyline = false)
         val (w, h) = if (kind == "poster") 300 to 450 else 480 to 270
@@ -150,6 +152,32 @@ internal object DownloadRenderArt {
             val small = Font(typeface, 11f)
             val tag = "NOW STREAMING"
             canvas.drawString(tag, (wf - small.measureTextWidth(tag)) / 2f, hf * 0.93f, small, Paint().apply { color = 0xB3FFFFFF.toInt() })
+        }
+        return bitmap
+    }
+
+    /** A title treatment: the name in heavy white type on transparency, as a clearlogo is. */
+    private fun drawLogo(slug: String): Bitmap {
+        val name = names[slug] ?: slug.uppercase()
+        val typeface = FontMgr.default.matchFamilyStyle("Segoe UI Black", FontStyle.BOLD)
+            ?: FontMgr.default.matchFamilyStyle("Segoe UI", FontStyle.BOLD)
+            ?: FontMgr.default.matchFamilyStyle(null, FontStyle.BOLD)
+        val font = Font(typeface, 96f)
+        val words = name.split(' ')
+        // Two-word names stack, as most logos for them do; the rest sit on one line.
+        val lines = if (words.size == 2 && name.length > 10) words else listOf(name)
+        val widths = lines.map { font.measureTextWidth(it) }
+        val w = (widths.max() + 24f).toInt()
+        val lineHeight = 100f
+        val h = (lineHeight * lines.size + 20f).toInt()
+        val bitmap = Bitmap().apply { allocN32Pixels(w, h); erase(0x00000000) }
+        val canvas = Canvas(bitmap)
+        val glow = looks[slug]?.glow ?: 0xFFFFFFFF.toInt()
+        lines.forEachIndexed { i, line ->
+            val x = (w - widths[i]) / 2f
+            val y = 88f + i * lineHeight
+            canvas.drawString(line, x + 3f, y + 4f, font, Paint().apply { color = 0x66000000 })
+            canvas.drawString(line, x, y, font, Paint().apply { color = if (i == 0) Color.WHITE else glow })
         }
         return bitmap
     }

@@ -12,6 +12,7 @@ import com.nuvio.app.features.profiles.MAX_PROFILES
 internal actual object DownloadsStorage {
     private val store = DesktopStorage.store("nuvio_downloads")
     private const val deviceKey = "downloads_device"
+    private const val titleMetadataKey = "downloads_title_metadata"
 
     actual fun loadPayload(): String? =
         store.getString(deviceKey)
@@ -30,4 +31,11 @@ internal actual object DownloadsStorage {
                 ?.takeIf { it.isNotBlank() }
                 ?.let { profile to it }
         }.toMap()
+
+    actual fun loadTitleMetadata(): String? =
+        store.getString(titleMetadataKey)
+
+    actual fun saveTitleMetadata(payload: String) {
+        store.putString(titleMetadataKey, payload)
+    }
 }

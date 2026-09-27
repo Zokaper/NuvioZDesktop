@@ -74,6 +74,7 @@ class DownloadsScreenRenderHarness {
         retryAt: Long? = null,
         error: String? = null,
         stream: String = "WEB-DL 1080p",
+        updated: Long = 0L,
     ) = DownloadItem(
         id = id,
         ownerProfileId = 1,
@@ -82,6 +83,7 @@ class DownloadsScreenRenderHarness {
         parentMetaType = if (episode != null) "series" else "movie",
         videoId = "tt-$slug:${season ?: 0}:${episode ?: 0}",
         title = title,
+        logo = DownloadRenderArt.logo(slug),
         poster = DownloadRenderArt.poster(slug),
         background = DownloadRenderArt.backdrop(slug),
         seasonNumber = season,
@@ -102,7 +104,8 @@ class DownloadsScreenRenderHarness {
         nextRetryAtEpochMs = retryAt,
         errorMessage = error,
         createdAtEpochMs = 0L,
-        updatedAtEpochMs = 0L,
+        updatedAtEpochMs = updated,
+        localFileUri = if (status == DownloadStatus.Completed) "file:///$id.mkv" else null,
     )
 
     private val severance = "Severance"
@@ -113,14 +116,92 @@ class DownloadsScreenRenderHarness {
         item("sv6", "severance", severance, DownloadStatus.Paused, 2, 6, "Attila", DownloadActivity.USER_PAUSED, pause = DownloadPauseReason.User, downloaded = 610 * mb, total = 1_950 * mb, position = 3),
         item("dune", "dune-part-two", "Dune: Part Two", DownloadStatus.Queued, activity = DownloadActivity.WAITING_FOR_CONNECTION, position = 4),
     )
-    private val completed = listOf(
-        item("sv1", "severance", severance, DownloadStatus.Completed, 2, 1, "Hello, Ms. Cobel", total = 2_050 * mb),
-        item("sv2", "severance", severance, DownloadStatus.Completed, 2, 2, "Goodbye, Mrs. Selvig", total = 1_980 * mb),
-        item("mf1", "modern-family", "Modern Family", DownloadStatus.Completed, 3, 1, "Dude Ranch", total = 1_850 * mb),
-        item("mf2", "modern-family", "Modern Family", DownloadStatus.Completed, 3, 2, "When Good Kids Go Bad", total = 1_870 * mb),
-        item("mf3", "modern-family", "Modern Family", DownloadStatus.Completed, 3, 3, "Phil on Wire", total = 1_900 * mb),
-        item("eeaao", "everything-everywhere", "Everything Everywhere All at Once", DownloadStatus.Completed, total = 9_400 * mb),
+    private val mfSeason3 = listOf(
+        "Dude Ranch", "When Good Kids Go Bad", "Phil on Wire", "Door to Door", "Hit and Run", "Go Bullfrogs!",
+        "Treehouse", "After the Fire", "Punkin Chunkin", "Express Christmas", "Lifetime Supply", "Egg Drop",
+        "Little Bo Bleep", "Me? Jealous?", "Aunt Mommy", "Virgin Territory", "Leap Day", "Send Out the Clowns",
+        "Election Day", "The Last Walt", "Planes, Trains and Cars", "Disneyland", "Tableau Vivant", "Baby on Board",
     )
+    private val mfOverviews = listOf(
+        "The family heads to a dude ranch for a vacation, where Jay tries to teach Manny to be a cowboy.",
+        "Claire and Phil suspect the kids are up to something; Mitchell and Cam meet a new neighbour.",
+        "Phil takes up tightrope walking to prove a point, while Claire runs for town council.",
+        "Claire goes door to door for signatures and Jay gets into a feud over a golf cart.",
+        "A stop sign at a dangerous corner sets Claire off on a campaign. Cam coaches a football team.",
+        "Cam is determined to lead his team to victory, and Phil tries to be a cool dad at a college visit.",
+        "Phil and Luke build a treehouse; Mitchell and Cam go out for a night without the baby.",
+        "A fire at a neighbour's house brings the family together to help, with mixed results.",
+    )
+
+    /**
+     * The library the "many episodes" pass is about: Modern Family with two whole seasons and most
+     * of a third on the device, S1-S2 watched, S3 watched to E6 and E7 half-way through, S3E11-E12
+     * still downloading. Plus a finished Severance season and a film.
+     */
+    private val modernFamily: List<DownloadItem> = buildList {
+        for (season in 1..2) {
+            for (ep in 1..24) {
+                add(item("mf$season-$ep", "modern-family", "Modern Family", DownloadStatus.Completed, season, ep, "Episode $ep", total = (1_720 + ep * 9) * mb, updated = 10L))
+            }
+        }
+        mfSeason3.take(12).forEachIndexed { index, name ->
+            val ep = index + 1
+            add(
+                when (ep) {
+                    11 -> item("mf3-$ep", "modern-family", "Modern Family", DownloadStatus.Downloading, 3, ep, name, DownloadActivity.TRANSFERRING, downloaded = 840 * mb, total = 1_880 * mb, position = 10)
+                    12 -> item("mf3-$ep", "modern-family", "Modern Family", DownloadStatus.Queued, 3, ep, name, DownloadActivity.QUEUED_FOR_SLOT, position = 11)
+                    else -> item("mf3-$ep", "modern-family", "Modern Family", DownloadStatus.Completed, 3, ep, name, total = (1_800 + ep * 13) * mb, updated = 20L)
+                },
+            )
+        }
+    }
+    private val completed = listOf(
+        item("sv1", "severance", severance, DownloadStatus.Completed, 2, 1, "Hello, Ms. Cobel", total = 2_050 * mb, updated = 5L),
+        item("sv2", "severance", severance, DownloadStatus.Completed, 2, 2, "Goodbye, Mrs. Selvig", total = 1_980 * mb, updated = 5L),
+        item("eeaao", "everything-everywhere", "Everything Everywhere All at Once", DownloadStatus.Completed, total = 9_400 * mb, updated = 30L),
+    ) + modernFamily.filter { it.status == DownloadStatus.Completed }
+
+    private val metadata = mapOf(
+        "tt-modern-family" to DownloadTitleMetadata(
+            parentMetaId = "tt-modern-family",
+            description = "Three different but related families face trials and tribulations in their own uniquely comedic ways: " +
+                "Jay and his much younger wife, his daughter's family of five, and his son's, with their adopted daughter.",
+            releaseInfo = "2009–2020",
+            genres = listOf("Comedy", "Family", "Romance"),
+            imdbRating = "8.5",
+            ageRating = "TV-PG",
+            episodes = (1..3).flatMap { season ->
+                (1..24).map { ep ->
+                    DownloadEpisodeMetadata(
+                        season = season,
+                        episode = ep,
+                        title = if (season == 3) mfSeason3[ep - 1] else "Episode $ep",
+                        overview = mfOverviews[(ep + season) % mfOverviews.size],
+                        thumbnail = DownloadRenderArt.still("modern-family", season * 100 + ep),
+                        runtimeMinutes = 21 + (ep % 3),
+                    )
+                }
+            },
+        ),
+        "tt-everything-everywhere" to DownloadTitleMetadata(
+            parentMetaId = "tt-everything-everywhere",
+            releaseInfo = "2022",
+            runtime = "2h 19m",
+            genres = listOf("Action", "Adventure", "Comedy"),
+        ),
+    )
+
+    private val watch: (DownloadItem) -> DownloadWatchState = { item ->
+        val season = item.seasonNumber
+        val ep = item.episodeNumber ?: 0
+        when {
+            item.parentMetaId != "tt-modern-family" -> DownloadWatchState.Unwatched
+            season != null && season < 3 -> DownloadWatchState(watched = true)
+            season == 3 && ep <= 6 -> DownloadWatchState(watched = true)
+            season == 3 && ep == 7 -> DownloadWatchState(fraction = 0.42f, updatedAtEpochMs = 99L, remainingMs = 12 * 60_000L)
+            else -> DownloadWatchState.Unwatched
+        }
+    }
 
     private fun entry(ep: Int, name: String, state: DownloadBatchEntryState, decision: DownloadEntryDecisionKind?, usable: Boolean? = true, bytes: Long = 5_500 * mb / 2) =
         DownloadBatchEntry(
@@ -199,9 +280,9 @@ class DownloadsScreenRenderHarness {
     )
 
     @Composable
-    private fun Screen(wide: Boolean) {
-        val items = queueItems + completed + attentionItems
-        val batches = listOf(bear, slowHorses, lanterns, pluribus, shrinking)
+    private fun Screen(wide: Boolean, libraryColumns: Int = 1, libraryOnly: Boolean = false) {
+        val items = if (libraryOnly) completed else queueItems + completed + attentionItems + modernFamily.filter { it.status != DownloadStatus.Completed }
+        val batches = if (libraryOnly) emptyList() else listOf(bear, slowHorses, lanterns, pluribus, shrinking)
         val attention = AttentionGrouping.group(items, batches, now)
         val unfinished = items.filter {
             it.status != DownloadStatus.Completed && DownloadPresenter.item(it, now).phase != DownloadUserPhase.NEEDS_YOU
@@ -214,7 +295,7 @@ class DownloadsScreenRenderHarness {
                 storage = DownloadStorageSummary(usedBytes = 42 * gb, freeBytes = 118 * gb),
                 attention = attention,
                 queue = queue,
-                cleanup = WatchedCleanup(completed.filter { it.parentMetaId == "tt-modern-family" }, 5_620 * mb),
+                cleanup = WatchedCleanup(completed.filter { it.parentMetaId == "tt-modern-family" }.take(3), 5_620 * mb),
                 nowEpochMs = now,
                 onOpenDownload = {},
                 onOpenShow = { _, _ -> },
@@ -226,6 +307,9 @@ class DownloadsScreenRenderHarness {
                 onCancelGroup = {},
                 initiallyExpandedGroups = true,
                 part = part,
+                metadata = metadata,
+                watch = watch,
+                libraryColumns = libraryColumns,
             )
         }
         if (wide) {
@@ -247,6 +331,26 @@ class DownloadsScreenRenderHarness {
                 content(DownloadsPart.All)
             }
         }
+    }
+
+    /** A show's own page: Modern Family, Season 3 open (next up is S3 E7). */
+    @Composable
+    private fun Show(season: Int? = null) {
+        DownloadedShowPage(
+            episodes = modernFamily,
+            metadata = metadata["tt-modern-family"],
+            watch = watch,
+            nowEpochMs = now,
+            selectedSeason = season,
+            onSelectSeason = {},
+            onBack = {},
+            onPlay = {},
+            onOpenDetail = {},
+            onDeleteTitle = {},
+            onDeleteSeason = {},
+            onDeleteWatched = { _, _ -> },
+            onDeleteEpisode = {},
+        )
     }
 
     @Composable
@@ -289,9 +393,18 @@ class DownloadsScreenRenderHarness {
         for ((sizeName, size) in sizes) {
             val phone = size.first < 600
             // Desktop: the window's own height - the panes scroll, as they do in the app.
-            render("screen-$sizeName", size.first, if (phone) (size.second * 2.4).toInt() else size.second, failures) { Screen(wide = !phone && downloadsUsesWideLayout((size.first - 68).dp)) }
+            // As the app decides it: two library cards to a row once the one column fits two.
+            val available = if (phone) size.first else size.first - 68
+            val columns = if (minOf(available - 32, 880) >= 600) 2 else 1
+            render("screen-$sizeName", size.first, if (phone) (size.second * 2.4).toInt() else size.second, failures) { Screen(wide = !phone && downloadsUsesWideLayout((size.first - 68).dp), columns) }
             // The whole main pane, for review: the window above shows only what fits.
-            if (!phone) render("screen-$sizeName-full", size.first, (size.second * 2.4).toInt(), failures) { Screen(wide = downloadsUsesWideLayout((size.first - 68).dp)) }
+            if (!phone) render("screen-$sizeName-full", size.first, (size.second * 2.4).toInt(), failures) { Screen(wide = downloadsUsesWideLayout((size.first - 68).dp), columns) }
+            // Everything finished: the library alone, as most visits to Downloads look.
+            render("library-$sizeName", size.first, size.second, failures) { Screen(wide = !phone && downloadsUsesWideLayout((size.first - 68).dp), columns, libraryOnly = true) }
+            // A show's page: the window, then the whole season.
+            render("show-$sizeName", size.first, size.second, failures) { Show() }
+            render("show-$sizeName-full", size.first, if (phone) 3000 else 2200, failures) { Show() }
+            render("show-$sizeName-season1", size.first, size.second, failures) { Show(season = 1) }
             render("detail-$sizeName", size.first, 520, failures) { Detail() }
             render("settings-$sizeName", size.first, if (phone) 1500 else 1300, failures) { Settings() }
         }
