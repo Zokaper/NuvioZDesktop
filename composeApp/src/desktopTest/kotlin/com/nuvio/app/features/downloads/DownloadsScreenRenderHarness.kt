@@ -161,6 +161,17 @@ class DownloadsScreenRenderHarness {
         item("eeaao", "everything-everywhere", "Everything Everywhere All at Once", DownloadStatus.Completed, total = 9_400 * mb, updated = 30L),
     ) + modernFamily.filter { it.status == DownloadStatus.Completed }
 
+    /** More finished titles, so the idle desktop grid has rows to lay out. */
+    private val moreLibrary = listOf(
+        item("dune-done", "dune-part-two", "Dune: Part Two", DownloadStatus.Completed, total = 11_200 * mb, updated = 25L),
+        item("past-done", "past-lives", "Past Lives", DownloadStatus.Completed, total = 4_300 * mb, updated = 24L),
+        item("opp-done", "oppenheimer", "Oppenheimer", DownloadStatus.Completed, total = 14_800 * mb, updated = 23L),
+    ) + (1..8).map { ep ->
+        item("sh$ep", "shogun", "Shogun", DownloadStatus.Completed, 1, ep, "Episode $ep", total = 3_100 * mb, updated = 22L)
+    } + (1..6).map { ep ->
+        item("bear$ep-done", "the-bear", "The Bear", DownloadStatus.Completed, 2, ep, "Episode $ep", total = 1_400 * mb, updated = 21L)
+    }
+
     private val metadata = mapOf(
         "tt-modern-family" to DownloadTitleMetadata(
             parentMetaId = "tt-modern-family",
@@ -280,8 +291,18 @@ class DownloadsScreenRenderHarness {
     )
 
     @Composable
-    private fun Screen(wide: Boolean, libraryColumns: Int = 1, libraryOnly: Boolean = false) {
-        val items = if (libraryOnly) completed else queueItems + completed + attentionItems + modernFamily.filter { it.status != DownloadStatus.Completed }
+    private fun Screen(windowWidth: Int, phone: Boolean, libraryOnly: Boolean = false) {
+        // As `DownloadsScreen` decides it, in a desktop window with its 68dp sidebar.
+        val available = if (phone) windowWidth else windowWidth - 68
+        val wide = !phone && downloadsUsesWideLayout(available.dp)
+        val libraryFirst = wide && libraryOnly
+        val contentMaxWidth = if (libraryFirst) DownloadsLibraryMaxWidth else DownloadsContentMaxWidth
+        val libraryColumns = when {
+            libraryFirst -> downloadsLibraryColumns(minOf(available.dp - DownloadsWideGutter * 2, DownloadsLibraryMaxWidth))
+            minOf(available - 32, 880) >= 600 -> 2
+            else -> 1
+        }
+        val items = if (libraryOnly) completed + moreLibrary else queueItems + completed + moreLibrary + attentionItems + modernFamily.filter { it.status != DownloadStatus.Completed }
         val batches = if (libraryOnly) emptyList() else listOf(bear, slowHorses, lanterns, pluribus, shrinking)
         val attention = AttentionGrouping.group(items, batches, now)
         val unfinished = items.filter {
@@ -310,9 +331,23 @@ class DownloadsScreenRenderHarness {
                 metadata = metadata,
                 watch = watch,
                 libraryColumns = libraryColumns,
+                contentMaxWidth = contentMaxWidth,
             )
         }
-        if (wide) {
+        if (libraryFirst) {
+            // Nothing under way: one wide column, the library as the page.
+            Row(Modifier.fillMaxSize()) {
+                Box(Modifier.width(68.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLow))
+                NuvioScreen(topPadding = 0.dp, horizontalPadding = DownloadsWideGutter) {
+                    stickyHeader {
+                        Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
+                            NuvioScreenHeader(modifier = Modifier.downloadsContentWidth(contentMaxWidth), title = "Downloads")
+                        }
+                    }
+                    content(DownloadsPart.All)
+                }
+            }
+        } else if (wide) {
             // The desktop window: its sidebar (collapsed, 68dp), then the production two-pane layout.
             Row(Modifier.fillMaxSize()) {
                 Box(Modifier.width(68.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLow))
@@ -394,13 +429,11 @@ class DownloadsScreenRenderHarness {
             val phone = size.first < 600
             // Desktop: the window's own height - the panes scroll, as they do in the app.
             // As the app decides it: two library cards to a row once the one column fits two.
-            val available = if (phone) size.first else size.first - 68
-            val columns = if (minOf(available - 32, 880) >= 600) 2 else 1
-            render("screen-$sizeName", size.first, if (phone) (size.second * 2.4).toInt() else size.second, failures) { Screen(wide = !phone && downloadsUsesWideLayout((size.first - 68).dp), columns) }
+            render("screen-$sizeName", size.first, if (phone) (size.second * 2.4).toInt() else size.second, failures) { Screen(size.first, phone) }
             // The whole main pane, for review: the window above shows only what fits.
-            if (!phone) render("screen-$sizeName-full", size.first, (size.second * 2.4).toInt(), failures) { Screen(wide = downloadsUsesWideLayout((size.first - 68).dp), columns) }
+            if (!phone) render("screen-$sizeName-full", size.first, (size.second * 2.4).toInt(), failures) { Screen(size.first, phone) }
             // Everything finished: the library alone, as most visits to Downloads look.
-            render("library-$sizeName", size.first, size.second, failures) { Screen(wide = !phone && downloadsUsesWideLayout((size.first - 68).dp), columns, libraryOnly = true) }
+            render("library-$sizeName", size.first, size.second, failures) { Screen(size.first, phone, libraryOnly = true) }
             // A show's page: the window, then the whole season.
             render("show-$sizeName", size.first, size.second, failures) { Show() }
             render("show-$sizeName-full", size.first, if (phone) 3000 else 2200, failures) { Show() }
