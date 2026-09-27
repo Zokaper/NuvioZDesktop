@@ -1,11 +1,21 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-26
+Last updated: 2026-09-27
 
 ## Phase 9 on desktop (branch `claude/phase-9-downloads`)
 
 **The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 9 - Downloads Redesign". Shared commits
 reach this repo by cherry-pick of the mobile commit, plus desktop-only actuals.
+
+**Wizard UX Polish Pass + title-level Download (2026-09-27):** made here first this time (the render harness lives here)
+and cherry-picked to mobile - write-up in `nuvio-z/STATUS.md`, "Wizard UX Polish Pass". Desktop commits: `27ae42e18`
+(shared wizard polish), `0162ebb8c` (details: the wide `DesktopDetailHero` had no title-level Download - it owns the
+ACTIONS section; both layouts now take `titleDownloadSecondaryAction`), `79aac511d` (tests: phone render pass in the
+production stacked frame at 360x780 / 393x852 / 412x915, Sources per-state UI test, `TitleDownloadActionBreakpointTest`
+at 400 / 820 / 1280 dp, mutation-checked), `1ae657e9a` (stale Choose-now estimate assertion, failing since calibration),
+`9f661f8e5` (no-break space in GB/h). `desktopTest` 2,753 run / 2,751 pass / 1 skipped before `1ae657e9a`, whose class
+then passed 19/19. Note: this repo's `scripts/run-pure-suites.sh` is behind mobile's and group 2 fails to compile in
+both at HEAD (pre-existing).
 
 **Size levels calibrated + shown with their numbers (2026-09-26):** mobile `fc270bbd1` (calibrated table, Medium shown
 as "Standard", preset migration to the smallest level admitting the preset) and `330f3b464` (each size chip shows GB/h at
