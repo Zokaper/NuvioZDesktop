@@ -7,6 +7,13 @@ Last updated: 2026-09-27
 **The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 9 - Downloads Redesign". Shared commits
 reach this repo by cherry-pick of the mobile commit, plus desktop-only actuals.
 
+**Final library polish + the 60-second retry (2026-09-27):** `a30843126` (desktop-only fix: `HttpRequest.timeout`
+outlives a redirect on the shipped Java 17 and cut every debrid transfer at 60 s; header deadline now around
+`sendAsync`; `DesktopDownloadRequestTest`), `e91793c04` (shared: Downloaded badge + On this device block; idle desktop
+= one 1400 dp column with a library grid, active = two panes with a 38 % library pane of banner cards; carried to
+mobile as `77fee8199`), `270577da8` (harness). Full write-up and the live-log diagnosis: `nuvio-z/STATUS.md`,
+"final library polish". Desktop debug 72.
+
 **Downloaded library redesign (2026-09-27):** backdrop + logo library cards, a show page with a hero and one season
 at a time, an offline title-metadata snapshot - write-up in `nuvio-z/STATUS.md`, "downloaded library redesign".
 Desktop: `ee74654b8` + `f9a9c5717` (cherry-picks of mobile `4cd57664e` / made here and carried back as `cbf992c63`),
