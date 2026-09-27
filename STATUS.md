@@ -1,11 +1,23 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-27
+Last updated: 2026-09-28
 
 ## Phase 9 on desktop (branch `claude/phase-9-downloads`)
 
 **The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 9 - Downloads Redesign". Shared commits
 reach this repo by cherry-pick of the mobile commit, plus desktop-only actuals.
+
+**Phase 9 closeout verification (2026-09-28):** feature-frozen. `f982d176b` is the shared half of mobile
+`cc1a8d8c0`: the changelog brought up to the final product (desktop 132 gains the library, background
+discovery and **Downloads no longer restart every minute**, since stable `z6` still carries the redirect
+timeout), plus the iOS window comment. `desktopTest` **2,770 / 2,770** on `f982d176b`, in two runs: 2,725 /
+2,725 excluding the download E2E class (19 m 40 s), then `DesktopDownloadQueueE2ETest` 45 / 45 (9 m 2 s).
+⚠ As one task the suite now exceeds `desktopTest`'s fixed 20-minute timeout on this machine: it hit the
+cap twice, still making progress. Split the run or raise the cap (debt). Desktop 72 on this PC downloaded
+Modern Family S6 (24 episodes) with 0 failures and 0 retries, but no transfer ran past 60 s, so the
+60-second fix is **clean but not yet confirmed** on a device. Desktop CI's `Desktop tests` job is still
+red from the vendored `frame_copy_test` (pre-existing since 2026-09-03). `Dev` is an ancestor of this
+branch. Full record: `nuvio-z/STATUS.md`, "Phase 9 closeout verification".
 
 **Final library polish + the 60-second retry (2026-09-27):** `a30843126` (desktop-only fix: `HttpRequest.timeout`
 outlives a redirect on the shipped Java 17 and cut every debrid transfer at 60 s; header deadline now around
