@@ -305,8 +305,14 @@ class AssistedChoiceFlowTest {
         assertTrue(sheet.estimated)
         assertEquals(listOf(2160, 1080, 720), sheet.rows.map { it.height })
         assertEquals(1080, sheet.preselectedHeight)
-        // 4 episodes x 45 min = 3 h at 1080p Medium (1-2 GB/h), not a single exact figure.
-        assertEquals(3 * gb..6 * gb, sheet.rows.first { it.height == 1080 }.estimate)
+        // 4 episodes x 45 min = 3 h at 1080p Standard, from Small's GB/h to Standard's - a range, not
+        // one exact figure. Read from the table: the levels were calibrated (1.2 -> 3 GB/h) after this
+        // test was written with the provisional 1-2 GB/h, which is what it asserted until 2026-09-27.
+        val small = DownloadSizeLevels.gigabytesPerHour(DownloadSizeLevel.SMALL, 1080)!!
+        val standard = DownloadSizeLevels.gigabytesPerHour(DownloadSizeLevel.MEDIUM, 1080)!!
+        val estimate = sheet.rows.first { it.height == 1080 }.estimate!!
+        assertTrue(kotlin.math.abs((3 * small * gb).toLong() - estimate.first) <= 2, "low end: $estimate")
+        assertTrue(kotlin.math.abs((3 * standard * gb).toLong() - estimate.last) <= 2, "high end: $estimate")
         assertTrue(sheet.rows.all { it.totalBytes == 0L }, "no row pretends to know the real size")
 
         DownloadFlowController.chooseResolution(1080)
