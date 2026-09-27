@@ -7,6 +7,13 @@ Last updated: 2026-09-27
 **The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 9 - Downloads Redesign". Shared commits
 reach this repo by cherry-pick of the mobile commit, plus desktop-only actuals.
 
+**Downloaded library redesign (2026-09-27):** backdrop + logo library cards, a show page with a hero and one season
+at a time, an offline title-metadata snapshot - write-up in `nuvio-z/STATUS.md`, "downloaded library redesign".
+Desktop: `ee74654b8` + `f9a9c5717` (cherry-picks of mobile `4cd57664e` / made here and carried back as `cbf992c63`),
+`79511b5d3` (`DownloadsStorage.desktop` title-metadata actual; `DownloadsScreenRenderHarness` gains a Modern Family
+library and `library-*` / `show-*` scenes, fixtures gain generated logos). Renders:
+`Nuvio Z/render-review/phase-9-downloaded-library/`. Full `desktopTest` not re-run.
+
 **Responsive wizard band; desktop debug 70 (2026-09-27):** `f59ef67d7` (the stacked/phone wizard band gives way,
 150 -> min 80 dp, when the panel would scroll - `SetupPanelFit` + pure `setupStackedBandHeightDp`, Diagram drawing
 scaled not clipped; carried to mobile as `c15249216`, byte-identical) and `818c967b2` (`SetupWizardRenderHarness` phone
