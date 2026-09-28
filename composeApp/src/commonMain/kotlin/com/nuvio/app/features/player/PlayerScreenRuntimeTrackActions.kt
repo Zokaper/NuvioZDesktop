@@ -134,20 +134,22 @@ internal fun PlayerScreenRuntime.restorePersistedTrackPreferenceIfNeeded(): Bool
         }
         PersistedSubtitleSelectionType.ADDON -> {
             if (!isUserExplicitSubtitleSelection) {
-                val storedItemId = preference.addonSubtitleItemId?.trim()
-                val belongsToCurrentItem = storedItemId.isNullOrBlank() || storedItemId == subtitlePreferenceItemId
+                // Z: a stored addon-subtitle URL names a file for one episode. It is reopened
+                // directly only on the item it was chosen for; any other episode is remapped from
+                // its own fetched list by provider, language and name (upstream `c9d6f5f63`), so an
+                // old URL never crosses an episode boundary.
                 val persistedUrl = persistedAddonSubtitleUrlForItem(
                     preference = preference,
                     itemId = subtitlePreferenceItemId,
                 )
-                if (belongsToCurrentItem && persistedUrl != null) {
+                if (persistedUrl != null) {
                     selectedAddonSubtitleId = preference.addonSubtitleId ?: persistedUrl
                     selectedSubtitleIndex = -1
                     useCustomSubtitles = true
                     playerController?.setSubtitleUri(persistedUrl)
                     preferredSubtitleSelectionApplied = true
                     isUserExplicitSubtitleSelection = true
-                } else if (belongsToCurrentItem) {
+                } else {
                     val fetchKey = addonSubtitleFetchKey.takeUnless {
                         activeSourceUrl.startsWith("file:") && externalSubtitles.isNotEmpty()
                     }
@@ -172,10 +174,6 @@ internal fun PlayerScreenRuntime.restorePersistedTrackPreferenceIfNeeded(): Bool
                         selectedSubtitleIndex = -1
                         useCustomSubtitles = false
                     }
-                } else {
-                    selectedAddonSubtitleId = null
-                    selectedSubtitleIndex = -1
-                    useCustomSubtitles = false
                 }
             }
         }
