@@ -153,10 +153,13 @@ class ScreenshotRenderHarness {
         }
     }
 
-    /** Library's Downloads tab on a phone: the header and switcher `DownloadsScreen` draws, then the list. */
+    /**
+     * Library's Downloads tab on a phone: the header and switcher `DownloadsScreen` draws, then the list.
+     * `NuvioScreen`'s default top padding, as the app's phone branch leaves it (`topChromePadding` is null).
+     */
     @Composable
     private fun PhoneDownloads() {
-        NuvioScreen(topPadding = 0.dp) {
+        NuvioScreen {
             stickyHeader {
                 Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
                     NuvioScreenHeader(modifier = Modifier.downloadsContentWidth(), title = "Downloads", actions = { HeaderActions() })
