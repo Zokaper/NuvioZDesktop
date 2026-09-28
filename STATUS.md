@@ -2,6 +2,27 @@
 
 Last updated: 2026-09-28
 
+## Pre-release upstream convergence - COMPLETE ON INTEGRATION BRANCH (2026-09-28)
+
+Branch `claude/pre-release-upstream-sync` is pushed at code head `9a095d8cd`, unmerged to `Dev`.
+Vanilla moved from `0.1.23-alpha` to `0.1.26-alpha` without replacing Phase 9 Downloads, organized
+storage/migration, offline playback, the standalone Downloads destination, the Java 17 redirected
+download timeout fix, Z updater/release identity, or Z Social / Watch Together. Canonical decisions
+and cross-repo results are in `nuvio-z/Docs/UPSTREAM-SYNC-0.5.4.md` and `nuvio-z/STATUS.md`.
+
+The Social/session recovery is integrated. Exact-tag inspection shows upstream still has V2 and V3,
+so both remain `drop-at-next-sync`; desktop uses install-scoped official-session storage and moves
+the legacy shared value once. The full split run includes the rejection, access/expiry, bridge,
+renewal, Social recovery and six install-storage tests, all passing.
+
+Verification: `scripts/run-desktop-tests-split.sh build/pre-release-sync-split` passed **3,184 / 3,184**
+with zero skips/failures/errors/duplicates (rest 1,651; playback 1,027; Downloads 457; E2E 49).
+Pure group 1 passed 278; group 2 reproduced the already-documented standalone Downloads source-list
+compile failure. CI run `36460011350` built the Windows MSI successfully; the overall run is red only
+at the pre-existing vendored Linux `frame_copy_test` assertion `player != NULL`, before Kotlin tests.
+The convergence review found no release correctness issue and no missing shared Z port. No release,
+merge, feed promotion, final RC or Phase 10 work was performed.
+
 ## Phase 9 on desktop (branch `claude/phase-9-downloads`)
 
 **The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 9 - Downloads Redesign". Shared commits
