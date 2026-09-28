@@ -1,6 +1,22 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-28
+Last updated: 2026-09-29
+
+## Upstream UX convergence, part 2 - ON BRANCH, UNMERGED (2026-09-29)
+
+Branch `claude/pre-release-ux-convergence` (from `b4c83e95a`, which is untouched), pushed, unmerged
+to `Dev`. Canonical write-up: `nuvio-z/STATUS.md` and `nuvio-z/Docs/UPSTREAM-SYNC-0.5.4.md` "Part 2".
+Desktop-specific: upstream's jelly top bar replaces Z's old floating top bar (sidebar still
+selectable; the top bar now has Downloads and Social; narrow windows use it); the shared dialog /
+sheet / menu components come from mobile upstream ahead of desktop upstream; `752962638`
+cherry-picked; subtitle restore now remaps across episodes instead of clearing; TMDB on by default
+for profiles without a stored choice. PiP audited, not changed: one engine, surface reparented,
+transport still party-gated, released with the engine. Shared files touched in this pass are
+byte-identical to `nuvio-z`'s. Nothing released; physical QA list in the canonical STATUS.
+
+Verification: `scripts/run-desktop-tests-split.sh build/ux-convergence-split` passed **3,206 / 3,206**
+(rest 1,673; playback 1,027; Downloads 457; E2E 49; no skips/failures/duplicates) on `7bf01c009`.
+CI `36487928657`: Windows MSI green; red only at the pre-existing Linux `frame_copy_test` assertion.
 
 ## Pre-release upstream convergence - COMPLETE ON INTEGRATION BRANCH (2026-09-28)
 
