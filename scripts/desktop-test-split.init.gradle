@@ -1,0 +1,32 @@
+// Splits :composeApp:desktopTest into four disjoint parts that together run every test exactly once.
+//
+// Why: the whole suite now takes longer than desktopTest's fixed 20-minute `timeout` on the reference
+// Windows machine (Phase 9 closeout, 2026-09-27/28). Hitting that cap fails the task while tests are
+// still passing, which reads like a test failure and is not one. Run the parts one after another with
+// scripts/run-desktop-tests-split.sh rather than raising the cap: each part stays well under it.
+//
+// Select a part with -PnzPart=<part>:
+//   rest      everything outside the four packages below (includes the slow promo render harness)
+//   playback  com.nuvio.app.features.{player,playback,watchparty}.*
+//   downloads com.nuvio.app.features.downloads.* except the E2E class
+//   e2e       com.nuvio.app.features.downloads.DesktopDownloadQueueE2ETest
+// `rest` is defined by exclusion, so a new package can never fall between the parts.
+allprojects {
+    tasks.withType(Test).matching { it.name == "desktopTest" }.configureEach { t ->
+        def part = project.findProperty("nzPart")
+        if (part == null) return
+        def e2e = "com.nuvio.app.features.downloads.DesktopDownloadQueueE2ETest"
+        def heavy = ["com.nuvio.app.features.downloads.*", "com.nuvio.app.features.player.*",
+                     "com.nuvio.app.features.playback.*", "com.nuvio.app.features.watchparty.*"]
+        t.filter { f ->
+            f.failOnNoMatchingTests = true
+            switch (part) {
+                case "e2e": f.includeTestsMatching(e2e); break
+                case "downloads": f.includeTestsMatching("com.nuvio.app.features.downloads.*"); f.excludeTestsMatching(e2e); break
+                case "playback": heavy.drop(1).each { f.includeTestsMatching(it) }; break
+                case "rest": heavy.each { f.excludeTestsMatching(it) }; break
+                default: throw new GradleException("unknown nzPart " + part)
+            }
+        }
+    }
+}
