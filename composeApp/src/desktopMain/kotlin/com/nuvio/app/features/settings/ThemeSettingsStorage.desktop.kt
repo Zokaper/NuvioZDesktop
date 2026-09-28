@@ -35,6 +35,7 @@ internal actual object ThemeSettingsStorage {
     // not resize the interface, and pushing a 4K desktop's zoom onto a laptop would be worse than
     // having no setting at all. `selectedAppLanguageKey` is the existing device-local key.
     private const val desktopUiZoomPercentKey = "desktop_ui_zoom_percent"
+    private const val navBarGlowEnabledKey = "nav_bar_glow_enabled"
     private val profileScopedSyncKeys = listOf(
         selectedThemeKey,
         customThemeColorsKey,
@@ -42,6 +43,7 @@ internal actual object ThemeSettingsStorage {
         liquidGlassNativeTabBarEnabledKey,
         desktopNavigationLayoutKey,
         navBarStyleKey,
+        navBarGlowEnabledKey,
     )
     private val deviceLocale = Locale.getDefault()
     private val store = DesktopStorage.store("nuvio_theme_settings")
@@ -107,6 +109,13 @@ internal actual object ThemeSettingsStorage {
         store.putString(ProfileScopedKey.of(navBarStyleKey), styleKey)
     }
 
+    actual fun loadNavBarGlowEnabled(): Boolean? =
+        store.getBoolean(ProfileScopedKey.of(navBarGlowEnabledKey))
+
+    actual fun saveNavBarGlowEnabled(enabled: Boolean) {
+        store.putBoolean(ProfileScopedKey.of(navBarGlowEnabledKey), enabled)
+    }
+
     actual fun exportToSyncPayload(): JsonObject = buildJsonObject {
         loadSelectedTheme()?.let { put(selectedThemeKey, encodeSyncString(it)) }
         loadCustomThemeColors()?.let { put(customThemeColorsKey, encodeSyncString(it)) }
@@ -114,6 +123,7 @@ internal actual object ThemeSettingsStorage {
         loadLiquidGlassNativeTabBarEnabled()?.let { put(liquidGlassNativeTabBarEnabledKey, encodeSyncBoolean(it)) }
         loadDesktopNavigationLayout()?.let { put(desktopNavigationLayoutKey, encodeSyncString(it)) }
         loadNavBarStyle()?.let { put(navBarStyleKey, encodeSyncString(it)) }
+        loadNavBarGlowEnabled()?.let { put(navBarGlowEnabledKey, encodeSyncBoolean(it)) }
     }
 
     actual fun replaceFromSyncPayload(payload: JsonObject) {
@@ -125,6 +135,7 @@ internal actual object ThemeSettingsStorage {
         payload.decodeSyncBoolean(liquidGlassNativeTabBarEnabledKey)?.let(::saveLiquidGlassNativeTabBarEnabled)
         payload.decodeSyncString(desktopNavigationLayoutKey)?.let(::saveDesktopNavigationLayout)
         payload.decodeSyncString(navBarStyleKey)?.let(::saveNavBarStyle)
+        payload.decodeSyncBoolean(navBarGlowEnabledKey)?.let(::saveNavBarGlowEnabled)
         applySelectedAppLanguage(loadSelectedAppLanguage() ?: AppLanguage.ENGLISH.code)
     }
 }

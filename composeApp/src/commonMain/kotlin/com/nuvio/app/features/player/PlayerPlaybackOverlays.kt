@@ -4,12 +4,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeContent
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -31,11 +27,16 @@ import com.nuvio.app.features.player.skip.NextEpisodeCard
 import com.nuvio.app.features.player.skip.NextEpisodeInfo
 import com.nuvio.app.features.player.skip.SkipIntroButton
 import com.nuvio.app.features.player.skip.SkipInterval
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
 
 @Composable
 internal fun BoxScope.PlayerPlaybackOverlays(
     playerControlsLocked: Boolean,
+    useLegacyLayout: Boolean,
     lockedOverlayVisible: Boolean,
+    showRemainingTime: Boolean = false,
     playbackSnapshot: PlayerPlaybackSnapshot,
     displayedPositionMs: Long,
     metrics: PlayerLayoutMetrics,
@@ -46,7 +47,7 @@ internal fun BoxScope.PlayerPlaybackOverlays(
     logo: String?,
     title: String,
     onBackWithProgress: () -> Unit,
-    p2pInitialLoadingMessage: String?,
+    openingLoadingMessage: String?,
     p2pInitialLoadingProgress: Float?,
     showP2pRebufferStats: Boolean,
     p2pRebufferMessage: String?,
@@ -57,6 +58,7 @@ internal fun BoxScope.PlayerPlaybackOverlays(
     pausedOverlayVisible: Boolean,
     watchPartyBanner: String?,
     activeSkipInterval: SkipInterval?,
+    skipsToPostCredits: Boolean,
     skipIntervalDismissed: Boolean,
     controlsVisible: Boolean,
     onSkipInterval: (SkipInterval) -> Unit,
@@ -96,6 +98,8 @@ internal fun BoxScope.PlayerPlaybackOverlays(
             metrics = metrics,
             horizontalSafePadding = horizontalSafePadding,
             onUnlock = onUnlock,
+            useLegacyLayout = useLegacyLayout,
+            showRemainingTime = showRemainingTime,
             modifier = Modifier.fillMaxSize(),
         )
     }
@@ -117,7 +121,7 @@ internal fun BoxScope.PlayerPlaybackOverlays(
             onBack = onBackWithProgress,
             horizontalSafePadding = horizontalSafePadding,
             modifier = Modifier.fillMaxSize(),
-            message = p2pInitialLoadingMessage,
+            message = openingLoadingMessage,
             progress = p2pInitialLoadingProgress,
             state = loadingState,
             formatSize = formatSize,
@@ -133,26 +137,13 @@ internal fun BoxScope.PlayerPlaybackOverlays(
             .padding(top = 58.dp),
     )
 
-    AnimatedVisibility(
-        visible = currentGestureFeedback != null,
-        enter = fadeIn(),
-        exit = fadeOut(),
-    ) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            renderedGestureFeedback?.let { feedback ->
-                GestureFeedbackPill(
-                    feedback = feedback,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .windowInsetsPadding(WindowInsets.safeContent.only(WindowInsetsSides.Top))
-                        .padding(horizontal = horizontalSafePadding)
-                        .padding(top = 40.dp),
-                )
-            }
-        }
-    }
+    PlayerGestureOverlay(
+        currentFeedback = currentGestureFeedback,
+        renderedFeedback = renderedGestureFeedback,
+        useLegacyLayout = useLegacyLayout,
+        horizontalSafePadding = horizontalSafePadding,
+        horizontalPadding = metrics.horizontalPadding,
+    )
 
     // Deliberately independent of `controlsVisible`: a player held still because it is waiting on
     // somebody else has to say so even after the chrome fades, or it reads as one that has broken.
@@ -178,6 +169,7 @@ internal fun BoxScope.PlayerPlaybackOverlays(
     if (!playerControlsLocked) {
         SkipIntroButton(
             interval = if (!initialLoadCompleted || pausedOverlayVisible) null else activeSkipInterval,
+            skipsToPostCredits = skipsToPostCredits,
             dismissed = skipIntervalDismissed,
             controlsVisible = controlsVisible,
             onSkip = {

@@ -8,6 +8,7 @@ import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.downloads.SourceFactsExtractor
 import com.nuvio.app.features.player.skip.NextEpisodeInfo
+import com.nuvio.app.features.player.skip.PlayerNextEpisodeRules
 import com.nuvio.app.features.playback.PlaybackMode
 import com.nuvio.app.features.playback.PlaybackProgress
 import com.nuvio.app.features.playback.PlaybackQualityOptions
@@ -26,6 +27,30 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+
+/**
+ * Upstream's keyed-lifecycle guard (0.5.x): the snapshot describes the item now playing, after its
+ * resume seek, with no scrub or error in the way. A snapshot still describing the previous episode
+ * must never read as this one's threshold.
+ */
+internal fun PlayerScreenRuntime.isNextEpisodeSnapshotSettled(): Boolean =
+    playbackSnapshotKey == activePlaybackKey &&
+        !playbackSnapshot.isLoading &&
+        initialSeekApplied &&
+        !isScrubbingTimeline &&
+        errorMessage == null
+
+internal fun PlayerScreenRuntime.isAtNextEpisodeThreshold(): Boolean {
+    if (!isNextEpisodeSnapshotSettled()) return false
+    return playbackSnapshot.isEnded || PlayerNextEpisodeRules.shouldShowNextEpisodeCard(
+        positionMs = playbackSnapshot.positionMs,
+        durationMs = playbackSnapshot.durationMs,
+        skipIntervals = skipIntervals,
+        thresholdMode = playerSettingsUiState.nextEpisodeThresholdMode,
+        thresholdPercent = playerSettingsUiState.nextEpisodeThresholdPercent,
+        thresholdMinutesBeforeEnd = playerSettingsUiState.nextEpisodeThresholdMinutesBeforeEnd,
+    )
+}
 
 internal sealed interface PlayerNextEpisodeResolutionResult {
     data class DownloadReady(val item: DownloadItem) : PlayerNextEpisodeResolutionResult

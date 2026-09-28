@@ -14,6 +14,7 @@ class SettingsReplayWizardTest {
 
         val scene = ImageComposeScene(width = 100, height = 100) {
             availableEntries = settingsSearchEntries(
+                isTablet = false,
                 pluginsEnabled = false,
                 downloadsEnabled = false,
                 notificationsEnabled = false,
@@ -27,6 +28,7 @@ class SettingsReplayWizardTest {
                 runSetupAgainAvailable = true,
             )
             unavailableEntries = settingsSearchEntries(
+                isTablet = false,
                 pluginsEnabled = false,
                 downloadsEnabled = false,
                 notificationsEnabled = false,

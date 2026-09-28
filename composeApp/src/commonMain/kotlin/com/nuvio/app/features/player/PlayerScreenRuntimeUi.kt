@@ -58,6 +58,7 @@ import com.nuvio.app.core.debug.PlaybackDebugSettings
 import com.nuvio.app.core.debug.isDebugBuild
 import com.nuvio.app.core.network.NetworkQualityRepository
 import com.nuvio.app.core.ui.nuvio
+import com.nuvio.app.core.ui.themePalette
 import com.nuvio.app.features.debrid.DebridSettingsRepository
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
 import com.nuvio.app.features.details.MetaDetailsRepository
@@ -88,6 +89,7 @@ import com.nuvio.app.features.streams.isSelectableForPlayback
 import com.nuvio.app.features.watchprogress.buildPlaybackVideoId
 import com.nuvio.app.features.watching.application.WatchingState
 import com.nuvio.app.isDesktop
+import com.nuvio.app.features.player.skip.internalSkipAction
 import com.nuvio.app.isIos
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -520,6 +522,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     val nativeSkipInterval = activeSkipInterval.takeIf {
         initialLoadCompleted && !pausedOverlayVisible && !skipIntervalDismissed
     }
+    val nativeSkipAction = nativeSkipInterval?.internalSkipAction(skipIntervals, playbackSnapshot.durationMs)
     val nextEpisodeForControls = nextEpisodeInfo.takeIf { isSeries && showNextEpisodeCard }
     val startingEpisode = nextEpisodeTransition
         .takeIf { it.phase == PlayerNextEpisodePhase.STARTING }
@@ -587,6 +590,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         episodeText = episodeText,
         streamTitle = activeStreamTitle,
         providerName = activeProviderName,
+        pauseOverlayEnabled = playerSettingsUiState.pauseOverlayEnabled,
         pauseOverlayWatchingLabel = stringResource(Res.string.compose_player_youre_watching),
         pauseOverlayLogo = logo,
         pauseOverlayEpisodeInfo = if (seasonNumber != null && episodeNumber != null) {
@@ -615,6 +619,10 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         videoSettingsLabel = stringResource(Res.string.player_action_video_settings),
         watchTogetherLabel = stringResource(Res.string.watch_party_title),
         tapToUnlockLabel = stringResource(Res.string.compose_player_tap_to_unlock),
+        pipLabel = stringResource(Res.string.compose_player_picture_in_picture),
+        pipPlaceholderTitle = stringResource(Res.string.compose_player_pip_placeholder_title),
+        pipRestoreLabel = stringResource(Res.string.compose_player_pip_restore),
+        pipWindowTitle = stringResource(Res.string.compose_player_pip_window_title),
         playbackErrorTitle = stringResource(Res.string.compose_player_playback_error),
         playbackErrorMessage = errorMessage.orEmpty(),
         playbackErrorActionLabel = stringResource(Res.string.compose_player_go_back),
@@ -673,6 +681,10 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         onLabel = stringResource(Res.string.compose_action_on),
         offLabel = stringResource(Res.string.compose_action_off),
         themeAccentColor = themeColors.accent.toCssColorString(),
+        themeAccentGradientColors = MaterialTheme.themePalette.accentGradient
+            .takeIf { it.size > 1 }
+            .orEmpty()
+            .map { it.toCssColorString() },
         themeAccentStrongColor = themeColors.accentStrong.toCssColorString(),
         themeOnAccentColor = themeColors.onAccent.toCssColorString(),
         themeFocusColor = themeColors.focusRing.toCssColorString(),
@@ -830,9 +842,13 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             .map { it.name.lowercase() }
             .sorted(),
         skipPromptVisible = nativeSkipInterval != null && !playerControlsLocked,
-        skipPromptLabel = skipPromptLabel(nativeSkipInterval?.type),
+        skipPromptLabel = if (nativeSkipAction?.skipsToPostCredits == true) {
+            stringResource(Res.string.player_skip_to_post_credits)
+        } else {
+            skipPromptLabel(nativeSkipInterval?.type)
+        },
         skipPromptStartMs = ((nativeSkipInterval?.startTime ?: 0.0) * 1000).toLong().coerceAtLeast(0L),
-        skipPromptEndMs = ((nativeSkipInterval?.endTime ?: 0.0) * 1000).toLong().coerceAtLeast(0L),
+        skipPromptEndMs = nativeSkipAction?.targetMs?.coerceAtLeast(0L) ?: 0L,
         skipPromptDismissed = skipIntervalDismissed,
         nextEpisodeVisible = nextEpisodeForControls != null && !playerControlsLocked,
         nextEpisodeHeaderLabel = stringResource(Res.string.player_next_episode),
@@ -855,6 +871,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             nextEpisodeForControls?.hasAired == true && nextEpisodeTransition.canAcceptManualTap(),
     )
     val gestureCallbacks = rememberSurfaceGestureCallbacks()
+    val playbackGesturesEnabled = initialLoadCompleted && errorMessage == null
 
     Box(
         modifier = Modifier
@@ -862,6 +879,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             .onSizeChanged { layoutSize = it }
             .playerSurfaceTapGestures(
                 layoutSize = layoutSize,
+                playbackGesturesEnabled = playbackGesturesEnabled,
                 playerControlsLockedState = gestureCallbacks.playerControlsLocked,
                 onSurfaceTap = gestureCallbacks.onSurfaceTap,
                 onSurfaceDoubleTap = gestureCallbacks.onSurfaceDoubleTap,
@@ -872,6 +890,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             .playerSurfaceDragGestures(
                 gestureController = gestureController,
                 layoutSize = layoutSize,
+                playbackGesturesEnabled = playbackGesturesEnabled,
                 sideGestureSystemEdgeExclusionPx = sideGestureSystemEdgeExclusionPx,
                 playerControlsLockedState = gestureCallbacks.playerControlsLocked,
                 touchGesturesEnabledState = gestureCallbacks.touchGesturesEnabled,
@@ -926,7 +945,10 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                 },
                 onSnapshot = { snapshot ->
                     val wasPlaying = playbackSnapshot.isPlaying
-                    playbackSnapshot = snapshot
+                    // Upstream's keyed update: it stamps `playbackSnapshotKey`, which the next-episode
+                    // threshold and the restored launch both require, keeps the duration an ended
+                    // snapshot drops, and releases a scrub target held while the engine buffered.
+                    if (!updatePlaybackSnapshot(snapshot)) return@PlatformPlayerSurface
                     // Stamped where it arrives, because nothing downstream can recover the age of a
                     // sample once it has been handed on without one.
                     playbackSnapshotAtMs = kotlin.time.Clock.System.now().toEpochMilliseconds()
@@ -970,7 +992,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         }
 
         AnimatedVisibility(
-            visible = pausedOverlayVisible && !controlsVisible && !playerControlsLocked,
+            visible = playerSettingsUiState.pauseOverlayEnabled && pausedOverlayVisible && !controlsVisible && !playerControlsLocked,
             enter = fadeIn(animationSpec = tween(durationMillis = 220)),
             exit = fadeOut(animationSpec = tween(durationMillis = 180)),
         ) {
@@ -1055,6 +1077,12 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
             metrics = metrics,
             resizeMode = resizeMode,
             isLocked = playerControlsLocked,
+            useLegacyLayout = playerSettingsUiState.useLegacyPlayerLayout,
+            showRemainingTime = showRemainingTime,
+            onRuntimeClick = { showRemainingTime = !showRemainingTime },
+            releaseInfo = metaUiState.meta?.takeIf { it.id == parentMetaId }?.releaseInfo,
+            hideDetails = activeSkipInterval != null && !skipIntervalDismissed,
+            onInteraction = { controlsActivityTick += 1 },
             showPlaybackControls = controlsVisible,
             onLockToggle = {
                 if (playerControlsLocked) unlockPlayerControls() else lockPlayerControls()
@@ -1098,6 +1126,7 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
                                 lang = sub.language,
                             )
                         }
+                    PlayerStreamsRepository.pauseSearchForPlayback()
                     openExternal(
                         ExternalPlayerPlaybackRequest(
                             sourceUrl = activeSourceUrl,
@@ -1105,6 +1134,8 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
                             streamTitle = activeStreamTitle,
                             sourceHeaders = activeSourceHeaders,
                             resumePositionMs = playbackSnapshot.positionMs,
+                            durationMs = playbackSnapshot.durationMs.takeIf { it > 0L },
+                            playbackSession = playbackSession,
                             subtitles = loadedSubtitles,
                             season = activeSeasonNumber,
                             episode = activeEpisodeNumber,
@@ -1130,8 +1161,9 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
                 scrubbingPositionMs = positionMs
             },
             onScrubFinished = { positionMs ->
-                isScrubbingTimeline = false
-                scrubbingPositionMs = null
+                // Upstream's scrub end: settles any skip segment the scrub crossed, and holds the
+                // target on the timeline while the engine is still loading it.
+                finishTimelineScrub(positionMs)
                 // The party seeks everyone at one instant, this player included, so performing the
                 // seek here as well would move it twice - once to the scrub target and once to
                 // wherever the barrier says the party will be.
@@ -1313,6 +1345,9 @@ private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControl
                 showVideoSettingsModal = true
                 controlsVisible = true
             }
+        }
+        PlayerControlsAction.PictureInPicture -> {
+            togglePlayerPictureInPicture()
         }
         PlayerControlsAction.DoubleTapSeekBack -> {
             return prepareDoubleTapSeekForNativeFallback(PlayerSeekDirection.Backward)
@@ -1589,11 +1624,11 @@ private fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: D
         "skipInterval" -> {
             val interval = activeSkipInterval ?: return true
             // Clamped, like the shared overlay's own skip handler has always been. Marker data comes
-            // from a different cut often enough that an end time past this file is ordinary, and
-            // seeking past the end lands on the last frame, which is where playback stops.
-            val rawMs = (interval.endTime * 1000).toLong()
+            // from a different cut often enough that an end time past this file is ordinary. The target
+            // is upstream's: the segment end, or the post-credits scene a movie keeps.
             val durationMs = playbackSnapshot.durationMs
-            val targetPositionMs = if (durationMs > 0L) rawMs.coerceAtMost(durationMs - 1) else rawMs
+            val action = interval.internalSkipAction(skipIntervals, durationMs) ?: return true
+            val targetPositionMs = if (durationMs > 0L) action.targetMs.coerceAtMost(durationMs - 1) else action.targetMs
             if (!submitPartySeek(targetPositionMs)) playerController?.seekTo(targetPositionMs)
             scheduleProgressSyncAfterSeek()
             skipIntervalDismissed = true
@@ -1905,6 +1940,7 @@ private fun PlayerScreenRuntime.activeSubmitIntroImdbId(): String? =
 private fun skipPromptLabel(type: String?): String =
     when (type?.lowercase()) {
         "intro", "op", "mixed-op" -> stringResource(Res.string.player_skip_intro)
+        "movie-credits" -> stringResource(Res.string.player_skip_movie_credits)
         "outro", "ed", "mixed-ed", "credits" -> stringResource(Res.string.player_skip_outro)
         "recap" -> stringResource(Res.string.player_skip_recap)
         else -> stringResource(Res.string.player_skip)
@@ -1928,8 +1964,9 @@ private fun PlayerScreenRuntime.handlePlayerControlsScrubChange(positionMs: Long
 
 private fun PlayerScreenRuntime.handlePlayerControlsScrubFinished(positionMs: Long) {
     playerControlsLog.d { "scrubFinished positionMs=$positionMs controller=${playerController != null} ${playerControlLogContext()}" }
-    isScrubbingTimeline = false
-    scrubbingPositionMs = null
+    // Upstream's scrub end: settles any skip segment the scrub crossed, and holds the
+    // target on the timeline while the engine is still loading it.
+    finishTimelineScrub(positionMs)
     if (!submitPartySeek(positionMs)) playerController?.seekTo(positionMs)
     scheduleProgressSyncAfterSeek()
 }
@@ -2381,7 +2418,9 @@ private fun BoxScope.RenderPlaybackOverlays(
         val playerClipboardManager = LocalClipboardManager.current
         PlayerPlaybackOverlays(
             playerControlsLocked = playerControlsLocked,
+            useLegacyLayout = isDesktop || playerSettingsUiState.useLegacyPlayerLayout,
             lockedOverlayVisible = lockedOverlayVisible,
+            showRemainingTime = showRemainingTime,
             playbackSnapshot = playbackSnapshot,
             displayedPositionMs = displayedPositionMs,
             metrics = metrics,
@@ -2400,10 +2439,16 @@ private fun BoxScope.RenderPlaybackOverlays(
             logo = openingPresentation.logo,
             title = openingPresentation.title,
             onBackWithProgress = { requestBack() },
-            p2pInitialLoadingMessage = if (startingEpisode != null) {
-                stringResource(Res.string.player_next_episode_starting)
-            } else {
-                p2pInitialLoadingMessage
+            // Upstream's "show loading status" names the engine's stage. Only the desktop native
+            // overlay renders this message; on phones `PlaybackLoadingHost` draws its own steps.
+            openingLoadingMessage = when {
+                startingEpisode != null -> stringResource(Res.string.player_next_episode_starting)
+                p2pInitialLoadingMessage != null -> p2pInitialLoadingMessage
+                else -> playerLoadingStatusMessage(
+                    showStatus = playerSettingsUiState.showPlayerLoadingStatus,
+                    controllerReady = playerController != null,
+                    buffering = playbackSnapshot.isLoading,
+                )
             },
             p2pInitialLoadingProgress = p2pInitialLoadingProgress,
             showP2pRebufferStats = showP2pRebufferStats,
@@ -2415,11 +2460,12 @@ private fun BoxScope.RenderPlaybackOverlays(
             pausedOverlayVisible = pausedOverlayVisible,
             watchPartyBanner = watchPartyBanner,
             activeSkipInterval = activeSkipInterval.takeUnless { isDesktop },
+            skipsToPostCredits = activeSkipInterval?.internalSkipAction(skipIntervals, playbackSnapshot.durationMs)?.skipsToPostCredits == true,
             skipIntervalDismissed = skipIntervalDismissed,
             controlsVisible = controlsVisible,
             onSkipInterval = { interval ->
-                val rawMs = (interval.endTime * 1000.0).toLong()
                 val durationMs = playbackSnapshot.durationMs
+                val rawMs = interval.internalSkipAction(skipIntervals, durationMs)?.targetMs ?: return@PlayerPlaybackOverlays
                 val seekMs = if (durationMs > 0L) rawMs.coerceAtMost(durationMs - 1) else rawMs
                 if (!submitPartySeek(seekMs)) playerController?.seekTo(seekMs)
                 scheduleProgressSyncAfterSeek()
@@ -2428,7 +2474,7 @@ private fun BoxScope.RenderPlaybackOverlays(
             onDismissSkipInterval = { skipIntervalDismissed = true },
             sliderEdgePadding = sliderEdgePadding,
             overlayBottomPadding = overlayBottomPadding,
-            isSeries = isSeries,
+            isSeries = isSeries && !isDesktop,
             nextEpisodeInfo = nextEpisodeInfo,
             showNextEpisodeCard = showNextEpisodeCard && !isDesktop,
             nextEpisodeResolving =
@@ -2569,6 +2615,7 @@ private fun PlayerScreenRuntime.RenderPlayerModals(displayedPositionMs: Long) {
         },
         onSourcesPanelDismissed = {
             showSourcesPanel = false
+            PlayerStreamsRepository.stopSourcesLoading()
             controlsVisible = true
         },
         isSeries = isSeries,

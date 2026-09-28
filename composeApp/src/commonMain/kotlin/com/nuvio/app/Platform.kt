@@ -12,3 +12,4 @@ internal expect val isWindows: Boolean
 
 expect fun platformDisplayMaxHeight(): Int?
 
+internal expect val supportsPosterNavigationMotion: Boolean

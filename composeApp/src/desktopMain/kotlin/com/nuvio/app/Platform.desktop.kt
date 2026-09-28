@@ -21,3 +21,4 @@ actual fun platformDisplayMaxHeight(): Int? = runCatching {
         .maxOrNull()
 }.getOrNull()
 
+internal actual val supportsPosterNavigationMotion: Boolean = false

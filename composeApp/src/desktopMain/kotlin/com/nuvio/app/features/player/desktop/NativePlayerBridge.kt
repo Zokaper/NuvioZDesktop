@@ -58,6 +58,12 @@ internal object NativePlayerBridge {
      * export, so the call site is guarded by host OS.
      */
     external fun promoteOpeningContainer(handle: Long)
+    external fun beginWindowDrag(handle: Long)
+    external fun setWindowResizable(windowHwnd: Long, enabled: Boolean)
+    private external fun reparentSurfaceNative(handle: Long, hostViewPtr: Long)
+
+    fun reparentSurface(handle: Long, hostViewPtr: Long): Boolean =
+        runCatching { reparentSurfaceNative(handle, hostViewPtr) }.isSuccess
     external fun setPaused(handle: Long, paused: Boolean)
     external fun seekTo(handle: Long, positionMs: Long)
     external fun seekToExact(handle: Long, positionMs: Long)
