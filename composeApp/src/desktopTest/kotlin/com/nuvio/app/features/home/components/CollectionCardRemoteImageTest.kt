@@ -20,6 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class CollectionCardRemoteImageTest {
     @get:Rule
@@ -75,7 +76,9 @@ class CollectionCardRemoteImageTest {
                 }
             }
             waitForColor(2)
-            assertEquals(0, requests.get(), "The focus asset should not load before hover")
+            // Upstream prefetches the focus asset once the card is visible (7ed88917a), so hover reads
+            // it from the codec cache; this test predates that and asserted no load at all. One, at most.
+            assertTrue(requests.get() <= 1, "The focus asset should load at most once before hover")
             card.performMouseInput { enter(center) }
             waitForColor(0)
             waitForColor(1)
