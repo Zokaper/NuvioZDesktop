@@ -7,6 +7,36 @@ Last updated: 2026-09-28
 **The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 9 - Downloads Redesign". Shared commits
 reach this repo by cherry-pick of the mobile commit, plus desktop-only actuals.
 
+**Phase 9 release-gate pass: DONE, RELEASE GATE PENDING (2026-09-28).** The canonical record is
+`nuvio-z/STATUS.md`, "Phase 9 release-gate pass" (matrix, blockers, identities). Desktop specifics:
+- **Final head `71f483d27`** (desktop debug 73, run `36385963112`, dispatched). The last product-code commit is
+  `f7526b5f2`. After it come `e55de6982` (STATUS), `89e54c9cb` (test-only race fixes), `aba35cb48` (the same
+  changelog copy fix as mobile), `589ca0a58` (the split runner), and `71f483d27` (debug counter and debug lines).
+- **The owed full run.** On `e55de6982` (the same code as `f7526b5f2`): 2,799 tests, 2,798 passed, and
+  `AssistedChoiceFlowTest.realSizesOverTheSizeRuleBecomeTheOverLimitDecision` **failed once**. The cause is a
+  test race, not the product:
+  - The early-choice claim clears `awaitsQualityChoice` and moves every entry to `RESOLVING` in one write
+    (`DownloadFlowController.kt:831`), and the decisions are written afterwards. The test waited only for the
+    claim.
+  - Running the class alone 5 times turned up two more races of the same kind. `choosingAQuality...`: the batch
+    reads ready a moment before the discovery job hands over its candidates. `nothingToDownload...`: the flag is
+    cleared just before the notice is posted.
+  - All three waits now wait for the state they assert, and the class then passed 15 / 15 alone. In the product,
+    the only effect is a momentary "Finding sources N of N" sheet that moves to the choice when discovery
+    finishes.
+- **Final result: `desktopTest` 2,799 / 2,799 on `589ca0a58`**, the complete suite. Parts: rest 1,291
+  (16 m 13 s), playback 1,002, downloads 457, E2E 49 (9 m 8 s); 0 duplicates, every part `BUILD SUCCESSFUL`.
+  `71f483d27` adds only the debug counter and debug changelog lines.
+- **The full `desktopTest` now runs split:** `scripts/run-desktop-tests-split.sh [out-dir]`. It runs four
+  disjoint parts (`rest` by exclusion, `playback`, `downloads`, `e2e`) and prints per-part and total counts with
+  a duplicate check. As one task the suite exceeds the 20-minute `timeout`. `rest` alone takes about 16 min,
+  mostly the promo render harness, which runs only where the local promo art exists.
+- **Still owed (physical):** the 60-second redirect fix on a transfer longer than 60 s, and the first-launch
+  folder migration over an existing flat library (debug 73 is the first build carrying it).
+- **Proposed stable:** `0.1.23-alpha-z7`, `VERSION_CODE` 46, serial 132, MSI `2.0.132`, tag
+  `0.1.23-alpha-z7+132`. The bump is the final commit on `Dev` after the merge. **Not made; nothing stable
+  published.**
+
 **Phase 9 closeout: organized download folders, chip removed, final /code-review (2026-09-28):**
 - `c34152da5` is the shared half of mobile `67a9595d4` plus the desktop actual (`relativePathOf` /
   `existsInDownloads` / `fileUriFor` / `moveCompletedFile`, `Files.move` without replace, `:` refused)
@@ -22,7 +52,7 @@ reach this repo by cherry-pick of the mobile commit, plus desktop-only actuals.
   - 3 new tests, and one test race fixed.
 - Results: targeted 169 / 169 on `f7526b5f2`. The full non-E2E run was stopped by Claude Code under
   system memory pressure after 2,748 passes / 0 failures. **One complete split `desktopTest` pass on
-  `f7526b5f2` is owed.**
+  `f7526b5f2` is owed.** *(Discharged in the release-gate pass above: 2,799 / 2,799.)*
 - Full record: `nuvio-z/STATUS.md`, "final /code-review gate" and "organized download folders".
 
 **Phase 9 closeout verification (2026-09-28):** feature-frozen. `f982d176b` is the shared half of mobile
