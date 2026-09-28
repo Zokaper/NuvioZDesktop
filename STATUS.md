@@ -7,6 +7,13 @@ Last updated: 2026-09-28
 **The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 9 - Downloads Redesign". Shared commits
 reach this repo by cherry-pick of the mobile commit, plus desktop-only actuals.
 
+**Phase 9: DONE (2026-09-28).** The maintainer reported both owed desktop checks physically: the folder
+migration over an existing flat library **passed**, and a redirected download ran past 60 s with **no retry at
+the minute** and finished normally, so the 60-second fix is confirmed on a device. Mobile's migration check was
+waived, not run. SideStore is now the official iOS path, so TestFlight is no longer a release requirement.
+Nothing is merged to `Dev` and nothing stable is published; Phase 10 has not started. Canonical record:
+`nuvio-z/STATUS.md`, "Phase 9 final physical QA". The earlier gate-pass notes follow.
+
 **Phase 9 release-gate pass: DONE, RELEASE GATE PENDING (2026-09-28).** The canonical record is
 `nuvio-z/STATUS.md`, "Phase 9 release-gate pass" (matrix, blockers, identities). Desktop specifics:
 - **Final head `71f483d27`** (desktop debug 73, run `36385963112`, dispatched). The last product-code commit is
@@ -31,8 +38,9 @@ reach this repo by cherry-pick of the mobile commit, plus desktop-only actuals.
   disjoint parts (`rest` by exclusion, `playback`, `downloads`, `e2e`) and prints per-part and total counts with
   a duplicate check. As one task the suite exceeds the 20-minute `timeout`. `rest` alone takes about 16 min,
   mostly the promo render harness, which runs only where the local promo art exists.
-- **Still owed (physical):** the 60-second redirect fix on a transfer longer than 60 s, and the first-launch
-  folder migration over an existing flat library (debug 73 is the first build carrying it).
+- ~~**Still owed (physical):** the 60-second redirect fix on a transfer longer than 60 s, and the first-launch
+  folder migration over an existing flat library (debug 73 is the first build carrying it).~~ Both passed
+  physically, 2026-09-28.
 - **Proposed stable:** `0.1.23-alpha-z7`, `VERSION_CODE` 46, serial 132, MSI `2.0.132`, tag
   `0.1.23-alpha-z7+132`. The bump is the final commit on `Dev` after the merge. **Not made; nothing stable
   published.**
