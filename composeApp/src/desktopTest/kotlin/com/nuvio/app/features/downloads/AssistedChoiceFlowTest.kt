@@ -208,7 +208,9 @@ class AssistedChoiceFlowTest {
         val batchId = startSeason()
         DownloadFlowController.dismiss()
         gate.complete(Unit)
-        await("ready") { batch()?.isAwaitingQualityChoice == true }
+        // The last entry reads AWAITING_CHOICE a moment before the discovery job ends and hands over
+        // its candidates; chooseQuality in that window shows FindingSources (flaked alone, 2026-09-28).
+        await("ready") { AssistedDiscovery.candidates(batchId) != null && batch()?.isAwaitingQualityChoice == true }
 
         DownloadFlowController.chooseQuality(batchId)
         assertIs<DownloadFlowStep.ChooseResolution>(DownloadFlowController.step.value)
@@ -261,7 +263,8 @@ class AssistedChoiceFlowTest {
         startSeason()
         DownloadFlowController.dismiss()
         gate.complete(Unit)
-        await("the batch to settle") { batch()?.awaitsQualityChoice == false }
+        // The flag is cleared a moment before the notice is posted (flaked alone, 2026-09-28).
+        await("the batch to settle") { batch()?.awaitsQualityChoice == false && notices.log.isNotEmpty() }
 
         val settled = assertNotNull(batch())
         assertTrue(settled.entries.all { it.decision == DownloadEntryDecisionKind.NO_SOURCES })
@@ -449,7 +452,9 @@ class AssistedChoiceFlowTest {
     fun aMissingResolutionFollowsTheFallbackAndAskIsTheGroupedDecision() {
         chooseEarly(2160) // nobody has 4K; the default fallback is Ask
         gate.complete(Unit)
-        await("the batch to settle") { batch()?.awaitsQualityChoice == false && batch()?.entries?.none { it.state == DownloadBatchEntryState.AWAITING_CHOICE } == true }
+        // The claim clears the flag and moves every entry to RESOLVING in one write; each decision is
+        // written later. Waiting only for the claim raced the decisions (failed once, 2026-09-28).
+        await("every entry to be decided") { batch()?.awaitsQualityChoice == false && batch()?.entries?.all { it.decision != null } == true }
 
         assertTrue(items().isEmpty())
         assertTrue(assertNotNull(batch()).entries.all { it.decision == DownloadEntryDecisionKind.RESOLUTION_MISSING })
@@ -474,7 +479,9 @@ class AssistedChoiceFlowTest {
         DownloadFlowController.policyProvider = { DownloadPolicy(sizeLevel = DownloadSizeLevel.SMALL) }
         chooseEarly(1080)
         gate.complete(Unit)
-        await("the batch to settle") { batch()?.awaitsQualityChoice == false && batch()?.entries?.none { it.state == DownloadBatchEntryState.AWAITING_CHOICE } == true }
+        // The claim clears the flag and moves every entry to RESOLVING in one write; each decision is
+        // written later. Waiting only for the claim raced the decisions (failed once, 2026-09-28).
+        await("every entry to be decided") { batch()?.awaitsQualityChoice == false && batch()?.entries?.all { it.decision != null } == true }
 
         assertTrue(items().isEmpty(), "the estimate was not a promise: nothing over the rule starts")
         assertTrue(assertNotNull(batch()).entries.all { it.decision == DownloadEntryDecisionKind.OVER_LIMIT })
