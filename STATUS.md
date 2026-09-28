@@ -7,6 +7,24 @@ Last updated: 2026-09-28
 **The canonical write-up is `nuvio-z/STATUS.md`**, "Phase 9 - Downloads Redesign". Shared commits
 reach this repo by cherry-pick of the mobile commit, plus desktop-only actuals.
 
+**Phase 9 closeout: organized download folders, chip removed, final /code-review (2026-09-28):**
+- `c34152da5` is the shared half of mobile `67a9595d4` plus the desktop actual (`relativePathOf` /
+  `existsInDownloads` / `fileUriFor` / `moveCompletedFile`, `Files.move` without replace, `:` refused)
+  and 2 E2E on real files (finish-into-layout; migrate, restart, next-episode, missing file, delete
+  cleanup).
+- `f7526b5f2` is the review fixes, the same as mobile `6ab634f46`:
+  - batch owner on enqueue;
+  - **desktop never metered** (the hidden Wi-Fi rule held every download on a metered-flagged
+    Windows connection, a regression vs `z6`);
+  - device-wide discovery result;
+  - offline season-end gap;
+  - no offline fall-through;
+  - 3 new tests, and one test race fixed.
+- Results: targeted 169 / 169 on `f7526b5f2`. The full non-E2E run was stopped by Claude Code under
+  system memory pressure after 2,748 passes / 0 failures. **One complete split `desktopTest` pass on
+  `f7526b5f2` is owed.**
+- Full record: `nuvio-z/STATUS.md`, "final /code-review gate" and "organized download folders".
+
 **Phase 9 closeout verification (2026-09-28):** feature-frozen. `f982d176b` is the shared half of mobile
 `cc1a8d8c0`: the changelog brought up to the final product (desktop 132 gains the library, background
 discovery and **Downloads no longer restart every minute**, since stable `z6` still carries the redirect
