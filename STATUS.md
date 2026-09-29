@@ -2,6 +2,19 @@
 
 Last updated: 2026-09-29
 
+## Setup + settings physical-QA polish - ON BRANCH, UNMERGED (2026-09-29)
+
+Same branch. Canonical write-up (every finding, commits, what still needs a device): the top section
+of `nuvio-z/STATUS.md`. Desktop-specific: the top bar is sized from its widest measured label
+(Downloads and Social no longer truncate); the Navigation preview is the real sidebar / top bar over a
+scrolling page; Hover wraps sample cards in the real `HomePosterHoverPreview`; Device Setup on arrival
+asks the sidebar / top bar question; `NativePlayerController` delegates its subtitle mapping to the
+shared `SubtitleRenderGeometry` (values unchanged). Shared commits cherry-picked from mobile; this
+repo's copy of `PlayerEngine.android.kt` was left as it was (not built here).
+Verification: compile pass; render harness and the new click test pass; the split suite was stopped by
+Claude Code for low memory after `rest` reached 1,760 passed / 0 failed - `playback`, `downloads` and
+`e2e` did not run. Debug build **75**.
+
 ## Setup + Settings architecture pass - COMPLETE ON BRANCH, UNMERGED (2026-09-29)
 
 Branch `claude/setup-settings-architecture` (from `3ae61b62f`, untouched), pushed, unmerged to `Dev`.
