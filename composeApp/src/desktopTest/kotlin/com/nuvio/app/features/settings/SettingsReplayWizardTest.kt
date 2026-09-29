@@ -57,6 +57,9 @@ class SettingsReplayWizardTest {
             "searchableText must contain replay, setup, or wizard",
         )
         assertFalse(unavailableEntries.any { it.target is SettingsSearchTarget.RunSetupAgain })
+        // Setup + settings pass: the row lives under Setup & about with its new name.
+        assertTrue(entry.title == "Run Initial Setup again", "was '${entry.title}'")
+        assertTrue(availableEntries.any { it.target is SettingsSearchTarget.AdvancedSetup })
     }
 
     @Test

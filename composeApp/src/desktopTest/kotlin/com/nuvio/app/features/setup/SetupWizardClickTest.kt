@@ -154,6 +154,82 @@ class SetupWizardClickTest {
         }
     }
 
+    // --- Advanced Setup (setup + settings pass): the hub and its panel frame -----------------
+
+    private val hubFacts = AdvancedSetupFacts(isDesktop = true, playbackModeName = PlaybackMode.STREAMLINED.name)
+
+    @Composable
+    private fun Hub(onOpen: (AdvancedSetupCategory) -> Unit, onTour: () -> Unit) {
+        AdvancedSetupHub(
+            facts = hubFacts,
+            values = AdvancedSetupValues(),
+            reviewed = emptyList(),
+            insets = androidx.compose.foundation.layout.PaddingValues(0.dp),
+            windowWidth = 1280.dp,
+            onOpenCategory = onOpen,
+            onStartTour = onTour,
+            onClose = {},
+        )
+    }
+
+    @Test
+    fun hubCategoryCardOpensItsCategoryOncePerClick() {
+        val opened = mutableListOf<AdvancedSetupCategory>()
+        withScene({ ConsumingRoot { Hub(onOpen = { opened += it }, onTour = {}) } }) { scene ->
+            scene.click(scene.nodeWithText("Skipping & next episode").center(), jitter = true)
+            scene.click(scene.nodeWithText("Subtitles").center(), jitter = false)
+            assertEquals(listOf(AdvancedSetupCategory.Skipping, AdvancedSetupCategory.Subtitles), opened)
+        }
+    }
+
+    @Test
+    fun hubTourButtonStartsTheTourOnce() {
+        var tours = 0
+        withScene({ ConsumingRoot { Hub(onOpen = {}, onTour = { tours++ }) } }) { scene ->
+            scene.click(scene.nodeWithText("Take the full tour").center(), jitter = true)
+            assertEquals(1, tours)
+        }
+    }
+
+    /** The two-pane panel frame walks one panel per Next, and Done ends the category. */
+    @Test
+    fun panelFrameAdvancesOnePanelPerClick() {
+        var panel by mutableStateOf<AdvancedSetupPanel?>(AdvancedSetupPanel.SkipSegments)
+        var advances = 0
+        withScene({
+            ConsumingRoot {
+                val current = panel
+                if (current != null) {
+                    val panels = advancedSetupPanels(current.category, hubFacts)
+                    AdvancedSetupPanelFrame(
+                        panel = current,
+                        facts = hubFacts,
+                        values = AdvancedSetupValues(),
+                        touring = false,
+                        position = (panels.indexOf(current) + 1) to panels.size,
+                        isLast = nextAdvancedSetupPanel(current, hubFacts) == null,
+                        wideDesktop = true,
+                        windowHeight = 820.dp,
+                        insets = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                        onBack = { panel = previousAdvancedSetupPanel(current, hubFacts) },
+                        onAdvance = {
+                            advances++
+                            panel = nextAdvancedSetupPanel(current, hubFacts)
+                        },
+                        onClose = {},
+                        onSocialEnabledChange = {},
+                    )
+                }
+            }
+        }) { scene ->
+            scene.click(scene.nodeWithText(NextLabel).center(), jitter = true, settleMs = 16)
+            assertEquals(AdvancedSetupPanel.NextEpisode, panel)
+            scene.click(scene.nodeWithText("Done").center(), jitter = false, settleMs = 250)
+            assertEquals(null, panel)
+            assertEquals(2, advances)
+        }
+    }
+
     @Composable
     private fun ConsumingRoot(content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit) {
         Box(modifier = Modifier.fillMaxSize().nuvioConsumePointerEvents(), content = content)
