@@ -712,7 +712,7 @@
         },
         {
           "build": 74,
-          "text": "Setup + settings pass: Advanced Setup (Settings → Setup & about, the Done page, the What's New card), a reorganised Settings with Navigation and About pages, Welcome back when a profile arrives from a phone, and sync and sign-out fixes."
+          "text": "First debug build on the upstream sync (vanilla 0.1.26-alpha plus the UX convergence): upstream's top bar, now with Downloads and Social (the sidebar is still selectable; narrow windows use the top bar), upstream's dialogs, sheets and menus, skip movie credits, your subtitle choice carried to the next episode, a smoother Home banner, custom posters kept when you return to a title, shimmering source-list labels, TMDB details on by default, and Nuvio Z keeping its own sign-in. Plus the setup + settings pass: Advanced Setup (Settings → Setup & about, the Done page, the What's New card), a reorganised Settings with Navigation and About pages, Welcome back when a profile arrives from a phone, and sync and sign-out fixes."
         }
       ]
     }
