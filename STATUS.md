@@ -2,6 +2,39 @@
 
 Last updated: 2026-09-29
 
+## Setup + Settings architecture pass - COMPLETE ON BRANCH, UNMERGED (2026-09-29)
+
+Branch `claude/setup-settings-architecture` (from `3ae61b62f`, untouched), pushed, unmerged to `Dev`.
+Canonical write-up - what shipped, deviations, physical QA, debt - is the top section of
+`nuvio-z/STATUS.md`; plan `../PLAN-setup-settings-architecture.md`. Shared commits were carried from
+`mobile/claude/setup-settings-architecture` by **cherry-pick** (a full merge drags an unrelated mobile
+baseline); every file the pass added or changed in both repos is byte-identical to `nuvio-z`'s except
+the per-repository `core/sync/ZProfileSyncContributors.kt` (no Random Episode) and
+`features/setup/AdvancedSetupRepoBindings.kt` (empty Random Episode row), plus the files that were
+already divergent (`AppGate.kt`, `MainAppContent.kt`, `SettingsSearch.kt`, `ProfileRepository.kt`,
+`LocalAccountDataCleaner.kt`), which received the same hunks.
+
+Desktop-specific: `DesktopStorage.wipeExceptDeviceLocal()` (sign-out keeps zoom, renderer, Discord,
+Sentry, window, downloads/logs/updates/TorrServer); per-profile `DeviceSetupStorage` flags; no
+device-stale Device Setup run (arrival only); Advanced Setup's two-pane frame at >= 1000 dp and a
+three-column hub; Navigation = sidebar / top bar + style; the hover panel in Posters; the Android
+engine / libmpv / DV7 / tunneling rows no longer shown on the Advanced page (vanilla desktop hides
+them too; Decoder priority kept).
+
+New desktop tests: `AdvancedSetupRenderHarness` (hub, every panel at 420x900 / 1280x820 /
+2560x1440 / 3840x2160, Android-facts panels, specimens in every palette - PNGs in
+`composeApp/build/advanced-setup-render/`, reviewed; the review fixed desktop Home/Details
+cropping, a short metadata band, the hub's missing background and empty source-row release lines),
+hub and panel-frame cases in `SetupWizardClickTest`, `ZSettingsHubDesktopTest`, and the new title in
+`SettingsReplayWizardTest`.
+
+**Verification.** Owed from the handoff: `compileKotlinDesktop` at `ace6b7fa2` passed, split suite
+**3,259 / 3,259**. Final: `scripts/run-desktop-tests-split.sh` on code head `880639293` - **3,269 /
+3,269** (rest 1,736; playback 1,027; Downloads 457; E2E 49; no skips, failures or duplicates). The one
+later code commit (`fix(settings): no JVM-only replaceAll`, a two-call-site change for Kotlin/Native)
+compiled with `compileKotlinDesktop`. Nothing released beyond the debug channel; physical QA is
+outstanding (see the canonical STATUS).
+
 ## Upstream UX convergence, part 2 - ON BRANCH, UNMERGED (2026-09-29)
 
 Branch `claude/pre-release-ux-convergence` (from `b4c83e95a`, which is untouched), pushed, unmerged
