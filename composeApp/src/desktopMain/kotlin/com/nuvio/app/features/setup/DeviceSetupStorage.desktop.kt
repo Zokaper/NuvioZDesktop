@@ -1,6 +1,7 @@
 package com.nuvio.app.features.setup
 
 import com.nuvio.app.core.storage.DesktopStorage
+import com.nuvio.app.core.storage.ProfileScopedKey
 
 /**
  * Desktop has no device steps (no mobile-data rule), so `setupWizardRun` never asks for a device
@@ -14,5 +15,12 @@ internal actual object DeviceSetupStorage {
 
     actual fun saveRevision(revision: Int) {
         store.putInt(revisionKey, revision)
+    }
+
+    actual fun loadProfileFlag(flag: String, profileId: Int): Boolean =
+        store.getBoolean(ProfileScopedKey.of(flag, profileId)) ?: false
+
+    actual fun saveProfileFlag(flag: String, profileId: Int, value: Boolean) {
+        store.putBoolean(ProfileScopedKey.of(flag, profileId), value)
     }
 }

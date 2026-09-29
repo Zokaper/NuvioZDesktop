@@ -108,7 +108,7 @@ internal fun supabaseSessionKey(backendUrl: String): String {
 }
 
 /**
- * Looks the store up on every call rather than holding it: `DesktopStorage.wipe()`, which sign-out
+ * Looks the store up on every call rather than holding it: `DesktopStorage.wipeExceptDeviceLocal()`, which sign-out
  * runs, discards the store instances along with the files.
  */
 private class DesktopStoreSlot(private val key: String) : StoredSessionSlot {

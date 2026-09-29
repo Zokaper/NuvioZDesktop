@@ -6,7 +6,6 @@ import kotlinx.serialization.json.Json
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
-import java.util.Comparator
 import java.util.Locale
 import java.util.Properties
 import kotlin.io.path.exists
@@ -27,17 +26,38 @@ internal object DesktopStorage {
         stores.getOrPut(name) { Store(rootDir.resolve("$name.properties")) }
     }
 
-    fun wipe() {
-        synchronized(stores) {
-            stores.values.forEach(Store::clearInMemory)
-            stores.clear()
-        }
-        if (!rootDir.exists()) return
-        Files.walk(rootDir).use { stream ->
+    /**
+     * Clears account, credential and cache stores while preserving installation preferences.
+     * Only direct `*.properties` children are considered: downloads, logs, updater payloads and
+     * the native-player directories also live under [rootDir] and are deliberately untouched.
+     */
+    fun wipeExceptDeviceLocal() {
+        wipeExcept(rootDir)
+    }
+
+    internal fun wipeExcept(directory: Path) {
+        if (!directory.exists()) return
+        val files = Files.list(directory).use { stream ->
             stream
-                .sorted(Comparator.reverseOrder())
-                .filter { it != rootDir }
-                .forEach { path -> runCatching { Files.deleteIfExists(path) } }
+                .filter { Files.isRegularFile(it) && it.fileName.toString().endsWith(STORE_SUFFIX) }
+                .toList()
+        }
+        files.forEach { file ->
+            val name = file.fileName.toString().removeSuffix(STORE_SUFFIX)
+            if (!LocalStoreRegistry.isWiped(name)) return@forEach
+
+            val preservedKeys = LocalStoreRegistry.find(name)?.preservedKeys.orEmpty()
+            if (preservedKeys.isEmpty()) {
+                synchronized(stores) {
+                    stores.remove(name)?.clearInMemory()
+                }
+                Files.deleteIfExists(file)
+            } else {
+                Store(file).retainOnly(preservedKeys)
+                synchronized(stores) {
+                    stores[name]?.clearInMemory()
+                }
+            }
         }
     }
 
@@ -154,6 +174,15 @@ internal object DesktopStorage {
             if (changed) persist()
         }
 
+        fun retainOnly(keys: Set<String>) = synchronized(lock) {
+            ensureLoaded()
+            val changed = properties.stringPropertyNames()
+                .filterNot(keys::contains)
+                .map(properties::remove)
+                .isNotEmpty()
+            if (changed) persist()
+        }
+
         fun clearInMemory() = synchronized(lock) {
             properties.clear()
             loaded = false
@@ -178,4 +207,6 @@ internal object DesktopStorage {
             }
         }
     }
+
+    private const val STORE_SUFFIX = ".properties"
 }
