@@ -2,6 +2,18 @@
 
 Last updated: 2026-09-29
 
+## iOS / Watch Together hardening shared desktop pass — in progress (2026-09-29)
+
+Branch `claude/ios-watch-together-hardening` starts at the final pushed setup/settings
+head `b8e39bab7`. The WT repository, barrier, diagnostics, readiness reconciler, route
+guard, lobby and Social surfaces were carried from mobile with focused shared-history
+merges; the desktop-divergent `MainAppContent` and player UI were adapted without replacing
+their desktop behavior. Shared files meant to match mobile are byte-identical. Desktop
+receives a durable Away roster, readiness reconciliation, command-path T0–T4 logs,
+friendly duplicate-friend-request states, and Social's active-party Return affordance.
+No iOS-only Swift/UIKit code is in this repo. `compileKotlinDesktop` passed; the full split
+suite is running. A fresh desktop debug build is required for cross-platform physical QA.
+
 ## Setup + settings QA follow-ups after debug 68 / desktop 75 - ON BRANCH, UNMERGED (2026-09-29)
 
 Canonical write-up: top section of `nuvio-z/STATUS.md`. Desktop-specific: **Windows has no in-app
