@@ -31,6 +31,12 @@ sealed interface SettingsDestinationRoute : AppRoute {
 }
 
 @Serializable
+sealed interface DownloadsDestinationRoute : AppRoute {
+    override val preferredTabName: String
+        get() = "Downloads"
+}
+
+@Serializable
 data object TabsRoute : AppRoute
 
 @Serializable
@@ -39,6 +45,15 @@ data class DetailRoute(
     val id: String,
     override val title: String? = null,
 ) : AppRoute
+
+@Serializable
+data class WatchPartyLobbyRoute(
+    val inviteCode: String? = null,
+    val partyId: String? = null,
+    override val title: String? = null,
+) : AppRoute {
+    override val hidesNavigationBar: Boolean get() = true
+}
 
 @Serializable
 data class PersonDetailRoute(
@@ -86,7 +101,14 @@ data class DownloadsSettingsRoute(override val title: String = "") : SettingsDes
 data class DownloadShowRoute(
     val showId: String,
     override val title: String,
-) : AppRoute
+) : DownloadsDestinationRoute
+
+/** Manual, several episodes: pick each episode's source (Phase 9). */
+@Serializable
+data class DownloadChooseSourcesRoute(
+    val batchId: String,
+    override val title: String = "",
+) : DownloadsDestinationRoute
 
 @Serializable
 data class AddonsSettingsRoute(override val title: String = "") : SettingsDestinationRoute

@@ -1,8 +1,12 @@
 package com.nuvio.app
 
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.ImageLoader
@@ -15,10 +19,16 @@ import com.nuvio.app.core.poster.CustomPosterFallbackInterceptor
 import com.nuvio.app.core.ui.NativeProfileSwitcherController
 import com.nuvio.app.core.ui.NuvioTheme
 import com.nuvio.app.core.ui.configurePlatformImageLoader
+import com.nuvio.app.core.ui.desktopUiScaleForWindow
 import com.nuvio.app.core.ui.platformProvidesImageLoader
 import com.nuvio.app.features.settings.ThemeSettingsRepository
 import com.nuvio.app.navigation.AppRoute
 import com.nuvio.app.navigation.TabsRoute
+import com.nuvio.app.navigation.WatchPartyLobbyRoute
+import com.nuvio.app.features.watchparty.WatchPartyRouteExitGuard
+
+/** Called only when SwiftUI proposes an unguarded native removal of the lobby. */
+fun requestNativeRouteExit(route: WatchPartyLobbyRoute): Boolean = WatchPartyRouteExitGuard.request(route)
 
 fun disposeRoute(route: AppRoute) {
     disposeRouteResources(route)
@@ -40,7 +50,7 @@ fun App(
     onReplace: ((AppRoute) -> Unit)? = null,
     onActivate: ((AppScreenTab) -> Unit)? = null,
     onAppReady: ((Boolean) -> Unit)? = null,
-    onTabTitles: ((home: String, search: String, library: String, profile: String, switchProfile: String, addProfile: String) -> Unit)? = null,
+    onTabTitles: ((home: String, search: String, library: String, downloads: String, profile: String, switchProfile: String, addProfile: String) -> Unit)? = null,
     nativeProfileSwitcherController: NativeProfileSwitcherController? = null,
     appGateController: AppGateController? = null,
 ) {
@@ -96,10 +106,20 @@ internal fun AppEnvironment(content: @Composable () -> Unit) {
     val amoledEnabled by remember {
         ThemeSettingsRepository.amoledEnabled
     }.collectAsStateWithLifecycle()
+    val desktopUiZoom by remember {
+        ThemeSettingsRepository.desktopUiZoom
+    }.collectAsStateWithLifecycle()
 
     val customThemeColors by ThemeSettingsRepository.customThemeColors.collectAsStateWithLifecycle()
 
-    NuvioTheme(appTheme = selectedTheme, amoled = amoledEnabled, customThemeColors = customThemeColors) {
-        content()
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        NuvioTheme(
+            appTheme = selectedTheme,
+            amoled = amoledEnabled,
+            desktopUiScale = desktopUiScaleForWindow(maxWidth.value, maxHeight.value) * desktopUiZoom.factor,
+            customThemeColors = customThemeColors,
+        ) {
+            content()
+        }
     }
 }
