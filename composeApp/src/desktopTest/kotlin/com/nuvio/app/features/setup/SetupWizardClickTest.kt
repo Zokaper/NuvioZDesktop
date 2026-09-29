@@ -230,6 +230,50 @@ class SetupWizardClickTest {
         }
     }
 
+    /**
+     * "Set up in Settings" (setup polish): the link asks for the page and nothing else - the panel is
+     * not closed, not advanced and not left - and the page it asks for is one the hub hosts over
+     * itself (`ZNestedSettingsPage`), so Back lands on this same panel.
+     */
+    @Test
+    fun setUpInSettingsOpensThePageWithoutLeavingThePanel() {
+        val requested = mutableListOf<com.nuvio.app.features.settings.SettingsPage>()
+        var panel by mutableStateOf<AdvancedSetupPanel?>(AdvancedSetupPanel.EnhancedMetadata)
+        var closes = 0
+        withScene({
+            ConsumingRoot {
+                val current = panel
+                if (current != null) {
+                    AdvancedSetupPanelFrame(
+                        panel = current,
+                        facts = hubFacts,
+                        values = AdvancedSetupValues(),
+                        touring = true,
+                        position = 20 to 25,
+                        isLast = false,
+                        wideDesktop = true,
+                        windowHeight = 820.dp,
+                        insets = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                        onBack = { panel = null },
+                        onAdvance = { panel = null },
+                        onClose = { closes++ },
+                        onSocialEnabledChange = {},
+                        onOpenSettings = { requested += it },
+                    )
+                }
+            }
+        }) { scene ->
+            scene.click(scene.nodeWithText("Set up in Settings").center(), jitter = true)
+            assertEquals(listOf(com.nuvio.app.features.settings.SettingsPage.MdbListRatings), requested)
+            assertEquals(AdvancedSetupPanel.EnhancedMetadata, panel)
+            assertEquals(0, closes)
+        }
+        requested.forEach { page ->
+            kotlin.test.assertTrue(com.nuvio.app.features.settings.ZNestedSettingsPage.supports(page), "$page is hosted over the hub")
+        }
+        kotlin.test.assertTrue(com.nuvio.app.features.settings.ZNestedSettingsPage.supports(com.nuvio.app.features.settings.SettingsPage.TraktAuthentication))
+    }
+
     @Composable
     private fun ConsumingRoot(content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit) {
         Box(modifier = Modifier.fillMaxSize().nuvioConsumePointerEvents(), content = content)
