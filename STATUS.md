@@ -35,6 +35,12 @@ later code commit (`fix(settings): no JVM-only replaceAll`, a two-call-site chan
 compiled with `compileKotlinDesktop`. Nothing released beyond the debug channel; physical QA is
 outstanding (see the canonical STATUS).
 
+**CI and debug build.** Push CI `36559496418`: Windows MSI **success**; the Linux desktop-tests job is
+red only at the pre-existing vendored `frame_copy_test` (`player != NULL`). **Desktop debug build 74**
+is the first desktop debug build on the upstream sync (vanilla 0.1.26-alpha + the UX convergence);
+its first dispatch was cancelled before publishing to correct its note, and it was re-dispatched as
+run `36561216816` - check its result before testing.
+
 ## Upstream UX convergence, part 2 - ON BRANCH, UNMERGED (2026-09-29)
 
 Branch `claude/pre-release-ux-convergence` (from `b4c83e95a`, which is untouched), pushed, unmerged
