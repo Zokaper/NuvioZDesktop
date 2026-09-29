@@ -713,6 +713,10 @@
         {
           "build": 74,
           "text": "First debug build on the upstream sync (vanilla 0.1.26-alpha plus the UX convergence): upstream's top bar, now with Downloads and Social (the sidebar is still selectable; narrow windows use the top bar), upstream's dialogs, sheets and menus, skip movie credits, your subtitle choice carried to the next episode, a smoother Home banner, custom posters kept when you return to a title, shimmering source-list labels, TMDB details on by default, and Nuvio Z keeping its own sign-in. Plus the setup + settings pass: Advanced Setup (Settings → Setup & about, the Done page, the What's New card), a reorganised Settings with Navigation and About pages, Welcome back when a profile arrives from a phone, and sync and sign-out fixes."
+        },
+        {
+          "build": 75,
+          "text": "Advanced Setup polish from the device pass: the Player, Home, Detail page, Enhanced metadata and Source list previews now show the app's real screens; the Navigation preview uses the real sidebar and top bar, and hover previews can be tried on the sample cards; Set up in Settings opens the page over Advanced Setup and Back returns to where you were; Social switches respond at once; a clearer Take the full tour; the tour no longer slides the whole screen. The top bar no longer shortens Downloads to Downl.... Welcome back on desktop now also sets up the sidebar or top bar."
         }
       ]
     }
