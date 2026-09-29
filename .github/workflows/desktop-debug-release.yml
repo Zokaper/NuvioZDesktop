@@ -64,6 +64,9 @@ jobs:
     runs-on: windows-2022
     env:
       LOCAL_PROPERTIES_BASE64: ${{ secrets.NUVIO_DESKTOP_LOCAL_PROPERTIES_BASE64 }}
+      # Official builds must bundle a working TMDB key; the build refuses a blank one.
+      TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+      NUVIO_REQUIRE_TMDB_API_KEY: "true"
       WEBVIEW2_VERSION: 1.0.4078.44
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -187,6 +190,9 @@ jobs:
     runs-on: macos-15
     env:
       LOCAL_PROPERTIES_BASE64: ${{ secrets.NUVIO_DESKTOP_LOCAL_PROPERTIES_BASE64 }}
+      # Official builds must bundle a working TMDB key; the build refuses a blank one.
+      TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+      NUVIO_REQUIRE_TMDB_API_KEY: "true"
       MACOS_ARCH: arm64
       GH_TOKEN: ${{ github.token }}
     steps:
