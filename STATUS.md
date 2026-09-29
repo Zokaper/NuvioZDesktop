@@ -2,6 +2,17 @@
 
 Last updated: 2026-09-29
 
+## Setup + settings QA follow-ups after debug 68 / desktop 75 - ON BRANCH, UNMERGED (2026-09-29)
+
+Canonical write-up: top section of `nuvio-z/STATUS.md`. Desktop-specific: **Windows has no in-app
+trailer surface** (`trailerPlaybackMode = EXTERNAL`, `HeroTrailerPlayerSurface` is `= Unit`), so
+Advanced Setup's Hover panel now offers only the preview switch there, as Settings already did; real
+Windows hover trailers would be a new feature. `desktop-debug-release` and `desktop-release` now read
+a `TMDB_API_KEY` repository secret and require it (`NUVIO_REQUIRE_TMDB_API_KEY`); **the secret does
+not exist yet**, so the next desktop debug or release build fails at `generateRuntimeConfigs` until it
+is added. Commits `59fcb3176` (cherry-pick of mobile `764719138`), `c6efe14c2`.
+Desktop `desktopTest` for the same packages from a deleted results directory: **228 tests, 0 failed**.
+
 ## Setup + settings physical-QA polish - ON BRANCH, UNMERGED (2026-09-29)
 
 Same branch. Canonical write-up (every finding, commits, what still needs a device): the top section
