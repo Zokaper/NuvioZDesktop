@@ -11,9 +11,10 @@ scrolling page; Hover wraps sample cards in the real `HomePosterHoverPreview`; D
 asks the sidebar / top bar question; `NativePlayerController` delegates its subtitle mapping to the
 shared `SubtitleRenderGeometry` (values unchanged). Shared commits cherry-picked from mobile; this
 repo's copy of `PlayerEngine.android.kt` was left as it was (not built here).
-Verification: compile pass; render harness and the new click test pass; the split suite was stopped by
-Claude Code for low memory after `rest` reached 1,760 passed / 0 failed - `playback`, `downloads` and
-`e2e` did not run. Debug build **75**.
+Verification: compile pass; split suite **3,301 / 3,301** (rest 1,763; playback 1,032; downloads 457;
+E2E 49; no skips, failures or duplicates). Push CI `36588328017`: Windows MSI success, Linux red only at
+the pre-existing `frame_copy_test`. Debug build **75** = `debug-v0.1.23-alpha-z6.75` (run
+`36588356606`, success).
 
 ## Setup + Settings architecture pass - COMPLETE ON BRANCH, UNMERGED (2026-09-29)
 
