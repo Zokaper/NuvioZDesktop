@@ -1,8 +1,15 @@
 # Nuvio Z Status
 
-Last updated: 2026-09-29
+Last updated: 2026-09-30
 
-## iOS / Watch Together hardening shared desktop pass — in progress (2026-09-29)
+## iOS / Watch Together hardening shared desktop pass — finalized (2026-09-30)
+
+Head `21d1adea9`: full split suite **3,309 tests, 0 failures** (rest 1,767 / playback 1,036 /
+downloads 457 / e2e 49), including the one-shot route-exit authorization carried from mobile
+`792eb61ef`. Desktop debug 77 is cut from this head; tag and run ID are recorded in
+`nuvio-z/STATUS.md`.
+
+### Earlier notes (2026-09-29)
 
 Branch `claude/ios-watch-together-hardening` starts at the final pushed setup/settings
 head `b8e39bab7`. The WT repository, barrier, diagnostics, readiness reconciler, route
