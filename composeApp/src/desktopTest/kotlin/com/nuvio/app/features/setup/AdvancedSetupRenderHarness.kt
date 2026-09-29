@@ -120,15 +120,19 @@ class AdvancedSetupRenderHarness {
             renderPanels("desktop", desktopFacts, w, h, failures)
         }
         renderPanels("android", androidFacts, 420, 900, failures)
+        // A small phone, where the device pass found the crops (setup polish).
+        renderPanels("android-small", androidFacts, 360, 740, failures)
 
         for (theme in AppTheme.entries) {
             render("specimens-${theme.name.lowercase()}", 1280, 820, theme, failures) {
                 AdvancedPreviewFrame(Modifier.fillMaxSize()) {
                     androidx.compose.foundation.layout.Column {
-                        SpecimenPlayerChrome(
-                            legacyLayout = false, showLayoutChoice = true, pauseOverlay = true, loadingOverlay = true,
-                            contentWarnings = true, touchPanel = false, touchGestures = true, holdToSpeed = true, holdSpeed = 2f,
-                        )
+                        androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(300.dp)) {
+                            SpecimenPlayerChrome(
+                                legacyLayout = false, showLayoutChoice = true, pauseOverlay = true, loadingOverlay = true,
+                                contentWarnings = true, desktop = false,
+                            )
+                        }
                         SpecimenSkipTimeline(
                             skipIntro = true, autoSkip = setOf(AutoSkipSegmentType.RECAP), showNextEpisode = true,
                             autoPlayNext = false, thresholdMode = com.nuvio.app.features.player.skip.NextEpisodeThresholdMode.PERCENTAGE,
@@ -141,22 +145,56 @@ class AdvancedSetupRenderHarness {
             render("specimens-b-${theme.name.lowercase()}", 1280, 820, theme, failures) {
                 AdvancedPreviewFrame(Modifier.fillMaxSize()) {
                     androidx.compose.foundation.layout.Column {
-                        SpecimenSubtitles(style = SubtitleStyleState(outlineEnabled = true, bold = true))
-                        SpecimenSourceList(
-                            backgroundMode = StreamBackgroundMode.Cinematic, showSizeBadges = true,
-                            badgePlacement = StreamBadgePlacement.TOP, showAddonLogo = true,
-                        )
-                        SpecimenMetadata(enriched = true)
+                        androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(220.dp)) {
+                            SpecimenSubtitles(
+                                style = SubtitleStyleState(outlineEnabled = true, bold = true),
+                                renderer = com.nuvio.app.features.player.SubtitleRenderer.ExoPlayer,
+                                desktop = false,
+                            )
+                        }
+                        androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(260.dp)) {
+                            SpecimenSourceList(
+                                backgroundMode = StreamBackgroundMode.Cinematic, showSizeBadges = true,
+                                badgePlacement = StreamBadgePlacement.TOP, showAddonLogo = true,
+                            )
+                        }
+                        androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(300.dp)) {
+                            SpecimenMetadata(enriched = true, desktop = false)
+                        }
                     }
                 }
             }
             render("specimens-c-${theme.name.lowercase()}", 1280, 820, theme, failures) {
                 AdvancedPreviewFrame(Modifier.fillMaxSize()) {
                     androidx.compose.foundation.layout.Column {
-                        SpecimenDesktopNavigation(layout = DesktopNavigationLayout.Sidebar, style = NavBarStyle.EXPANDED)
-                        SpecimenDesktopNavigation(layout = DesktopNavigationLayout.TopBar, style = NavBarStyle.COMPACT)
+                        androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(300.dp)) {
+                            SpecimenDesktopNavigation(
+                                layout = DesktopNavigationLayout.Sidebar, style = NavBarStyle.EXPANDED,
+                                heroEnabled = true, socialEnabled = true, glowEnabled = true,
+                            )
+                        }
+                        androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(300.dp)) {
+                            SpecimenDesktopNavigation(
+                                layout = DesktopNavigationLayout.TopBar, style = NavBarStyle.EXPANDED,
+                                heroEnabled = false, socialEnabled = true, glowEnabled = true,
+                            )
+                        }
                         SpecimenIosTabBar(liquidGlass = true)
                         SpecimenTracking()
+                    }
+                }
+            }
+        }
+
+        // Device Setup's borrowed player step, as the wizard draws its band on a phone.
+        for ((w, h) in listOf(360 to 740, 420 to 900)) {
+            render("device-player-android-${w}x$h", w, h, AppTheme.WHITE, failures) {
+                androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(250.dp)) {
+                    AdvancedPreviewFrame(Modifier.fillMaxSize(), interactive = true) {
+                        SpecimenPlayerTouch(
+                            legacyLayout = true, showLayoutChoice = true, gestures = true,
+                            holdToSpeed = true, holdSpeed = 2f, interactive = true,
+                        )
                     }
                 }
             }

@@ -9,13 +9,7 @@ import androidx.compose.runtime.Composable
 
 /** Whether Random Episode is on, for the Detail page preview's Shuffle action. Always false on desktop. */
 @Composable
-internal fun rememberAdvancedRandomEpisodeAvailable(): Boolean {
-    val shuffle by remember {
-        EpisodeShuffleRepository.ensureLoaded()
-        EpisodeShuffleRepository.uiState
-    }.collectAsStateWithLifecycle()
-    return shuffle.available
-}
+internal fun rememberAdvancedRandomEpisodeAvailable(): Boolean = false
 
 /**
  * Detail page → Random Episode is mobile-only: `advancedSetupControls` never lists it on desktop, so
