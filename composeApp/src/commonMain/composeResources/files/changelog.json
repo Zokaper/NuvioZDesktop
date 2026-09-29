@@ -709,6 +709,10 @@
         {
           "build": 73,
           "text": "Finished downloads are sorted into Title / Season folders, and existing ones move there on first launch; the Downloaded chip on a show's page is gone. Fixes from the final review: downloads no longer wait forever on a connection Windows marks as metered; a profile switch during a background season no longer touches another profile's downloads or loses an early Choose now; offline autoplay stops at the end of what is downloaded; a file that vanished just before playing no longer falls back to online sources."
+        },
+        {
+          "build": 74,
+          "text": "Setup + settings pass: Advanced Setup (Settings → Setup & about, the Done page, the What's New card), a reorganised Settings with Navigation and About pages, Welcome back when a profile arrives from a phone, and sync and sign-out fixes."
         }
       ]
     }
