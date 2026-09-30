@@ -721,6 +721,10 @@
         {
           "build": 76,
           "text": "TMDB details work again: builds now carry Nuvio's built-in TMDB key, so cast, artwork, episode details and More like this come from TMDB with no key of your own (75 shipped without one). On Windows, Advanced Setup's Hover panel no longer offers trailer switches, because trailers cannot play on hover there yet; the preview card itself still works. Player previews show a real episode frame."
+        },
+        {
+          "build": 79,
+          "text": "Playback: removes an incorrect 'No safe automatic source' toast after a chosen source has been handed to the player. The source-selection watchdog now respects manual startup and player ownership; genuine automatic-selection failures still return to the source list."
         }
       ]
     }

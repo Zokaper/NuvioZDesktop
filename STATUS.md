@@ -1,3 +1,18 @@
+## RC follow-up: incorrect source-selection toast (2026-09-30)
+
+Mobile debug 72 physically passed ten exit/reopen cycles and lock-screen Live Activity
+background text, but a brief automatic-source toast persisted before the chosen source
+played. A retained-source-route Compose regression reproduced the exact toast before
+mobile `dac42f329` fixed it. The same unguarded dead-end watchdog exists on desktop.
+
+Maintainer authorized the same fix and desktop debug build. Merged only the ownership
+guard in StreamDestination / StreamRouteSurface and five policy tests from mobile's
+isolated `rc-toast-shared` branch (`c1d448df7`), based on desktop's current head to avoid
+bringing unrelated mobile/native changes. Completed handoff, manual startup and inactive
+routes suppress/cancel the backstop; ownership is checked again after its grace delay.
+Genuine automatic dead ends retain their fallback. Preparing debug 79; full split suite
+and local compilation are running. No stable version or serial change.
+
 # Nuvio Z Status
 
 Last updated: 2026-09-30
