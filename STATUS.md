@@ -1,3 +1,21 @@
+## iPhone return retest used installed debug 79 (2026-09-30, 23:06–23:12 Arabia)
+
+Installed laptop configuration is `1.45.79`, source `71c8386d4`, before the host Away policy
+merge `371e71dcf`. Host log confirms Away remained held after the iPhone's durable return RPC
+completed; maintainer disabled waiting before the recovered peer packet arrived. Current source
+already contains durable-return clearing and fresh/leased Away policy, with local focused tests
+51/51 passing. Do not classify this as physical failure of that uninstalled host fix.
+
+Existing CI `36734266044` built a successful Windows MSI on source `d020c0c609`. Artifact:
+https://github.com/Zokaper/NuvioZDesktop/actions/runs/36734266044/artifacts/11105899064 .
+Downloaded to `../.rc-investigation/wt-ios/desktop-away-host/`, SHA-256
+`651c896ada71e1862f4d869f9d40a62cab3bbeb930ca57bfbf0dee901b8ba06b`.
+This is a stable-channel build-only MSI, separate from installed Debug; no installation or debug
+release/feed change performed. Overall CI failed before Kotlin tests at Linux native frame-copy
+test `player != NULL`; Windows MSI job succeeded. Next Away acceptance needs a host containing
+`371e71dcf`. Mobile recovery follow-up is documented in canonical mobile STATUS/RC doc; no
+desktop transport, backend, source matching or player-control changes in this follow-up.
+
 ## Final iOS WT RC — desktop host Away policy (2026-09-30)
 
 Maintainer's desktop 78 / mobile 72 physical run passes otherwise; iOS Home Away/pause and
