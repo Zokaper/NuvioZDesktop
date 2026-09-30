@@ -10,7 +10,8 @@ nobody. Shared commit `c3822e4b0` (mobile `7846909dc`) is merged as `371e71dcf` 
 
 Desktop Kotlin/native bridge compile and focused presence tests **51/51 pass**. Logs and copied
 XML: `../.rc-investigation/wt-ios/desktop-focused*`. No new
-desktop build published. Backend notification migration is locally tested **347/347**, undeployed.
+desktop build published. Backend notification migration is locally tested **347/347** and deployed
+only to Z project `pzbpghmmordvzcfbayoh`; live trigger and migration history verified after backup.
 Canonical evidence/reconnect blocker: `../nuvio-z/Docs/IOS-WATCH-TOGETHER-RC.md`.
 
 ## RC follow-up: incorrect source-selection toast (2026-09-30)
