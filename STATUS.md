@@ -1,3 +1,18 @@
+## Final iOS WT RC — desktop host Away policy (2026-09-30)
+
+Maintainer's desktop 78 / mobile 72 physical run passes otherwise; iOS Home Away/pause and
+spontaneous foreground reconnect remain blockers. Desktop receives only the necessary host
+Away policy/presence change: durable `awaySince` joins fresh peer Away, bounded by the existing
+ten-minute lease. Return/expiry clears older peer Away; delayed pre-return packets cannot restore
+it. Failed/left/ended and unleased disconnected members remain excluded; preference OFF holds
+nobody. Shared commit `c3822e4b0` (mobile `7846909dc`) is merged as `371e71dcf` from isolated
+`rc-wt-away-shared`. No desktop transport/reconnect, source, controls, setup or Downloads changes.
+
+Desktop Kotlin/native bridge compile and focused presence tests **51/51 pass**. Logs and copied
+XML: `../.rc-investigation/wt-ios/desktop-focused*`. No new
+desktop build published. Backend notification migration is locally tested **347/347**, undeployed.
+Canonical evidence/reconnect blocker: `../nuvio-z/Docs/IOS-WATCH-TOGETHER-RC.md`.
+
 ## RC follow-up: incorrect source-selection toast (2026-09-30)
 
 Mobile debug 72 physically passed ten exit/reopen cycles and lock-screen Live Activity
