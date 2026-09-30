@@ -10,8 +10,17 @@ guard in StreamDestination / StreamRouteSurface and five policy tests from mobil
 isolated `rc-toast-shared` branch (`c1d448df7`), based on desktop's current head to avoid
 bringing unrelated mobile/native changes. Completed handoff, manual startup and inactive
 routes suppress/cancel the backstop; ownership is checked again after its grace delay.
-Genuine automatic dead ends retain their fallback. Preparing debug 79; full split suite
-and local compilation are running. No stable version or serial change.
+Genuine automatic dead ends retain their fallback. Local desktop compile and focused
+StreamRouteSurface / PlayerExitNavigation tests **36/36 pass**. Windows CI MSI compile
+passes (`36706431048`). Its Linux job repeats the pre-existing native fixture failure
+`frame_copy_test.c:36: player != NULL`, before Kotlin tests (also failed on prior head).
+Full local Windows split suite is still running, not yet declared green; logs live in
+`../.rc-investigation/desktop79/` (part logs, copied per-part XML, summary.txt).
+
+Maintainer needed to disconnect and requested dispatch now if possible. **Desktop debug
+79 dispatched**, run `36708599493`, source `71c8386d481a9f104910f33ac0a88c804939690c`.
+Mobile debug 73 is also dispatched, run `36706038578`. Publication/checksums and complete
+Windows test counts still need checking on return. No stable version or serial change.
 
 # Nuvio Z Status
 
