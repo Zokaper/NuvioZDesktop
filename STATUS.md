@@ -1,3 +1,30 @@
+## Home/lock Away hold coordination and return readiness (2026-10-01)
+
+Active branch: `claude/ios-watch-together-hardening`. Physical retest of the prior build-only
+stable MSI containing durable Away passes Home/pause and the corrected diagnostic iPhone's
+foreground recovery; lock shows Away but does not pause. The MSI did not enable debug logging,
+and the release app's logs folder is absent. Exact member-state/eligibility comparison remains
+unproven; lock remains an acceptance blocker pending a logged retest.
+
+Shared fix `5a0384cdc` (mobile `211ed26a3`) merged as `889209050` via isolated
+`rc-wt-return-shared`: retry unconsumed automatic hold edges, retain Away ownership during
+another hold and prohibit one guard/seek readiness from resuming through another. All
+nonterminal connected/ready combinations remain eligible with an active durable Away lease;
+left/failed remain excluded. Host input/output diagnostics log the roster, member state,
+away_since, server time, eligibility, return readiness and hold output.
+
+Away clearing now withdraws old peer readiness across catch-up and channel cleanup. Return
+requires a fresh ready engine, then the existing 400 ms recovery settle, bounded by the existing
+12 s startup/seek readiness ceiling. A paused host's return catch-up requires no moving-timeline
+lead. Desktop transport/reconnect recovery behavior is retained. Common regressions plus an
+actual desktop adapter regression added. Local desktop compile and focused suite: **416 tests / 0 failures / 0 errors / 0 skips**.
+The actual desktop adapter regression uses desktop channel cleanup; initial test-only method
+lookup failure corrected. XML/logs: ../.rc-investigation/wt-ios/away-recovery-desktop-final.log.
+
+Preparing regular desktop debug **80** and mobile debug **74**, including the existing durable
+Away and reconnect fixes. Tests and publication verification remain pending; no stable changes.
+Canonical evidence: `../nuvio-z/Docs/IOS-WATCH-TOGETHER-RC.md`.
+
 ## iPhone return retest used installed debug 79 (2026-09-30, 23:06–23:12 Arabia)
 
 Installed laptop configuration is `1.45.79`, source `71c8386d4`, before the host Away policy

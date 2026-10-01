@@ -427,6 +427,10 @@
         {
           "build": 64,
           "text": "Finished downloads are sorted into Title / Season folders, and existing ones move there on first launch; the Downloaded chip on a show's page is gone. Fixes from the final review: a profile switch during a background season no longer touches another profile's downloads or loses an early Choose now; offline autoplay stops at the end of what is downloaded; a file that vanished just before playing no longer falls back to online sources."
+        },
+        {
+          "build": 74,
+          "text": "Watch Together: returning from Away now catches up and proves player readiness before the host resumes, using the existing short recovery settle. Keeps the iOS socket recovery fixes and adds host hold diagnostics for the remaining lock retest."
         }
       ]
     },
@@ -725,6 +729,10 @@
         {
           "build": 79,
           "text": "Playback: removes an incorrect 'No safe automatic source' toast after a chosen source has been handed to the player. The source-selection watchdog now respects manual startup and player ownership; genuine automatic-selection failures still return to the source list."
+        },
+        {
+          "build": 80,
+          "text": "Watch Together: Away and buffering holds now retain independent ownership, and a skipped Away pause is retried. Returning guests must report fresh playback readiness before the normal short recovery settle. Includes durable Away support and logs for the Home/lock acceptance retest."
         }
       ]
     }
