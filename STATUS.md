@@ -19,10 +19,13 @@ requires a fresh ready engine, then the existing 400 ms recovery settle, bounded
 lead. Desktop transport/reconnect recovery behavior is retained. Common regressions plus an
 actual desktop adapter regression added. Local desktop compile and focused suite: **416 tests / 0 failures / 0 errors / 0 skips**.
 The actual desktop adapter regression uses desktop channel cleanup; initial test-only method
-lookup failure corrected. XML/logs: ../.rc-investigation/wt-ios/away-recovery-desktop-final.log.
+lookup failure corrected. XML/logs: `../.rc-investigation/wt-ios/away-recovery-desktop-final.log`.
 
-Preparing regular desktop debug **80** and mobile debug **74**, including the existing durable
-Away and reconnect fixes. Tests and publication verification remain pending; no stable changes.
+Regular desktop debug **80** dispatched on `5b75a12e7`, run `36822781351`:
+https://github.com/Zokaper/NuvioZDesktop/actions/runs/36822781351 . Debug-channel packaging
+enables file logs by default. Regular mobile debug **74** also dispatched, run `36822400793`,
+source `d2bb3f542`. Native packaging/publication/checksum verification remains pending.
+No stable versions/serials or backend changes. Lock acceptance still requires a logged retest.
 Canonical evidence: `../nuvio-z/Docs/IOS-WATCH-TOGETHER-RC.md`.
 
 ## iPhone return retest used installed debug 79 (2026-09-30, 23:06–23:12 Arabia)
