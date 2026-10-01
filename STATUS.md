@@ -3912,3 +3912,8 @@ CI suites above.
   the current release and `0.1.19-alpha` (2026-08-03) precedes it, each carrying
   one Windows x64 MSI and a `SHA256SUMS.txt`. `0.1.20-alpha` is installed and
   launches on Windows; the in-app replacement flow is still untested.
+
+Final-validation follow-up: pinned SDK error parsing can schedule unowned clearSession
+on session_not_found, and SDK automatic refresh mutates independently of the coordinator.
+The e8089d7 matrix is provisional. Correct the actual SDK boundary, then rerun affected
+merged-head validation before debug publication; no performance changes are authorized.
