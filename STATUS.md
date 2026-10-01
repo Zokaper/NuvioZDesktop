@@ -1,3 +1,14 @@
+## Performance audit (2026-10-01) — investigation only
+
+Branch `claude/perf-investigation`; harness in `scripts/perf/` (see its README). Canonical report:
+`../nuvio-z/Docs/PERFORMANCE-AUDIT-2026-10.md` on the same branch name. Desktop-specific numbers
+(installed apps, same machine, back-to-back): first UI task 3.2-3.7 s Z vs 2.4-2.5 s vanilla (with
+JFR; 2.3 s Z without), main-shell freeze 1.3-1.5 s in both, warm Home scroll 12-16 vs 13 frames
+>=33 ms per 30 s. Long scroll frames: card composition ~60 %, upstream `ScaledBitmapPainter`
+rescale in `onDraw` ~20-35 % (4.6-14 ms per image). GC negligible. Top-bar haze: slightly more
+>=50 ms present gaps than the sidebar. Static AppCDS: -38 % first task, -29 % shell freeze.
+No app code changed.
+
 ## Home/lock Away hold coordination and return readiness (2026-10-01)
 
 Active branch: `claude/ios-watch-together-hardening`. Physical retest of the prior build-only
