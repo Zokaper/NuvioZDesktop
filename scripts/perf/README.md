@@ -75,3 +75,33 @@ before the picker**, summed, so work that only moves from one task to another do
 win. Suspend functions count once per resumption under method tracing (a hero page change is ~2
 `animateScrollToPage` invocations). `composeApp/src/desktopTest/.../HiddenHomeActivityHarness.kt`
 measures a hidden Home in the real `AppTabHost` (collectors, hero changes, snapshot writes).
+
+## Performance Phase 2 additions (2026-10-01)
+
+```bash
+# Home scroll: cold load, Continue Watching (Shift+wheel), 3 vertical passes, Library <-> Home x3,
+# one more pass. Interleave before/after builds; other agents' builds load the machine.
+PERF_NOJFR=1 python scripts/perf/phase2.py scroll "<app>" out/a1-1 "<signed-out template>"
+python scripts/perf/phase2_summary.py scroll before=out/b4- after=out/a1-
+
+# Startup on an app image's own runtime (copy a matching java.exe into <app>/runtime/bin first;
+# jpackage strips it): launch -> picker -> click -> Home.
+PERF_JAVA="<app>/runtime/bin/java.exe" PERF_NOJFR=1 python scripts/perf/phase2.py startup "<app>" out/cds-1 "<template>"
+python scripts/perf/phase2_summary.py startup none=out/none- cds=out/cds-
+
+# CDS variants for one image: base.jsa (JDK classes) and full.jsa (JDK + app, path-bound) from a
+# class list recorded with PERF_JVM_EXTRA="-Xshare:off -XX:DumpLoadedClassList=<file>".
+python scripts/perf/cds_variants.py "<app>" <classlist> out/arch
+PERF_JVM_EXTRA="-Xshare:on -XX:SharedArchiveFile=out/arch/full.jsa" python scripts/perf/phase2.py startup ...
+```
+
+- `PerfDriver` now writes `frames-raw.txt` (every frame, per phase, so phases pool into
+  percentiles), logs the UI thread's **CPU** time per task (`TASK 1234ms cpu=987ms`) and per frame,
+  accepts `hwheel` (Shift + wheel, horizontal scroll), and runs on a jlinked runtime without
+  `jdk.management` (process CPU then reads 0). Windows reports thread CPU in 15.6 ms ticks: use the
+  CPU columns for tasks of hundreds of ms, not for single frames.
+- `run.py` takes extra JVM options from `PERF_JVM_EXTRA` and records the launch time (`launched`),
+  so `phase2_summary.py startup` can report launch -> JVM main and launch -> picker.
+- `phase2.py` samples the whole process's working set and private bytes after each step
+  (`mem.txt`): Skia bitmaps live outside the Java heap. It gives up after 60 s if the app stops
+  taking commands instead of waiting forever.

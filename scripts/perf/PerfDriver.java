@@ -15,6 +15,7 @@ import javax.swing.*;
  * - Command file: perf.dir/cmd.txt, polled every 100 ms. Lines:
  *     mark <phase>              start a new measurement phase
  *     wheel <x> <y> <rot> <intervalMs> <count>   post mouse wheel events at window coords
+ *     hwheel <x> <y> <rot> <intervalMs> <count>  the same with Shift held (horizontal scroll)
  *     click <x> <y>             post press/release/click at window coords
  *     info                      dump windows / components
  *     gc                        log GC + CPU counters
@@ -29,7 +30,7 @@ public class PerfDriver {
     static final Map<String, Stats> stats = Collections.synchronizedMap(new LinkedHashMap<>());
 
     static class Stats {
-        long frames, f16, f25, f33, f50, f100, lastFrameEnd, gaps33, gaps50, gaps100; java.util.ArrayList<Long> frameMs = new java.util.ArrayList<>();
+        long frames, f16, f25, f33, f50, f100, lastFrameEnd, gaps33, gaps50, gaps100; java.util.ArrayList<Long> frameMs = new java.util.ArrayList<>(), frameCpu = new java.util.ArrayList<>();
         long tasks, t8, t16, t33, t50, t100, t250, busyNs, jankNs, maxTaskMs;
         long beats, over16, over34, over50, over100, over250, over500, over1000, stalledMs, maxMs;
         long startNs = System.nanoTime(), endNs;
@@ -101,10 +102,16 @@ public class PerfDriver {
     }
 
     static class TimingQueue extends EventQueue {
+        // UI-thread CPU time per task as well as wall time: under other processes' load the wall time
+        // includes waiting for a core, the CPU time does not.
+        final ThreadMXBean cpuClock = ManagementFactory.getThreadMXBean();
+
         @Override protected void dispatchEvent(AWTEvent e) {
             long t = System.nanoTime();
+            long c = cpuClock.getCurrentThreadCpuTime();
             try { super.dispatchEvent(e); } finally {
                 long d = System.nanoTime() - t;
+                long cpu = cpuClock.getCurrentThreadCpuTime() - c;
                 Stats s = stats.get(phase);
                 boolean frame = false;
                 if (e instanceof java.awt.event.InvocationEvent) {
@@ -113,7 +120,7 @@ public class PerfDriver {
                 }
                 if (frame && s != null) synchronized (s) {
                     long ms = d / 1_000_000L;
-                    s.frames++; s.frameMs.add(d / 100_000L);
+                    s.frames++; s.frameMs.add(d / 100_000L); s.frameCpu.add(cpu / 100_000L);
                     if (ms >= 16) s.f16++;
                     if (ms >= 25) s.f25++;
                     if (ms >= 33) s.f33++;
@@ -152,7 +159,7 @@ public class PerfDriver {
                         int i = ps.indexOf("runnable=");
                         if (i >= 0) what += " " + ps.substring(i, Math.min(ps.length(), i + 110));
                     }
-                    log("TASK " + (d / 1_000_000L) + "ms " + what);
+                    log("TASK " + (d / 1_000_000L) + "ms cpu=" + (cpu / 1_000_000L) + "ms " + what);
                 }
             }
         }
@@ -269,6 +276,19 @@ public class PerfDriver {
                 int count = Integer.parseInt(p[5]);
                 for (int i = 0; i < count; i++) {
                     post(x, y, (target, pt) -> new MouseWheelEvent(target, MouseEvent.MOUSE_WHEEL, System.currentTimeMillis(), 0,
+                        pt.x, pt.y, 0, false, MouseWheelEvent.WHEEL_UNIT_SCROLL, 3, rot));
+                    Thread.sleep(interval);
+                }
+                break;
+            }
+            case "hwheel": {
+                // Shift + wheel: Compose desktop scrolls horizontally (e.g. along the Continue Watching row).
+                int x = Integer.parseInt(p[1]), y = Integer.parseInt(p[2]);
+                int rot = Integer.parseInt(p[3]);
+                long interval = Long.parseLong(p[4]);
+                int count = Integer.parseInt(p[5]);
+                for (int i = 0; i < count; i++) {
+                    post(x, y, (target, pt) -> new MouseWheelEvent(target, MouseEvent.MOUSE_WHEEL, System.currentTimeMillis(), InputEvent.SHIFT_DOWN_MASK,
                         pt.x, pt.y, 0, false, MouseWheelEvent.WHEEL_UNIT_SCROLL, 3, rot));
                     Thread.sleep(interval);
                 }
@@ -408,11 +428,30 @@ public class PerfDriver {
             }
         } catch (IOException ignored) {
         }
+        // Every frame time (0.1 ms units) per phase, so phases can be pooled for percentiles.
+        try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(dir.resolve("frames-raw.txt")))) {
+            for (Map.Entry<String, Stats> e : stats.entrySet()) {
+                java.util.ArrayList<Long> l, c;
+                synchronized (e.getValue()) { l = new java.util.ArrayList<>(e.getValue().frameMs); c = new java.util.ArrayList<>(e.getValue().frameCpu); }
+                StringBuilder b = new StringBuilder(e.getKey());
+                for (long v : l) b.append(' ').append(v);
+                w.println(b);
+                // The same frames' UI-thread CPU time, in the same order.
+                b = new StringBuilder(e.getKey() + "#cpu");
+                for (long v : c) b.append(' ').append(v);
+                w.println(b);
+            }
+        } catch (IOException ignored) {
+        }
     }
 
     static long processCpuNs() {
         OperatingSystemMXBean os = ManagementFactory.getOperatingSystemMXBean();
-        if (os instanceof com.sun.management.OperatingSystemMXBean) return ((com.sun.management.OperatingSystemMXBean) os).getProcessCpuTime();
+        // A jlinked app runtime may lack jdk.management (com.sun.management): report 0 there.
+        try {
+            if (os instanceof com.sun.management.OperatingSystemMXBean) return ((com.sun.management.OperatingSystemMXBean) os).getProcessCpuTime();
+        } catch (LinkageError ignored) {
+        }
         return 0;
     }
 
@@ -420,6 +459,14 @@ public class PerfDriver {
     static long gcCount() { long t = 0; for (GarbageCollectorMXBean g : ManagementFactory.getGarbageCollectorMXBeans()) t += Math.max(0, g.getCollectionCount()); return t; }
 
     static long allocBytes() {
+        try {
+            return allocBytesUnchecked();
+        } catch (LinkageError e) {
+            return 0;
+        }
+    }
+
+    static long allocBytesUnchecked() {
         ThreadMXBean tb = ManagementFactory.getThreadMXBean();
         if (!(tb instanceof com.sun.management.ThreadMXBean)) return 0;
         com.sun.management.ThreadMXBean st = (com.sun.management.ThreadMXBean) tb;

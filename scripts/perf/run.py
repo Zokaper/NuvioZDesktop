@@ -1,8 +1,9 @@
-import glob, os, subprocess, sys
+import glob, os, subprocess, sys, time
 
 # usage: run.py <appdir> <outdir> [extra jvm args...]
 app, out = sys.argv[1], os.path.abspath(sys.argv[2])
-extra = sys.argv[3:]
+# PERF_JVM_EXTRA: more JVM options, space-separated (e.g. a CDS archive for one variant).
+extra = sys.argv[3:] + os.environ.get("PERF_JVM_EXTRA", "").split()
 here = os.path.dirname(os.path.abspath(__file__))
 # PERF_JAVA: another JDK, e.g. a JDK 25 for JFR method timing (PERF_JFR_EXTRA=",method-timing=...").
 java = os.environ.get("PERF_JAVA") or r"C:\Program Files\Android\Android Studio\jbr\bin\java.exe"
@@ -25,7 +26,9 @@ args = [java] + opts + [
     "-Dskiko.fps.longFrames.show=true", "-Dskiko.fps.longFrames.millis=25",
 ] + ([] if NOJFR else [f"-XX:StartFlightRecording=filename={os.path.join(out, 'rec.jfr')},settings={os.environ.get('PERF_JFR_SETTINGS', 'profile')},dumponexit=true" + os.environ.get('PERF_JFR_EXTRA', '')]) + extra + ["-cp", ";".join([os.path.join(here, os.environ.get("PERF_CLASSES", "perfdriver.jar"))] + cp), "PerfDriver"]
 with open(os.path.join(out, "stdout.log"), "w") as f:
+    launched_ms = int(time.time() * 1000)
     p = subprocess.Popen(args, cwd=appdir, stdout=f, stderr=subprocess.STDOUT)
     open(os.path.join(out, "pid"), "w").write(str(p.pid))
+    open(os.path.join(out, "launched"), "w").write(str(launched_ms))
     print("pid", p.pid)
     p.wait()
