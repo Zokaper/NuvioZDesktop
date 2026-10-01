@@ -1,34 +1,42 @@
-## RC production auth corrections (2026-10-01, merged-head validation pending)
+## RC auth correction validation — 2026-10-01
 
-Codex owns `claude/ios-watch-together-hardening`. Exact Gemini desktop head is integrated
-through a normal merge with a correction commit descended from that head. Shared authored
-auth changes are identical to mobile; platform AppGate/profile seams were patched narrowly.
-Production AuthSessionCoordinator serializes SDK mutations/cleanup, atomically publishes
-state/storage, validates captured tokens without side effects and checks authority before
-refresh import/destructive cleanup. Email provider response is captured before import;
-status notifications cannot complete an in-flight login. Stale RefreshFailure revalidates the
-accepted captured session instead of attributing an old cause to a newer account. AppGate
-uses the tested reducer and the current identity's reloaded profiles. Auth diagnostics redact
-raw throwable payloads and identities. Original rejection below is historical evidence.
+Owner: Codex; active branch `claude/ios-watch-together-hardening`.
+Frozen product head: `dea69997826a2a57b805b65cb85ed7a18f623aec`.
+Complete disjoint rest/playback/downloads/e2e matrix: 1814/1062/457/49 = 3382 cases,
+zero failures/errors/skips and zero duplicates. First rest run had one unchanged scraper
+concurrency timeout (60s); four isolated probes and the entire rest rerun pass without
+scraper edits, timeout changes or exclusions. Focused auth 76, WT/player 709,
+profile/setup 233 and updater 75 pass. Local Windows compile/MSI passes; Windows x64 and
+macOS arm64/x86_64 build-only family passes (36897075909); downloaded hashes all match.
+Linux CI 36897043064 still fails native frame_copy_test.c:36 before Kotlin tests. Its native
+and CI paths are unchanged by auth; missing runtime factories remain an unproven hypothesis.
+This is a separate native fixture failure, never a product success or proven auth regression.
+Mobile final product 439835c8e: host 3440 (six policy skips, full-policy six pass), focused
+71/764/185/53, Android debug/release and device+simulator/Xcode pass. Coordinated unsigned
+release IPA 36897072101 is still running; no regular debug pair yet.
 
-Gemini and Claude performance branches remain untouched. The mistaken performance prompt
-caused no edits/commits/builds; only empty references/worktree were created then removed.
-Follow-up review also guards OfficialSessionAccess token-consumer refresh through coordinator
-ownership, preventing late SDK imports over a new login. Two more production-boundary tests
-cover this seam. The first-head Windows/macOS arm64/x86_64 build-only family passed (run
-36879438491), but the full desktop matrix did not: rest hit the 20-minute promo render cap;
-playback 1062 and e2e 49 passed; downloads 457 had one simulated-process-death failure.
-Cancelled discovery workers could keep writing into the restarted fixture. The test-only
-reset now exposes cancelled jobs; restart tests await termination without weakening assertions
-or changing production download behavior. Fresh affected/full validation is required.
-Rest will rerun with an external 90-minute allowance and every test retained. Linux CI still
-fails at native frame_copy_test.c:36 before Kotlin (run 36879355477), not a Kotlin pass or
-an established auth regression. Recorded installers' checksum manifest is retained locally.
-The complete corrected-head split suite, Windows package and macOS CI remain pending, as does the
-next combined regular debug pair. No counter/feed/stable publication. Physical iPhone WT
-Home/Away/return/lock/unlock/quiet foreground acceptance and desktop+iOS auth smoke remain
-open (Android where practical). RC is not accepted. Canonical detailed findings and matrix:
-`../nuvio-z/Docs/AUTH-CORRECTED-REVIEW.md`, `../nuvio-z/Docs/RC-CONVERGENCE-AUDIT.md`.
+Unmodified Gemini heads were rejected. Codex corrected the six reproduced production races
+and the AppGate/profile, token-consumer, SDK error-parser, automatic refresh/storage and
+clear-status reentry boundaries directly on the RC. Production review now passes the ten-item
+checklist through actual coordinator and pinned-SDK/MockEngine regressions. Credential-response
+provenance precedes import; case-insensitive primary-email matching is an additional check.
+Remote validation uses raw captured-token HTTP without SDK Auth error-parser side effects.
+Storage restore, refresh, import, clearing and publication check current authority.
+
+Gemini refs and Claude performance work remain untouched. The mistaken prompt caused no
+performance edits, commits or builds: only empty refs/worktree were created and removed.
+Both RC worktrees were verified clean of accidental performance modifications. No stable,
+feed or debug-counter change. Exact integration history and defects: canonical
+`Docs/AUTH-CORRECTED-REVIEW.md` (desktop: `../nuvio-z/Docs/AUTH-CORRECTED-REVIEW.md`).
+
+Physical iPhone WT acceptance remains OPEN: Home/Away pause; return waits for guest readiness
+and resumes smoothly; lock/Away pause; unlock/return recovery; quiet foreground without
+spontaneous reconnect. Auth smoke remains OPEN on desktop+iOS, Android where practical:
+wrong then correct password; logout then email login; authenticated restart; anonymous to
+email; browser/code login. RC is NOT accepted. Next regular debug pair waits for all build
+gates; publish only existing prerelease/debug channels, never stable. Preserve main's newer
+SideStore/feed state on eventual promotion. Historical entries below are not current status.
+
 ## Corrected Gemini auth review — integration rejected (2026-10-01)
 
 Active RC remains `claude/ios-watch-together-hardening`. Exact Gemini desktop head
