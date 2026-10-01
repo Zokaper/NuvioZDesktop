@@ -55,12 +55,12 @@ internal object HomeActivityProbe {
                 settingsRootActionRequests = MutableSharedFlow(),
             )
         }
-        @Suppress("UNUSED_VARIABLE") val keep = keepHomeBehindOtherTabs
         AppTabHost(
             selectedTab = tab,
             requests = requests,
             state = AppTabState(searchListState = searchListState, tabsRouteActiveState = tabsRouteActive),
             actions = AppTabActions(),
+            keepHomeBehindOtherTabs = keepHomeBehindOtherTabs,
         )
     }
 

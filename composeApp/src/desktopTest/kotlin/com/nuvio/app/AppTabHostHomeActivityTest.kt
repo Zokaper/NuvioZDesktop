@@ -40,4 +40,21 @@ class AppTabHostHomeActivityTest {
         compose.mainClock.advanceTimeBy(1_000L)
         assertTrue(HomeActivityProbe.heroChanges(compose, seconds = 30) > 0, "hero did not resume when Home came back")
     }
+
+    /** An iOS 16+ native-tab host: choosing Home there switches hosts, so Home has no business here. */
+    @Test
+    fun aNativeTabHostDoesNotComposeHomeBehindItsOwnTab() {
+        HomeActivityProbe.show(compose) { HomeActivityProbe.Host(AppScreenTab.Library, keepHomeBehindOtherTabs = false) }
+        compose.mainClock.autoAdvance = false
+        compose.mainClock.advanceTimeBy(2_000L)
+        assertTrue(HomeActivityProbe.heroTitles(compose).isEmpty(), "a native Library host composed a hidden Home")
+    }
+
+    /** The same host still shows a working Home when Home is its tab - e.g. Social coerced to Home when Social is off. */
+    @Test
+    fun aNativeTabHostWhoseTabIsHomeShowsAWorkingHome() {
+        HomeActivityProbe.show(compose) { HomeActivityProbe.Host(AppScreenTab.Home, keepHomeBehindOtherTabs = false) }
+        compose.mainClock.autoAdvance = false
+        assertTrue(HomeActivityProbe.heroChanges(compose, seconds = 30) > 0, "hero never paged on a native Home host")
+    }
 }
