@@ -21,10 +21,13 @@ actual desktop adapter regression added. Local desktop compile and focused suite
 The actual desktop adapter regression uses desktop channel cleanup; initial test-only method
 lookup failure corrected. XML/logs: `../.rc-investigation/wt-ios/away-recovery-desktop-final.log`.
 
-Regular desktop debug **80** dispatched on `5b75a12e7`, run `36822781351`:
-https://github.com/Zokaper/NuvioZDesktop/actions/runs/36822781351 . Debug-channel packaging
-enables file logs by default. Regular mobile debug **74** also dispatched, run `36822400793`,
-source `d2bb3f542`. Native packaging/publication/checksum verification remains pending.
+Regular desktop debug **80** published from `5b75a12e7`; run `36822781351` succeeded:
+https://github.com/Zokaper/NuvioZDesktop/releases/tag/debug-v0.1.23-alpha-z6.80 . MSI and DMG
+were downloaded and match their published GitHub SHA-256 digests. MSI product is `Nuvio Z Debug`
+version `1.45.80`; debug-channel packaging enables file logs by default. macOS mounted-package
+and launch smoke checks passed in CI. Regular mobile debug **74** also published from `d2bb3f542`,
+run `36822400793` succeeded; APK/IPA checksums and canonical SideStore debug feed verified.
+Evidence: `../.rc-investigation/wt-ios/away-release-verification.json`.
 No stable versions/serials or backend changes. Lock acceptance still requires a logged retest.
 Canonical evidence: `../nuvio-z/Docs/IOS-WATCH-TOGETHER-RC.md`.
 
