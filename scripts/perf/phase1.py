@@ -60,7 +60,8 @@ else:
     time.sleep(7)
     cmd("move 1900 1150", "gc", "mark home-hidden")
     time.sleep(60)
-    cmd("gc", "mark home-return-settle", "move 796 80", "click 796 80")
+    # The bar is expanded (labels shown) off Home, so Home sits at x=490 there, not at its collapsed 796.
+    cmd("gc", "mark home-return-settle", "move 490 80", "click 490 80")
     time.sleep(5)
     cmd("move 1900 1150", "mark home-returned")
     time.sleep(30)
