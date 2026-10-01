@@ -1,3 +1,23 @@
+## RC convergence audit / auth integration gate (2026-10-01)
+
+Release owner: Codex. Audited RC `9085e881b936be7dd2c5bd15fd2eccf7937fc975` on
+`claude/ios-watch-together-hardening` differs from Debug 80 source `5b75a12e7` only in docs.
+GitHub debug 80 run/release targets and package digest metadata rechecked. No stable
+publication, performance merge, debug counter, backend or product behavior change.
+
+Gemini auth origin `02524bb2e` remains branch-only and NOT approved for integration;
+final rebased SHA/test evidence is pending. Shared auth review finds unguarded stale remote
+validation, adoption of any status identity during login, failure handlers using the latest
+epoch, publication/storage ordering gaps and identity-bearing logs. Reproduction uses the
+actual mobile branch machine, byte-identical to desktop's. Do not merge until resolved.
+
+Debug 80 CI `36822780484`: Windows MSI passes, Linux frame-copy fixture fails at
+`player != NULL` before Kotlin tests. Full final-head four-part desktop suite remains a gate;
+416 focused tests do not replace it. Canonical audit and exact post-integration matrix:
+`../nuvio-z/Docs/RC-CONVERGENCE-AUDIT.md`. Physical iPhone lock/Away and return readiness
+acceptance remain release blockers. Actual integrated source base is 0.1.26-alpha;
+old debug naming persists until the final stable bump (proposed serial 132).
+
 ## Home/lock Away hold coordination and return readiness (2026-10-01)
 
 Active branch: `claude/ios-watch-together-hardening`. Physical retest of the prior build-only
