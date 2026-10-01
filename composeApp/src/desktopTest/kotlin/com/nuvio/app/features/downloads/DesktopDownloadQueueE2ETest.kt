@@ -1909,19 +1909,23 @@ class DesktopDownloadQueueE2ETest {
         return "${item.status}/${item.pauseReason} at ${item.downloadedBytes} bytes: ${item.errorMessage}"
     }
 
-    private fun assertContentOnDisk(item: DownloadItem, expected: ByteArray) {
-        assertNotNull(item.localFileUri, "no file was recorded for ${item.fileName}")
-        // Read the way playback reads it: a file being moved into the organized layout is found
-        // at its old place for the instant before the rename.
-        val uri = assertNotNull(
-            DownloadsPlatformDownloader.resolveLocalFileUri(item.localFileUri, item.fileName),
-            "${item.localFileUri} is missing",
-        )
-        val file = File(URI(uri))
-        assertTrue(file.exists(), "${file.absolutePath} is missing")
-        assertEquals(expected.size.toLong(), file.length(), "${file.name} is the wrong size")
-        assertTrue(file.readBytes().contentEquals(expected), "${file.name} does not match what was served")
-    }
+    private fun assertContentOnDisk(item: DownloadItem, expected: ByteArray) =
+        kotlinx.atomicfu.locks.synchronized(DownloadStore.lock) {
+            // Completion publishes before organizeLocked finishes its rename, in the same store
+            // critical section. Observe that whole operation, then read the current URI while the
+            // organizer cannot move it between exists/length/readBytes. A captured flow item is stale.
+            val settled = assertNotNull(DownloadStore.allItems.firstOrNull { it.id == item.id })
+            assertEquals(DownloadStatus.Completed, settled.status)
+            assertNotNull(settled.localFileUri, "no file was recorded for ${settled.fileName}")
+            val uri = assertNotNull(
+                DownloadsPlatformDownloader.resolveLocalFileUri(settled.localFileUri, settled.fileName),
+                "${settled.localFileUri} is missing",
+            )
+            val file = File(URI(uri))
+            assertTrue(file.exists(), "${file.absolutePath} is missing")
+            assertEquals(expected.size.toLong(), file.length(), "${file.name} is the wrong size")
+            assertTrue(file.readBytes().contentEquals(expected), "${file.name} does not match what was served")
+        }
 
     private fun awaitQueueDrained(
         timeoutMs: Long = 60_000L,

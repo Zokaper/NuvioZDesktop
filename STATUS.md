@@ -3917,3 +3917,11 @@ Final-validation follow-up: pinned SDK error parsing can schedule unowned clearS
 on session_not_found, and SDK automatic refresh mutates independently of the coordinator.
 The e8089d7 matrix is provisional. Correct the actual SDK boundary, then rerun affected
 merged-head validation before debug publication; no performance changes are authorized.
+
+Quiet-source e2e investigation: one of three unchanged cancellation+quiet-source probes
+failed while the test's captured flat URI was renamed by completion's organizer. The
+organizer holds DownloadStore.lock, but the fixture's exists/length/readBytes did not.
+The content helper now reads the current completed item and verifies exact file size/bytes
+under that same lock; all assertions remain. Five consecutive corrected probes passed.
+This is a test-only observation fix, not a production downloader change. Final full e2e
+and rest validation remain required after SDK-boundary auth integration.
