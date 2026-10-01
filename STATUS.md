@@ -3937,3 +3937,13 @@ reproduce an unowned clear and prove raw requests cannot clear B; coordinator te
 late storage/refresh behind logout/login and offline restart. No performance/WT/feed/version
 changes. Mobile auth focus 49 passes; fresh desktop focus/full partitions, mobile full/builds
 and exact-head iOS/macOS build-only validation remain required before debug publication.
+
+Final callback correction: a production-coordinator regression reproduced NotAuthenticated
+from clearSession reentering current rejection confirmation, publishing Authenticated again
+before cleanup settled. RefreshFailure had the same competing-validation seam. Both status
+handlers now defer while a validation/confirmation request is already active. One async test
+covers both callbacks and asserts Unauthenticated, null SDK session, one clear and one wipe.
+Pre-fix red evidence is retained under .rc-investigation/auth-sdk-boundary-desktop/.
+The in-progress d21029e39/5298df9a0 local matrix was stopped only at its owned launcher trees;
+shared daemons, Hot Reload and performance worktrees were preserved. New final-head matrix
+is mandatory. No debug/stable publication or counter/feed change.
