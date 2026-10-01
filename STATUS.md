@@ -13,7 +13,18 @@ raw throwable payloads and identities. Original rejection below is historical ev
 
 Gemini and Claude performance branches remain untouched. The mistaken performance prompt
 caused no edits/commits/builds; only empty references/worktree were created then removed.
-The complete desktop split suite, Windows package and macOS CI remain pending, as does the
+Follow-up review also guards OfficialSessionAccess token-consumer refresh through coordinator
+ownership, preventing late SDK imports over a new login. Two more production-boundary tests
+cover this seam. The first-head Windows/macOS arm64/x86_64 build-only family passed (run
+36879438491), but the full desktop matrix did not: rest hit the 20-minute promo render cap;
+playback 1062 and e2e 49 passed; downloads 457 had one simulated-process-death failure.
+Cancelled discovery workers could keep writing into the restarted fixture. The test-only
+reset now exposes cancelled jobs; restart tests await termination without weakening assertions
+or changing production download behavior. Fresh affected/full validation is required.
+Rest will rerun with an external 90-minute allowance and every test retained. Linux CI still
+fails at native frame_copy_test.c:36 before Kotlin (run 36879355477), not a Kotlin pass or
+an established auth regression. Recorded installers' checksum manifest is retained locally.
+The complete corrected-head split suite, Windows package and macOS CI remain pending, as does the
 next combined regular debug pair. No counter/feed/stable publication. Physical iPhone WT
 Home/Away/return/lock/unlock/quiet foreground acceptance and desktop+iOS auth smoke remain
 open (Android where practical). RC is not accepted. Canonical detailed findings and matrix:

@@ -7,6 +7,8 @@ import com.nuvio.app.features.streams.StreamItem
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.runBlocking
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -235,7 +237,7 @@ class AssistedChoiceFlowTest {
         val discoveredOnce = discoveries.get()
 
         // The process dies: the batch is on disk, the candidates were only in memory.
-        AssistedDiscovery.resetForTests(Dispatchers.Default)
+        runBlocking { AssistedDiscovery.resetForTests(Dispatchers.Default).joinAll() }
         assertNull(AssistedDiscovery.candidates(batchId))
         AssistedDiscovery.resumeInterrupted(DownloadsRepository.batches.value)
         await("the refresh to finish") { AssistedDiscovery.candidates(batchId) != null && batch()?.isAwaitingQualityChoice == true }
@@ -491,7 +493,8 @@ class AssistedChoiceFlowTest {
     fun anEarlyChoiceSurvivesAProcessDeath() {
         val batchId = chooseEarly(720)
         // The process dies before the sources are in: the batch and its choice are on disk.
-        AssistedDiscovery.resetForTests(Dispatchers.Default)
+        // A dead process cannot leave an old discovery writing into the restarted instance.
+        runBlocking { AssistedDiscovery.resetForTests(Dispatchers.Default).joinAll() }
         gate.complete(Unit)
         assertEquals(720, assertNotNull(batch()).earlyResolutionHeight)
         AssistedDiscovery.resumeInterrupted(DownloadsRepository.batches.value)
