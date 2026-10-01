@@ -13,6 +13,7 @@ import org.gradle.api.tasks.TaskAction
 import org.gradle.language.jvm.tasks.ProcessResources
 import org.gradle.process.ExecOperations
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.jetbrains.compose.desktop.application.tasks.AbstractJLinkTask
 import org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.TestExecutable
@@ -1799,9 +1800,10 @@ tasks.matching { it.name == "packageReleaseMsi" }.configureEach {
 // Class-data sharing for the bundled Windows runtime (Performance Phase 2; nuvio-z
 // Docs/PERFORMANCE-AUDIT-2026-10.md section 9). jlink leaves the runtime without the JDK's default
 // CDS archive, so every launch parses and verifies the ~5,000 JDK classes the app touches (AWT,
-// Swing, Java2D, ...) from scratch. This writes one into the app image at runtime/bin/server/
-// classes.jsa - where the JVM looks by itself under its default -Xshare:auto - so no launcher
-// option changes. The JVM checks the archive against itself and lib/modules (size, not path or
+// Swing, Java2D, ...) from scratch. This writes one into the jlinked runtime at bin/server/
+// classes.jsa - where the JVM looks by itself under its default -Xshare:auto - right after
+// createRuntimeImage, so the app image and the MSI (jpackage copies that runtime into both) carry
+// it and no launcher option is needed to find it. The JVM checks the archive against itself and lib/modules (size, not path or
 // timestamp) on every start and quietly runs without it when it does not match: a missing, stale
 // or corrupt archive costs the speed-up and nothing else.
 //
@@ -1809,15 +1811,14 @@ tasks.matching { it.name == "packageReleaseMsi" }.configureEach {
 // times; an MSI install moves the first and shifts the second by the installing machine's UTC
 // offset, so it would never validate on a user's machine. Off with -Pnuvio.desktop.cds=false.
 object WindowsCdsArchive {
-    fun generate(appImage: File, javaHome: File, classList: File, logger: org.gradle.api.logging.Logger) {
-        val runtime = appImage.resolve("runtime")
+    fun generate(runtime: File, javaHome: File, classList: File, logger: org.gradle.api.logging.Logger) {
         val archive = runtime.resolve("bin/server/classes.jsa")
         archive.delete()
         fun skip(reason: String) =
             logger.warn("Windows CDS archive skipped: $reason. The app still runs, only without the startup gain.")
 
         if (!classList.isFile) return skip("$classList is missing")
-        if (!runtime.resolve("bin/server/jvm.dll").isFile) return skip("no runtime under $appImage")
+        if (!runtime.resolve("bin/server/jvm.dll").isFile) return skip("no runtime at $runtime")
         fun javaVersion(home: File) = home.resolve("release").takeIf(File::isFile)
             ?.readLines()?.firstOrNull { it.startsWith("JAVA_VERSION=") }
         val runtimeVersion = javaVersion(runtime)
@@ -1855,23 +1856,21 @@ object WindowsCdsArchive {
 if (isWindowsHost) {
     val windowsCdsClassList = layout.projectDirectory.file("src/desktopMain/cds/windows-jdk-classlist.txt").asFile
     val windowsCdsEnabled = providers.gradleProperty("nuvio.desktop.cds").orNull?.toBoolean() ?: true
-    tasks.withType<AbstractJPackageTask>()
-        .matching { it.name == "createDistributable" || it.name == "createReleaseDistributable" }
-        .configureEach {
-            inputs.file(windowsCdsClassList).withPropertyName("windowsCdsClassList")
-            inputs.property("windowsCdsEnabled", windowsCdsEnabled)
-            if (windowsCdsEnabled) {
-                doLast {
-                    val task = this as AbstractJPackageTask
-                    WindowsCdsArchive.generate(
-                        appImage = task.destinationDir.get().asFile.resolve(task.packageName.get()),
-                        javaHome = File(task.javaHome.get()),
-                        classList = windowsCdsClassList,
-                        logger = task.logger,
-                    )
-                }
+    tasks.withType<AbstractJLinkTask>().configureEach {
+        inputs.file(windowsCdsClassList).withPropertyName("windowsCdsClassList")
+        inputs.property("windowsCdsEnabled", windowsCdsEnabled)
+        if (windowsCdsEnabled) {
+            doLast {
+                val task = this as AbstractJLinkTask
+                WindowsCdsArchive.generate(
+                    runtime = task.destinationDir.get().asFile,
+                    javaHome = File(task.javaHome.get()),
+                    classList = windowsCdsClassList,
+                    logger = task.logger,
+                )
             }
         }
+    }
 }
 
 if (isLinuxHost) {
