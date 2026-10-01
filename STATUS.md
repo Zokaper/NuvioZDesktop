@@ -1,3 +1,23 @@
+## RC production auth corrections (2026-10-01, merged-head validation pending)
+
+Codex owns `claude/ios-watch-together-hardening`. Exact Gemini desktop head is integrated
+through a normal merge with a correction commit descended from that head. Shared authored
+auth changes are identical to mobile; platform AppGate/profile seams were patched narrowly.
+Production AuthSessionCoordinator serializes SDK mutations/cleanup, atomically publishes
+state/storage, validates captured tokens without side effects and checks authority before
+refresh import/destructive cleanup. Email provider response is captured before import;
+status notifications cannot complete an in-flight login. Stale RefreshFailure revalidates the
+accepted captured session instead of attributing an old cause to a newer account. AppGate
+uses the tested reducer and the current identity's reloaded profiles. Auth diagnostics redact
+raw throwable payloads and identities. Original rejection below is historical evidence.
+
+Gemini and Claude performance branches remain untouched. The mistaken performance prompt
+caused no edits/commits/builds; only empty references/worktree were created then removed.
+The complete desktop split suite, Windows package and macOS CI remain pending, as does the
+next combined regular debug pair. No counter/feed/stable publication. Physical iPhone WT
+Home/Away/return/lock/unlock/quiet foreground acceptance and desktop+iOS auth smoke remain
+open (Android where practical). RC is not accepted. Canonical detailed findings and matrix:
+`../nuvio-z/Docs/AUTH-CORRECTED-REVIEW.md`, `../nuvio-z/Docs/RC-CONVERGENCE-AUDIT.md`.
 ## Corrected Gemini auth review — integration rejected (2026-10-01)
 
 Active RC remains `claude/ios-watch-together-hardening`. Exact Gemini desktop head
