@@ -1,3 +1,44 @@
+## Performance Phase 2 (2026-10-01) — poster scaling off the UI thread, JDK CDS archive
+
+Branch `claude/perf-phase-2` (from `claude/perf-phase-1`, so it carries Phase 1; worktree
+`.claude-worktrees/perf2-desktop`). **Not merged into the RC / Watch Together or auth branches, no
+builds published, no version, feed or workflow changes.** Results, method, upstream notes:
+`../nuvio-z/Docs/PERFORMANCE-AUDIT-2026-10.md` §9 (branch `claude/perf-phase-2` there, docs only).
+
+1. **Posters scaled off the UI thread** (`896af1e3d`). Upstream's `ScaledBitmapPainter`
+   (`AsyncImage.desktop.kt`, now on the patch surface) ran the mipmapped Skia rescale inside
+   `onDraw`, again for every card re-entering composition. New `core/ui/DesktopImageDownscaler.kt`
+   does it on two background workers (newest first, deduped, skipped once a card stops drawing) and
+   stores results in Coil's memory cache. 4 interleaved scroll runs: frames >= 33 ms cold load
+   67 -> 45, Continue Watching 25 -> 6, first pass 50 -> 31, warm 59 -> 40, tab switches 36 -> 12,
+   pass after returning 27 -> 10; >= 100 ms in warm / CW / return passes 20 -> 0; median frame
+   unchanged. UI-thread time in the painter 1,179 -> 34 ms per run; 169 UI-thread rescales -> 18
+   background scales. Memory 25-50 MB lower and flat. Posters pixel-identical.
+2. **JDK class-data-sharing archive in the Windows runtime** (`1aeb9749a`, `b1c24b6fd`).
+   `WindowsCdsArchive` dumps `runtime/bin/server/classes.jsa` right after `createRuntimeImage`
+   (so both the app image and the MSI carry it) from `src/desktopMain/cds/windows-jdk-classlist.txt`;
+   the JVM maps it by itself; `-XX:+VerifySharedSpaces` on Windows. Skips with a warning, never
+   fails the build; `-Pnuvio.desktop.cds=false` turns it off. Measured: first UI stall -11 %, JVM boot
+   -15 %, Home freeze -4 %. MSI +7.5 MB (256.5 -> 264.0). Missing / corrupt / truncated / other-JVM
+   archives all start normally (checked through the real launcher on the MSI's extracted image).
+   **The audit's big CDS win (-47 % first stall) is not shippable on JDK 17 MSI installs**: an
+   archive of the app's jars records their paths and mtimes, and an MSI install changes the
+   mtimes by the installer's UTC offset (§9.2). It would need an install-time custom action.
+
+Harness (`scripts/perf`, README "Performance Phase 2 additions"): `phase2.py` (scroll / startup
+protocols, per-step process memory), `phase2_summary.py`, `cds_variants.py`; `PerfDriver` logs
+raw frames, UI-thread CPU per task, `hwheel`, and runs on a jlinked runtime.
+
+**Verified (2026-10-01):** `DesktopImageDownscalerTest` 10/10; Temurin 17 `packageReleaseMsi` and
+JBR 25 `createDistributable` both produce the archive.
+Desktop full split suite (JBR SDK, results deleted, `--rerun`, at `b1c24b6fd`): rest 1789 (Phase 1's
+1779 + the 10 new), playback 1062, downloads 457, all green; e2e 46 / 49 under other agents' load - the
+three failures (all `DesktopDownloadQueueE2ETest`, the known load-sensitive class; no download code
+changed) pass when run alone. GitHub CI on the push: Windows MSI job green and its log shows the
+archive (27 MB) on the Temurin 17 runner; the desktop-tests job fails at
+`:composeMediaPlayer:buildNativeLinux` before any test runs, exactly as on `claude/perf-phase-1`.
+Mobile and iOS are untouched (desktop-only code), so no mobile suite was run for this phase.
+Next performance step once auth / the RC settle: Home from cache after profile selection (§2.2).
 
 ## Performance Phase 1 (2026-10-01) — four low-risk fixes, measured
 
