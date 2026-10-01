@@ -1,3 +1,23 @@
+## Corrected Gemini auth review — integration rejected (2026-10-01)
+
+Active RC remains `claude/ios-watch-together-hardening`. Exact Gemini desktop head
+`16577dba5bf8941d2986e1e98e9692948cd99ede` is NOT approved/merged. Shared auth blobs match
+mobile `ce987581e0a8cced00af82f6d7b7ea67dcd21555`. Production-source harness reproduces
+publication after sign-out, sign-out cleanup wiping newer B, stale RefreshFailure clearing B,
+old login error after newer success, raw exception diagnostics and validation refreshing B
+before dropping A's result. AppGate reducer wiring is real but its captured profile list can
+survive a new-identity cache reload. Full findings/ten-item checklist/email semantics:
+`../nuvio-z/Docs/AUTH-CORRECTED-REVIEW.md`. Reducer 23/23 passes; six adverse orchestration
+assertions reproduce with controlled boundary neighbours, not a full Gradle/SDK/device pass.
+
+No auth merge, production fix, performance merge, counter bump or publication. Full four-part
+merged-head suite, focused regressions/updater/WT, Windows package and macOS validations are
+pending an approved correction. Existing debug 80 remains published; next combined debug
+pair is gated. Older auth CI 36829662346 re-read: Windows MSI passes, Linux native fixture
+fails at player construction before Kotlin tests. Missing runtime factories remain a hypothesis;
+inspect playbin/appsink and rerun the fixture unskipped. Physical iPhone WT acceptance and
+desktop+iOS auth smoke (Android where practical) remain open; RC is not accepted.
+
 ## RC convergence audit / auth integration gate (2026-10-01)
 
 Release owner: Codex. Audited RC `9085e881b936be7dd2c5bd15fd2eccf7937fc975` on
