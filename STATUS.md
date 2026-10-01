@@ -1,13 +1,24 @@
 ## Authentication login state machine and session authority fix (2026-10-01)
 
 Active branch: `gemini/auth-login-state-machine-fix` (shared KMP logic with `nuvio-z`), rebased onto current Watch Together RC head behind desktop Debug 80 (`9085e881b`) and mobile Debug 74 (`e77954662`).
+
+Production race conditions addressed:
+1. **Scoped remote validation without side-effects**: `validateRemoteSession` returns a classified `RemoteValidationResult` (`Success`, `TransientFailure`, `DefinitiveRejection`) and no longer directly mutates state or clears local storage. `AuthStateMachine.onRemoteValidationCompleted` checks the validation request epoch and target user ID against the current state; stale validation completions (e.g. from an old session after sign-out, or after login to account B) are discarded harmlessly without clearing new sessions or reverting state.
+2. **Correlated in-flight session status adoption**: `InFlightAuthIntent` explicitly tags operations (`EmailSignIn`, `EmailSignUp`, `Anonymous`, `SignOut`, `ExternalSession`). Unrelated `SessionStatus.Authenticated` events arriving during an explicit credential mutation are ignored and do not hijack the active mutation. Browser/code auth continues to adopt when no credential mutation owns the transition.
+3. **Explicit email session proof**: `signInWithEmail` verifies that the active Supabase session matches the attempted login email (`userEmail.equals(cleanEmail, ignoreCase = true)`). Unrelated pre-existing sessions are rejected rather than falsely declared successful.
+4. **Stable operation epoch in failure handlers**: `signInWithEmail` and `signUpWithEmail` capture `val opId = operationEpoch.incrementAndGet()` before `runCatching`. The `onFailure` block receives this exact `opId` instead of reading the mutable global epoch, preventing a late failure of attempt 1 from clearing an active attempt 2.
+5. **Identity-safe RefreshFailure**: `SessionStatus.RefreshFailure` is scoped to the failing user ID and dropped if an explicit mutation is active or the user is anonymous, preventing stale refresh failures from older sessions from wiping newer logins.
+6. **Unified AppGate transition reducer**: Production `AppGate.kt` directly delegates its screen transition logic to `AuthStateMachine.decideAppGateTransition()`, ensuring identical behavior between tested reducer rules and production UI transitions.
+7. **Zero-PII diagnostic logging**: Replaced raw `$authState` string interpolations with `safeAuthStateDescription(authState)` (logging only state type, masked ID, and safe epoch/intent tags). No passwords, tokens, raw email addresses, or unmasked user IDs appear in logs.
+
 Desktop-specific verification:
 - Preserved install-scoped official session storage (`InstallScopedSessionManager.desktop.kt`) and legacy session migration from `Preferences.userRoot()`.
 - Verified `InstallScopedSessionManagerTest`: all 6 desktop storage tests passed (saves, loads, single-move legacy migration, priority over shared login).
 - Verified `OfficialSessionRejectionTest`: all 3 rejection/refresh classifier tests passed.
-- Verified `AuthStateMachineTest`: all 14 regression tests passed on JVM/desktop target (`:composeApp:desktopTest -x buildWindowsPlayerBridge`).
+- Verified `AuthStateMachineTest`: all 23 regression tests passed on JVM/desktop target (`:composeApp:desktopTest -x buildWindowsPlayerBridge`).
 - Confirmed deterministic transition from `AppGateScreen.Auth` to `AppGateScreen.ProfileSelection` / `AppGateScreen.Main` upon email authentication without latching on login screen.
-- Verified desktop auth/session/gate/profile test suite: **50 tests / 0 failures / 0 errors / 0 skips**.
+- Verified desktop auth test suite: **28 tests / 0 failures / 0 errors / 0 skips** (23 AuthStateMachineTest + 2 DeviceSessionRegistrationTest + 3 OfficialSessionRejectionTest).
+- Verified desktop network & profile test suite: **31 tests / 0 failures / 0 errors / 0 skips** (AppGateOverlayRulesTest, InstallScopedSessionManagerTest, OfficialSessionAccessTest, ZSessionBridgeTest, ZSessionRenewalTest, ProfileSettingsCredentialPolicyTest, ProfileSelectionRoutingTest).
 - Desktop compile: `:composeApp:compileKotlinDesktop` PASSED.
 
 ## Home/lock Away hold coordination and return readiness (2026-10-01)
