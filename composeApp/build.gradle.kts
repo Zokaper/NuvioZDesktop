@@ -1586,6 +1586,9 @@ compose.desktop {
             smokePlayerUrl?.takeIf { it.isNotBlank() }?.let { "-Dnuvio.desktop.smokePlayerUrl=$it" },
             debugTools?.takeIf { it.equals("true", ignoreCase = true) }?.let { "-Dnuvio.debugTools=true" },
             autoSelfTest?.takeIf { it.equals("true", ignoreCase = true) }?.let { "-Dnuvio.selfTest=true" },
+            // Checksum the runtime's CDS archive (WindowsCdsArchive below) before mapping it, so a
+            // damaged one is dropped instead of loaded: ~30 MB, a few ms. Windows packages only.
+            "-XX:+VerifySharedSpaces".takeIf { isWindowsHost },
         )
 
         nativeDistributions {
@@ -1791,6 +1794,84 @@ tasks.matching { it.name == "packageReleaseMsi" }.configureEach {
     doLast {
         publishWindowsMsiOutput(release = true)
     }
+}
+
+// Class-data sharing for the bundled Windows runtime (Performance Phase 2; nuvio-z
+// Docs/PERFORMANCE-AUDIT-2026-10.md section 9). jlink leaves the runtime without the JDK's default
+// CDS archive, so every launch parses and verifies the ~5,000 JDK classes the app touches (AWT,
+// Swing, Java2D, ...) from scratch. This writes one into the app image at runtime/bin/server/
+// classes.jsa - where the JVM looks by itself under its default -Xshare:auto - so no launcher
+// option changes. The JVM checks the archive against itself and lib/modules (size, not path or
+// timestamp) on every start and quietly runs without it when it does not match: a missing, stale
+// or corrupt archive costs the speed-up and nothing else.
+//
+// JDK classes only. An archive of the app's own jars records their absolute paths and modification
+// times; an MSI install moves the first and shifts the second by the installing machine's UTC
+// offset, so it would never validate on a user's machine. Off with -Pnuvio.desktop.cds=false.
+object WindowsCdsArchive {
+    fun generate(appImage: File, javaHome: File, classList: File, logger: org.gradle.api.logging.Logger) {
+        val runtime = appImage.resolve("runtime")
+        val archive = runtime.resolve("bin/server/classes.jsa")
+        archive.delete()
+        fun skip(reason: String) =
+            logger.warn("Windows CDS archive skipped: $reason. The app still runs, only without the startup gain.")
+
+        if (!classList.isFile) return skip("$classList is missing")
+        if (!runtime.resolve("bin/server/jvm.dll").isFile) return skip("no runtime under $appImage")
+        fun javaVersion(home: File) = home.resolve("release").takeIf(File::isFile)
+            ?.readLines()?.firstOrNull { it.startsWith("JAVA_VERSION=") }
+        val runtimeVersion = javaVersion(runtime)
+        val jdkVersion = javaVersion(javaHome)
+        if (runtimeVersion == null || runtimeVersion != jdkVersion) {
+            return skip("the runtime ($runtimeVersion) was not linked from $javaHome ($jdkVersion)")
+        }
+        val javaExe = javaHome.resolve("bin/java.exe")
+        if (!javaExe.isFile) return skip("$javaHome has no bin/java.exe")
+
+        // jpackage strips the runtime's launchers. The JDK's java.exe only loads the runtime's own
+        // jli.dll and jvm.dll from beside it, so the archive is written by the runtime's own JVM.
+        val borrowed = runtime.resolve("bin/java.exe")
+        javaExe.copyTo(borrowed, overwrite = true)
+        try {
+            val process = ProcessBuilder(
+                borrowed.absolutePath,
+                "-Xshare:dump",
+                "-XX:SharedClassListFile=${classList.absolutePath}",
+                "-XX:SharedArchiveFile=${archive.absolutePath}",
+            ).redirectErrorStream(true).start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+            val exit = process.waitFor()
+            if (exit != 0 || !archive.isFile) {
+                archive.delete()
+                return skip("the dump failed with exit code $exit: ${output.lines().filter(String::isNotBlank).takeLast(4).joinToString(" | ")}")
+            }
+        } finally {
+            borrowed.delete()
+        }
+        logger.lifecycle("Windows CDS archive: $archive (${archive.length() / 1_048_576} MB)")
+    }
+}
+
+if (isWindowsHost) {
+    val windowsCdsClassList = layout.projectDirectory.file("src/desktopMain/cds/windows-jdk-classlist.txt").asFile
+    val windowsCdsEnabled = providers.gradleProperty("nuvio.desktop.cds").orNull?.toBoolean() ?: true
+    tasks.withType<AbstractJPackageTask>()
+        .matching { it.name == "createDistributable" || it.name == "createReleaseDistributable" }
+        .configureEach {
+            inputs.file(windowsCdsClassList).withPropertyName("windowsCdsClassList")
+            inputs.property("windowsCdsEnabled", windowsCdsEnabled)
+            if (windowsCdsEnabled) {
+                doLast {
+                    val task = this as AbstractJPackageTask
+                    WindowsCdsArchive.generate(
+                        appImage = task.destinationDir.get().asFile.resolve(task.packageName.get()),
+                        javaHome = File(task.javaHome.get()),
+                        classList = windowsCdsClassList,
+                        logger = task.logger,
+                    )
+                }
+            }
+        }
 }
 
 if (isLinuxHost) {
