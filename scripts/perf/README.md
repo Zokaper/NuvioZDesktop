@@ -46,3 +46,32 @@ machine). One app at a time: the official session must never be refreshed by two
 
 `ScaleBench.java` times `ScaledBitmapPainter`'s rescale on a cached poster; `cds_dump.py` builds a
 static AppCDS archive from a `-XX:DumpLoadedClassList` run.
+
+## Performance Phase 1 additions (2026-10-01)
+
+**Registry safety.** `run.py` always starts the app with
+`-Djava.util.prefs.PreferencesFactory=PerfDriver$MemoryPrefsFactory`, and `PerfDriver` refuses to
+start if `java.util.prefs` is anything else. On Windows the default factory is the registry
+(`HKCU\Software\JavaSoft\Prefs`), where supabase-kt's default storage left the official login that
+vanilla Nuvio and older Z builds share; a build under test must never read, move or refresh it.
+
+```bash
+# A local build: composeApp/build/compose/binaries/main/app/Nuvio Z after :composeApp:createDistributable.
+# phase1.py copies the signed-out template data directory afresh for every run and refuses one that
+# holds a session file.
+PERF_NOJFR=1 python scripts/perf/phase1.py startup "<app>" out/b0-startup-1 "<signed-out template>"
+python scripts/perf/startup_summary.py b0=out/b0-startup- b1=out/b1-startup-
+
+# JDK 25+ JFR method tracing (JEP 520) names the work instead of inferring it from timer wakeups:
+export PERF_JAVA=".../jetbrains_s_r_o_-25-amd64-windows.2/bin/java.exe" PERF_JFR_SETTINGS=default
+export PERF_JFR_EXTRA=",method-trace=com.nuvio.app.features.social.OutgoingJoinRequestStore::tick;androidx.compose.foundation.pager.PagerState::animateScrollToPage"
+python scripts/perf/phase1.py tabs "<app>" out/b1-tabs-1 "<signed-out template>"
+python scripts/perf/methodtrace.py out/b1-tabs-1          # invocations per phase, time per thread
+python scripts/perf/wakeups.py out/b1-tabs-1              # with jdk.ThreadPark#threshold=0ms (noisy)
+```
+
+`startup_summary.py` reports the window task, the first-frame task and **every UI task >= 100 ms
+before the picker**, summed, so work that only moves from one task to another does not read as a
+win. Suspend functions count once per resumption under method tracing (a hero page change is ~2
+`animateScrollToPage` invocations). `composeApp/src/desktopTest/.../HiddenHomeActivityHarness.kt`
+measures a hidden Home in the real `AppTabHost` (collectors, hero changes, snapshot writes).

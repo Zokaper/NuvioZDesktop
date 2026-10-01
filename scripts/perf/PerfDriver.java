@@ -44,12 +44,49 @@ public class PerfDriver {
         log.println(String.format("%7d %d %-14s %s", ms(), System.currentTimeMillis(), phase, s.startsWith("cmd: mark") ? s + " nanoMs=" + System.nanoTime() / 1_000_000L + " rel=" + ms() : s));
     }
 
+    /**
+     * In-memory java.util.prefs, selected with
+     * -Djava.util.prefs.PreferencesFactory=PerfDriver$MemoryPrefsFactory (run.py always passes it).
+     * On Windows the default factory is the registry, HKCU\Software\JavaSoft\Prefs, which is where
+     * supabase-kt's default storage left the official login that vanilla Nuvio and older Z builds share.
+     * A build under test must never read, move or refresh that login, so nothing here touches it.
+     */
+    public static class MemoryPrefsFactory implements java.util.prefs.PreferencesFactory {
+        private static final java.util.prefs.Preferences USER = new MemoryPrefs(null, "");
+        private static final java.util.prefs.Preferences SYSTEM = new MemoryPrefs(null, "");
+        public java.util.prefs.Preferences userRoot() { return USER; }
+        public java.util.prefs.Preferences systemRoot() { return SYSTEM; }
+    }
+
+    static class MemoryPrefs extends java.util.prefs.AbstractPreferences {
+        private final Map<String, String> values = new HashMap<>();
+        private final Map<String, MemoryPrefs> children = new HashMap<>();
+        MemoryPrefs(MemoryPrefs parent, String name) { super(parent, name); }
+        protected void putSpi(String key, String value) { values.put(key, value); }
+        protected String getSpi(String key) { return values.get(key); }
+        protected void removeSpi(String key) { values.remove(key); }
+        protected void removeNodeSpi() { values.clear(); children.clear(); }
+        protected String[] keysSpi() { return values.keySet().toArray(new String[0]); }
+        protected String[] childrenNamesSpi() { return children.keySet().toArray(new String[0]); }
+        protected java.util.prefs.AbstractPreferences childSpi(String name) {
+            return children.computeIfAbsent(name, n -> new MemoryPrefs(this, n));
+        }
+        protected void syncSpi() { }
+        protected void flushSpi() { }
+    }
+
     public static void main(String[] args) throws Exception {
         dir = Paths.get(System.getProperty("perf.dir"));
         Files.createDirectories(dir);
         log = new PrintWriter(Files.newBufferedWriter(dir.resolve("driver.log")), true);
         stats.put(phase, new Stats());
         log("driver start; main=" + System.getProperty("perf.main"));
+        String prefs = java.util.prefs.Preferences.userRoot().getClass().getName();
+        log("prefs=" + prefs);
+        if (!prefs.endsWith("MemoryPrefs") && !Boolean.getBoolean("perf.allowRegistryPrefs")) {
+            log("refusing to start: java.util.prefs is not the in-memory factory");
+            System.exit(3);
+        }
         Thread hb = new Thread(PerfDriver::heartbeat, "perf-edt-heartbeat");
         hb.setDaemon(true);
         hb.setPriority(Thread.MAX_PRIORITY);
