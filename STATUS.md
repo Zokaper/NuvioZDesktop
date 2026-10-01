@@ -3925,3 +3925,15 @@ The content helper now reads the current completed item and verifies exact file 
 under that same lock; all assertions remain. Five consecutive corrected probes passed.
 This is a test-only observation fix, not a production downloader change. Final full e2e
 and rest validation remain required after SDK-boundary auth integration.
+
+SDK-boundary correction integrated by normal merge (shared helper 7b1fc338, authored mobile
+source d21029e39). StatelessAuthRequests uses the existing configured HTTP stack and Email
+credential encoding, bypassing Auth's destructive session_not_found parser for captured user
+lookup, refresh, credential responses and remote logout. Device-code fallback lookup is raw
+as well. SDK automatic refresh/lifecycle refresh/storage import are disabled; coordinator
+owns near-expiry renewal (30s check/60s ahead) and guarded stored-session read/import.
+Same-account status echoes settle obsolete validation. Real pinned-SDK MockEngine tests
+reproduce an unowned clear and prove raw requests cannot clear B; coordinator tests cover
+late storage/refresh behind logout/login and offline restart. No performance/WT/feed/version
+changes. Mobile auth focus 49 passes; fresh desktop focus/full partitions, mobile full/builds
+and exact-head iOS/macOS build-only validation remain required before debug publication.
