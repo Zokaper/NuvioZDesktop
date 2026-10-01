@@ -62,12 +62,8 @@ class AuthStateMachineTest {
             sessionUserId = "user-456",
             email = "async@test.com",
         )
-        assertFalse(statusResult.shouldValidateRemote, "In-flight mutation session must be adopted directly without remote validation")
-        assertEquals(
-            AuthState.Authenticated("user-456", "async@test.com", isAnonymous = false),
-            statusResult.newState.authState,
-        )
-        assertEquals("user-456", statusResult.newState.validatedUserId)
+        assertTrue(statusResult.isDropped, "Status has no credential-attempt provenance")
+        assertEquals(inFlight, statusResult.newState)
 
         // Later the mutation method finishes
         val mutationResult = AuthStateMachine.onExplicitSignInSucceeded(
@@ -446,10 +442,16 @@ class AuthStateMachineTest {
             sessionUserId = "device-linked-user",
             email = "device@test.com",
         )
+        assertTrue(codeStatusResult.isDropped)
         assertFalse(codeStatusResult.shouldValidateRemote)
+        assertEquals(waitingForCode, codeStatusResult.newState)
+        // The owned import completion, not an SDK status notification, finishes this attempt.
+        val codeCompleted = AuthStateMachine.onExplicitSignInSucceeded(
+            waitingForCode, 11L, "device-linked-user", "device@test.com",
+        )
         assertEquals(
             AuthState.Authenticated("device-linked-user", "device@test.com", isAnonymous = false),
-            codeStatusResult.newState.authState,
+            codeCompleted.newState.authState,
         )
     }
 
@@ -730,7 +732,7 @@ class AuthStateMachineTest {
         assertEquals("<empty>", maskEmail(null))
 
         assertEquals("1234...9012", maskId("123456789012"))
-        assertEquals("short", maskId("short"))
+        assertEquals("***", maskId("short"))
         assertEquals("<empty>", maskId(""))
         assertEquals("<empty>", maskId(null))
     }

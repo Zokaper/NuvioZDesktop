@@ -259,95 +259,11 @@ internal object AuthStateMachine {
             )
         }
 
-        // 1. If an explicit credential mutation is actively in flight:
-        val intent = state.inFlightIntent
-        if (intent != null) {
-            when (intent) {
-                is InFlightAuthIntent.EmailSignIn -> {
-                    val matchesEmail = email != null && email.equals(intent.email, ignoreCase = true)
-                    if (matchesEmail) {
-                        val updated = state.copy(
-                            authState = AuthState.Authenticated(
-                                userId = sessionUserId,
-                                email = email,
-                                isAnonymous = false,
-                            ),
-                            validatedUserId = sessionUserId,
-                            anonymousUserId = null,
-                        )
-                        return AuthTransitionResult(
-                            newState = updated,
-                            clearAnonymousStorage = true,
-                            shouldValidateRemote = false,
-                            logReason = "Adopted in-flight email sign-in session for ${maskEmail(intent.email)}",
-                        )
-                    } else {
-                        return AuthTransitionResult(
-                            newState = state,
-                            isDropped = true,
-                            logReason = "Dropped unrelated SessionStatus.Authenticated(userId=${maskId(sessionUserId)}, email=${maskEmail(email)}) while email sign-in for ${maskEmail(intent.email)} is in flight",
-                        )
-                    }
-                }
-                is InFlightAuthIntent.EmailSignUp -> {
-                    val matchesEmail = email != null && email.equals(intent.email, ignoreCase = true)
-                    if (matchesEmail) {
-                        val updated = state.copy(
-                            authState = AuthState.Authenticated(
-                                userId = sessionUserId,
-                                email = email,
-                                isAnonymous = false,
-                            ),
-                            validatedUserId = sessionUserId,
-                            anonymousUserId = null,
-                        )
-                        return AuthTransitionResult(
-                            newState = updated,
-                            clearAnonymousStorage = true,
-                            shouldValidateRemote = false,
-                            logReason = "Adopted in-flight email sign-up session for ${maskEmail(intent.email)}",
-                        )
-                    } else {
-                        return AuthTransitionResult(
-                            newState = state,
-                            isDropped = true,
-                            logReason = "Dropped unrelated SessionStatus.Authenticated during sign-up for ${maskEmail(intent.email)}",
-                        )
-                    }
-                }
-                is InFlightAuthIntent.SignOut -> {
-                    return AuthTransitionResult(
-                        newState = state,
-                        isDropped = true,
-                        logReason = "Dropped SessionStatus.Authenticated while signOut is in flight",
-                    )
-                }
-                is InFlightAuthIntent.Anonymous -> {
-                    return AuthTransitionResult(
-                        newState = state,
-                        isDropped = true,
-                        logReason = "Dropped SessionStatus.Authenticated while anonymous sign-in is in flight",
-                    )
-                }
-                is InFlightAuthIntent.ExternalSession -> {
-                    val updated = state.copy(
-                        authState = AuthState.Authenticated(
-                            userId = sessionUserId,
-                            email = email,
-                            isAnonymous = false,
-                        ),
-                        validatedUserId = sessionUserId,
-                        anonymousUserId = null,
-                        inFlightIntent = null,
-                    )
-                    return AuthTransitionResult(
-                        newState = updated,
-                        clearAnonymousStorage = true,
-                        shouldValidateRemote = false,
-                        logReason = "Adopted expected external session for ${maskId(sessionUserId)}",
-                    )
-                }
-            }
+        // Status carries account identity, not the credential request that produced it.
+        // Even a matching-email old session must wait for the explicit SDK call to succeed.
+        if (state.inFlightIntent != null) {
+            return AuthTransitionResult(newState = state, isDropped = true,
+                logReason = "Session status deferred during explicit auth operation")
         }
 
         // 2. If NO in-flight intent:
@@ -382,7 +298,7 @@ internal object AuthStateMachine {
         request: ValidationRequest,
         result: RemoteValidationResult,
     ): AuthTransitionResult {
-        if (request.epoch < state.currentEpoch) {
+        if (request.epoch != state.currentEpoch || state.activeValidationRequest != request) {
             return AuthTransitionResult(
                 newState = state,
                 isDropped = true,
@@ -663,5 +579,5 @@ internal fun maskEmail(email: String?): String {
 internal fun maskId(id: String?): String {
     if (id.isNullOrBlank()) return "<empty>"
     val trimmed = id.trim()
-    return if (trimmed.length <= 8) trimmed else "${trimmed.take(4)}...${trimmed.takeLast(4)}"
+    return if (trimmed.length <= 8) "***" else "${trimmed.take(4)}...${trimmed.takeLast(4)}"
 }
