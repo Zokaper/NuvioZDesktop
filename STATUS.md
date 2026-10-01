@@ -1,3 +1,15 @@
+## Authentication login state machine and session authority fix (2026-10-01)
+
+Active branch: `gemini/auth-login-state-machine-fix` (shared KMP logic with `nuvio-z`), rebased onto current Watch Together RC head behind desktop Debug 80 (`9085e881b`) and mobile Debug 74 (`e77954662`).
+Desktop-specific verification:
+- Preserved install-scoped official session storage (`InstallScopedSessionManager.desktop.kt`) and legacy session migration from `Preferences.userRoot()`.
+- Verified `InstallScopedSessionManagerTest`: all 6 desktop storage tests passed (saves, loads, single-move legacy migration, priority over shared login).
+- Verified `OfficialSessionRejectionTest`: all 3 rejection/refresh classifier tests passed.
+- Verified `AuthStateMachineTest`: all 14 regression tests passed on JVM/desktop target (`:composeApp:desktopTest -x buildWindowsPlayerBridge`).
+- Confirmed deterministic transition from `AppGateScreen.Auth` to `AppGateScreen.ProfileSelection` / `AppGateScreen.Main` upon email authentication without latching on login screen.
+- Verified desktop auth/session/gate/profile test suite: **50 tests / 0 failures / 0 errors / 0 skips**.
+- Desktop compile: `:composeApp:compileKotlinDesktop` PASSED.
+
 ## Home/lock Away hold coordination and return readiness (2026-10-01)
 
 Active branch: `claude/ios-watch-together-hardening`. Physical retest of the prior build-only
