@@ -273,3 +273,36 @@ jobs:
           path: composeApp/build/compose/release-msis/*.msi
           if-no-files-found: error
           retention-days: 14
+
+  changelog:
+    name: Global changelog
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Test the changelog tooling
+        run: python3 -m unittest scripts/test_check_changelog.py
+
+      - name: Validate the global changelog
+        run: python3 scripts/check-changelog.py validate
+
+      - name: Compare with the other repository
+        run: |
+          # The global changelog is byte-identical in nuvio-z and nuviozdesktop. Compare with the same
+          # branch name in the other repository (Dev pairs with main). A branch that exists only
+          # here has nothing to compare against: that is reported, not failed - the release workflows
+          # compare against the other trunk and do fail.
+          branch="${GITHUB_REF_NAME}"
+          [[ "${branch}" == "Dev" ]] && branch="main"
+          encoded="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "${branch}")"
+          if ! gh api "repos/Zokaper/nuvio-z/contents/composeApp/src/commonMain/composeResources/files/changelog.json?ref=${encoded}" \
+              -H "Accept: application/vnd.github.raw" > peer-changelog.json 2> peer-error.txt; then
+            echo "::warning::Zokaper/nuvio-z has no changelog.json on '${branch}'; skipped the cross-repository comparison."
+            cat peer-error.txt
+            exit 0
+          fi
+          python3 scripts/check-changelog.py compare peer-changelog.json

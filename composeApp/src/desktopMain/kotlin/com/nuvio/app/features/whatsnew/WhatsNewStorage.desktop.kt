@@ -4,18 +4,17 @@ import com.nuvio.app.core.build.AppVersionConfig
 import com.nuvio.app.core.storage.DesktopStorage
 
 internal actual object WhatsNewStorage {
+    // Written by earlier builds; read for migration only, never rewritten. 0.1.23-alpha-z6 and
+    // every stable desktop build before it wrote only the last-seen version.
     private const val lastSeenVersionKey = "nuvio_whats_new_last_seen_version"
     private const val ackSerialKey = "ack_serial"
+
+    private const val ackSeqKey = "ack_seq"
+    private const val ackSeenKey = "ack_seen"
+    private const val viewedSeqKey = "viewed_seq"
+    private const val viewedSeenKey = "viewed_seen"
     private const val ackDebugBuildKey = "ack_debug_build"
     private val store = DesktopStorage.store("nuvio_whats_new")
-
-    actual val isDesktop: Boolean = true
-
-    actual fun loadLastSeenVersion(): String? = store.getString(lastSeenVersionKey)
-
-    actual fun saveLastSeenVersion(versionName: String) {
-        store.putString(lastSeenVersionKey, versionName)
-    }
 
     /**
      * Desktop's own identity (Phase 9 fix): `VERSION_NAME` here is a stale mobile value, so the
@@ -39,13 +38,23 @@ internal actual object WhatsNewStorage {
             )
         }
 
-    actual fun loadAck(): WhatsNewAck? {
-        val serial = store.getInt(ackSerialKey) ?: return null
-        return WhatsNewAck(serial, store.getInt(ackDebugBuildKey) ?: 0)
+    actual fun load(): StoredWhatsNew {
+        fun seen(seqKey: String, seenKey: String): SeenEvents? =
+            store.getInt(seqKey)?.let { SeenEvents(it.coerceAtLeast(0), SeenEvents.decodeAbove(store.getString(seenKey))) }
+        return StoredWhatsNew(
+            acknowledged = seen(ackSeqKey, ackSeenKey),
+            viewed = seen(viewedSeqKey, viewedSeenKey),
+            debugBuild = store.getInt(ackDebugBuildKey),
+            legacySerial = store.getInt(ackSerialKey),
+            legacyLastSeenVersion = store.getString(lastSeenVersionKey),
+        )
     }
 
-    actual fun saveAck(ack: WhatsNewAck) {
-        store.putInt(ackSerialKey, ack.serial)
-        store.putInt(ackDebugBuildKey, ack.debugBuild)
+    actual fun save(state: WhatsNewState) {
+        store.putInt(ackSeqKey, state.acknowledged.floor)
+        store.putString(ackSeenKey, SeenEvents.encodeAbove(state.acknowledged.above))
+        store.putInt(viewedSeqKey, state.viewed.floor)
+        store.putString(viewedSeenKey, SeenEvents.encodeAbove(state.viewed.above))
+        store.putInt(ackDebugBuildKey, state.debugBuild)
     }
 }
