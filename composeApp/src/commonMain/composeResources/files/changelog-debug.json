@@ -73,6 +73,14 @@
     {
       "build": 80,
       "text": "Watch Together: Away and buffering holds now retain independent ownership, and a skipped Away pause is retried. Returning guests must report fresh playback readiness before the normal short recovery settle. Includes durable Away support and logs for the Home/lock acceptance retest."
+    },
+    {
+      "build": 81,
+      "text": "Sign-in, sign-out and account switching reworked so an old or failed attempt can't override a newer one; profile selection after sign-in fixed. Watch Together Away and return-readiness fixes from 80 remain."
+    },
+    {
+      "build": 82,
+      "text": "What's New is now one changelog across Desktop, Android and iPhone. This build previews the next release's notes: they open once after this update, and stay in Settings → What's New, which shows a New badge while something is unseen. Entries for phones sit at the end of each update. Everything in 81 is here too."
     }
   ]
 }
