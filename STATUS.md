@@ -1,3 +1,13 @@
+## Global What's New - release-event changelog (2026-10-02, branch `claude/whatsnew-global`)
+
+Owner: Claude, in isolated worktrees; Codex's frozen RC untouched. Same change as `nuvio-z`
+`claude/whatsnew-global` (canonical record: `../nuvio-z/STATUS.md`, `Docs/Z-FEATURES.md` C21), cut here
+from the frozen RC docs head `bc0434882`. Shared What's New files, `changelog.json`, the store registry,
+`ZSettingsRoot.kt` and the changelog tooling are byte-identical with mobile; desktop keeps its own
+`WhatsNewStorage.desktop.kt`, `DesktopChangelogTest` and `changelog-debug.json`. Desktop `z6` installs
+migrate from `last_seen_version` with no intermediate release. The next desktop release is **serial 132**
+(`0.1.26-alpha-z1`), seq 1 of the global changelog.
+
 ## Frozen RC — READY FOR DEVICE QA (2026-10-02)
 
 Codex is the sole implementation owner. No new production changes were needed in this
