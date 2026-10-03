@@ -39,6 +39,8 @@ class PluginRuntimeDesktopTest {
 
     @Test
     fun `desktop runtime handles concurrent scraper executions`() = runBlocking {
+        val rounds = System.getenv("NUVIO_SCRAPER_STRESS_ROUNDS")?.toInt() ?: 1
+        repeat(rounds) { round ->
         val results = coroutineScope {
             (0 until 32).map { index ->
                 async(Dispatchers.Default) {
@@ -67,6 +69,8 @@ class PluginRuntimeDesktopTest {
         results.forEachIndexed { index, streams ->
             assertEquals(1, streams.size)
             assertEquals("https://example.test/$index.mp4", streams.single().url)
+        }
+        if (rounds > 1) println("Scraper stress round ${round + 1}/$rounds: 32 executions passed")
         }
     }
 }
