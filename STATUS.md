@@ -1,3 +1,23 @@
+## Final RC P1 correction in progress — 2026-10-03
+
+Active branch: `codex/rc-p1-desktop-final`, isolated at
+`.codex-worktrees/rc-p1-desktop-verified`, based exactly on Debug 82
+`53e67e6027c2d2a69b556734a4796f3a19033537`. Mobile correction branch:
+`codex/rc-p1-final-qa`, based on Debug 76. Performance trees are untouched.
+
+The original 32-execution scraper test passed six rounds, then timed out at 60s.
+Native output: `Cannot get jni env because the vm is not cached.` Pinned quickjs-kt
+1.0.15's `jni_globals.c` increments/decrements process-global instance accounting
+without synchronization. Creation/close will be fenced together; evaluation and host
+work remain parallel. Exact lost-update interleaving in the shipped native binary
+has not been instrumented. Repeated stress and full validation are pending.
+
+Shared Social authority and narrow release-validator changes will arrive by merge.
+No stable publication, ship-date finalization or QA-flag removal is authorized.
+Maintainer confirms no new physical testing; one combined QA pass follows fresh builds.
+Debug counter remains 82 until validation passes. Classification: BLOCKED pending validation.
+Evidence: `.rc-investigation/rc-p1-20261003` in the workspace parent.
+
 ## Global What's New - release-event changelog (2026-10-02, branch `claude/whatsnew-global`)
 
 Owner: Claude, in isolated worktrees; Codex's frozen RC untouched. Same change as `nuvio-z`
