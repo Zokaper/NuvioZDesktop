@@ -1,22 +1,38 @@
-## Final RC P1 correction in progress — 2026-10-03
+## Final RC P1 corrections — validated; Debug 83 packaging next (2026-10-03)
 
-Active branch: `codex/rc-p1-desktop-final`, isolated at
-`.codex-worktrees/rc-p1-desktop-verified`, based exactly on Debug 82
-`53e67e6027c2d2a69b556734a4796f3a19033537`. Mobile correction branch:
-`codex/rc-p1-final-qa`, based on Debug 76. Performance trees are untouched.
+Active branch: `codex/rc-p1-desktop-final`, worktree `.codex-worktrees/rc-p1-desktop-verified`,
+based exactly on Debug 82 `53e67e6027c2d2a69b556734a4796f3a19033537`. Mobile branch:
+`codex/rc-p1-final-qa`, based exactly on Debug 76. Validated Desktop product head:
+`23b908ca9caab5a6311a8e885f952e5cbcf8d965`; subsequent edits are docs and Debug counter only.
+Shared Social and changelog-validator changes arrived through isolated shared Git merges;
+the legitimately divergent account-cleaner seam was authored on each platform.
+All three P1 corrections and both narrow P2 tooling fixes are implemented. Mobile
+host: **3470**, zero failures/errors, six policy skips; exactly those six pass separately
+under full distribution. Desktop: **1849 + 1062 + 457 + 49 = 3417**, zero failures,
+errors, skips or duplicate cases. Social: **16 real-repository regressions x 5 repetitions
+per repository**, all pass, including ordinary and A -> B -> A switches, stale errors,
+thrown session failure and twenty overlapping switching rounds per repetition.
+What's New/storage: mobile **47**, desktop **48**, all pass. Changelog CLI **23** and
+SideStore **6** Python tests pass; CLI also passes with the exact CPython 3.12.3 parser.
+Android full Debug and unsigned full release/R8 packaging pass; Mobile CI 37118806274 passes.
 
-The original 32-execution scraper test passed six rounds, then timed out at 60s.
-Native output: `Cannot get jni env because the vm is not cached.` Pinned quickjs-kt
-1.0.15's `jni_globals.c` increments/decrements process-global instance accounting
-without synchronization. Creation/close will be fenced together; evaluation and host
-work remain parallel. Exact lost-update interleaving in the shipped native binary
-has not been instrumented. Repeated stress and full validation are pending.
+Scraper stress: **11 independent JVMs, 11000 rounds, 352000 executions**, zero failures,
+timeouts or missing-VM diagnostics (one Gradle JVM plus ten standalone JVMs). Only
+native create/close is serialized. The ten-runtime host barrier proves evaluation
+and async host work remains concurrent. The exact native lost-update interleaving
+is inferred; the unsynchronized JNI lifecycle source and cached-VM failure are proved.
+Desktop hosted CI 37119440403 retains the pre-existing Linux frame_copy_test.c:36 failure
+before Kotlin; Windows MSI and global changelog jobs pass. No unrelated native fix is taken.
 
-Shared Social authority and narrow release-validator changes will arrive by merge.
-No stable publication, ship-date finalization or QA-flag removal is authorized.
-Maintainer confirms no new physical testing; one combined QA pass follows fresh builds.
-Debug counter remains 82 until validation passes. Classification: BLOCKED pending validation.
+Global catalogs are byte-identical between repositories and unchanged from 76/82;
+global event #1, mobile serial 127, all five physical-QA flags and all unreleased ship
+dates remain intact. Maintainer confirms no physical QA has passed. Performance work,
+stable versions, stable publication and stable feeds are untouched.
 Evidence: `.rc-investigation/rc-p1-20261003` in the workspace parent.
+
+Debug 83 is next; version `0.1.23-alpha-z6.83`, expected Windows ProductVersion `1.45.83`.
+Classification: **BLOCKED pending fresh packaging verification**. Physical reacceptance and
+the unchanged broader checklist are canonical in mobile `Docs/RC-P1-FINAL-QA.md`.
 
 ## Global What's New - release-event changelog (2026-10-02, branch `claude/whatsnew-global`)
 
