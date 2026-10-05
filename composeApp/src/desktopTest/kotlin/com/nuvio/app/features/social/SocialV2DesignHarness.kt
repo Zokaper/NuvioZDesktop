@@ -549,6 +549,7 @@ class SocialV2DesignHarness {
                 art = "Burning", actions = listOf("Join" to true))
             V2InboxRow(ana, rich("Ana" to true, " wants to be friends" to false), "1h", unread = true,
                 actions = listOf("Accept" to true, "Decline" to false))
+            Spacer(Modifier.height(10.dp))
             V2SectionLabel("Earlier")
             V2InboxRow(seraph, rich("Seraph" to true, " recommends " to false, "Andor" to true), "2h", art = "Andor")
             V2InboxRow(zokaper, rich("Zokaper" to true, " accepted your friend request" to false), "1d")
@@ -621,7 +622,7 @@ class SocialV2DesignHarness {
     private fun V2Button(text: String, primary: Boolean, modifier: Modifier = Modifier, compact: Boolean = false) {
         Box(
             modifier.clip(RoundedCornerShape(999.dp))
-                .background(if (primary) Color.White else MaterialTheme.colorScheme.surfaceVariant)
+                .background(if (primary) Color.White else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                 .padding(horizontal = if (compact) 14.dp else 20.dp, vertical = if (compact) 7.dp else 13.dp),
             contentAlignment = Alignment.Center,
         ) {
@@ -675,7 +676,13 @@ class SocialV2DesignHarness {
     ) {
         val muted = MaterialTheme.colorScheme.onSurfaceVariant
         Row(
-            Modifier.fillMaxWidth().alpha(if (dim) 0.5f else 1f).padding(vertical = 10.dp),
+            Modifier.padding(vertical = 5.dp).fillMaxWidth().alpha(if (dim) 0.55f else 1f)
+                .clip(RoundedCornerShape(18.dp))
+                .background(
+                    if (unread) MaterialTheme.colorScheme.surfaceVariant
+                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                )
+                .padding(14.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Box(Modifier.size(42.dp)) {
@@ -683,7 +690,7 @@ class SocialV2DesignHarness {
                 if (unread) {
                     Box(
                         Modifier.align(Alignment.TopEnd).size(12.dp).clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.background).padding(2.dp).clip(CircleShape).background(V2LiveColor),
+                            .background(MaterialTheme.colorScheme.surfaceVariant).padding(2.dp).clip(CircleShape).background(V2LiveColor),
                     )
                 }
             }
