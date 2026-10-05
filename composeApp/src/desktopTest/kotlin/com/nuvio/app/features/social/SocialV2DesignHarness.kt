@@ -32,8 +32,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
@@ -158,63 +162,63 @@ class SocialV2DesignHarness {
 
     // --- scenes -------------------------------------------------------------------------------
 
+    /**
+     * Round 2 (2026-10-05). Settled: C backdrop cards for Watching Now, one Home shelf. Rejected: B's
+     * small portrait poster. Open: how Recently watched looks - D landscape stills, E a two-column
+     * backdrop grid, C compact backdrop cards.
+     */
     @Test
-    fun renderVisualDirections() {
+    fun renderRecentlyWatchedOptions() {
         outputDir.mkdirs()
         val failures = mutableListOf<String>()
-        val variants = listOf("A", "B", "C")
+        val variants = listOf("D", "E", "C")
         for (v in variants) {
             renderScene("activity-$v-411x1500", 411, 1500, failures) { ActivityScene(v) }
+            renderScene("activity-$v-320x1100", 320, 1100, failures) { ActivityScene(v) }
         }
-        renderScene("activity-compare-A-B-C", 1290, 1500, failures) {
+        renderScene("activity-compare-D-E-C", 1290, 1500, failures) {
             Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 variants.forEach { v -> Box(Modifier.width(414.dp).fillMaxHeight()) { ActivityScene(v) } }
             }
         }
-        // The narrowest phone, where every candidate has to hold up.
-        for (v in variants) renderScene("activity-$v-320x700", 320, 700, failures) { ActivityScene(v) }
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
     }
 
     @Test
-    fun renderHomeShelfOptions() {
+    fun renderHomeShelf() {
         outputDir.mkdirs()
         val failures = mutableListOf<String>()
-        val kinds = listOf("one-shelf-cards", "two-shelves-cards", "one-shelf-posters")
-        for (k in kinds) {
-            renderScene("home-$k-411x820", 411, 820, failures) { HomeScene(k, tile = 216.dp, continueWidth = 264.dp) }
-            renderScene("home-$k-1280x700", 1280, 700, failures) { HomeScene(k, tile = 272.dp, continueWidth = 340.dp) }
-        }
+        renderScene("home-shelf-411x820", 411, 820, failures) { HomeScene("one-shelf-cards", tile = 216.dp, continueWidth = 264.dp) }
+        renderScene("home-shelf-1280x700", 1280, 700, failures) { HomeScene("one-shelf-cards", tile = 272.dp, continueWidth = 340.dp) }
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
     }
 
+    /** Watching Now is always C now; [recent] picks the Recently watched form. */
     @Composable
-    private fun ActivityScene(variant: String) {
+    private fun ActivityScene(recent: String) {
         Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             V2Chrome()
             Spacer(Modifier.height(14.dp))
             V2SectionLabel("Watching now", liveItems.size.toString(), live = true)
-            Column(verticalArrangement = Arrangement.spacedBy(if (variant == "C") 10.dp else 0.dp)) {
-                liveItems.forEach { item ->
-                    when (variant) {
-                        "A" -> V2RowA(item)
-                        "B" -> V2RowB(item)
-                        else -> V2CardC(item, height = 164.dp, big = true, modifier = Modifier.fillMaxWidth())
-                    }
-                }
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                liveItems.forEach { V2CardC(it, height = 164.dp, big = true, modifier = Modifier.fillMaxWidth()) }
             }
-            val buckets = bucketFriendActivity(groups, nowMs)
-            buckets.forEach { (bucket, bucketGroups) ->
-                Spacer(Modifier.height(10.dp))
+            bucketFriendActivity(groups, nowMs).forEach { (bucket, bucketGroups) ->
+                Spacer(Modifier.height(12.dp))
                 V2SectionLabel(bucket.label)
-                Column(verticalArrangement = Arrangement.spacedBy(if (variant == "C") 10.dp else 0.dp)) {
-                    bucketGroups.forEach { g ->
-                        val item = g.toItem(nowMs)
-                        when (variant) {
-                            "A" -> V2RowA(item)
-                            "B" -> V2RowB(item)
-                            else -> V2CardC(item, height = 128.dp, big = false, modifier = Modifier.fillMaxWidth())
+                val items = bucketGroups.map { it.toItem(nowMs) }
+                when (recent) {
+                    "D" -> Column { items.forEach { V2RowD(it) } }
+                    "E" -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        items.chunked(2).forEach { pair ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                pair.forEach { V2HomeTile(it, Modifier.weight(1f)) }
+                                if (pair.size == 1) Spacer(Modifier.weight(1f))
+                            }
                         }
+                    }
+                    else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        items.forEach { V2CardC(it, height = 116.dp, big = false, modifier = Modifier.fillMaxWidth()) }
                     }
                 }
             }
@@ -242,10 +246,6 @@ class SocialV2DesignHarness {
                     V2Shelf { liveItems.forEach { V2HomeTile(it, Modifier.width(tile)) } }
                     V2ShelfTitle("Friends' activity", null, seeAll = true)
                     V2Shelf { recentItems.forEach { V2HomeTile(it, Modifier.width(tile)) } }
-                }
-                "one-shelf-posters" -> {
-                    V2ShelfTitle("Friends", null, seeAll = true)
-                    V2Shelf { (liveItems + recentItems).forEach { V2PosterTile(it) } }
                 }
                 else -> {
                     V2ShelfTitle("Friends", null, seeAll = true)
@@ -297,51 +297,6 @@ class SocialV2DesignHarness {
         }
     }
 
-    // --- candidate B: poster feed ------------------------------------------------------------
-
-    @Composable
-    private fun V2RowB(item: V2Item) {
-        val muted = MaterialTheme.colorScheme.onSurfaceVariant
-        Column {
-            Row(
-                Modifier.fillMaxWidth().padding(vertical = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                Box(Modifier.width(72.dp).clip(RoundedCornerShape(10.dp))) {
-                    V2Art(item.title, Modifier.fillMaxWidth().aspectRatio(2f / 3f))
-                    item.live?.let { live ->
-                        Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(Color.Black.copy(alpha = 0.4f)))
-                        Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(live.progress).height(3.dp).background(V2LiveColor))
-                    }
-                }
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                        V2Faces(item, 20.dp)
-                        Text(
-                            item.sentence, style = MaterialTheme.typography.labelLarge, color = muted,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
-                        )
-                    }
-                    Text(
-                        item.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
-                        maxLines = 2, overflow = TextOverflow.Ellipsis,
-                    )
-                    val sub = listOfNotNull(
-                        item.meta.takeIf { it.isNotBlank() },
-                        item.time?.let(::ago),
-                        item.live?.let { if (it.playing) "Playing now" else "Paused" },
-                    ).joinToString(" · ")
-                    Text(sub, style = MaterialTheme.typography.bodySmall, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    item.live?.join?.let { join ->
-                        Spacer(Modifier.height(4.dp))
-                        V2Pill(join, MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurface)
-                    }
-                }
-            }
-            Box(Modifier.fillMaxWidth().height(0.5.dp).background(MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f)))
-        }
-    }
-
     // --- candidate C: backdrop cards ---------------------------------------------------------
 
     @Composable
@@ -366,9 +321,7 @@ class SocialV2DesignHarness {
                 live.playing -> "LIVE"
                 else -> "PAUSED"
             }
-            live?.join?.let { join ->
-                Box(Modifier.align(Alignment.TopEnd).padding(10.dp)) { V2Pill(join, Color.White, Color.Black) }
-            }
+            if (live != null) V2InfoDot(Modifier.align(Alignment.TopEnd).padding(12.dp))
             if (chip != null) {
                 Row(
                     Modifier.align(if (live == null) Alignment.TopEnd else Alignment.TopStart).padding(12.dp)
@@ -405,6 +358,7 @@ class SocialV2DesignHarness {
                         )
                     }
                 }
+                live?.join?.let { V2JoinHint(it, Modifier.padding(bottom = 2.dp)) }
             }
             if (live != null) {
                 Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(Color.White.copy(alpha = 0.18f)))
@@ -441,16 +395,17 @@ class SocialV2DesignHarness {
                         horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Box(Modifier.size(6.dp).clip(CircleShape).background(if (live.playing) V2LiveColor else Color(0xFFE6B341)))
-                        Text(if (live.party) "PARTY" else if (live.playing) "LIVE" else "PAUSED", color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        val state = if (live.party) "PARTY" else if (live.playing) "LIVE" else "PAUSED"
+                        Text(state, color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        live.join?.let { join ->
+                            Text("· $join", color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                        }
                     }
                 }
                 Spacer(Modifier.weight(1f))
-                val join = live?.join
-                if (join != null) {
-                    Box(Modifier.clip(RoundedCornerShape(999.dp)).background(Color.White).padding(horizontal = 11.dp, vertical = 4.dp)) {
-                        Text(join, color = Color.Black, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
-                    }
-                } else if (live == null && item.time != null) {
+                if (live != null) {
+                    V2InfoDot()
+                } else if (item.time != null) {
                     Text(ago(item.time), color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
                 }
             }
@@ -471,34 +426,6 @@ class SocialV2DesignHarness {
                 Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(Color.White.copy(alpha = 0.18f)))
                 Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(live.progress).height(3.dp).background(V2LiveColor))
             }
-        }
-    }
-
-    // --- Home option: portrait posters with an avatar badge ----------------------------------
-
-    @Composable
-    private fun V2PosterTile(item: V2Item) {
-        val muted = MaterialTheme.colorScheme.onSurfaceVariant
-        Column(Modifier.width(124.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Box {
-                V2Art(item.title, Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(14.dp)))
-                item.live?.let { live ->
-                    Row(
-                        Modifier.align(Alignment.TopStart).padding(8.dp).clip(RoundedCornerShape(999.dp))
-                            .background(Color.Black.copy(alpha = 0.55f)).padding(horizontal = 7.dp, vertical = 3.dp),
-                        horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Box(Modifier.size(6.dp).clip(CircleShape).background(if (live.playing) V2LiveColor else Color(0xFFE6B341)))
-                        Text(if (live.party) "PARTY" else if (live.playing) "LIVE" else "PAUSED", color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                    }
-                }
-                Box(Modifier.align(Alignment.BottomEnd).padding(8.dp)) { V2Faces(item, 28.dp) }
-            }
-            Text(item.title, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                listOfNotNull(item.who, item.time?.let(::ago), item.live?.join).joinToString(" · "),
-                style = MaterialTheme.typography.labelSmall, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
         }
     }
 
@@ -574,6 +501,64 @@ class SocialV2DesignHarness {
                 if (ring) Box(Modifier.fillMaxSize().border(2.dp, V2LiveColor, CircleShape))
                 val p = item.friends.first()
                 SocialAvatar(p.displayName, p.avatarUrl, p.avatarColorHex, size)
+            }
+        }
+    }
+
+    /** Long-press / right-click opens details too; this is the visible way in on a card whose tap joins. */
+    @Composable
+    private fun V2InfoDot(modifier: Modifier = Modifier) {
+        Box(
+            modifier.size(26.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.45f))
+                .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("i", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+        }
+    }
+
+    /** What a tap on the card does. A hint, not a button: the whole card is the target. */
+    @Composable
+    private fun V2JoinHint(text: String, modifier: Modifier = Modifier) {
+        Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Canvas(Modifier.size(width = 9.dp, height = 10.dp)) {
+                drawPath(
+                    Path().apply { moveTo(0f, 0f); lineTo(size.width, size.height / 2f); lineTo(0f, size.height); close() },
+                    V2LiveColor,
+                )
+            }
+            Text(text, color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+        }
+    }
+
+    // --- candidate D: landscape stills -------------------------------------------------------
+
+    /** B's sentence and feed rhythm, with a 16:9 still instead of the small portrait poster. */
+    @Composable
+    private fun V2RowD(item: V2Item) {
+        val muted = MaterialTheme.colorScheme.onSurfaceVariant
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.width(140.dp)) {
+                V2Art(item.title, Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp)))
+                Box(Modifier.align(Alignment.BottomStart).padding(6.dp)) { V2Faces(item, 22.dp) }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(color = MaterialTheme.colorScheme.onBackground, fontWeight = FontWeight.SemiBold)) { append(item.who) }
+                        append(" watched")
+                    },
+                    style = MaterialTheme.typography.labelLarge, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                Text(item.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(
+                    listOfNotNull(item.meta.takeIf { it.isNotBlank() }, item.time?.let(::ago)).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }
