@@ -22,18 +22,21 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -429,10 +432,302 @@ class SocialV2DesignHarness {
         }
     }
 
+    // --- round 3: the remaining screens ------------------------------------------------------
+
+    @Test
+    fun renderRemainingScreens() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        renderScene("sheet-join-ask-411x914", 411, 914, failures) { JoinSheetScene(liveItems.first { it.live?.join == "Ask to join" }) }
+        renderScene("sheet-join-direct-411x914", 411, 914, failures) { JoinSheetScene(liveItems.first { it.live?.join == "Join" }) }
+        for ((w, h) in listOf(411 to 1000, 320 to 900)) {
+            renderScene("friends-${w}x$h", w, h, failures) { FriendsScene() }
+            renderScene("inbox-${w}x$h", w, h, failures) { InboxScene() }
+            renderScene("profile-${w}x${h + 500}", w, h + 500, failures) { ProfileScene() }
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
+    /** Tapping a Watching Now card: confirm, so a stray tap never starts playback. */
+    @Composable
+    private fun JoinSheetScene(item: V2Item) {
+        val muted = MaterialTheme.colorScheme.onSurfaceVariant
+        val direct = item.live?.join == "Join"
+        Box(Modifier.fillMaxSize()) {
+            ActivityScene("D")
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.62f)))
+            Column(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                    .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                V2Handle(Modifier.align(Alignment.CenterHorizontally))
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.width(124.dp).clip(RoundedCornerShape(12.dp))) {
+                        V2Art(item.title, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
+                        item.live?.let { live ->
+                            Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(Color.Black.copy(alpha = 0.4f)))
+                            Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(live.progress).height(3.dp).background(V2LiveColor))
+                        }
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
+                            V2Faces(item, 20.dp)
+                            Text(item.sentence, style = MaterialTheme.typography.labelLarge, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        Text(item.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            listOfNotNull(item.meta.ifBlank { null }, if (item.live?.playing == true) "Playing" else "Paused").joinToString(" · "),
+                            style = MaterialTheme.typography.bodySmall, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                Text(
+                    if (direct) "${item.who} lets friends join directly. You'll start in sync with them."
+                    else "${item.who} gets a request. You'll join as soon as they accept.",
+                    style = MaterialTheme.typography.bodyMedium, color = muted,
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    V2Button(if (direct) "Join now" else "Ask to join", primary = true, modifier = Modifier.fillMaxWidth())
+                    V2Button("View details", primary = false, modifier = Modifier.fillMaxWidth())
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun FriendsScene() {
+        val muted = MaterialTheme.colorScheme.onSurfaceVariant
+        Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+            V2Chrome(friendsTab = true)
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier.weight(1f).clip(RoundedCornerShape(999.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                ) {
+                    Text("Add a friend by @handle", style = MaterialTheme.typography.bodyMedium, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                V2Button("Invite code", primary = false, compact = true)
+            }
+            Spacer(Modifier.height(14.dp))
+            V2SectionLabel("Requests", "1")
+            V2PersonRow(ana, "@ana · wants to be friends", below = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    V2Button("Accept", primary = true, compact = true)
+                    V2Button("Decline", primary = false, compact = true)
+                }
+            })
+            V2SectionLabel("Sent", "1")
+            V2PersonRow(ben, "@ben · waiting for a reply") { V2Button("Cancel", primary = false, compact = true) }
+            V2SectionLabel("Friends", "4")
+            V2PersonRow(zokaper, "Watching The Punisher", live = true)
+            V2PersonRow(seraph, "Watching A Perfectly Ordinary Movie", live = true)
+            V2PersonRow(bigz, "Paused · The Punisher")
+            V2PersonRow(longName, "Watched 2w ago")
+            Spacer(Modifier.height(10.dp))
+            Text("Privacy and sharing  ›", style = MaterialTheme.typography.labelLarge, color = muted)
+        }
+    }
+
+    @Composable
+    private fun InboxScene() {
+        val muted = MaterialTheme.colorScheme.onSurfaceVariant
+        Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+            Row(Modifier.padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("‹", style = MaterialTheme.typography.headlineSmall)
+                Text("Inbox", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text("Mark all read", style = MaterialTheme.typography.labelLarge, color = muted)
+            }
+            Spacer(Modifier.height(10.dp))
+            V2SectionLabel("New", "3")
+            V2InboxRow(ben, rich("Ben" to true, " asked to join your playback of " to false, "Severance" to true), "now", unread = true,
+                actions = listOf("Accept" to true, "Decline" to false))
+            V2InboxRow(rayo, rich("Rayo" to true, " invited you to watch " to false, "Burning" to true), "12m", unread = true,
+                art = "Burning", actions = listOf("Join" to true))
+            V2InboxRow(ana, rich("Ana" to true, " wants to be friends" to false), "1h", unread = true,
+                actions = listOf("Accept" to true, "Decline" to false))
+            V2SectionLabel("Earlier")
+            V2InboxRow(seraph, rich("Seraph" to true, " recommends " to false, "Andor" to true), "2h", art = "Andor")
+            V2InboxRow(zokaper, rich("Zokaper" to true, " accepted your friend request" to false), "1d")
+            V2InboxRow(bigz, rich("Big Z" to true, " started watching " to false, "The Punisher" to true), "1d", art = "The Punisher")
+            V2InboxRow(debug, rich("Party invite from " to false, "debug" to true, " expired" to false), "3d", dim = true)
+        }
+    }
+
+    @Composable
+    private fun ProfileScene() {
+        val muted = MaterialTheme.colorScheme.onSurfaceVariant
+        val liveSeraph = liveItems.first { it.friends.first().handle == "seraph" }
+        val theirs = recentItems.filter { item -> item.friends.any { it.handle == "seraph" } }
+        Column(
+            Modifier.fillMaxSize().clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                .background(MaterialTheme.colorScheme.surface).padding(horizontal = 20.dp),
+        ) {
+            V2Handle(Modifier.align(Alignment.CenterHorizontally).padding(top = 10.dp))
+            Row(Modifier.padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(80.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.fillMaxSize().border(2.5.dp, V2LiveColor, CircleShape))
+                    SocialAvatar(seraph.displayName, null, seraph.avatarColorHex, 70.dp)
+                }
+                Column(Modifier.weight(1f)) {
+                    Text("Seraph", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text("@seraph · friends since Sep 2026", style = MaterialTheme.typography.bodySmall, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            V2CardC(liveSeraph, height = 150.dp, big = true, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(10.dp))
+            Text("14 h watched together · 6 parties", style = MaterialTheme.typography.labelMedium, color = muted)
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                V2Button("Start a party", primary = true, compact = true)
+                V2Button("Recommend", primary = false, compact = true)
+                V2Button("•••", primary = false, compact = true)
+            }
+            Spacer(Modifier.height(16.dp))
+            V2SectionLabel("Recently watched")
+            theirs.forEach { V2RowD(it) }
+            Spacer(Modifier.height(10.dp))
+            V2SectionLabel("Watched together")
+            Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                listOf("Burning" to "3 parties", "Andor" to "2 parties", "Daredevil" to "1 party").forEach { (title, count) ->
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        V2Art(title, Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)))
+                        Text(title, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(count, style = MaterialTheme.typography.labelSmall, color = muted)
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            V2SectionLabel("Privacy")
+            V2ToggleRow("Hide my activity from Seraph", false)
+            V2ToggleRow("Notify me when Seraph starts watching", true)
+            Text(
+                "Remove friend", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
+                color = Color(0xFFFF7A7A), modifier = Modifier.padding(vertical = 14.dp),
+            )
+        }
+    }
+
+    @Composable
+    private fun V2Handle(modifier: Modifier = Modifier) {
+        Box(modifier.width(36.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)))
+    }
+
+    @Composable
+    private fun V2Button(text: String, primary: Boolean, modifier: Modifier = Modifier, compact: Boolean = false) {
+        Box(
+            modifier.clip(RoundedCornerShape(999.dp))
+                .background(if (primary) Color.White else MaterialTheme.colorScheme.surfaceVariant)
+                .padding(horizontal = if (compact) 14.dp else 20.dp, vertical = if (compact) 7.dp else 13.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text, color = if (primary) Color.Black else MaterialTheme.colorScheme.onSurface,
+                style = if (compact) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false,
+            )
+        }
+    }
+
+    @Composable
+    private fun V2PersonRow(
+        person: SocialProfileSummary,
+        sub: String,
+        live: Boolean = false,
+        below: (@Composable () -> Unit)? = null,
+        trailing: (@Composable () -> Unit)? = null,
+    ) {
+        val muted = MaterialTheme.colorScheme.onSurfaceVariant
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(50.dp), contentAlignment = Alignment.Center) {
+                if (live) Box(Modifier.fillMaxSize().border(2.dp, V2LiveColor, CircleShape))
+                SocialAvatar(person.displayName, null, person.avatarColorHex, 42.dp)
+            }
+            Column(Modifier.weight(1f)) {
+                Text(person.displayName, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(sub, style = MaterialTheme.typography.labelMedium, color = if (live) V2LiveColor else muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (below != null) {
+                    Spacer(Modifier.height(8.dp))
+                    below()
+                }
+            }
+            if (trailing != null) trailing() else if (below == null) Text("›", style = MaterialTheme.typography.titleLarge, color = muted)
+        }
+    }
+
+    @Composable
+    private fun V2InboxRow(
+        person: SocialProfileSummary,
+        text: AnnotatedString,
+        time: String,
+        unread: Boolean = false,
+        art: String? = null,
+        dim: Boolean = false,
+        actions: List<Pair<String, Boolean>> = emptyList(),
+    ) {
+        val muted = MaterialTheme.colorScheme.onSurfaceVariant
+        Row(
+            Modifier.fillMaxWidth().alpha(if (dim) 0.5f else 1f).padding(vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(Modifier.size(42.dp)) {
+                SocialAvatar(person.displayName, null, person.avatarColorHex, 42.dp)
+                if (unread) {
+                    Box(
+                        Modifier.align(Alignment.TopEnd).size(12.dp).clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.background).padding(2.dp).clip(CircleShape).background(V2LiveColor),
+                    )
+                }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(text, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(time, style = MaterialTheme.typography.labelSmall, color = muted)
+                }
+                if (actions.isNotEmpty()) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        actions.forEach { (label, primary) -> V2Button(label, primary, compact = true) }
+                    }
+                }
+            }
+            if (art != null) V2Art(art, Modifier.width(72.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)))
+        }
+    }
+
+    @Composable
+    private fun V2ToggleRow(label: String, checked: Boolean) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            Switch(checked = checked, onCheckedChange = null)
+        }
+    }
+
+    /** "**Seraph** recommends **Andor**": the parts flagged true are emphasised. */
+    @Composable
+    private fun rich(vararg parts: Pair<String, Boolean>): AnnotatedString {
+        val strong = MaterialTheme.colorScheme.onBackground
+        val soft = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.78f)
+        return buildAnnotatedString {
+            parts.forEach { (text, bold) ->
+                withStyle(SpanStyle(color = if (bold) strong else soft, fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal)) {
+                    append(text)
+                }
+            }
+        }
+    }
+
     // --- shared pieces ------------------------------------------------------------------------
 
     @Composable
-    private fun V2Chrome() {
+    private fun V2Chrome(friendsTab: Boolean = false) {
         val muted = MaterialTheme.colorScheme.onSurfaceVariant
         Column(Modifier.padding(top = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -449,11 +744,19 @@ class SocialV2DesignHarness {
                 }
             }
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(999.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)).padding(3.dp)) {
-                Box(Modifier.weight(1f).clip(RoundedCornerShape(999.dp)).background(MaterialTheme.colorScheme.onBackground.copy(alpha = 0.14f)).padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                    Text("Activity", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                }
-                Box(Modifier.weight(1f).padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                    Text("Friends", style = MaterialTheme.typography.labelLarge, color = muted)
+                listOf("Activity" to !friendsTab, "Friends" to friendsTab).forEach { (label, selected) ->
+                    Box(
+                        Modifier.weight(1f).clip(RoundedCornerShape(999.dp))
+                            .background(if (selected) MaterialTheme.colorScheme.onBackground.copy(alpha = 0.14f) else Color.Transparent)
+                            .padding(vertical = 8.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            label, style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (selected) MaterialTheme.colorScheme.onBackground else muted,
+                        )
+                    }
                 }
             }
         }
