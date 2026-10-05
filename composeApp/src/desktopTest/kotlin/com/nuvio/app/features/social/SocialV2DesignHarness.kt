@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -727,6 +728,171 @@ class SocialV2DesignHarness {
                 withStyle(SpanStyle(color = if (bold) strong else soft, fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal)) {
                     append(text)
                 }
+            }
+        }
+    }
+
+    // --- round 4: desktop dashboard and system notifications --------------------------------
+
+    @Test
+    fun renderDesktopAndNotifications() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        renderScene("desktop-1280x820", 1280, 820, failures) { DesktopScene() }
+        renderScene("desktop-1920x1080", 1920, 1080, failures) { DesktopScene() }
+        renderScene("notifications-411x900", 411, 900, failures) { NotificationScene() }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
+    /** The dashboard kept and restyled: the feed in the settled card family, the Friends view as the rail. */
+    @Composable
+    private fun DesktopScene() {
+        val muted = MaterialTheme.colorScheme.onSurfaceVariant
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val rail = 360.dp
+            val feedWidth = maxWidth - rail - 84.dp
+            val liveColumns = if (feedWidth >= 1100.dp) 3 else 2
+            val recentColumns = if (feedWidth >= 1100.dp) 3 else 2
+            Column(Modifier.fillMaxSize().padding(horizontal = 28.dp)) {
+                Row(Modifier.padding(top = 22.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Social", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    V2Button("Invite code", primary = false, compact = true)
+                    Row(
+                        Modifier.clip(RoundedCornerShape(999.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                        horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Inbox", style = MaterialTheme.typography.labelLarge)
+                        Box(Modifier.size(18.dp).clip(CircleShape).background(V2LiveColor), contentAlignment = Alignment.Center) {
+                            Text("2", color = Color.Black, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(18.dp))
+                Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        V2SectionLabel("Watching now", liveItems.size.toString(), live = true)
+                        Spacer(Modifier.height(6.dp))
+                        V2Grid(liveItems, liveColumns) { item, modifier -> V2CardC(item, height = 180.dp, big = true, modifier = modifier) }
+                        bucketFriendActivity(groups, nowMs).forEach { (bucket, bucketGroups) ->
+                            Spacer(Modifier.height(14.dp))
+                            V2SectionLabel(bucket.label)
+                            V2Grid(bucketGroups.map { it.toItem(nowMs) }, recentColumns, gap = 18.dp) { item, modifier ->
+                                Box(modifier) { V2RowD(item) }
+                            }
+                        }
+                    }
+                    Column(
+                        Modifier.width(rail).fillMaxHeight().clip(RoundedCornerShape(22.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)).padding(18.dp),
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(999.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
+                                .padding(horizontal = 16.dp, vertical = 11.dp),
+                        ) {
+                            Text("Add a friend by @handle", style = MaterialTheme.typography.bodyMedium, color = muted, maxLines = 1)
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        V2SectionLabel("Requests", "1")
+                        V2PersonRow(ana, "@ana · wants to be friends", below = {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                V2Button("Accept", primary = true, compact = true)
+                                V2Button("Decline", primary = false, compact = true)
+                            }
+                        })
+                        V2SectionLabel("Sent", "1")
+                        V2PersonRow(ben, "@ben · waiting for a reply") { V2Button("Cancel", primary = false, compact = true) }
+                        V2SectionLabel("Friends", "4")
+                        V2PersonRow(zokaper, "Watching The Punisher", live = true)
+                        V2PersonRow(seraph, "Watching A Perfectly Ordinary Movie", live = true)
+                        V2PersonRow(bigz, "Paused · The Punisher")
+                        V2PersonRow(longName, "Watched 2w ago")
+                        Spacer(Modifier.height(8.dp))
+                        Text("Privacy and sharing  ›", style = MaterialTheme.typography.labelLarge, color = muted)
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun <T> V2Grid(items: List<T>, columns: Int, gap: Dp = 12.dp, cell: @Composable (T, Modifier) -> Unit) {
+        Column(verticalArrangement = Arrangement.spacedBy(gap)) {
+            items.chunked(columns).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                    row.forEach { cell(it, Modifier.weight(1f)) }
+                    repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
+                }
+            }
+        }
+    }
+
+    /**
+     * What reaches the user outside the app. Android: a real system notification with actions (FCM).
+     * iPhone: a local notification posted when Nuvio Z next opens or refreshes - SideStore has no push.
+     */
+    @Composable
+    private fun NotificationScene() {
+        val muted = MaterialTheme.colorScheme.onSurfaceVariant
+        Column(
+            Modifier.fillMaxSize().background(Color(0xFF15171B)).padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("ANDROID", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = muted)
+            V2AndroidNotification(ben, "Ben asked to join", "Your playback of Severance · S1 E3", listOf("Accept", "Decline"))
+            V2AndroidNotification(rayo, "Rayo invited you to watch", "Burning · Watch Together", listOf("Join"))
+            V2AndroidNotification(ana, "Ana wants to be friends", "@ana", listOf("Accept", "Decline"))
+            V2AndroidNotification(seraph, "Seraph recommends Andor", "Tap to open it", emptyList())
+            Spacer(Modifier.height(6.dp))
+            Text("IPHONE · SHOWN WHEN NUVIO Z OPENS", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = muted)
+            V2IosBanner("Ben asked to join", "Your playback of Severance · S1 E3")
+            V2IosBanner("2 new in your Social inbox", "Ana wants to be friends, and 1 more")
+        }
+    }
+
+    @Composable
+    private fun V2AndroidNotification(person: SocialProfileSummary, title: String, body: String, actions: List<String>) {
+        Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Color(0xFF2A2D33)).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                Box(Modifier.size(18.dp).clip(CircleShape).background(V2LiveColor), contentAlignment = Alignment.Center) {
+                    Text("Z", color = Color.Black, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                }
+                Text("Nuvio Z · Social · now", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.7f))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(title, color = Color.White, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    Text(body, color = Color.White.copy(alpha = 0.72f), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                SocialAvatar(person.displayName, null, person.avatarColorHex, 38.dp)
+            }
+            if (actions.isNotEmpty()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+                    actions.forEach { Text(it, color = Color(0xFFA8C7FA), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold) }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun V2IosBanner(title: String, body: String) {
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Color(0xFF34363B)).padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(11.dp), verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(38.dp).clip(RoundedCornerShape(9.dp)).background(V2LiveColor), contentAlignment = Alignment.Center) {
+                Text("Z", color = Color.Black, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            }
+            Column(Modifier.weight(1f)) {
+                Row {
+                    Text("NUVIO Z", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
+                    Text("now", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall)
+                }
+                Text(title, color = Color.White, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Text(body, color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
