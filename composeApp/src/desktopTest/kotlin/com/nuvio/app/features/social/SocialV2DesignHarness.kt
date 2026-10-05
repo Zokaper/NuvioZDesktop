@@ -96,6 +96,7 @@ class SocialV2DesignHarness {
     private val ana = profile("Ana", "ana", "#E0527A")
     private val rayo = profile("Rayo", "rayo", "#C2A12B")
     private val ben = profile("Ben", "ben", "#4FB0C6")
+    private val me = profile("big z", "zokaper", "#1E88E5")
     private val longName = profile("A Friend With A Very Long Display Name", "longname", "#7A8B99")
 
     private val activityRuns = listOf(
@@ -614,6 +615,24 @@ class SocialV2DesignHarness {
         }
     }
 
+    /** You, top-left: avatar, name, @handle and friend count, as the V1 header had it. */
+    @Composable
+    private fun V2Identity(avatar: Dp, big: Boolean, modifier: Modifier = Modifier) {
+        Row(modifier, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            SocialAvatar(me.displayName, null, me.avatarColorHex, avatar)
+            Column {
+                Text(
+                    me.displayName, style = if (big) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "@${me.handle} · 4 friends", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+
     @Composable
     private fun V2Handle(modifier: Modifier = Modifier) {
         Box(modifier.width(36.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)))
@@ -755,7 +774,7 @@ class SocialV2DesignHarness {
             val recentColumns = if (feedWidth >= 1100.dp) 3 else 2
             Column(Modifier.fillMaxSize().padding(horizontal = 28.dp)) {
                 Row(Modifier.padding(top = 22.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Social", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    V2Identity(avatar = 52.dp, big = true, modifier = Modifier.weight(1f))
                     V2Button("Invite code", primary = false, compact = true)
                     Row(
                         Modifier.clip(RoundedCornerShape(999.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
@@ -904,7 +923,7 @@ class SocialV2DesignHarness {
         val muted = MaterialTheme.colorScheme.onSurfaceVariant
         Column(Modifier.padding(top = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Social", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                V2Identity(avatar = 42.dp, big = false, modifier = Modifier.weight(1f))
                 Row(
                     Modifier.clip(RoundedCornerShape(999.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
                         .padding(horizontal = 12.dp, vertical = 7.dp),
