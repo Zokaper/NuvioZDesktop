@@ -49,6 +49,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.NuvioAsyncImage
 
 /*
@@ -324,6 +325,13 @@ internal fun SocialSectionLabel(text: String, count: Int? = null, live: Boolean 
             Text(count.toString(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+}
+
+/** What the Social nav item's badge counts: actionable, unread inbox items. Zero while Social is off. */
+@Composable
+internal fun socialUnreadCount(): Int {
+    val state by SocialRepository.uiState.collectAsStateWithLifecycle()
+    return state.unreadCount
 }
 
 // --- labels ----------------------------------------------------------------------------------
