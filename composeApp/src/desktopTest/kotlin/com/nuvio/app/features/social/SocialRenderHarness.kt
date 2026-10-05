@@ -374,7 +374,11 @@ class SocialRenderHarness {
      * stack. Now there is one description of the layout and this file composes it.
      */
     @Composable
-    private fun SocialFeedScene(state: SocialUiState = feedState) {
+    private fun SocialFeedScene(
+        state: SocialUiState = feedState,
+        tab: SocialTab = SocialTab.Activity,
+        overlay: SocialOverlay? = null,
+    ) {
         val groups = groupFriendActivity(state.activity)
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             SocialFeed(
@@ -384,6 +388,8 @@ class SocialRenderHarness {
                     activityBuckets = bucketFriendActivity(groups, renderNowMs),
                     activityNowMs = renderNowMs,
                     joinAffordance = ::affordanceFor,
+                    initialTab = tab,
+                    initialOverlay = overlay,
                 ),
                 actions = SocialFeedActions(),
                 listState = rememberLazyListState(),
@@ -391,8 +397,38 @@ class SocialRenderHarness {
         }
     }
 
+    private val notifications = listOf(
+        SocialNotification(
+            id = "join_request:1", kind = SocialNotificationKind.WatchingNowJoinRequest, actor = profile("Ben", "ben"),
+            createdAt = "2026-09-15T11:59:00Z", state = "pending",
+            availableActions = setOf(SocialNotificationAction.Accept, SocialNotificationAction.Decline),
+            contentSummary = com.nuvio.app.features.watchparty.PartyContent("tt-sev", "series", "tt-sev:1:3", "Severance", season = 1, episode = 3),
+        ),
+        SocialNotification(
+            id = "party_invite:1", kind = SocialNotificationKind.PartyInvitation, actor = profile("Rayo", "rayo"),
+            createdAt = "2026-09-15T11:48:00Z", state = "pending", partyId = "party-burning",
+            availableActions = setOf(SocialNotificationAction.Join),
+            contentSummary = com.nuvio.app.features.watchparty.PartyContent("tt7282468", "movie", "tt7282468", "Burning"),
+        ),
+        SocialNotification(
+            id = "friend_request:1", kind = SocialNotificationKind.FriendRequest, actor = profile("Ana", "ana"),
+            createdAt = "2026-09-15T11:00:00Z", state = "pending",
+            availableActions = setOf(SocialNotificationAction.Accept, SocialNotificationAction.Decline),
+        ),
+        SocialNotification(
+            id = "friend_request:2", kind = SocialNotificationKind.FriendRequest, actor = profile("Zokaper", "zokaper"),
+            createdAt = "2026-09-14T10:00:00Z", readAt = "2026-09-14T10:05:00Z", state = "accepted",
+        ),
+        SocialNotification(
+            id = "party_invite:2", kind = SocialNotificationKind.PartyInvitation, actor = profile("debug", "debug"),
+            createdAt = "2026-09-12T20:00:00Z", readAt = "2026-09-12T20:01:00Z", state = "expired",
+            contentSummary = com.nuvio.app.features.watchparty.PartyContent("tt-andor", "series", "tt-andor:1:1", "Andor"),
+        ),
+    )
+
     private val feedState = SocialUiState(
-        capabilities = SocialCapabilities(socialEnabled = true, watchPartyEnabled = true),
+        capabilities = SocialCapabilities(socialEnabled = true, watchPartyEnabled = true, partyContractVersion = 2),
+        notifications = notifications,
         activeProfileId = "p-zokaper",
         me = profile("big z", "zokaper"),
         friends = friends,
@@ -420,10 +456,42 @@ class SocialRenderHarness {
             renderPhone("phone-social-typical-${w}x$h", w, h, failures) { SocialFeedScene(typicalState) }
             renderPhone("phone-social-full-${w}x$h", w, h, failures) { SocialFeedScene() }
         }
+        for ((w, h) in listOf(411 to 914, 320 to 600)) {
+            renderPhone("phone-social-friends-${w}x$h", w, h, failures) { SocialFeedScene(tab = SocialTab.Friends) }
+            renderPhone("phone-social-inbox-${w}x$h", w, h, failures) { SocialFeedScene(overlay = SocialOverlay.Inbox) }
+            renderPhone("phone-sheet-join-${w}x$h", w, h, failures) {
+                SheetFrame {
+                    val item = orderWatchingNowForDisplay(watchingNow).first()
+                    SocialJoinSheetContent(item, affordanceFor(item), {}, {}, {})
+                }
+            }
+            renderPhone("phone-sheet-profile-${w}x$h", w, h, failures) {
+                SheetFrame {
+                    val seraph = profile()
+                    val groups = groupFriendActivity(activityRuns).filter { g -> g.friends.any { it.profileId == seraph.profileId } }
+                    val live = watchingNow.first { it.profile.profileId == seraph.profileId }
+                    SocialProfileContent(seraph, live, affordanceFor(live), groups, renderNowMs, {}, {}, { _, _, _ -> }, {})
+                }
+            }
+        }
         renderPhone("phone-social-empty-411x914", 411, 914, failures) {
             SocialFeedScene(feedState.copy(watchingNow = emptyList(), activity = emptyList(), friends = emptyList()))
         }
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
+    /** A sheet's body on the sheet's surface, as the bottom sheet hosts it. */
+    @Composable
+    private fun SheetFrame(content: @Composable () -> Unit) {
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            Column(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 24.dp),
+            ) {
+                CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) { content() }
+            }
+        }
     }
 
     private fun renderPhone(
