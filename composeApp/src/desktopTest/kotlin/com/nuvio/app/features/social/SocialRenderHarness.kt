@@ -426,9 +426,31 @@ class SocialRenderHarness {
         ),
     )
 
+    private val inboxEvents = listOf(
+        SocialInboxEvent(
+            id = "e-rec", kind = SocialInboxEvent.Recommendation, actor = profile(),
+            createdAt = "2026-09-15T10:00:00Z",
+            payload = SocialInboxPayload(contentId = "tt-andor", contentType = "series", title = "Andor", note = "the prison arc is unreal"),
+        ),
+        SocialInboxEvent(
+            id = "e-acc", kind = SocialInboxEvent.FriendAccepted, actor = profile("Zokaper", "zokaper"),
+            createdAt = "2026-09-14T12:00:00Z", readAt = "2026-09-14T12:01:00Z",
+        ),
+        SocialInboxEvent(
+            id = "e-watch", kind = SocialInboxEvent.FriendWatching, actor = profile("Big Z", "bigz"),
+            createdAt = "2026-09-14T09:00:00Z", readAt = "2026-09-14T09:05:00Z",
+            payload = SocialInboxPayload(contentId = "tt5", contentType = "series", title = "The Punisher"),
+        ),
+        // A kind from a newer backend: must be skipped, not crash or draw blank.
+        SocialInboxEvent(id = "e-future", kind = "something_new", actor = profile(), createdAt = "2026-09-15T11:59:30Z"),
+    )
+
     private val feedState = SocialUiState(
         capabilities = SocialCapabilities(socialEnabled = true, watchPartyEnabled = true, partyContractVersion = 2),
         notifications = notifications,
+        inbox = inboxEvents,
+        sentRequests = listOf(SentFriendRequest("sent-1", profile("Ben", "ben"), "2026-09-15T09:00:00Z")),
+        socialV2Backend = true,
         activeProfileId = "p-zokaper",
         me = profile("big z", "zokaper"),
         friends = friends,
@@ -470,7 +492,27 @@ class SocialRenderHarness {
                     val seraph = profile()
                     val groups = groupFriendActivity(activityRuns).filter { g -> g.friends.any { it.profileId == seraph.profileId } }
                     val live = watchingNow.first { it.profile.profileId == seraph.profileId }
-                    SocialProfileContent(seraph, live, affordanceFor(live), groups, renderNowMs, {}, {}, { _, _, _ -> }, {})
+                    SocialProfileContent(
+                        friend = seraph,
+                        prefs = SocialFriendPrefs(seraph.profileId, hideActivity = false, notifyWhenWatching = true),
+                        stats = SocialTogetherStats(
+                            seconds = 50_400, parties = 6,
+                            titles = listOf(
+                                SocialTogetherTitle("Burning", "tt7282468", "movie", parties = 3),
+                                SocialTogetherTitle("Andor", "tt-andor", "series", parties = 2),
+                                SocialTogetherTitle("Daredevil", "tt-dd", "series", parties = 1),
+                            ),
+                        ),
+                        onSetPrefs = { _, _ -> },
+                        watching = live,
+                        affordance = affordanceFor(live),
+                        groups = groups,
+                        nowMs = renderNowMs,
+                        onOpenWatching = {},
+                        onWatchingDetails = {},
+                        onOpenContent = { _, _, _ -> },
+                        onRemove = {},
+                    )
                 }
             }
         }
