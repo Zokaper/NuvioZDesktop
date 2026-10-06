@@ -117,9 +117,9 @@ class SocialActivityRedesignHarness {
     /** Server order: newest first. */
     private val runs = listOf(
         run(ana, "tt0329938", "Transformers: Armada", "2026-10-06T07:00:00Z", 1, 5, events = 5),
-        run(faye, "tt0914798", "The Boy in the Striped Pajamas", "2026-10-04T21:00:00Z"),
-        run(jules, "tt0914798", "The Boy in the Striped Pajamas", "2026-10-04T20:00:00Z"),
-        run(ben, "tt37287335", "Obsession", "2026-10-04T18:00:00Z"),
+        run(faye, "tt0914798", "The Boy in the Striped Pajamas", "2026-10-05T21:00:00Z"),
+        run(jules, "tt0914798", "The Boy in the Striped Pajamas", "2026-10-05T20:00:00Z"),
+        run(ben, "tt37287335", "Obsession", "2026-10-05T18:00:00Z"),
         run(mika, "tt0149460", "Futurama", "2026-10-03T22:00:00Z", 7, 1, events = 77),
         run(faye, "tt0068361", "The Discreet Charm of the Bourgeoisie", "2026-10-02T21:00:00Z"),
         run(faye, "tt0071406", "Pastoral: To Die in the Country", "2026-10-02T18:00:00Z"),
@@ -182,7 +182,7 @@ class SocialActivityRedesignHarness {
                 Column(Modifier.padding(horizontal = 16.dp)) { PhoneChrome() }
                 Spacer(Modifier.height(10.dp))
                 Column(Modifier.fillMaxSize().clipToBounds().verticalScroll(rememberScrollState())) {
-                    Feed(direction, withLive, width, horizontal = 16.dp, phone = true)
+                    Feed(direction, withLive, width, horizontal = if (direction == "F") 20.dp else 16.dp, phone = true)
                 }
             }
         }
@@ -223,7 +223,13 @@ class SocialActivityRedesignHarness {
             if (withLive) {
                 Column(Modifier.padding(horizontal = horizontal)) {
                     SectionLabel("Watching now", live = true)
-                    LiveCard(live, Modifier.fillMaxWidth(if (phone) 1f else 0.5f).height(if (phone) 170.dp else 190.dp))
+                    val liveModifier = when {
+                        direction == "F" && phone -> Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                        // Two grid cells wide, 16:9: the backdrop's own shape, never a cropped strip.
+                        direction == "F" -> pileGrid(width, phone).let { (_, cell) -> Modifier.width(cell * 2 + PileGap).aspectRatio(16f / 9f) }
+                        else -> Modifier.fillMaxWidth(if (phone) 1f else 0.5f).height(if (phone) 170.dp else 190.dp)
+                    }
+                    LiveCard(live, liveModifier)
                 }
             } else {
                 Column(Modifier.padding(horizontal = horizontal)) {
@@ -749,24 +755,44 @@ class SocialActivityRedesignHarness {
             renderScene("F-piles-desktop-${w}x$h", w, h, failures) { DesktopScene("F", withLive = false) }
         }
         renderScene("F-piles-desktop-scroll-1600x1400", 1600, 1400, failures) { DesktopScene("F", withLive = true) }
+        renderScene("F-piles-desktop-live-1600x1000", 1600, 1000, failures) { DesktopScene("F", withLive = true) }
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
+    /** Columns and cell width for the pile grid in a content area [width] wide. */
+    private fun pileGrid(width: Dp, phone: Boolean): Pair<Int, Dp> {
+        val columns = if (phone) 2 else ((width + PileGap) / (200.dp + PileGap)).toInt().coerceIn(3, 6)
+        val gap = if (phone) PilePhoneGap else PileGap
+        return columns to (width - gap * (columns - 1)) / columns
     }
 
     @Composable
     private fun PilesFeed(width: Dp, horizontal: Dp, phone: Boolean) {
-        val gap = if (phone) 12.dp else 18.dp
-        val columns = if (phone) 2 else ((width + gap) / (200.dp + gap)).toInt().coerceIn(3, 6)
-        // One continuous grid, newest first: section headers left half-empty lines (holes) on desktop.
-        // The order and each card's "· 2d" carry the timeline.
-        val entries = weekTimeline.flatMap { it.second }
-        Column(Modifier.padding(horizontal = horizontal)) {
-            SectionLabel("Recently watched")
-            Column(verticalArrangement = Arrangement.spacedBy(gap + 4.dp)) {
-                entries.chunked(columns).forEach { line ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
-                        line.forEach { PileCard(it, phone, Modifier.weight(1f)) }
-                        repeat(columns - line.size) { Spacer(Modifier.weight(1f)) }
+        val gap = if (phone) PilePhoneGap else PileGap
+        val (columns, _) = pileGrid(width - horizontal * 2, phone)
+        // The timeline without holes: a section's label sits above its first card, inside the grid,
+        // so Today, Yesterday and This week share a line when they are short.
+        val cells = weekTimeline.flatMap { (label, entries) -> entries.mapIndexed { i, entry -> (if (i == 0) label else null) to entry } }
+        Column(Modifier.padding(horizontal = horizontal), verticalArrangement = Arrangement.spacedBy(if (phone) 26.dp else 22.dp)) {
+            cells.chunked(columns).forEach { line ->
+                val labelled = line.any { it.first != null }
+                Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                    line.forEach { (label, entry) ->
+                        Column(Modifier.weight(1f)) {
+                            if (labelled) {
+                                Box(Modifier.height(30.dp), contentAlignment = Alignment.TopStart) {
+                                    if (label != null) {
+                                        Text(
+                                            label.uppercase(), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 1.2.sp,
+                                        )
+                                    }
+                                }
+                            }
+                            PileCard(entry, phone, Modifier.fillMaxWidth())
+                        }
                     }
+                    repeat(columns - line.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
         }
@@ -825,28 +851,25 @@ class SocialActivityRedesignHarness {
     }
 
     /**
-     * Up to three stills as a deck: the newest in front at full width, older ones behind it, each a
-     * step narrower and higher, darkened so the front still stays the picture. A single title is a
-     * plain still with the same top inset, so a row of cards lines up whatever the counts.
+     * Up to three stills fanned to the right: the newest in front at the left, each older one a step
+     * further right, a little shorter and darker, so its edge shows. Every pile has the same 16:9
+     * footprint, so a line of cards lines up whatever the counts.
      */
     @Composable
     private fun Pile(titles: List<FriendActivityGroup>) {
         val shown = titles.take(3)
-        val peek = 12.dp
-        Box(Modifier.fillMaxWidth()) {
-            Box(Modifier.fillMaxWidth().padding(top = peek * 2).aspectRatio(16f / 9f))
+        val shift = 12.dp
+        BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
+            val cardWidth = maxWidth - shift * (shown.size - 1)
             shown.indices.reversed().forEach { depth ->
                 val group = shown[depth]
-                val inset = 0.07f * depth
                 Box(
-                    Modifier.align(Alignment.TopCenter)
-                        .padding(top = peek * (2 - depth))
-                        .fillMaxWidth(1f - inset * 2)
-                        .aspectRatio(16f / 9f)
+                    Modifier.padding(start = shift * depth, top = (6 * depth).dp, bottom = (6 * depth).dp)
+                        .width(cardWidth).fillMaxHeight()
                         .clip(RoundedCornerShape(12.dp)),
                 ) {
                     Art(group.contentId, group.title, Modifier.matchParentSize())
-                    if (depth > 0) Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = 0.15f + 0.2f * depth)))
+                    if (depth > 0) Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = 0.25f + 0.2f * depth)))
                 }
             }
         }
@@ -1068,5 +1091,7 @@ class SocialActivityRedesignHarness {
 
     private companion object {
         val LiveColor = Color(0xFF6FD08C)
+        val PileGap = 18.dp
+        val PilePhoneGap = 16.dp
     }
 }
