@@ -83,7 +83,7 @@ import com.nuvio.app.features.social.SocialProfileSummary
 import com.nuvio.app.features.social.SocialUiState
 import com.nuvio.app.features.social.WatchJoinPolicy
 import com.nuvio.app.features.social.WatchingNowItem
-import com.nuvio.app.features.social.bucketFriendActivity
+import com.nuvio.app.features.social.friendActivityTimeline
 import com.nuvio.app.features.social.groupFriendActivity
 import com.nuvio.app.features.social.homeSocialSections
 import com.nuvio.app.features.social.watchingNowJoinAffordance
@@ -860,7 +860,7 @@ class PromoRenderHarness {
                     state = state,
                     handle = "maya",
                     activityGroups = groups,
-                    activityBuckets = bucketFriendActivity(groups, nowMs),
+                    activityTimeline = friendActivityTimeline(state.activity, nowMs),
                     activityNowMs = nowMs,
                     joinAffordance = { item -> watchingNowJoinAffordance(item, OutgoingJoinRequestState.Idle, null) },
                 ),
@@ -919,7 +919,7 @@ class PromoRenderHarness {
                         state = state,
                         handle = "theo",
                         activityGroups = groups,
-                        activityBuckets = bucketFriendActivity(groups, nowMs),
+                        activityTimeline = friendActivityTimeline(state.activity, nowMs),
                         activityNowMs = nowMs,
                         joinAffordance = { item -> watchingNowJoinAffordance(item, outgoing, null) },
                     ),

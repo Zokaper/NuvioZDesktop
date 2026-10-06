@@ -385,7 +385,7 @@ class SocialRenderHarness {
                 model = SocialFeedModel(
                     state = state,
                     activityGroups = groups,
-                    activityBuckets = bucketFriendActivity(groups, renderNowMs),
+                    activityTimeline = friendActivityTimeline(state.activity, renderNowMs),
                     activityNowMs = renderNowMs,
                     joinAffordance = ::affordanceFor,
                     initialTab = tab,
