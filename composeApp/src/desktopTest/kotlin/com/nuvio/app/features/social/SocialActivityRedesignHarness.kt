@@ -37,6 +37,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -870,6 +872,81 @@ class SocialActivityRedesignHarness {
                 ) {
                     Art(group.contentId, group.title, Modifier.matchParentSize())
                     if (depth > 0) Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = 0.25f + 0.2f * depth)))
+                }
+            }
+        }
+    }
+
+    // --- round 7 (2026-10-06): "the fanning is too subtle; on hover spin them out" ------------
+
+    /** Rest and hover side by side, at desktop and phone card widths, with 2- and 3-title decks. */
+    @Test
+    fun renderFanStudy() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        val decks = listOf(
+            groupFriendActivity(runs.filter { it.profile == faye }).take(3),
+            groupFriendActivity(runs.filter { it.profile == jules }).take(2),
+            groupFriendActivity(runs.filter { it.profile == ben }).take(1),
+        )
+        renderScene("G-fan-study-900x760", 900, 760, failures) {
+            Column(Modifier.fillMaxSize().padding(28.dp), verticalArrangement = Arrangement.spacedBy(40.dp)) {
+                for ((label, spread) in listOf("REST" to 0f, "HOVER" to 1f)) {
+                    Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                        decks.forEach { deck -> Box(Modifier.width(250.dp)) { FanPile(deck, spread) } }
+                    }
+                }
+                Text("PHONE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    decks.forEach { deck -> Box(Modifier.width(178.dp)) { FanPile(deck, 0f) } }
+                }
+            }
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
+    /**
+     * The deck as a fan: older stills behind and to the right, each a step smaller, tilted and
+     * darker, all pivoting near the bottom-left like a hand of cards. [spread] 0 is rest, 1 is hover:
+     * the cards spin further out, the front one lifts.
+     */
+    @Composable
+    private fun FanPile(titles: List<FriendActivityGroup>, spread: Float) {
+        val shown = titles.take(3)
+        val back = (shown.size - 1).coerceAtLeast(0)
+        val restShift = 22.dp
+        BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
+            val cardWidth = maxWidth - restShift * back
+            shown.indices.reversed().forEach { depth ->
+                val group = shown[depth]
+                Box(
+                    Modifier.width(cardWidth).fillMaxHeight()
+                        .graphicsLayer {
+                            transformOrigin = TransformOrigin(0.3f, 1f)
+                            if (depth == 0) {
+                                val lift = 1f + 0.03f * spread
+                                scaleX = lift
+                                scaleY = lift
+                                rotationZ = 1.5f * spread
+                                translationY = -4.dp.toPx() * spread
+                            } else {
+                                translationX = (22f + 22f * spread).dp.toPx() * depth
+                                translationY = -(4f + 4f * spread).dp.toPx() * depth
+                                rotationZ = -(4f + 5f * spread) * depth
+                                val s = 1f - 0.06f * depth
+                                scaleX = s
+                                scaleY = s
+                            }
+                            shadowElevation = 10.dp.toPx()
+                            shape = RoundedCornerShape(12.dp)
+                            clip = true
+                        },
+                ) {
+                    Art(group.contentId, group.title, Modifier.matchParentSize())
+                    if (depth > 0) {
+                        Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = (0.12f + 0.1f * depth) * (1f - 0.6f * spread))))
+                    }
                 }
             }
         }
