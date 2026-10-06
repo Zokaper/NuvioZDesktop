@@ -190,10 +190,12 @@ class SocialActivityRedesignHarness {
 
     @Composable
     private fun DesktopScene(direction: String, withLive: Boolean) {
-        BoxWithConstraints(Modifier.fillMaxSize()) {
+        BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             val rail = 340.dp
-            val feedWidth = maxWidth - rail - 28.dp * 3
-            Column(Modifier.fillMaxSize()) {
+            val timelineDirection = direction.startsWith("E")
+            val pageWidth = if (timelineDirection) minOf(maxWidth, 1280.dp) else maxWidth
+            val feedWidth = pageWidth - rail - 28.dp * 3
+            Column(Modifier.width(pageWidth).fillMaxHeight()) {
                 NavPill()
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 28.dp),
@@ -238,6 +240,8 @@ class SocialActivityRedesignHarness {
                 "A" -> ShelvesFeed(width, horizontal, phone)
                 "C" -> DigestFeed(width, horizontal, phone)
                 "D" -> LogFeed(width, horizontal, phone)
+                "E" -> TimelineFeed(horizontal, phone, coarse = false)
+                "E2" -> TimelineFeed(horizontal, phone, coarse = true)
                 else -> GridFeed(width, horizontal, phone)
             }
         }
@@ -569,6 +573,158 @@ class SocialActivityRedesignHarness {
                 )
             }
             Art(group.contentId, group.title, Modifier.width(84.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)))
+        }
+    }
+
+    // --- round 3 (2026-10-06): "I like D, but per-friend, but also a timeline" -----------------
+
+    /**
+     * E, the friend-day timeline (after Letterboxd's activity log): day headers, and within a day one
+     * row per friend whose titles collapse into one sentence. A title two friends watched that day is
+     * its own row. Rows keep D's form: avatar, sentence, meta, small landscape art.
+     */
+    @Test
+    fun renderTimelineDirection() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        for ((direction, label) in listOf("E" to "timeline", "E2" to "timeline-weeks")) {
+            listOf(411 to 914, 320 to 640).forEach { (w, h) ->
+                renderScene("$direction-$label-phone-${w}x$h", w, h, failures) { PhoneScene(direction, withLive = true) }
+            }
+            renderScene("$direction-$label-phone-scroll-411x2000", 411, 2000, failures) { PhoneScene(direction, withLive = true) }
+            listOf(1280 to 820, 1600 to 1000, 1920 to 1080).forEach { (w, h) ->
+                renderScene("$direction-$label-desktop-${w}x$h", w, h, failures) { DesktopScene(direction, withLive = false) }
+            }
+            renderScene("$direction-$label-desktop-scroll-1600x1500", 1600, 1500, failures) { DesktopScene(direction, withLive = true) }
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
+    /** One timeline row: one friend's titles that day, or one title several friends watched that day. */
+    private data class TimelineEntry(val people: List<SocialProfileSummary>, val titles: List<FriendActivityGroup>)
+
+    private val dayMs = 86_400_000L
+
+    private fun dayLabel(dayStart: Long): String {
+        val today = nowMs / dayMs * dayMs
+        val days = ((today - dayStart) / dayMs).toInt()
+        val date = java.time.LocalDate.ofEpochDay(dayStart / dayMs)
+        return when {
+            days <= 0 -> "Today"
+            days == 1 -> "Yesterday"
+            days < 7 -> date.dayOfWeek.getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH)
+            else -> "${date.month.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.ENGLISH)} ${date.dayOfMonth}"
+        }
+    }
+
+    /** E2: Today, Yesterday, This week, Last week, Earlier. Fewer headers, more collapse per friend. */
+    private fun weekBucket(dayStart: Long): Long {
+        val days = ((nowMs / dayMs * dayMs - dayStart) / dayMs)
+        return when {
+            days <= 1 -> -days          // 0 today, -1 yesterday
+            days < 7 -> -2
+            days < 14 -> -3
+            else -> -4
+        }
+    }
+
+    private val weekLabels = mapOf(0L to "Today", -1L to "Yesterday", -2L to "This week", -3L to "Last week", -4L to "Earlier")
+
+    private fun buildTimeline(coarse: Boolean): List<Pair<String, List<TimelineEntry>>> = runs
+        .groupBy { run ->
+            val day = (parseSocialTimestampMs(run.lastEventTime) ?: 0L) / dayMs * dayMs
+            if (coarse) weekBucket(day) else day
+        }
+        .toSortedMap(compareByDescending { it })
+        .map { (day, dayRuns) ->
+            val titles = groupFriendActivity(dayRuns)
+            val shared = titles.filter { it.friends.size > 1 }.map { TimelineEntry(it.friends, listOf(it)) }
+            val solo = titles.filter { it.friends.size == 1 }
+                .groupBy { it.friends.single().profileId }
+                .values.map { TimelineEntry(listOf(it.first().friends.single()), it) }
+            (if (coarse) weekLabels.getValue(day) else dayLabel(day)) to (shared + solo)
+        }
+
+    private val timeline = buildTimeline(coarse = false)
+    private val weekTimeline = buildTimeline(coarse = true)
+
+    @Composable
+    private fun TimelineFeed(horizontal: Dp, phone: Boolean, coarse: Boolean) {
+        Column(Modifier.padding(horizontal = horizontal)) {
+            (if (coarse) weekTimeline else timeline).forEach { (label, entries) ->
+                SectionLabel(label)
+                entries.forEach { TimelineRow(it) }
+                Spacer(Modifier.height(12.dp))
+            }
+        }
+    }
+
+    @Composable
+    private fun TimelineRow(entry: TimelineEntry) {
+        val muted = MaterialTheme.colorScheme.onSurfaceVariant
+        val strong = MaterialTheme.colorScheme.onBackground
+        val titles = entry.titles
+        val names = when (entry.people.size) {
+            1 -> entry.people[0].displayName
+            2 -> "${entry.people[0].displayName} & ${entry.people[1].displayName}"
+            else -> "${entry.people[0].displayName} + ${entry.people.size - 1}"
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 9.dp, horizontal = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(Modifier.width(44.dp), contentAlignment = Alignment.CenterStart) {
+                SocialAvatarStack(entry.people.take(3), (entry.people.size - 3).coerceAtLeast(0), if (entry.people.size > 1) 28.dp else 36.dp)
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(color = strong, fontWeight = FontWeight.SemiBold)) { append(names) }
+                        withStyle(SpanStyle(color = muted)) { append(" watched ") }
+                        val shown = titles.take(3)
+                        shown.forEachIndexed { i, group ->
+                            if (i > 0) withStyle(SpanStyle(color = muted)) { append(if (i == shown.lastIndex && titles.size <= 3) " and " else ", ") }
+                            withStyle(SpanStyle(color = strong, fontWeight = FontWeight.SemiBold)) { append(group.title) }
+                        }
+                        if (titles.size > 3) withStyle(SpanStyle(color = muted)) { append(" and ${titles.size - 3} more") }
+                    },
+                    style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                )
+                val meta = if (titles.size == 1) {
+                    titles[0].contextLabel()
+                } else {
+                    val films = titles.count { !it.isEpisodic }
+                    val shows = titles.size - films
+                    listOfNotNull(
+                        films.takeIf { it > 0 }?.let { if (it == 1) "1 film" else "$it films" },
+                        shows.takeIf { it > 0 }?.let { if (it == 1) "1 show" else "$it shows" },
+                    ).joinToString(" · ")
+                }
+                Text(
+                    listOf(meta, relativeTimeLabel(titles.first().lastEventMs, nowMs)).filter(String::isNotBlank).joinToString(" · "),
+                    style = MaterialTheme.typography.labelMedium, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            ThumbStack(titles)
+        }
+    }
+
+    /** Up to three stills fanned to the left, newest on top, each edged in the page colour. */
+    @Composable
+    private fun ThumbStack(titles: List<FriendActivityGroup>) {
+        val shown = titles.take(3)
+        val step = 14.dp
+        Box(Modifier.width(84.dp + step * (shown.size - 1)).height(48.dp)) {
+            shown.reversed().forEachIndexed { i, group ->
+                val depth = shown.size - 1 - i
+                Box(
+                    Modifier.padding(start = step * (shown.size - 1 - depth), top = (depth * 3).dp)
+                        .width(84.dp - (depth * 6).dp).aspectRatio(16f / 9f)
+                        .clip(RoundedCornerShape(8.dp)).background(Color.Black).padding(1.5.dp)
+                        .clip(RoundedCornerShape(7.dp)),
+                ) { Art(group.contentId, group.title, Modifier.matchParentSize()) }
+            }
         }
     }
 
