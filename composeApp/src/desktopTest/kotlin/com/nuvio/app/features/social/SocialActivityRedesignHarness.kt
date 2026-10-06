@@ -242,6 +242,7 @@ class SocialActivityRedesignHarness {
                 "D" -> LogFeed(width, horizontal, phone)
                 "E" -> TimelineFeed(horizontal, phone, coarse = false)
                 "E2" -> TimelineFeed(horizontal, phone, coarse = true)
+                "F" -> PilesFeed(width, horizontal, phone)
                 else -> GridFeed(width, horizontal, phone)
             }
         }
@@ -724,6 +725,129 @@ class SocialActivityRedesignHarness {
                         .clip(RoundedCornerShape(8.dp)).background(Color.Black).padding(1.5.dp)
                         .clip(RoundedCornerShape(7.dp)),
                 ) { Art(group.contentId, group.title, Modifier.matchParentSize()) }
+            }
+        }
+    }
+
+    // --- round 4 (2026-10-06): "I like the stacked multi-title rows, but desktop is dead space and
+    // mobile is cramped" ---------------------------------------------------------------------------
+
+    /**
+     * F, piles: E2's sections and per-friend collapse, but each entry is a card whose art is a tidy
+     * deck of that friend's stills (front on top, the rest peeking above it, smaller and darker), with
+     * the words under it. Cards flow into columns, so desktop fills its width and a phone gets two.
+     */
+    @Test
+    fun renderPilesDirection() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        listOf(411 to 914, 360 to 780, 320 to 640).forEach { (w, h) ->
+            renderScene("F-piles-phone-${w}x$h", w, h, failures) { PhoneScene("F", withLive = true) }
+        }
+        renderScene("F-piles-phone-scroll-411x1900", 411, 1900, failures) { PhoneScene("F", withLive = true) }
+        listOf(1280 to 820, 1600 to 1000, 1920 to 1080).forEach { (w, h) ->
+            renderScene("F-piles-desktop-${w}x$h", w, h, failures) { DesktopScene("F", withLive = false) }
+        }
+        renderScene("F-piles-desktop-scroll-1600x1400", 1600, 1400, failures) { DesktopScene("F", withLive = true) }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
+    @Composable
+    private fun PilesFeed(width: Dp, horizontal: Dp, phone: Boolean) {
+        val gap = if (phone) 12.dp else 18.dp
+        val columns = if (phone) 2 else ((width + gap) / (200.dp + gap)).toInt().coerceIn(3, 6)
+        // One continuous grid, newest first: section headers left half-empty lines (holes) on desktop.
+        // The order and each card's "· 2d" carry the timeline.
+        val entries = weekTimeline.flatMap { it.second }
+        Column(Modifier.padding(horizontal = horizontal)) {
+            SectionLabel("Recently watched")
+            Column(verticalArrangement = Arrangement.spacedBy(gap + 4.dp)) {
+                entries.chunked(columns).forEach { line ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                        line.forEach { PileCard(it, phone, Modifier.weight(1f)) }
+                        repeat(columns - line.size) { Spacer(Modifier.weight(1f)) }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun PileCard(entry: TimelineEntry, phone: Boolean, modifier: Modifier) {
+        val muted = MaterialTheme.colorScheme.onSurfaceVariant
+        val strong = MaterialTheme.colorScheme.onBackground
+        val titles = entry.titles
+        val names = when (entry.people.size) {
+            1 -> entry.people[0].displayName
+            2 -> "${entry.people[0].displayName} & ${entry.people[1].displayName}"
+            else -> "${entry.people[0].displayName} + ${entry.people.size - 1}"
+        }
+        Column(modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Pile(titles)
+            Spacer(Modifier.height(5.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                SocialAvatarStack(entry.people.take(3), (entry.people.size - 3).coerceAtLeast(0), if (phone) 20.dp else 22.dp)
+                Text(
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(color = strong, fontWeight = FontWeight.SemiBold)) { append(names) }
+                        withStyle(SpanStyle(color = muted)) { append(" · ${relativeTimeLabel(titles.first().lastEventMs, nowMs)}") }
+                    },
+                    style = if (phone) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleSmall,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (titles.size == 1) {
+                Text(
+                    titles[0].title, style = MaterialTheme.typography.bodyMedium, color = strong,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                val context = titles[0].contextLabel()
+                if (context.isNotBlank()) {
+                    Text(context, style = MaterialTheme.typography.labelMedium, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            } else {
+                val films = titles.count { !it.isEpisodic }
+                val shows = titles.size - films
+                Text(
+                    listOfNotNull(
+                        films.takeIf { it > 0 }?.let { if (it == 1) "1 film" else "$it films" },
+                        shows.takeIf { it > 0 }?.let { if (it == 1) "1 show" else "$it shows" },
+                    ).joinToString(" · "),
+                    style = MaterialTheme.typography.bodyMedium, color = strong, maxLines = 1,
+                )
+                Text(
+                    titles.joinToString(", ") { it.title },
+                    style = MaterialTheme.typography.labelMedium, color = muted,
+                    maxLines = if (phone) 1 else 2, overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+
+    /**
+     * Up to three stills as a deck: the newest in front at full width, older ones behind it, each a
+     * step narrower and higher, darkened so the front still stays the picture. A single title is a
+     * plain still with the same top inset, so a row of cards lines up whatever the counts.
+     */
+    @Composable
+    private fun Pile(titles: List<FriendActivityGroup>) {
+        val shown = titles.take(3)
+        val peek = 12.dp
+        Box(Modifier.fillMaxWidth()) {
+            Box(Modifier.fillMaxWidth().padding(top = peek * 2).aspectRatio(16f / 9f))
+            shown.indices.reversed().forEach { depth ->
+                val group = shown[depth]
+                val inset = 0.07f * depth
+                Box(
+                    Modifier.align(Alignment.TopCenter)
+                        .padding(top = peek * (2 - depth))
+                        .fillMaxWidth(1f - inset * 2)
+                        .aspectRatio(16f / 9f)
+                        .clip(RoundedCornerShape(12.dp)),
+                ) {
+                    Art(group.contentId, group.title, Modifier.matchParentSize())
+                    if (depth > 0) Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = 0.15f + 0.2f * depth)))
+                }
             }
         }
     }
