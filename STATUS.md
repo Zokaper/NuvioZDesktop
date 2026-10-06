@@ -17,6 +17,13 @@ folded into the bump commits and the branches were force-pushed with lease befor
   wizard stays on its own `ios-setup-v*` line (README pins `ios-setup-v1.1.2-beta.1`; bump it when a new setup release ships).
 - The non-blocking debt list in the entry below is unchanged by the release.
 
+
+## 2026-10-06 - Desktop stutter: measured on the real app, two fixes (branch `claude/perf-stutter-1`, unmerged)
+
+- A human-driven stutter probe (`scripts/perf/observe/`, from `claude/perf-observe`) measured the installed 2.0.132 signed in. The biggest cause that never warms up is the poster rescale inside `ScaledBitmapPainter.onDraw`: 3.0 s of 16 s hitch time, all of it during Home scrolling. The first Settings open freezes for 990 ms on `settingsSearchEntries`.
+- Fixes: Phase 2's `DesktopImageDownscaler` (cherry-picked `708673199`) and a lazy Settings search index (`be94152d5`). 97 settings/core.ui desktop tests pass. The full suite has not run.
+- **Still pending:** a before/after run on battery (60 Hz). Then the full suite, the PATCH-SURFACE note and the merge decision. The handoff is `Nuvio Z/HANDOFF-perf-stutter.md`; the findings are in `Nuvio Z/PERF-OBSERVE-2026-10-06.md`.
+
 ## Final release gate - Stage 1 prepared, QA gates cleared (2026-10-03)
 
 **Release candidate** (frozen product code; every later commit is docs, debug counters, the What's New reorder, the QA-marker removal and
