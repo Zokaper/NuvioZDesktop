@@ -952,6 +952,88 @@ class SocialActivityRedesignHarness {
         }
     }
 
+    // --- round 8 (2026-10-06): no hover; "fanned upwards, centred, may be better - try both" -----
+
+    @Test
+    fun renderFanStyles() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        val decks = listOf(
+            groupFriendActivity(runs.filter { it.profile == faye }).take(3),
+            groupFriendActivity(runs.filter { it.profile == jules }).take(2),
+            groupFriendActivity(runs.filter { it.profile == ben }).take(1),
+        )
+        renderScene("H-fan-styles-900x1000", 900, 1000, failures) {
+            Column(Modifier.fillMaxSize().padding(28.dp), verticalArrangement = Arrangement.spacedBy(30.dp)) {
+                for ((label, style) in listOf("DIAGONAL (current)" to 0, "CENTRED STACK" to 1, "CENTRED FAN" to 2)) {
+                    Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                        decks.forEach { deck -> Box(Modifier.width(250.dp)) { StylePile(deck, style) } }
+                    }
+                }
+                Text("CENTRED STACK - PHONE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    decks.forEach { deck -> Box(Modifier.width(170.dp)) { StylePile(deck, 1) } }
+                }
+            }
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
+    /**
+     * 0 diagonal: older stills behind and to the right, tilted up (debug 88).
+     * 1 centred stack: older stills centred above the front one, each a step narrower and higher.
+     * 2 centred fan: older stills centred above, alternately tilted left and right from the bottom.
+     * Every style keeps the 16:9 footprint; centred styles give the front still a top inset to peek into.
+     */
+    @Composable
+    private fun StylePile(titles: List<FriendActivityGroup>, style: Int) {
+        val shown = titles.take(3)
+        val back = (shown.size - 1).coerceAtLeast(0)
+        BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
+            val peek = 9.dp
+            val cardWidth = if (style == 0) maxWidth - 22.dp * back else maxWidth
+            val cardHeight = if (style == 0) maxHeight else maxHeight - peek * back
+            shown.indices.reversed().forEach { depth ->
+                val group = shown[depth]
+                Box(
+                    Modifier.align(Alignment.BottomStart).width(cardWidth).height(cardHeight)
+                        .graphicsLayer {
+                            when (style) {
+                                0 -> if (depth > 0) {
+                                    transformOrigin = TransformOrigin(0.3f, 1f)
+                                    translationX = 22.dp.toPx() * depth
+                                    translationY = -4.dp.toPx() * depth
+                                    rotationZ = -4f * depth
+                                    scaleX = 1f - 0.06f * depth
+                                    scaleY = 1f - 0.06f * depth
+                                }
+                                1 -> if (depth > 0) {
+                                    transformOrigin = TransformOrigin(0.5f, 0f)
+                                    translationY = -peek.toPx() * depth
+                                    scaleX = 1f - 0.08f * depth
+                                    scaleY = 1f - 0.08f * depth
+                                }
+                                else -> if (depth > 0) {
+                                    transformOrigin = TransformOrigin(0.5f, 1f)
+                                    translationY = -peek.toPx() * depth
+                                    rotationZ = if (depth == 1) -3.5f else 3.5f
+                                    scaleX = 1f - 0.05f * depth
+                                    scaleY = 1f - 0.05f * depth
+                                }
+                            }
+                            shadowElevation = 10.dp.toPx()
+                            shape = RoundedCornerShape(12.dp)
+                            clip = true
+                        },
+                ) {
+                    Art(group.contentId, group.title, Modifier.matchParentSize())
+                    if (depth > 0) Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = 0.12f + 0.1f * depth)))
+                }
+            }
+        }
+    }
+
     // --- shared pieces --------------------------------------------------------------------------
 
     @Composable
