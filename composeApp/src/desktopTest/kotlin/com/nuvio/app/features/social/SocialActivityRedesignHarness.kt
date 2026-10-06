@@ -236,6 +236,8 @@ class SocialActivityRedesignHarness {
             Spacer(Modifier.height(14.dp))
             when (direction) {
                 "A" -> ShelvesFeed(width, horizontal, phone)
+                "C" -> DigestFeed(width, horizontal, phone)
+                "D" -> LogFeed(width, horizontal, phone)
                 else -> GridFeed(width, horizontal, phone)
             }
         }
@@ -437,6 +439,136 @@ class SocialActivityRedesignHarness {
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
+        }
+    }
+
+    // --- round 2 (2026-10-06): "the art is too prominent, still messy" ------------------------
+
+    /**
+     * Two calmer directions. The person and the words lead; artwork is a small landscape accent
+     * (never a portrait poster). C groups by person, D is one line per title.
+     */
+    @Test
+    fun renderCalmDirections() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        for ((direction, label) in listOf("C" to "digest", "D" to "log")) {
+            listOf(411 to 914, 320 to 640).forEach { (w, h) ->
+                renderScene("$direction-$label-phone-${w}x$h", w, h, failures) { PhoneScene(direction, withLive = true) }
+            }
+            renderScene("$direction-$label-phone-scroll-411x2000", 411, 2000, failures) { PhoneScene(direction, withLive = true) }
+            listOf(1280 to 820, 1600 to 1000).forEach { (w, h) ->
+                renderScene("$direction-$label-desktop-${w}x$h", w, h, failures) { DesktopScene(direction, withLive = false) }
+            }
+            renderScene("$direction-$label-desktop-scroll-1600x1500", 1600, 1500, failures) { DesktopScene(direction, withLive = true) }
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
+    // --- C: one quiet card per friend ----------------------------------------------------------
+
+    @Composable
+    private fun DigestFeed(width: Dp, horizontal: Dp, phone: Boolean) {
+        val columns = if (phone || width < 900.dp) 1 else 2
+        Column(Modifier.padding(horizontal = horizontal)) {
+            SectionLabel("Recently watched")
+            Grid(shelves, columns, gap = 10.dp) { shelf, modifier -> DigestCard(shelf, modifier) }
+        }
+    }
+
+    @Composable
+    private fun DigestCard(shelf: PersonShelf, modifier: Modifier) {
+        val muted = MaterialTheme.colorScheme.onSurfaceVariant
+        val strong = MaterialTheme.colorScheme.onBackground
+        val last = relativeTimeLabel(shelf.titles.first().lastEventMs, nowMs)
+        Row(
+            modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f))
+                .padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            SocialAvatar(shelf.person.displayName, null, shelf.person.avatarColorHex, 40.dp)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(color = strong, fontWeight = FontWeight.SemiBold)) { append(shelf.person.displayName) }
+                        withStyle(SpanStyle(color = muted)) { append("  ·  $last") }
+                    },
+                    style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(color = muted)) { append("Watched ") }
+                        shelf.titles.take(3).forEachIndexed { i, group ->
+                            if (i > 0) withStyle(SpanStyle(color = muted)) { append(", ") }
+                            withStyle(SpanStyle(color = strong)) { append(group.title) }
+                            if (group.isEpisodic) {
+                                withStyle(SpanStyle(color = muted)) { append(" (${group.contextLabel().substringBefore(" ·")})") }
+                            }
+                        }
+                        val more = shelf.titles.size - 3
+                        if (more > 0) withStyle(SpanStyle(color = muted)) { append(" and $more more") }
+                    },
+                    style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    shelf.titles.take(4).forEach { group ->
+                        Art(group.contentId, group.title, Modifier.width(64.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(6.dp)))
+                    }
+                }
+            }
+        }
+    }
+
+    // --- D: the log -----------------------------------------------------------------------------
+
+    @Composable
+    private fun LogFeed(width: Dp, horizontal: Dp, phone: Boolean) {
+        val columns = if (phone || width < 900.dp) 1 else 2
+        Column(Modifier.padding(horizontal = horizontal)) {
+            bucketFriendActivity(groups, nowMs).forEach { (bucket, bucketGroups) ->
+                SectionLabel(bucket.label)
+                // Wide gutter: a row's thumbnail must not read as belonging to the avatar beside it.
+                Column {
+                    bucketGroups.chunked(columns).forEach { line ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(56.dp)) {
+                            line.forEach { LogRow(it, Modifier.weight(1f)) }
+                            repeat(columns - line.size) { Spacer(Modifier.weight(1f)) }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+            }
+        }
+    }
+
+    @Composable
+    private fun LogRow(group: FriendActivityGroup, modifier: Modifier) {
+        val muted = MaterialTheme.colorScheme.onSurfaceVariant
+        val strong = MaterialTheme.colorScheme.onBackground
+        Row(
+            modifier.padding(vertical = 9.dp, horizontal = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(Modifier.width(44.dp), contentAlignment = Alignment.CenterStart) {
+                SocialAvatarStack(group.stackedFriends, group.avatarOverflow, if (group.friends.size > 1) 28.dp else 36.dp)
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(color = strong, fontWeight = FontWeight.SemiBold)) { append(group.friendNamesLabel()) }
+                        withStyle(SpanStyle(color = muted)) { append(" watched ") }
+                        withStyle(SpanStyle(color = strong, fontWeight = FontWeight.SemiBold)) { append(group.title) }
+                    },
+                    style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    listOf(group.contextLabel(), relativeTimeLabel(group.lastEventMs, nowMs)).filter(String::isNotBlank).joinToString(" · "),
+                    style = MaterialTheme.typography.labelMedium, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Art(group.contentId, group.title, Modifier.width(84.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)))
         }
     }
 
