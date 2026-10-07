@@ -1,8 +1,10 @@
 # Desktop stutter comparison — 2026-10-07
 
 Continuation of workspace `HANDOFF-perf-stutter.md` and `PERF-OBSERVE-2026-10-06.md`.
-Branch: `claude/perf-stutter-1`. Product fixes: `708673199` (Windows poster downscale on workers)
-and `be94152d5` (lazy Settings search index). Nothing pushed, merged or published.
+Initial branch: `claude/perf-stutter-1`, with `708673199` (Windows poster downscale on workers)
+and `be94152d5` (lazy Settings search index). Startup stage is frozen on `codex/perf-stutter-2`
+at `c7e7bfb10`; current isolated hidden-Home stage is `codex/perf-stutter-3`. Each comparison is
+documented separately below. Nothing pushed, integrated into release branches or published.
 
 ## Result
 
@@ -40,6 +42,13 @@ Neither appears in the successful patched run.
 Match **`ScaledBitmapPainter.scale:` exactly**. The raw-data `attr.py` substring
 `ScaledBitmapPainter.scale` also matches the patched, cheap `scaledBitmap` method and mislabels
 it as scaling. Its hardcoded phase times apply only to `real-1`.
+
+Use the committed `scripts/perf/observe/attribute.py <run> --frame ScaledBitmapPainter.scale:
+--frame settingsSearchEntries` instead, with explicit `--start-seconds` / `--end-seconds` for a
+segment. It reads the complete frame dictionary before resolving samples and reports inclusive
+attribution, unsampled hitches, frame quantiles and shutdown-marker state. Verified on the real
+before/after recordings: reproduces 2,305/1,028 ms -> 0/0 and the after Home-scroll frame table
+exactly. Overlapping stack matches must not be added together.
 
 First tab visit's worst UI frame (one visit each):
 

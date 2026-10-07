@@ -98,3 +98,17 @@ Inspect the product diff first: only supply files belonging to the isolated fix 
   `com.nuvio.app` code closest to the work.
 - **Machine load**: when other JVMs (Gradle and Kotlin daemons) used real CPU during the session,
   say so next to any number you quote.
+
+For task intervals and inclusive stack attribution, use `attribute.py` with explicit bounds:
+
+```powershell
+python scripts\perf\observe\attribute.py C:\perf\run-1 --start-seconds 15 --end-seconds 45 --frame ScaledBitmapPainter.scale: --frame settingsSearchEntries
+```
+
+Bounds are seconds after premain, selecting tasks by start time. Values include frame quantiles,
+hitch/sample counts and sample-weighted full task duration for each literal stack fragment.
+Fragments are independent and their attribution may overlap; do not add overlapping totals.
+Match `ScaledBitmapPainter.scale:` with the colon: omitting it also matches the cheap
+`scaledBitmap` cache lookup. Workspace scratch `attr.py` additionally has boundaries tied to
+the original `real-1` run; do not reuse those for another recording. Check shutdown/exit markers
+and machine load separately before drawing a comparison from these estimates.
