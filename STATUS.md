@@ -18,6 +18,24 @@ folded into the bump commits and the branches were force-pushed with lease befor
 - The non-blocking debt list in the entry below is unchanged by the release.
 
 
+## 2026-10-07 — Next isolated performance step: settings-sync startup
+
+Branch `codex/perf-stutter-2`, worktree `.claude-worktrees/perf-stutter-2`, starts from
+`claude/perf-stutter-1` `89bb2c359` (the measured poster and Settings fixes plus their report).
+Only additional product change is `c401e1bfc`, a clean cherry-pick of Phase 1 `f50962f88`:
+AppGate waits for one frame and starts settings sync on `Dispatchers.Default`; observer startup
+is locked to prevent duplicate collectors. Included `ProfileSettingsSyncStartTest` races eight
+callers. Hidden Home, class warming and row composition are not added in this step.
+
+Build + focused sync/auth tests are running in `build/perf-startup-step-20261007/`. The prior
+two-fix branch's full split suite runs separately in its own worktree. No physical measurement
+of this startup step yet; wait for builds/tests to finish before the paired app runs. Make the
+test copy from the preceding patched app, changing only classes compiled from `AppGate.kt` and
+`ProfileSettingsSync.kt`, retaining the installed runtime/configuration. The new
+`scripts/perf/observe/patch_app.py` selects their JVM SourceFile attributes, includes companions,
+removes obsolete generated classes and verifies unrelated entries remain identical. Nothing pushed,
+merged or published. Canonical seam notes: mobile docs branch `codex/perf-stutter-documentation`.
+
 ## 2026-10-06 - Desktop stutter: measured on the real app, two fixes (branch `claude/perf-stutter-1`, unmerged)
 
 - A human-driven stutter probe (`scripts/perf/observe/`, from `claude/perf-observe`) measured the installed 2.0.132 signed in. The biggest cause that never warms up is the poster rescale inside `ScaledBitmapPainter.onDraw`: 3.0 s of 16 s hitch time, all of it during Home scrolling. The first Settings open freezes for 990 ms on `settingsSearchEntries`.

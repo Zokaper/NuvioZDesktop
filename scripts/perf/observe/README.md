@@ -68,6 +68,21 @@ A completed recording has `exited.txt`, a `shutdown` entry in `timeline.tsv`, an
 with the launcher exit code. Inspect those before comparing. Keep incomplete attempts separately;
 a missing exit/shutdown marker alone does not establish an application crash.
 
+## Prepare a copy with one additional fix
+
+`patch_app.py` copies a preceding test app and replaces only classes whose JVM `SourceFile`
+attribute names the supplied Kotlin files. It includes generated companions, removes obsolete
+generated classes, rejects classes newer than Java 17, and verifies every unrelated jar entry.
+The output must be a fresh directory outside the base app. Runtime, configuration, libraries and
+resources are kept from the base. Do not replace the whole locally built jar: its generated
+configuration and native binaries can differ from the installed release.
+
+```powershell
+python scripts\perf\observe\patch_app.py C:\perf\apps\previous composeApp\build\libs\composeApp-desktop.jar C:\perf\apps\startup AppGate.kt ProfileSettingsSync.kt
+```
+
+Inspect the product diff first: only supply files belonging to the isolated fix being measured.
+
 ## Reading the report
 
 - **By interaction**: one row per click or key. It shows the screen you landed on (screenshot file),
