@@ -18,7 +18,21 @@ folded into the bump commits and the branches were force-pushed with lease befor
 - The non-blocking debt list in the entry below is unchanged by the release.
 
 
-## 2026-10-07 — Next isolated performance step: settings-sync startup
+## 2026-10-07 — Hidden-Home step being prepared offline
+
+Branch `codex/perf-stutter-3` now occupies `.claude-worktrees/perf-stutter-2` to reuse its build
+cache; previous `codex/perf-stutter-2` is frozen at `c7e7bfb10`. Product code is still identical
+to that startup stage while the baseline is measured. Added desktop-only Home probe/harness
+from Phase 1, adapted to two desktop cases: visible Home and Home retained behind Library after
+visiting Home. It composes the real AppTabHost and uses seeded hero data and virtual time; it is
+an automated logical measurement, not a substitute for the maintainer's signed-in app test.
+
+Baseline harness is running in `build/perf-home-step-20261007/`. Then carry only `4c68420cb`,
+run its retention/pause/resume regressions and the same harness, build the jar and prepare a
+separate app copy. Maintainer is unavailable for about an hour; physical comparison stays
+pending. No class-warming or row-composition change is bundled here. Nothing pushed or published.
+
+## 2026-10-07 — Completed isolated performance step: settings-sync startup
 
 Branch `codex/perf-stutter-2`, worktree `.claude-worktrees/perf-stutter-2`, starts from
 `claude/perf-stutter-1` `89bb2c359` (the measured poster and Settings fixes plus their report).
