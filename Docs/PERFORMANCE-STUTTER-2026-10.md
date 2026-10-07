@@ -89,7 +89,10 @@ second tab loop to verify warm switches.
 
 ## Verification
 
-Prior targeted desktop settings/core.ui tests: 97, zero failures. Full split suite is running in
-`build/perf-stutter-ab-split-20261007/`; record fresh summary when complete. Mobile code and tests
-unchanged. Canonical patch-surface notes use separate mobile branch
+Prior targeted desktop settings/core.ui tests: 97, zero failures. Full split suite completed:
+rest 1,898 / playback 1,072 / downloads 457 / E2E 49 = **3,476**, zero failures/errors/skips and
+zero duplicates, all four parts `rc=0`. Fresh summary: `build/perf-stutter-ab-split-20261007/`;
+recorded HEAD `ef54fbdb2`, with product code unchanged since `be94152d5`. Later commits are
+measurement documentation and recorder tooling. Mobile code and tests unchanged.
+Canonical patch-surface notes use separate mobile branch
 `codex/perf-stutter-documentation`, isolated from Social work.
