@@ -184,7 +184,7 @@ old classes with 13 rebuilt classes from only `AppShellComponents.kt` / `TabPane
 in the rebuilt jar. All unrelated jar entries are verified byte-identical. Launcher, runtime and
 configuration are copied unchanged. The signed-in app has **not** been launched or physically
 compared for this step; the maintainer is unavailable. Do not infer smoother scrolling from the
-virtual-time result. A fresh cumulative full split regression run follows.
+virtual-time result. Full cumulative regression results follow.
 
 **Cumulative full verification completed:** rest 1,903 / playback 1,072 / downloads 457 / E2E 49 =
 **3,481**, zero failures/errors/skips and zero duplicates; all four parts and supervisor exit 0.
