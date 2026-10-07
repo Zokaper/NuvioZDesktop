@@ -50,6 +50,24 @@ debug-tools overhead. `-NoShots` turns screenshots off. `-Smoke -SmokeSeconds 15
 throwaway, signed-out copy: empty `APPDATA`/`LOCALAPPDATA` and in-memory `java.util.prefs`, so the real
 data and the shared registry login are never touched. It can run beside a real instance.
 
+For a human-driven run from a coding-agent session, launch the observer in a separate hidden
+PowerShell process and return immediately. It then finishes independently of a chat/command
+interruption. The app window remains visible for the human test.
+
+```powershell
+$observer = (Resolve-Path scripts\perf\observe\observe.ps1).Path
+$run = 'C:\perf\run-2'  # fresh directory; probe/output paths must have no spaces
+New-Item -ItemType Directory $run | Out-Null
+Start-Process powershell.exe -WindowStyle Hidden -ArgumentList @(
+    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $observer + '"'),
+    '-Jar', 'C:\perf\stutterprobe.jar', '-Out', $run
+) -RedirectStandardOutput "$run\observer.stdout.log" -RedirectStandardError "$run\observer.stderr.log"
+```
+
+A completed recording has `exited.txt`, a `shutdown` entry in `timeline.tsv`, and `exit-code.txt`
+with the launcher exit code. Inspect those before comparing. Keep incomplete attempts separately;
+a missing exit/shutdown marker alone does not establish an application crash.
+
 ## Reading the report
 
 - **By interaction**: one row per click or key. It shows the screen you landed on (screenshot file),

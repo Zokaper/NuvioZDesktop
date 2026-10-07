@@ -69,6 +69,8 @@ if ($SmokeSeconds -gt 0) {
     Start-Sleep -Seconds 5
 }
 $proc.WaitForExit()
+[System.IO.File]::WriteAllText((Join-Path $Out 'exit-code.txt'), [string]$proc.ExitCode)
+Write-Host "Launcher exited with code $($proc.ExitCode)."
 Start-Sleep -Milliseconds 500
 if (-not $tp.HasExited) { Stop-Process -Id $tp.Id -Force }
 [System.IO.File]::WriteAllText((Join-Path $Out 'exited.txt'), [string][DateTimeOffset]::Now.ToUnixTimeMilliseconds())

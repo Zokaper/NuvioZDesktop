@@ -22,7 +22,8 @@ folded into the bump commits and the branches were force-pushed with lease befor
 
 - A human-driven stutter probe (`scripts/perf/observe/`, from `claude/perf-observe`) measured the installed 2.0.132 signed in. The biggest cause that never warms up is the poster rescale inside `ScaledBitmapPainter.onDraw`: 3.0 s of 16 s hitch time, all of it during Home scrolling. The first Settings open freezes for 990 ms on `settingsSearchEntries`.
 - Fixes: Phase 2's `DesktopImageDownscaler` (cherry-picked `708673199`) and a lazy Settings search index (`be94152d5`). 97 settings/core.ui desktop tests pass. The full suite has not run.
-- **Still pending:** a before/after run on battery (60 Hz). Then the full suite, the PATCH-SURFACE note and the merge decision. The handoff is `Nuvio Z/HANDOFF-perf-stutter.md`; the findings are in `Nuvio Z/PERF-OBSERVE-2026-10-06.md`.
+- **2026-10-07 continuation:** before/after completed on battery, 60 Hz. UI-thread poster scaling and eager Settings indexing disappear; first Settings frame 1,392 -> 229 ms. Maintainer confirms Settings opens like other tabs, Home slightly smoother but still very stuttery, and general tab switching still stutters. See `Docs/PERFORMANCE-STUTTER-2026-10.md` for conditions, raw data and remaining causes. An interrupted after attempt is excluded; detached-observer retry ended normally with exit code 0. Recorder now captures exit codes and its README documents detached launch.
+- **Still pending:** full split suite (running in `build/perf-stutter-ab-split-20261007`), matched warm-tab measurement and merge decision. Canonical PATCH-SURFACE notes use separate mobile documentation branch `codex/perf-stutter-documentation`. Both product fixes remain local and unmerged. Original handoff: `Nuvio Z/HANDOFF-perf-stutter.md`.
 
 ## Final release gate - Stage 1 prepared, QA gates cleared (2026-10-03)
 
