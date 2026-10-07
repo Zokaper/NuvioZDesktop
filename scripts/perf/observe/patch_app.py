@@ -5,6 +5,7 @@ performance comparison. Includes generated companions and removes obsolete gener
 Usage: python patch_app.py BASE_APP REBUILT_JAR NEW_APP AppGate.kt ProfileSettingsSync.kt
 """
 import argparse
+from copy import copy
 from pathlib import Path
 import shutil
 import struct
@@ -108,9 +109,10 @@ def main():
         with ZipFile(pending, "w") as patched:
             for entry in before.infolist():
                 if entry.filename not in old:
-                    patched.writestr(entry, before.read(entry))
+                    # Writing changes ZipInfo offsets; preserve the open reader's metadata.
+                    patched.writestr(copy(entry), before.read(entry))
             for entry, data in new.values():
-                patched.writestr(entry, data)
+                patched.writestr(copy(entry), data)
         # Verify every retained entry's contents and require the selected classes to match.
         with ZipFile(pending) as patched:
             expected = (set(before.namelist()) - set(old)) | set(new)

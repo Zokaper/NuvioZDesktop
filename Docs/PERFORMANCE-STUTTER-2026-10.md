@@ -96,3 +96,45 @@ recorded HEAD `ef54fbdb2`, with product code unchanged since `be94152d5`. Later 
 measurement documentation and recorder tooling. Mobile code and tests unchanged.
 Canonical patch-surface notes use separate mobile branch
 `codex/perf-stutter-documentation`, isolated from Social work.
+
+## Isolated startup step — completed 2026-10-07
+
+`codex/perf-stutter-2` adds only `c401e1bfc` (Phase 1 `f50962f88`) to the preceding two product
+fixes. AppGate waits for one frame before initializing settings sync on Default; start is locked.
+Desktop jar builds; focused sync/auth **108 tests pass**, zero failures/errors/skips, including
+the eight-caller observer-start regression. Logs: `build/perf-startup-step-20261007/`.
+
+App `perf-observe-data/apps/after-2-startup` is a copy of `after-1`, replacing 69 old classes with
+71 rebuilt classes selected by SourceFile `AppGate.kt` / `ProfileSettingsSync.kt`. All unrelated
+jar entries are verified byte-identical; launcher/runtime/configuration remain unchanged.
+The copy helper initially mutated shared ZipInfo metadata during verification. This was corrected
+by copying entry metadata before writing, and the successful copy passed all byte checks before
+launch. The failed copy is archived locally as `after-2-startup-copy-attempt-1`.
+
+Raw paired runs: `startup-before-20261007-1` / `startup-after-20261007-1`, both signed in, battery,
+60 Hz, Java 17.0.20.1, normal shutdown and exit code 0. Baseline has 604 s elapsed including a long
+wait for the maintainer; after has 87 s. Compare the first **12 s after premain**, not session length.
+
+| Early UI measurement | Before | After |
+| --- | ---: | ---: |
+| Application/window task | 4,349.8 ms | 2,220.8 ms |
+| First profile-picker frame | 2,093.0 ms | 1,794.1 ms |
+| UI tasks >=100 ms within first 12 s, summed duration | 6,676.8 ms | 5,225.2 ms |
+| Samples under `ProfileSettingsSync.startObserving` in hitches >=25 ms | 258 | 0 |
+| Samples under `createMdbListHttpClient` in hitches >=25 ms | 130 | 0 |
+
+Sample-weighted attribution puts 1,303 ms under settings observer startup before, zero after.
+MDBList's 657 ms is a subset of that work, not an additional cost. The targeted work demonstrably
+left the UI thread. **The maintainer did not notice a visible startup improvement.** Keep the
+threading fix; do not call startup smooth or claim a confirmed end-to-end launch speedup.
+
+Important limits: window size differs slightly (1935x1215 / 1920x1200); background JVM mean is
+0.013 / 0.012 cores (max 0.176 / 0.121); JVM-start-to-premain delay is about 0.41 / 11.49 s,
+outside this probe's timed tasks. Baseline waited much longer before profile selection. No matched
+warm-tab claim is possible from these interactions. The early table is one observation per build.
+
+Remaining launch cost: the after run has a 998 ms component task containing avatar-catalog /
+`SupabaseProvider.getClient` initialization (479 ms attributed to the latter). Home entry still
+has a roughly 1.5 s frame; Search/cards and tab transitions still have major composition costs.
+Next independent change is the handoff's hidden-Home activity gate (`4c68420cb`). Human testing
+is unavailable for about an hour, so prepare and verify it offline, retaining a separate test app.

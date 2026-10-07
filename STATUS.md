@@ -27,14 +27,24 @@ AppGate waits for one frame and starts settings sync on `Dispatchers.Default`; o
 is locked to prevent duplicate collectors. Included `ProfileSettingsSyncStartTest` races eight
 callers. Hidden Home, class warming and row composition are not added in this step.
 
-Build + focused sync/auth tests are running in `build/perf-startup-step-20261007/`. The prior
-two-fix branch's full split suite runs separately in its own worktree. No physical measurement
-of this startup step yet; wait for builds/tests to finish before the paired app runs. Make the
-test copy from the preceding patched app, changing only classes compiled from `AppGate.kt` and
-`ProfileSettingsSync.kt`, retaining the installed runtime/configuration. The new
+**Verified:** desktop jar builds; focused sync/auth **108** pass, zero failures/errors/skips,
+including the eight-caller race test. Prior two-fix full split **3,476** passes. Logs:
+`build/perf-startup-step-20261007/`. Paired signed-in 60 Hz runs `startup-before-20261007-1` /
+`startup-after-20261007-1` both ended normally, exit code 0. Observer/MDBList startup disappears
+from UI-thread hitch samples (observer weighted attribution 1,303 ms -> 0). Maintainer **did not
+notice** visible launch improvement. Remaining avatar/backend initialization and major Home/tab
+composition costs are documented in `Docs/PERFORMANCE-STUTTER-2026-10.md`, with timing limits.
+
+Test copy `perf-observe-data/apps/after-2-startup` replaces only classes compiled from `AppGate.kt`
+and `ProfileSettingsSync.kt` (69 old / 71 new), retaining installed runtime/configuration. The new
 `scripts/perf/observe/patch_app.py` selects their JVM SourceFile attributes, includes companions,
 removes obsolete generated classes and verifies unrelated entries remain identical. Nothing pushed,
 merged or published. Canonical seam notes: mobile docs branch `codex/perf-stutter-documentation`.
+
+**Next:** maintainer cannot test for about an hour; prepare hidden-Home gating alone (`4c68420cb`)
+and automated verification, keeping its physical comparison pending. Do not batch it with class
+warming or row-composition changes. Latest startup branch has focused verification, not a new
+full split run with the startup change.
 
 ## 2026-10-06 - Desktop stutter: measured on the real app, two fixes (branch `claude/perf-stutter-1`, unmerged)
 
