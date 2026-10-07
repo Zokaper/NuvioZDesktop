@@ -211,8 +211,9 @@ API loads the requested class without running its initializer. See the
 [Java 17 Class API](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Class.html#forName(java.lang.String,boolean,java.lang.ClassLoader)).
 It does not execute a screen or perform composition/JIT warming.
 
-Local scratch source, manifests, results and initialization logs are under
-`build/perf-tab-warming-prep-20261007/`. JVM is **25.0.4.1**, not the installed Java 17 runtime;
+Probe source is committed as `scripts/perf/observe/NoInitTabLoadProbe.java`; local manifests,
+results and initialization logs are under `build/perf-tab-warming-prep-20261007/`.
+JVM is **25.0.4.1**, not the installed Java 17 runtime;
 Gradle tests were running concurrently. This tests loading feasibility, not app frame timing or
 a deployment performance claim. The no-initialization sentinel stays uninitialized and neither
 run logs a Nuvio class initializer.

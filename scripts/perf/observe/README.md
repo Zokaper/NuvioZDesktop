@@ -112,3 +112,16 @@ Match `ScaledBitmapPainter.scale:` with the colon: omitting it also matches the 
 `scaledBitmap` cache lookup. Workspace scratch `attr.py` additionally has boundaries tied to
 the original `real-1` run; do not reuse those for another recording. Check shutdown/exit markers
 and machine load separately before drawing a comparison from these estimates.
+
+## Offline class-loading feasibility probe
+
+`NoInitTabLoadProbe.java` loads supplied class names from an app copy's jars in an isolated
+URLClassLoader, with initialization disabled. It never invokes application functions or Compose.
+Compile with `javac --release 17 -d <scratch> scripts/perf/observe/NoInitTabLoadProbe.java`, then run
+`java -Xlog:class+init=info:file=<scratch>/init.log -cp <scratch> NoInitTabLoadProbe <app-copy>/app <manifest.tsv>`.
+Manifest lines are `KotlinSourceFile.kt<TAB>binary.class.Name`; use the SourceFile reader in
+`patch_app.py` to derive a generated-inclusive list from the app jar. The probe reports load
+failures and classes actually defined, plus a sentinel that must remain uninitialized. Check the
+initialization log for Nuvio classes. Results establish feasibility only; report JVM version and
+use the signed-in app probe for frame timing. The 2026-10-07 experiment and coverage limits are
+recorded in `Docs/PERFORMANCE-STUTTER-2026-10.md`.
