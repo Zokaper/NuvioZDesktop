@@ -18,19 +18,31 @@ folded into the bump commits and the branches were force-pushed with lease befor
 - The non-blocking debt list in the entry below is unchanged by the release.
 
 
-## 2026-10-07 — Hidden-Home step being prepared offline
+## 2026-10-07 — Hidden-Home step ready for physical comparison
 
 Branch `codex/perf-stutter-3` now occupies `.claude-worktrees/perf-stutter-2` to reuse its build
-cache; previous `codex/perf-stutter-2` is frozen at `c7e7bfb10`. Product code is still identical
-to that startup stage while the baseline is measured. Added desktop-only Home probe/harness
+cache; previous `codex/perf-stutter-2` is frozen at `c7e7bfb10`. Added desktop-only Home probe/harness
 from Phase 1, adapted to two desktop cases: visible Home and Home retained behind Library after
 visiting Home. It composes the real AppTabHost and uses seeded hero data and virtual time; it is
 an automated logical measurement, not a substitute for the maintainer's signed-in app test.
 
-Baseline harness is running in `build/perf-home-step-20261007/`. Then carry only `4c68420cb`,
-run its retention/pause/resume regressions and the same harness, build the jar and prepare a
-separate app copy. Maintainer is unavailable for about an hour; physical comparison stays
-pending. No class-warming or row-composition change is bundled here. Nothing pushed or published.
+Baseline harness passed: Library has 21 live subscriptions, retained hero pages 10/minute and
+182 snapshot applies/minute (virtual time). `6f27e2eec` cleanly carries only `4c68420cb`:
+AppShellComponents wraps Home in Z-owned TabPaneActivity, providing inactive screen activity
+and capping the lifecycle at CREATED behind other tabs. After: Library has 7 subscriptions,
+zero hero changes and zero snapshot applies/minute, with the same retained 49 semantics nodes.
+Visible-Home control is unchanged (13 subscriptions, 10 hero changes, 182 snapshot applies).
+Desktop jar and all **4** focused regression/measurement cases pass, zero failures/errors/skips;
+the regression explicitly checks retention, pause and resume. Raw logs/XML and paired metrics:
+`build/perf-home-step-20261007/`. These are seeded virtual-time measurements, not physical FPS.
+
+Prepared `perf-observe-data/apps/after-3-hidden-home` from `after-2-startup`: only SourceFile
+`AppShellComponents.kt` / `TabPaneActivity.kt`, 12 old classes replaced with 13 rebuilt classes.
+Helper now permits a newly added source absent from the base, while requiring all named sources
+in the rebuilt jar and checking every unrelated entry byte-for-byte. Do not launch until the
+maintainer returns; compare the preceding startup app with this copy using two full tab loops
+and Home return/scroll retention. Broader cumulative split suite is next. No class-warming or
+row-composition change is bundled here. Nothing pushed or published.
 
 ## 2026-10-07 — Completed isolated performance step: settings-sync startup
 

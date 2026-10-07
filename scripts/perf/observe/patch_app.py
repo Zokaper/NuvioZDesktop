@@ -65,7 +65,7 @@ def source_file(data):
     return None
 
 
-def selected_classes(jar, sources):
+def selected_classes(jar, sources, require_all=True):
     selected = {}
     found = set()
     for entry in jar.infolist():
@@ -78,7 +78,7 @@ def selected_classes(jar, sources):
                 raise ValueError(f"Class exceeds installed Java 17: {entry.filename}")
             selected[entry.filename] = (entry, data)
             found.add(source)
-    if found != sources:
+    if require_all and found != sources:
         raise ValueError(f"Missing source files: {sorted(sources - found)}")
     return selected
 
@@ -101,7 +101,8 @@ def main():
         raise ValueError("Expected one main app jar")
     original = candidates[0]
     with ZipFile(original) as before, ZipFile(args.rebuilt_jar) as rebuilt:
-        old = selected_classes(before, sources)
+        # A fix may add a new source file; only the rebuilt jar must contain every named file.
+        old = selected_classes(before, sources, require_all=False)
         new = selected_classes(rebuilt, sources)
         shutil.copytree(base, output)
         target = output / "app" / original.name

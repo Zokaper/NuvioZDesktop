@@ -73,6 +73,7 @@ a missing exit/shutdown marker alone does not establish an application crash.
 `patch_app.py` copies a preceding test app and replaces only classes whose JVM `SourceFile`
 attribute names the supplied Kotlin files. It includes generated companions, removes obsolete
 generated classes, rejects classes newer than Java 17, and verifies every unrelated jar entry.
+A newly added source may be absent from the base; every supplied source must exist in the rebuilt jar.
 The output must be a fresh directory outside the base app. Runtime, configuration, libraries and
 resources are kept from the base. Do not replace the whole locally built jar: its generated
 configuration and native binaries can differ from the installed release.

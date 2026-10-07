@@ -138,3 +138,56 @@ Remaining launch cost: the after run has a 998 ms component task containing avat
 has a roughly 1.5 s frame; Search/cards and tab transitions still have major composition costs.
 Next independent change is the handoff's hidden-Home activity gate (`4c68420cb`). Human testing
 is unavailable for about an hour, so prepare and verify it offline, retaining a separate test app.
+
+## Isolated hidden-Home step — automated comparison 2026-10-07
+
+`codex/perf-stutter-3` continues the startup stage frozen at `c7e7bfb10`. It occupies the same
+`.claude-worktrees/perf-stutter-2` directory to reuse the build cache. Only additional product
+change is `6f27e2eec`, a clean cherry-pick of Phase 1 `4c68420cb`. Existing upstream-owned
+`AppShellComponents.kt` wraps the retained Home pane in Z-owned `TabPaneActivity.kt`. An inactive
+Home gets `LocalScreenActive=false` and a lifecycle capped at CREATED. Composition and scroll
+state remain retained; activity and lifecycle collectors resume when Home is selected.
+
+Baseline was measured before applying the gate, with the same test-only `HomeActivityProbe` and
+`HiddenHomeActivityHarness` restored/adapted from Phase 1. The real AppTabHost initially visits
+Home, then selects Library; eight seeded hero titles avoid network timing. After 2 virtual seconds
+settling, observe 60 virtual seconds. Subscriber counts include the selected tab's collectors on
+the probed repositories; they are not exclusively Home-owned. Snapshot applies are global to this
+isolated test host, not a physical app CPU/frame metric.
+
+| Retained Home behind Library | Before gate | After gate |
+| --- | ---: | ---: |
+| Repository subscriptions above pre-composition count | 21 | 7 |
+| Semantics nodes | 49 | 49 |
+| Hero still composed | yes | yes |
+| Hero title changes / 60 virtual seconds | 10 | 0 |
+| Snapshot applies / 60 virtual seconds | 182 | 0 |
+
+Visible-Home control is unchanged: 13 subscriptions, 28 nodes, hero composed, 10 title changes and
+182 snapshot applies. Baseline harness **2/2** passes; after jar build and focused regression/
+measurement **4/4** pass, zero failures/errors/skips. The two regression tests verify visible
+paging and the complete Home -> Library -> Home retention/pause/resume path. Logs, separate XML
+archives and metric files: `build/perf-home-step-20261007/`.
+
+Test copy `perf-observe-data/apps/after-3-hidden-home` comes from `after-2-startup`, replacing 12
+old classes with 13 rebuilt classes from only `AppShellComponents.kt` / `TabPaneActivity.kt`.
+`patch_app.py` permits the new source absent from the base and still requires every named source
+in the rebuilt jar. All unrelated jar entries are verified byte-identical. Launcher, runtime and
+configuration are copied unchanged. The signed-in app has **not** been launched or physically
+compared for this step; the maintainer is unavailable. Do not infer smoother scrolling from the
+virtual-time result. A fresh cumulative full split regression run follows.
+
+### Next human comparison
+
+Use `after-2-startup` as baseline and `after-3-hidden-home` as candidate, one signed-in instance
+at a time, same power state and window size, with builds finished before recording. In each:
+
+1. Select the same profile, wait for Home to settle, scroll and note the current position.
+2. Visit Search, Library, Downloads, Social and Settings once, pausing briefly in each.
+3. Repeat that full tab loop to distinguish first-visit cost from warm switching.
+4. Leave Library selected for about 15 seconds, then return Home; check scroll position and hero
+   resume, and scroll again. Mark noticeable stalls with F8.
+5. Close with the window X and verify normal shutdown plus exit code before analysis.
+
+Next proposed product phase remains background tab-class warming, followed separately by
+row/card composition. Neither is included in this candidate.
