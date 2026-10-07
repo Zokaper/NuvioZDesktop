@@ -186,6 +186,13 @@ configuration are copied unchanged. The signed-in app has **not** been launched 
 compared for this step; the maintainer is unavailable. Do not infer smoother scrolling from the
 virtual-time result. A fresh cumulative full split regression run follows.
 
+**Cumulative full verification completed:** rest 1,903 / playback 1,072 / downloads 457 / E2E 49 =
+**3,481**, zero failures/errors/skips and zero duplicates; all four parts and supervisor exit 0.
+Fresh summary and separate XML archives: `build/perf-home-split-20261007/`, recorded HEAD
+`c5ff5b056`. Later commits are observation tools/docs only; product code is unchanged since
+`6f27e2eec`. The five additional cases over the original 3,476 are the observer-start race,
+two Home activity regressions and two measurement cases. Signed-in physical QA remains pending.
+
 ### Next human comparison
 
 Use `after-2-startup` as baseline and `after-3-hidden-home` as candidate, one signed-in instance

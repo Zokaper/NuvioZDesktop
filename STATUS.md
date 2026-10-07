@@ -41,8 +41,16 @@ Prepared `perf-observe-data/apps/after-3-hidden-home` from `after-2-startup`: on
 Helper now permits a newly added source absent from the base, while requiring all named sources
 in the rebuilt jar and checking every unrelated entry byte-for-byte. Do not launch until the
 maintainer returns; compare the preceding startup app with this copy using two full tab loops
-and Home return/scroll retention. Broader cumulative split suite is next. No class-warming or
-row-composition change is bundled here. Nothing pushed or published.
+and Home return/scroll retention.
+
+**Full cumulative split passed:** rest/playback/downloads/E2E = 1,903/1,072/457/49 = **3,481**,
+zero failures/errors/skips/duplicates, all parts rc=0 and supervisor exit 0. Fresh XML/summary:
+`build/perf-home-split-20261007/`, recorded HEAD `c5ff5b056`; later commits change only observation
+tools/docs, with product code still `6f27e2eec`. This covers the startup race and hidden-Home
+regressions together with all previous tests. No class-warming or row-composition product change
+is bundled here. Their read-only feasibility/code inspection is preserved in the report, with
+Java source and corrected explicit stack-attribution tooling committed for reuse. Nothing pushed
+or published. Physical performance comparison remains the next step when the maintainer returns.
 
 ## 2026-10-07 — Completed isolated performance step: settings-sync startup
 
