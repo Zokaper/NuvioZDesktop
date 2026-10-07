@@ -191,3 +191,59 @@ at a time, same power state and window size, with builds finished before recordi
 
 Next proposed product phase remains background tab-class warming, followed separately by
 row/card composition. Neither is included in this candidate.
+
+## Preparation for subsequent phases (read-only; no product change)
+
+### Background tab-class loading
+
+A standalone feasibility probe uses the copied app's 135 jars, an isolated URLClassLoader with
+the platform parent, and `Class.forName(name, false, loader)`. With initialization disabled, the
+API loads the requested class without running its initializer. See the
+[Java 17 Class API](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Class.html#forName(java.lang.String,boolean,java.lang.ClassLoader)).
+It does not execute a screen or perform composition/JIT warming.
+
+Local scratch source, manifests, results and initialization logs are under
+`build/perf-tab-warming-prep-20261007/`. JVM is **25.0.4.1**, not the installed Java 17 runtime;
+Gradle tests were running concurrently. This tests loading feasibility, not app frame timing or
+a deployment performance claim. The no-initialization sentinel stays uninitialized and neither
+run logs a Nuvio class initializer.
+
+| Requested manifest | Nuvio classes defined by loader | All classes defined by loader | Load failures |
+| --- | ---: | ---: | ---: |
+| Five `*ScreenKt` entry holders only | 5 | 5 | 0 |
+| All generated/source classes from the five screen files | 138 | 160 | 0 |
+
+Source-file coverage: Downloads 19, Library 26, Search 19, Settings 40, Social 34. Loading only
+the five entry holders leaves their generated UI classes unloaded. Entry-holder and matching
+`ComposableSingletons` binary families cover 129 of the 138 classes; the remaining nine are
+Library/Social data/helper types. A future warmer needs explicit coverage of generated classes,
+not just five `Class.forName` calls. These screens also call separately compiled components,
+so loading this manifest cannot remove all first-visit work.
+
+Suggested isolated implementation: desktop-owned worker plus a small `Main.kt` startup seam,
+using the existing `App(onAppReady = ...)` callback. The normal AppGate forwards root-content
+readiness there; no new shared `expect` API or AppGateController wiring is needed. Wait for
+readiness and a frame/idle interval, then load a bounded manifest in cancellable chunks once per
+process. Do not invoke UI functions or initialize repositories. Measure startup, first and warm
+tab loops, and class-loader contention if a tab is clicked during warming. A worker prototype
+still needs installed Java 17 verification and its own paired human run after hidden-Home QA.
+
+### Home row/card composition
+
+Code inspection finds separate `rememberPosterCardStyleUiState()` calls in HomeScreen,
+HomeCatalogSection and the HomePosterCard -> HomePosterHoverPreview -> NuvioPosterCard stack.
+Each helper call uses its own plain `collectAsState()` subscription. These plain collectors are
+outside the lifecycle gating measured above; the hidden-Home harness counts twelve other
+repositories, not the poster-style flow. A later narrow experiment could provide one live style
+value to a shelf/card subtree, preserving settings updates and independent callers.
+
+When desktop hover preview is enabled, before any popup opens it already creates two interaction
+sources, several state holders/effects, a library-item conversion, action scope, translated
+failure message and popup position provider. Some of that may be deferred, but trailer debounce,
+hover transitions, scroll dismissal and save/watched actions must preserve their behavior.
+FriendActivityRow also computes labels and lays out several text/avatar nodes; sampling names
+alone does not establish which operation is expensive. Measure with populated rows before
+choosing a change. The watched badge uses visibility fades, not an infinite idle animation.
+
+These are candidate mechanisms, not measured fixes or a promise that scrolling is solved.
+Keep class loading and each composition experiment in separate product/test stages.
