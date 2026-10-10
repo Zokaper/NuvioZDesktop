@@ -310,9 +310,28 @@ public final class StutterProbe {
                 java.lang.reflect.Method dispatch = EventQueue.class.getDeclaredMethod("dispatchEvent", AWTEvent.class);
                 dispatch.setAccessible(true);
                 DISPATCH = dispatch;
+                Field dispatchThreadField = EventQueue.class.getDeclaredField("dispatchThread");
+                dispatchThreadField.setAccessible(true);
+                String lastChain = "";
                 while (true) {
                     Thread.sleep(200);
                     EventQueue top = Toolkit.getDefaultToolkit().getSystemEventQueue();
+                    // Diagnostics: the whole chain from the bottom, and which queues own a dispatch thread.
+                    EventQueue bottom = top;
+                    Field prev = EventQueue.class.getDeclaredField("previousQueue");
+                    prev.setAccessible(true);
+                    for (Object p = prev.get(bottom); p != null; p = prev.get(bottom)) bottom = (EventQueue) p;
+                    StringBuilder chain = new StringBuilder();
+                    for (EventQueue q = bottom; q != null; q = (EventQueue) next.get(q)) {
+                        Object dt = dispatchThreadField.get(q);
+                        chain.append(q.getClass().getSimpleName()).append('@').append(Integer.toHexString(System.identityHashCode(q)))
+                            .append(dt == null ? "" : "[edt " + ((Thread) dt).getName() + "]").append(" > ");
+                    }
+                    String c = chain.toString();
+                    if (!c.equals(lastChain)) {
+                        emit("Q " + us() + " chain " + c + "appctx=" + top.getClass().getSimpleName() + "@" + Integer.toHexString(System.identityHashCode(top)));
+                        lastChain = c;
+                    }
                     for (Object n = next.get(top); n != null; n = next.get(top)) top = (EventQueue) n;
                     if (!(top instanceof TimingQueue)) {
                         top.push(new TimingQueue(top));
