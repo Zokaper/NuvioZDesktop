@@ -80,6 +80,12 @@ def selected_classes(jar, sources, require_all=True):
             found.add(source)
     if require_all and found != sources:
         raise ValueError(f"Missing source files: {sorted(sources - found)}")
+    # Objects Kotlin copies out of inline functions (an inlined `onDispose`, say) carry the inline
+    # function's SourceFile, not ours, but are nested under our classes and are loaded by them.
+    outers = {name[:-len(".class")] + "$" for name in selected}
+    for entry in jar.infolist():
+        if entry.filename not in selected and entry.filename.endswith(".class") and                 any(entry.filename.startswith(outer) for outer in outers):
+            selected[entry.filename] = (entry, jar.read(entry))
     return selected
 
 
