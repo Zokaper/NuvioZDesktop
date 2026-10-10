@@ -26,6 +26,7 @@ import com.nuvio.app.core.debug.selftest.SelfTestOverlay
 import com.nuvio.app.core.deeplink.handleAppUrl
 import com.nuvio.app.core.diagnostics.SentryInitializer
 import com.nuvio.app.core.ui.NuvioTheme
+import com.nuvio.app.core.ui.ProvideDesktopPrefetchScheduler
 import com.nuvio.app.features.discordrpc.DiscordPresenceManager
 import com.nuvio.app.features.p2p.P2pStreamingEngine
 import com.nuvio.app.features.p2p.preloadP2pStreamingEngineAsync
@@ -271,7 +272,9 @@ fun main(args: Array<String>) {
             }
 
             if (smokePlayerUrl == null) {
-                App()
+                ProvideDesktopPrefetchScheduler {
+                    App()
+                }
                 SelfTestOverlay()
             } else {
                 // The player surface reads LocalNuvioPlatformDensity, which only
