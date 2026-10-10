@@ -25,6 +25,7 @@ import com.nuvio.app.core.debug.selftest.DesktopSelfTest
 import com.nuvio.app.core.debug.selftest.SelfTestOverlay
 import com.nuvio.app.core.deeplink.handleAppUrl
 import com.nuvio.app.core.diagnostics.SentryInitializer
+import com.nuvio.app.core.ui.DesktopWheelSmoothing
 import com.nuvio.app.core.ui.NuvioTheme
 import com.nuvio.app.core.ui.ProvideDesktopPrefetchScheduler
 import com.nuvio.app.features.discordrpc.DiscordPresenceManager
@@ -74,6 +75,9 @@ fun main(args: Array<String>) {
         runCatching { NativePlayerBridge.initGtkEarly() }
     }
     applyDesktopRendererPreference()
+    // Before anything composes a scrollable: Compose reads this once. The app smooths wheel and
+    // touchpad input itself on Windows (see DesktopWheelSmoothing).
+    DesktopWheelSmoothing.disableComposeWheelSmoothing()
     SentryInitializer.start()
     configureDesktopQuickJsLibrary()
     configureDesktopChrome()
@@ -200,6 +204,7 @@ fun main(args: Array<String>) {
             LaunchedEffect(window) {
                 applyNativeDesktopWindowChrome(window)
                 installLinuxExtendedMouseButtons()
+                DesktopWheelSmoothing.install()
                 // Windows fullscreen is emulated natively and isn't reflected by
                 // WindowPlacement, so it must be re-applied once the window peer exists.
                 fullscreenController.applyRestoredFullscreenState(window, windowState, wasFullscreenOnLastExit)
@@ -272,6 +277,7 @@ fun main(args: Array<String>) {
             }
 
             if (smokePlayerUrl == null) {
+                DesktopWheelSmoothing.FrameDriver()
                 ProvideDesktopPrefetchScheduler {
                     App()
                 }

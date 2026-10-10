@@ -209,8 +209,9 @@ public final class StutterProbe {
             Thread.sleep(1);
         }
         emit("Q " + us() + " edt-seen " + edt.getName());
-        Toolkit.getDefaultToolkit().getSystemEventQueue().push(new TimingQueue());
+        Toolkit.getDefaultToolkit().getSystemEventQueue().push(new TimingQueue(null));
         emit("Q " + us() + " queue-pushed");
+        startQueueGuard();
         // Environment, once the main window exists.
         for (int i = 0; i < 600; i++) {
             Thread.sleep(100);
@@ -296,8 +297,62 @@ public final class StutterProbe {
         }
     }
 
+    /**
+     * The app may push an EventQueue of its own later (wheel smoothing on Windows, button mapping on
+     * Linux). Only the topmost queue dispatches, so the probe would go blind; re-push on top of it
+     * and hand each event to that queue's own dispatchEvent.
+     */
+    static void startQueueGuard() {
+        Thread t = new Thread(() -> {
+            try {
+                Field next = EventQueue.class.getDeclaredField("nextQueue");
+                next.setAccessible(true);
+                java.lang.reflect.Method dispatch = EventQueue.class.getDeclaredMethod("dispatchEvent", AWTEvent.class);
+                dispatch.setAccessible(true);
+                DISPATCH = dispatch;
+                while (true) {
+                    Thread.sleep(200);
+                    EventQueue top = Toolkit.getDefaultToolkit().getSystemEventQueue();
+                    for (Object n = next.get(top); n != null; n = next.get(top)) top = (EventQueue) n;
+                    if (!(top instanceof TimingQueue)) {
+                        top.push(new TimingQueue(top));
+                        emit("Q " + us() + " queue-repushed over " + top.getClass().getName());
+                    }
+                }
+            } catch (Throwable ex) {
+                emit("Q " + us() + " queue-guard-failed " + ex);
+            }
+        }, "stutterprobe-queue-guard");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    static volatile java.lang.reflect.Method DISPATCH;
+
     static final class TimingQueue extends EventQueue {
         long seq;
+        final EventQueue delegate;
+
+        TimingQueue(EventQueue delegate) {
+            this.delegate = delegate;
+        }
+
+        void dispatchThrough(AWTEvent e) {
+            if (delegate == null) {
+                super.dispatchEvent(e);
+                return;
+            }
+            try {
+                DISPATCH.invoke(delegate, e);
+            } catch (java.lang.reflect.InvocationTargetException ex) {
+                Throwable c = ex.getCause();
+                if (c instanceof RuntimeException) throw (RuntimeException) c;
+                if (c instanceof Error) throw (Error) c;
+                throw new RuntimeException(c);
+            } catch (IllegalAccessException ex) {
+                super.dispatchEvent(e);
+            }
+        }
 
         @Override
         protected void dispatchEvent(AWTEvent e) {
@@ -309,7 +364,7 @@ public final class StutterProbe {
             curStart = t0;
             if (e instanceof MouseEvent || e instanceof KeyEvent) input(e, t0);
             try {
-                super.dispatchEvent(e);
+                dispatchThrough(e);
             } finally {
                 long t1 = System.nanoTime();
                 curStart = 0;
@@ -347,7 +402,10 @@ public final class StutterProbe {
         int id = e.getID();
         if (e instanceof MouseWheelEvent) {
             MouseWheelEvent w = (MouseWheelEvent) e;
-            emit("I " + us(t) + " wheel " + w.getX() + " " + w.getY() + " " + w.getWheelRotation() + (w.isShiftDown() ? "s" : ""));
+            // Raw toolkit events are "wheel"; events the app synthesises (smoothing) are "swheel".
+            String what = w.getClass() == MouseWheelEvent.class ? "wheel" : "swheel";
+            emit("I " + us(t) + " " + what + " " + w.getX() + " " + w.getY() + " " + w.getWheelRotation() + (w.isShiftDown() ? "s" : "")
+                + " " + w.getPreciseWheelRotation() + " " + w.getWhen() + " " + w.getComponent().getClass().getName());
             lastInputNs = t;
         } else if (id == MouseEvent.MOUSE_PRESSED || id == MouseEvent.MOUSE_RELEASED) {
             MouseEvent m = (MouseEvent) e;
