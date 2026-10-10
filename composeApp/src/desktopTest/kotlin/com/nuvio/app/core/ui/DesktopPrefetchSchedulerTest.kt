@@ -144,6 +144,7 @@ class DesktopPrefetchSchedulerTest {
 
     @Test
     fun slicesStayShortWhileTheUserIsScrolling() {
+        lastInteraction = now
         val request = BigRequest(needs = 3 * FRAME)
         scheduler.scheduleLowPriorityPrefetch(request)
         drainPosted()
@@ -156,7 +157,24 @@ class DesktopPrefetchSchedulerTest {
         }
 
         assertFalse(request.done)
-        assertTrue(request.offered.all { it == FRAME / 2 }, "offered ${request.offered}")
+        assertTrue(
+            request.offered.all { it == DesktopPrefetchScheduler.INTERACTING_SLICE_NANOS },
+            "offered ${request.offered}",
+        )
+    }
+
+    @Test
+    fun whileScrollingProgressWaitsAFrameInsteadOfChaining() {
+        lastInteraction = now
+        val request = FakeRequest("long", cost = DesktopPrefetchScheduler.INTERACTING_SLICE_NANOS, runs = 3)
+        scheduler.scheduleLowPriorityPrefetch(request)
+
+        posted.removeAt(0).run()
+
+        assertEquals(1, request.executed)
+        assertTrue(posted.isEmpty(), "no back-to-back pass while the user scrolls")
+        val (delay, _) = delayed.single()
+        assertEquals(FRAME - DesktopPrefetchScheduler.INTERACTING_SLICE_NANOS, delay)
     }
 
     @Test

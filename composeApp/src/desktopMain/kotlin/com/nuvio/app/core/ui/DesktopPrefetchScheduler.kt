@@ -27,12 +27,14 @@ import javax.swing.Timer
  * same requests between frames; this does it on the AWT event thread, which is where composition
  * runs on desktop.
  *
- * Each pass gets half a frame. Compose's requests stop themselves when [PlatformPrefetchRequestScope]
- * runs out and resume in the next pass, and a pass is posted behind whatever input and frames are
- * already queued, so a frame waits for at most one slice. A request can also decline to start when
- * its measured average does not fit (a whole poster row measures as one unit); the slot then grows
- * across frame-spaced retries, but only while the user is not scrolling or typing, because a long
- * slice in the middle of a scroll would be the very hitch this exists to remove.
+ * While idle, each pass gets half a frame and passes follow each other until the queue is empty.
+ * While the user is scrolling or typing, a pass gets at most [INTERACTING_SLICE_NANOS] and the next
+ * one waits a frame: back-to-back half-frame passes there were measured making one frame in five
+ * miss its refresh (prefetch 9.7 ms + frame 8.5 ms + the scroll event 6 ms on the late frames).
+ * Compose's requests stop themselves when [PlatformPrefetchRequestScope] runs out and resume in the
+ * next pass. A request can also decline to start when its measured average does not fit (a whole
+ * poster row measures as one unit); the slot then grows across frame-spaced retries, but only while
+ * the user is idle, because a long slice in the middle of a scroll is the very hitch this removes.
  */
 @OptIn(InternalComposeUiApi::class)
 internal class DesktopPrefetchScheduler(
@@ -77,7 +79,7 @@ internal class DesktopPrefetchScheduler(
         val start = nanoTime()
         val interacting = start - lastInteractionNanos() < interval * INTERACTION_FRAMES
         val slice = if (interacting) {
-            interval / 2
+            minOf(interval / 2, INTERACTING_SLICE_NANOS)
         } else {
             ((interval / 2) shl declinedPasses.coerceAtMost(MAX_GROWTH_STEPS)).coerceAtMost(MAX_SLICE_NANOS)
         }
@@ -113,7 +115,12 @@ internal class DesktopPrefetchScheduler(
         passPending = true
         if (progressed) {
             declinedPasses = 0
-            post(::runPass)
+            if (interacting) {
+                // One slice per frame while the user is moving the content.
+                postAfter((interval - (nanoTime() - start)).coerceAtLeast(MIN_GAP_NANOS), ::runPass)
+            } else {
+                post(::runPass)
+            }
         } else {
             // Nothing fitted: wait a frame instead of spinning the event thread.
             declinedPasses++
@@ -124,6 +131,8 @@ internal class DesktopPrefetchScheduler(
     internal companion object {
         /** Input this recent (in frames) means the user is mid-scroll: keep slices short. */
         const val INTERACTION_FRAMES = 6L
+        const val INTERACTING_SLICE_NANOS = 4_000_000L
+        const val MIN_GAP_NANOS = 1_000_000L
         const val MAX_GROWTH_STEPS = 3
         const val MAX_SLICE_NANOS = 50_000_000L
         const val PROGRESS_NANOS = 500_000L

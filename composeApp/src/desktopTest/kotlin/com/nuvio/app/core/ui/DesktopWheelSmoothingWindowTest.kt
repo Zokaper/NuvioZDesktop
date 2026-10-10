@@ -89,6 +89,52 @@ class DesktopWheelSmoothingWindowTest {
         }
     }
 
+    @Test
+    fun aSteadyTouchpadStreamProducesOneEventPerFrame() {
+        assumeFalse("needs a display", GraphicsEnvironment.isHeadless())
+        assumeFalse("Windows only", !System.getProperty("os.name", "").lowercase().contains("windows"))
+        val state = LazyListState()
+        val times = java.util.Collections.synchronizedList(mutableListOf<Long>())
+        val listener = AWTEventListener { event ->
+            if (event is MouseWheelEvent && event.preciseWheelRotation != 0.05) times += System.nanoTime()
+        }
+        lateinit var window: ComposeWindow
+        SwingUtilities.invokeAndWait {
+            window = ComposeWindow()
+            window.setSize(400, 400)
+            window.setContent {
+                DesktopWheelSmoothing.FrameDriver()
+                LazyColumn(state = state, modifier = Modifier.fillMaxSize()) {
+                    items(4000) { Box(Modifier.fillMaxWidth().height(40.dp)) }
+                }
+            }
+            window.isVisible = true
+            DesktopWheelSmoothing.install()
+            Toolkit.getDefaultToolkit().addAWTEventListener(listener, AWTEvent.MOUSE_WHEEL_EVENT_MASK)
+        }
+        try {
+            Thread.sleep(800)
+            lateinit var target: java.awt.Component
+            SwingUtilities.invokeAndWait { target = SwingUtilities.getDeepestComponentAt(window.contentPane, 200, 200) }
+            val queue = Toolkit.getDefaultToolkit().systemEventQueue
+            val end = System.nanoTime() + 1_500_000_000L
+            while (System.nanoTime() < end) {
+                queue.postEvent(wheel(target, 0.05))
+                Thread.sleep(4)
+            }
+            Thread.sleep(500)
+            val snapshot = synchronized(times) { times.toList() }
+            val gaps = snapshot.zipWithNext { a, b -> (b - a) / 1_000_000.0 }.sorted()
+            println("SMOOTHING-DIAG events=${snapshot.size} p50=${gaps[gaps.size / 2]} p90=${gaps[gaps.size * 9 / 10]} max=${gaps.last()}")
+            assertTrue(gaps[gaps.size * 9 / 10] < 25.0, "one event per frame: p90 gap ${gaps[gaps.size * 9 / 10]} ms")
+        } finally {
+            SwingUtilities.invokeAndWait {
+                Toolkit.getDefaultToolkit().removeAWTEventListener(listener)
+                window.dispose()
+            }
+        }
+    }
+
     private fun wheel(target: java.awt.Component, rotation: Double) =
         MouseWheelEvent(
             target, MouseEvent.MOUSE_WHEEL, System.currentTimeMillis(), 0, 200, 200, 200, 200,
