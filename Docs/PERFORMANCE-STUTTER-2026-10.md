@@ -264,3 +264,38 @@ choosing a change. The watched badge uses visibility fades, not an infinite idle
 
 These are candidate mechanisms, not measured fixes or a promise that scrolling is solved.
 Keep class loading and each composition experiment in separate product/test stages.
+
+## Hidden-Home physical comparison — 2026-10-10
+
+Runs `home-before-20261010-1` (`apps/after-2-startup`) and `home-after-20261010-1`
+(`apps/after-3-hidden-home`), under workspace `.claude-worktrees/perf-observe-data/`. Signed in,
+battery, 60 Hz, Java 17.0.20.1, about 64 s each, normal shutdown marker and exit code 0. Window
+1920x1200 / 1935x1215. Launched back to back; analysis ran only after both closed.
+
+Protocol as driven: profile, Home scroll, one fast tab loop (~0.7 s per tab), a few Settings
+clicks, return to Home. There was no second tab loop and no 15 s Library hold, so off-Home time is
+about 10 s per run. Segment numbers come from scratch `seg.py`, which pools tasks by start time
+between click timestamps.
+
+| Segment | Before | After |
+| --- | ---: | ---: |
+| Home scroll: UI busy / frames >=100 ms / p95 | 35.9% / 8 / 21.7 ms | 44.5% / 14 / 39.2 ms |
+| Off Home (first-visit loop): UI busy / frames >=100 ms | 54.5% / 13 | 39.4% / 9 |
+| Quiet Settings window: UI busy | 17.2% (1.5 s) | 22.4% (1.9 s) |
+| Return to Home: worst frame | 36 ms | 157 ms |
+
+**Verdict: no measurable or felt improvement.** The maintainer reports it is "still super
+stuttery". The quiet off-Home windows are too short to show hero paging (one page every ~6 s),
+and the differences above are within run-to-run variation for one observation each. The gate
+also modifies upstream-owned `AppShellComponents.kt`. It should not count as a perf win; whether
+to keep it is open.
+
+**Where steady Home-scroll stutter actually is.** In the after run, 38.0–50.5 s (after Home
+entry): 40 hitches, p95 frame 92 ms, 11 frames >=100 ms, worst 548 ms. Nearly every hitch loads
+**0 classes**, and is 50–80% composition, the rest layout and text. That is recurring per-item
+composition cost as rows and cards enter the viewport, not cold code. Inclusive attribution
+(`attribute.py`, overlapping): `HomeCatalogSection` 427 ms, `HomePosterHoverPreview` 360 ms,
+`homeSocialSections` 259 ms, `NuvioPosterCard` 252 ms, `FriendActivityRow` 64 ms,
+`ContinueWatchingCard` 59 ms. The hover-preview wrapper that each poster carries before any popup
+opens (see "Home row/card composition" above) is the largest single named cost, so it is the next
+target ahead of tab-class warming.
