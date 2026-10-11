@@ -56,6 +56,33 @@ class DesktopStorageTest {
     }
 
     @Test
+    fun a_write_that_cannot_land_is_kept_in_memory_and_saved_by_the_next_one() {
+        val directory = Files.createTempDirectory("desktop-storage-blocked-test")
+        val file = directory.resolve("nuvio_window_state.properties")
+        try {
+            // Stands in for a file another process holds: the move over it fails.
+            Files.createDirectories(file)
+            Files.createFile(file.resolve("occupant"))
+            val store = DesktopStorage.Store(file)
+
+            store.putFloat("window_width", 1280f)
+
+            assertEquals(1280f, store.getFloat("window_width"))
+
+            Files.delete(file.resolve("occupant"))
+            Files.delete(file)
+            store.putFloat("window_height", 720f)
+
+            val reloaded = DesktopStorage.Store(file)
+            assertEquals(1280f, reloaded.getFloat("window_width"))
+            assertEquals(720f, reloaded.getFloat("window_height"))
+            assertFalse(Files.exists(directory.resolve("nuvio_window_state.properties.tmp")))
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun signOutKeepsDeviceLocalStoresAndOnlyTheDeviceRevisionFromTheMixedStore() {
         val directory = Files.createTempDirectory("desktop-storage-wipe-test")
         try {

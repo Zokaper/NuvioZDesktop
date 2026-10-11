@@ -57,10 +57,16 @@ import javax.imageio.ImageIO
 import java.awt.Color as AwtColor
 import javax.swing.JComponent
 import javax.swing.JOptionPane
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 private val NuvioDesktopNativeBackground = AwtColor(0x0D, 0x0D, 0x0D)
 private const val MacosDarkAquaAppearance = "NSAppearanceNameDarkAqua"
+private const val WindowStateSaveDelayMillis = 300L
 
 @OptIn(ExperimentalComposeUiApi::class)
 fun main(args: Array<String>) {
@@ -222,22 +228,39 @@ fun main(args: Array<String>) {
             LaunchedEffect(windowState) {
                 // Only persist geometry while windowed: fullscreen/native-Windows-fullscreen
                 // coordinates aren't a meaningful "windowed position" to restore later.
+                // Z: a drag-resize emits dozens of these a second. The state is read here, on the
+                // UI thread, but written once the window has settled, off it - the synchronous
+                // per-event rewrites stalled every resize and were the likeliest cause of a crash
+                // reported while resizing rapidly (see DesktopStorage.Store.persist).
+                var pendingMaximized: Boolean? = null
+                var pendingGeometry: DesktopWindowGeometry? = null
+                var pendingSave: Job? = null
                 snapshotFlow { Triple(windowState.placement, windowState.position, windowState.size) }
                     .collect { (placement, position, size) ->
                         val isFullscreen = fullscreenController.isFullscreen(window, windowState)
                         if (!isFullscreen && restoresMaximizedWindowPlacement) {
-                            DesktopWindowModeStorage.saveWasMaximized(placement == WindowPlacement.Maximized)
+                            pendingMaximized = placement == WindowPlacement.Maximized
                         }
                         val isWindowed = placement == WindowPlacement.Floating && !isFullscreen
                         if (isWindowed && position.isSpecified) {
-                            DesktopWindowModeStorage.saveWindowedGeometry(
-                                DesktopWindowGeometry(
-                                    x = position.x.value,
-                                    y = position.y.value,
-                                    width = size.width.value,
-                                    height = size.height.value,
-                                ),
+                            pendingGeometry = DesktopWindowGeometry(
+                                x = position.x.value,
+                                y = position.y.value,
+                                width = size.width.value,
+                                height = size.height.value,
                             )
+                        }
+                        pendingSave?.cancel()
+                        pendingSave = launch {
+                            delay(WindowStateSaveDelayMillis)
+                            val maximized = pendingMaximized
+                            val geometry = pendingGeometry
+                            pendingMaximized = null
+                            pendingGeometry = null
+                            withContext(Dispatchers.IO) {
+                                maximized?.let(DesktopWindowModeStorage::saveWasMaximized)
+                                geometry?.let(DesktopWindowModeStorage::saveWindowedGeometry)
+                            }
                         }
                     }
             }

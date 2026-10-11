@@ -1,11 +1,15 @@
 package com.nuvio.app.core.storage
 
+import co.touchlab.kermit.Logger
 import com.nuvio.app.core.build.AppVersionConfig
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.io.IOException
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.nio.file.StandardCopyOption
 import java.util.Locale
 import java.util.Properties
 import kotlin.io.path.exists
@@ -200,13 +204,30 @@ internal object DesktopStorage {
             }
         }
 
+        // Z: a failed write is logged, never thrown. Window geometry is saved on every resize event,
+        // and Windows Defender or the search indexer can hold the file for a moment; the uncaught
+        // IOException escaped the window's LaunchedEffect and closed the app. The value stays in
+        // memory, and every write stores the whole file, so the next successful one catches up.
+        // Writing a sibling and moving it over the original means a crash mid-write can no longer
+        // leave a truncated store behind.
         private fun persist() {
-            Files.createDirectories(file.parent)
-            Files.newOutputStream(file).use { output ->
-                properties.store(output, "Nuvio desktop preferences")
+            try {
+                Files.createDirectories(file.parent)
+                val staging = file.resolveSibling("${file.fileName}.tmp")
+                Files.newOutputStream(staging).use { output ->
+                    properties.store(output, "Nuvio desktop preferences")
+                }
+                try {
+                    Files.move(staging, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+                } catch (_: AtomicMoveNotSupportedException) {
+                    Files.move(staging, file, StandardCopyOption.REPLACE_EXISTING)
+                }
+            } catch (error: IOException) {
+                log.w(error) { "Could not save ${file.fileName}; keeping the change in memory" }
             }
         }
     }
 
+    private val log = Logger.withTag("DesktopStorage")
     private const val STORE_SUFFIX = ".properties"
 }
