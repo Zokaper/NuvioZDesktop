@@ -94,11 +94,37 @@ jobs:
           if (!(Test-Path -LiteralPath $runtimePath) -or (Get-Item -LiteralPath $runtimePath).Length -lt 1000000) {
             throw 'The bundled Windows libmpv runtime was not materialized from the pinned archive.'
           }
-      - name: Set up Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: 17
+      # The Windows app ships on JetBrains Runtime 25: every build in the 2026-10 Home-scrolling
+      # pass was measured on it, and the runtime switch on its own was a visible improvement
+      # over Temurin 17 (Docs/PERFORMANCE-STUTTER-2026-10.md). jpackage bundles the JDK Gradle
+      # runs on, so it is pinned to that exact build by checksum rather than resolved by setup-java.
+      - name: Set up Java (pinned JetBrains Runtime 25)
+        shell: pwsh
+        env:
+          JBR_NAME: jbrsdk_jcef-25.0.4.1-windows-x64-b583.48
+          JBR_SHA256: b46392a0ed9e262e3fbcf1eb24b7f643dfa362b153b458a66f3911bd4711203d
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:RUNNER_TEMP "$env:JBR_NAME.tar.gz"
+          curl.exe -fsSL --retry 3 -o $archive "https://cache-redirector.jetbrains.com/intellij-jbr/$env:JBR_NAME.tar.gz"
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Unable to download the pinned JetBrains Runtime.'
+          }
+          $actualSha256 = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $env:JBR_SHA256) {
+            throw "The pinned JetBrains Runtime checksum does not match: $actualSha256"
+          }
+          tar -xzf $archive -C $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Unable to extract the pinned JetBrains Runtime.'
+          }
+          $javaHome = Join-Path $env:RUNNER_TEMP $env:JBR_NAME
+          & (Join-Path $javaHome 'bin\java.exe') -version
+          if ($LASTEXITCODE -ne 0) {
+            throw 'The pinned JetBrains Runtime does not start.'
+          }
+          "JAVA_HOME=$javaHome" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          (Join-Path $javaHome 'bin') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
       - name: Cap Gradle memory for hosted runners
