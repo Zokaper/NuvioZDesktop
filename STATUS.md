@@ -31,7 +31,19 @@ rc=0 (`build/perf-ship-split-20261011/`). Debug 90 (`debug-v0.1.26-alpha-z1.90`,
 published through the real pipeline; its extracted MSI carries runtime `25.0.4.1` with the same 12 modules as the
 measured `after-4` copy.
 
-**Release checklist:** maintainer's physical check of Debug 90 (MSI upgrade over Debug 89, startup/sign-in,
+**Debug 90 physical test found an uncached auto-pick (fixed in `a8dd6593c`, Debug 91).** Lioness S1E1: the
+chain was cached `[TB⚡] MediaFusion` -> uncached `[TB⏳] ComeTorz` -> uncached. The cached link never started
+(`NeverStarted` after 20.3 s, no mpv output - cause unknown), and the second attempt played Torbox's two-minute slate;
+the probe flagged it (`placeholder:served_29947_claimed_41600000000`) after mpv's first frame, when a verdict is
+ignored by design. Cause: the "Nuvio Z Recommended" AIOStreams instance sends no `streamData` (0/162, with or without
+our User-Agent), so `isAioStreams` is false on the playback path (facts are built without the manifest) and
+`isUncachedDebrid` waved an explicit `isDebridReady=false` through for want of debrid evidence. An explicit false now
+always blocks auto-play. Not a regression of this pass (no playback code changed; stable 0.1.26-alpha-z1 has it too).
+**Mobile has the same bug** - `PlaybackSourceSelector.kt` is shared and needs merging to `nuvio-z` with a phone check.
+Full split at `4e906e57e`: 1,921/1,073/457/49 = **3,500**, zero failures/errors/skips/duplicates
+(`build/perf-ship-split-20261011b/`). Debug 91 (`debug-v0.1.26-alpha-z1.91`, run `38136326166`) published.
+
+**Release checklist:** maintainer's physical check of Debug 91 (MSI upgrade over Debug 89, startup/sign-in,
 native playback, rapid window resize plus geometry restore, Home scroll); then merge into `Dev`, bump `VERSION_NAME=0.1.26-alpha-z2` /
 `RELEASE_SERIAL=133` as the last commit (folding the ship date into the changelog event), copy `changelog.json`
 byte-for-byte to `nuvio-z` `main`, dry-run, publish. Mobile ships nothing in this release; the four shared
