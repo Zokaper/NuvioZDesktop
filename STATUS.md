@@ -25,9 +25,14 @@ JetBrains Runtime `jbrsdk_jcef-25.0.4.1-windows-x64-b583.48` from JetBrains' CDN
 `b46392a0...203d` (identical to the archive in `~/.gradle/jdks` that every perf build ran on) and run Gradle on it,
 so jpackage bundles it. macOS and Linux stay on Temurin 17 (never measured on 25).
 
-**Release checklist:** full split suite on the final code (running); Debug 90 through the real pipeline (branch
-pushed; dispatch was blocked pending the maintainer's OK) and a physical check of MSI install/upgrade, startup,
-native playback and window resizing; then merge into `Dev`, bump `VERSION_NAME=0.1.26-alpha-z2` /
+**Verified:** full split suite at `190fb6114` (all product code, changelog included) on JBR 25:
+rest/playback/downloads/E2E = 1,921/1,072/457/49 = **3,499**, zero failures/errors/skips/duplicates, every part
+rc=0 (`build/perf-ship-split-20261011/`). Debug 90 (`debug-v0.1.26-alpha-z1.90`, run `38133037570`) built and
+published through the real pipeline; its extracted MSI carries runtime `25.0.4.1` with the same 12 modules as the
+measured `after-4` copy.
+
+**Release checklist:** maintainer's physical check of Debug 90 (MSI upgrade over Debug 89, startup/sign-in,
+native playback, rapid window resize plus geometry restore, Home scroll); then merge into `Dev`, bump `VERSION_NAME=0.1.26-alpha-z2` /
 `RELEASE_SERIAL=133` as the last commit (folding the ship date into the changelog event), copy `changelog.json`
 byte-for-byte to `nuvio-z` `main`, dry-run, publish. Mobile ships nothing in this release; the four shared
 commonMain files reach `nuvio-z` only by a later merge, which needs its own mobile check.
