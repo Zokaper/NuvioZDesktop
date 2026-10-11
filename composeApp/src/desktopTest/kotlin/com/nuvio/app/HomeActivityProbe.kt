@@ -59,7 +59,7 @@ internal object HomeActivityProbe {
             selectedTab = tab,
             requests = requests,
             state = AppTabState(searchListState = searchListState, tabsRouteActiveState = tabsRouteActive),
-            actions = AppTabActions(),
+            actions = AppTabActions(onWhatsNewClick = null),
         )
     }
 
