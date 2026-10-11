@@ -25,7 +25,9 @@ import com.nuvio.app.core.debug.selftest.DesktopSelfTest
 import com.nuvio.app.core.debug.selftest.SelfTestOverlay
 import com.nuvio.app.core.deeplink.handleAppUrl
 import com.nuvio.app.core.diagnostics.SentryInitializer
+import com.nuvio.app.core.ui.DesktopWheelSmoothing
 import com.nuvio.app.core.ui.NuvioTheme
+import com.nuvio.app.core.ui.ProvideDesktopPrefetchScheduler
 import com.nuvio.app.features.discordrpc.DiscordPresenceManager
 import com.nuvio.app.features.p2p.P2pStreamingEngine
 import com.nuvio.app.features.p2p.preloadP2pStreamingEngineAsync
@@ -55,10 +57,16 @@ import javax.imageio.ImageIO
 import java.awt.Color as AwtColor
 import javax.swing.JComponent
 import javax.swing.JOptionPane
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 private val NuvioDesktopNativeBackground = AwtColor(0x0D, 0x0D, 0x0D)
 private const val MacosDarkAquaAppearance = "NSAppearanceNameDarkAqua"
+private const val WindowStateSaveDelayMillis = 300L
 
 @OptIn(ExperimentalComposeUiApi::class)
 fun main(args: Array<String>) {
@@ -73,6 +81,9 @@ fun main(args: Array<String>) {
         runCatching { NativePlayerBridge.initGtkEarly() }
     }
     applyDesktopRendererPreference()
+    // Before anything composes a scrollable: Compose reads this once. The app smooths wheel and
+    // touchpad input itself on Windows (see DesktopWheelSmoothing).
+    DesktopWheelSmoothing.disableComposeWheelSmoothing()
     SentryInitializer.start()
     configureDesktopQuickJsLibrary()
     configureDesktopChrome()
@@ -199,6 +210,7 @@ fun main(args: Array<String>) {
             LaunchedEffect(window) {
                 applyNativeDesktopWindowChrome(window)
                 installLinuxExtendedMouseButtons()
+                DesktopWheelSmoothing.install()
                 // Windows fullscreen is emulated natively and isn't reflected by
                 // WindowPlacement, so it must be re-applied once the window peer exists.
                 fullscreenController.applyRestoredFullscreenState(window, windowState, wasFullscreenOnLastExit)
@@ -216,22 +228,39 @@ fun main(args: Array<String>) {
             LaunchedEffect(windowState) {
                 // Only persist geometry while windowed: fullscreen/native-Windows-fullscreen
                 // coordinates aren't a meaningful "windowed position" to restore later.
+                // Z: a drag-resize emits dozens of these a second. The state is read here, on the
+                // UI thread, but written once the window has settled, off it - the synchronous
+                // per-event rewrites stalled every resize and were the likeliest cause of a crash
+                // reported while resizing rapidly (see DesktopStorage.Store.persist).
+                var pendingMaximized: Boolean? = null
+                var pendingGeometry: DesktopWindowGeometry? = null
+                var pendingSave: Job? = null
                 snapshotFlow { Triple(windowState.placement, windowState.position, windowState.size) }
                     .collect { (placement, position, size) ->
                         val isFullscreen = fullscreenController.isFullscreen(window, windowState)
                         if (!isFullscreen && restoresMaximizedWindowPlacement) {
-                            DesktopWindowModeStorage.saveWasMaximized(placement == WindowPlacement.Maximized)
+                            pendingMaximized = placement == WindowPlacement.Maximized
                         }
                         val isWindowed = placement == WindowPlacement.Floating && !isFullscreen
                         if (isWindowed && position.isSpecified) {
-                            DesktopWindowModeStorage.saveWindowedGeometry(
-                                DesktopWindowGeometry(
-                                    x = position.x.value,
-                                    y = position.y.value,
-                                    width = size.width.value,
-                                    height = size.height.value,
-                                ),
+                            pendingGeometry = DesktopWindowGeometry(
+                                x = position.x.value,
+                                y = position.y.value,
+                                width = size.width.value,
+                                height = size.height.value,
                             )
+                        }
+                        pendingSave?.cancel()
+                        pendingSave = launch {
+                            delay(WindowStateSaveDelayMillis)
+                            val maximized = pendingMaximized
+                            val geometry = pendingGeometry
+                            pendingMaximized = null
+                            pendingGeometry = null
+                            withContext(Dispatchers.IO) {
+                                maximized?.let(DesktopWindowModeStorage::saveWasMaximized)
+                                geometry?.let(DesktopWindowModeStorage::saveWindowedGeometry)
+                            }
                         }
                     }
             }
@@ -271,7 +300,10 @@ fun main(args: Array<String>) {
             }
 
             if (smokePlayerUrl == null) {
-                App()
+                DesktopWheelSmoothing.FrameDriver()
+                ProvideDesktopPrefetchScheduler {
+                    App()
+                }
                 SelfTestOverlay()
             } else {
                 // The player surface reads LocalNuvioPlatformDensity, which only

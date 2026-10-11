@@ -1,3 +1,60 @@
+## 2026-10-11 - Home-scrolling perf pass heading to Desktop 0.1.26-alpha-z2 (serial 133)
+
+Branch `claude/perf-home-smooth` (worktree `.claude-worktrees/perf-stutter-2`), pushed. The maintainer accepted
+the pass on 2026-10-10 after signed-in touchpad runs on the installed app (Home scroll, 60 Hz): frames on time
+60% (JBR 25 only) -> 78% (+ prefetch) -> 80% (+ smoothing) -> **87%** (+ row cache), p90 36 -> 22 ms. The rare long
+frames did not move (~1 in 40 still >= 60 ms, p99 ~100 ms). Raw runs: `perf-observe-data/home-*-20261010-1`.
+
+**What ships (product):**
+- Poster scaling off the UI thread on Windows (`DesktopImageDownscaler`, seam in `AsyncImage.desktop.kt`).
+- Lazy Settings search index (`SettingsScreen.kt`).
+- Settings-sync observer started one frame after AppGate, off the UI thread (`AppGate.kt`, `ProfileSettingsSync.kt`).
+- Upcoming lazy-list items composed between frames (`DesktopPrefetchScheduler`, provided from `Main.kt`).
+- Windows wheel/touchpad smoothing (`DesktopWheelSmoothing`, installed from `Main.kt`).
+- Home rows kept composed behind the viewport on desktop (`HomeListState.kt`; mobile keeps the stock state).
+- **Window-resize crash fix (`5a68eaa51`).** A friend's build closed while the window was resized rapidly. Not
+  reproduced here; the fix removes the most likely cause: every resize event rewrote
+  `nuvio_window_state.properties` four times on the UI thread, and `DesktopStorage.Store.persist` let an
+  `IOException` (file briefly held by Defender/the indexer) escape the window's `LaunchedEffect`. `persist` now
+  writes a sibling and moves it over the original, logging a failure instead of throwing; `Main.kt` writes window
+  state 300 ms after the last change, on `Dispatchers.IO`. Regression: `DesktopStorageTest` (blocked target).
+- The hidden-Home pause (`6f27e2eec`) was measured as no difference and **reverted** (`27c72df53`).
+
+**Runtime (`2f86f313f`):** the Windows jobs of `desktop-release.yml` and `desktop-debug-release.yml` now download
+JetBrains Runtime `jbrsdk_jcef-25.0.4.1-windows-x64-b583.48` from JetBrains' CDN, verify SHA-256
+`b46392a0...203d` (identical to the archive in `~/.gradle/jdks` that every perf build ran on) and run Gradle on it,
+so jpackage bundles it. macOS and Linux stay on Temurin 17 (never measured on 25).
+
+**Verified:** full split suite at `190fb6114` (all product code, changelog included) on JBR 25:
+rest/playback/downloads/E2E = 1,921/1,072/457/49 = **3,499**, zero failures/errors/skips/duplicates, every part
+rc=0 (`build/perf-ship-split-20261011/`). Debug 90 (`debug-v0.1.26-alpha-z1.90`, run `38133037570`) built and
+published through the real pipeline; its extracted MSI carries runtime `25.0.4.1` with the same 12 modules as the
+measured `after-4` copy.
+
+**Debug 90 physical test found an uncached auto-pick (fixed in `a8dd6593c`, Debug 91).** Lioness S1E1: the
+chain was cached `[TB⚡] MediaFusion` -> uncached `[TB⏳] ComeTorz` -> uncached. The cached link never started
+(`NeverStarted` after 20.3 s, no mpv output - cause unknown), and the second attempt played Torbox's two-minute slate;
+the probe flagged it (`placeholder:served_29947_claimed_41600000000`) after mpv's first frame, when a verdict is
+ignored by design. Cause: the "Nuvio Z Recommended" AIOStreams instance sends no `streamData` (0/162, with or without
+our User-Agent), so `isAioStreams` is false on the playback path (facts are built without the manifest) and
+`isUncachedDebrid` waved an explicit `isDebridReady=false` through for want of debrid evidence. An explicit false now
+always blocks auto-play. Not a regression of this pass (no playback code changed; stable 0.1.26-alpha-z1 has it too).
+**Mobile has the same bug** - `PlaybackSourceSelector.kt` is shared and needs merging to `nuvio-z` with a phone check.
+Full split at `4e906e57e`: 1,921/1,073/457/49 = **3,500**, zero failures/errors/skips/duplicates
+(`build/perf-ship-split-20261011b/`). Debug 91 (`debug-v0.1.26-alpha-z1.91`, run `38136326166`) published.
+
+**Debug 91 passed the maintainer's check (2026-10-11).** One late fix rides along without a debug build, at the
+maintainer's call: the What's New row under Settings > Setup & about was gone since the 0.4.13 sync (upstream's
+`App.kt` split dropped the `onWhatsNewClick` hand-off; `f521b8c82` restores it and makes the two hops required
+parameters). Compiled, settings + whatsnew tests 63/63; not seen on screen before the stable build. Mobile has the
+same gap and gets it with the shared merge.
+
+**Release checklist:** maintainer's physical check of Debug 91 (MSI upgrade over Debug 89, startup/sign-in,
+native playback, rapid window resize plus geometry restore, Home scroll); then merge into `Dev`, bump `VERSION_NAME=0.1.26-alpha-z2` /
+`RELEASE_SERIAL=133` as the last commit (folding the ship date into the changelog event), copy `changelog.json`
+byte-for-byte to `nuvio-z` `main`, dry-run, publish. Mobile ships nothing in this release; the four shared
+commonMain files reach `nuvio-z` only by a later merge, which needs its own mobile check.
+
 ## Stable release shipped - Mobile 0.5.4-z1+127 / Desktop 0.1.26-alpha-z1+132 (2026-10-04)
 
 The first stable Nuvio Z release is live on both repositories, published by the release workflows in `publish` mode (dispatched
@@ -16,6 +73,77 @@ folded into the bump commits and the branches were force-pushed with lease befor
   correction landed on top of the release. Every install, release and setup link was checked against the live endpoints. The iOS Setup
   wizard stays on its own `ios-setup-v*` line (README pins `ios-setup-v1.1.2-beta.1`; bump it when a new setup release ships).
 - The non-blocking debt list in the entry below is unchanged by the release.
+
+
+## 2026-10-07 — Hidden-Home step ready for physical comparison
+
+Branch `codex/perf-stutter-3` now occupies `.claude-worktrees/perf-stutter-2` to reuse its build
+cache; previous `codex/perf-stutter-2` is frozen at `c7e7bfb10`. Added desktop-only Home probe/harness
+from Phase 1, adapted to two desktop cases: visible Home and Home retained behind Library after
+visiting Home. It composes the real AppTabHost and uses seeded hero data and virtual time; it is
+an automated logical measurement, not a substitute for the maintainer's signed-in app test.
+
+Baseline harness passed: Library has 21 live subscriptions, retained hero pages 10/minute and
+182 snapshot applies/minute (virtual time). `6f27e2eec` cleanly carries only `4c68420cb`:
+AppShellComponents wraps Home in Z-owned TabPaneActivity, providing inactive screen activity
+and capping the lifecycle at CREATED behind other tabs. After: Library has 7 subscriptions,
+zero hero changes and zero snapshot applies/minute, with the same retained 49 semantics nodes.
+Visible-Home control is unchanged (13 subscriptions, 10 hero changes, 182 snapshot applies).
+Desktop jar and all **4** focused regression/measurement cases pass, zero failures/errors/skips;
+the regression explicitly checks retention, pause and resume. Raw logs/XML and paired metrics:
+`build/perf-home-step-20261007/`. These are seeded virtual-time measurements, not physical FPS.
+
+Prepared `perf-observe-data/apps/after-3-hidden-home` from `after-2-startup`: only SourceFile
+`AppShellComponents.kt` / `TabPaneActivity.kt`, 12 old classes replaced with 13 rebuilt classes.
+Helper now permits a newly added source absent from the base, while requiring all named sources
+in the rebuilt jar and checking every unrelated entry byte-for-byte. Do not launch until the
+maintainer returns; compare the preceding startup app with this copy using two full tab loops
+and Home return/scroll retention.
+
+**Full cumulative split passed:** rest/playback/downloads/E2E = 1,903/1,072/457/49 = **3,481**,
+zero failures/errors/skips/duplicates, all parts rc=0 and supervisor exit 0. Fresh XML/summary:
+`build/perf-home-split-20261007/`, recorded HEAD `c5ff5b056`; later commits change only observation
+tools/docs, with product code still `6f27e2eec`. This covers the startup race and hidden-Home
+regressions together with all previous tests. No class-warming or row-composition product change
+is bundled here. Their read-only feasibility/code inspection is preserved in the report, with
+Java source and corrected explicit stack-attribution tooling committed for reuse. Nothing pushed
+or published. Physical performance comparison remains the next step when the maintainer returns.
+
+## 2026-10-07 — Completed isolated performance step: settings-sync startup
+
+Branch `codex/perf-stutter-2`, worktree `.claude-worktrees/perf-stutter-2`, starts from
+`claude/perf-stutter-1` `89bb2c359` (the measured poster and Settings fixes plus their report).
+Only additional product change is `c401e1bfc`, a clean cherry-pick of Phase 1 `f50962f88`:
+AppGate waits for one frame and starts settings sync on `Dispatchers.Default`; observer startup
+is locked to prevent duplicate collectors. Included `ProfileSettingsSyncStartTest` races eight
+callers. Hidden Home, class warming and row composition are not added in this step.
+
+**Verified:** desktop jar builds; focused sync/auth **108** pass, zero failures/errors/skips,
+including the eight-caller race test. Prior two-fix full split **3,476** passes. Logs:
+`build/perf-startup-step-20261007/`. Paired signed-in 60 Hz runs `startup-before-20261007-1` /
+`startup-after-20261007-1` both ended normally, exit code 0. Observer/MDBList startup disappears
+from UI-thread hitch samples (observer weighted attribution 1,303 ms -> 0). Maintainer **did not
+notice** visible launch improvement. Remaining avatar/backend initialization and major Home/tab
+composition costs are documented in `Docs/PERFORMANCE-STUTTER-2026-10.md`, with timing limits.
+
+Test copy `perf-observe-data/apps/after-2-startup` replaces only classes compiled from `AppGate.kt`
+and `ProfileSettingsSync.kt` (69 old / 71 new), retaining installed runtime/configuration. The new
+`scripts/perf/observe/patch_app.py` selects their JVM SourceFile attributes, includes companions,
+removes obsolete generated classes and verifies unrelated entries remain identical. Nothing pushed,
+merged or published. Canonical seam notes: mobile docs branch `codex/perf-stutter-documentation`.
+
+**Next:** maintainer cannot test for about an hour; prepare hidden-Home gating alone (`4c68420cb`)
+and automated verification, keeping its physical comparison pending. Do not batch it with class
+warming or row-composition changes. Latest startup branch has focused verification, not a new
+full split run with the startup change.
+
+## 2026-10-06 - Desktop stutter: measured on the real app, two fixes (branch `claude/perf-stutter-1`, unmerged)
+
+- A human-driven stutter probe (`scripts/perf/observe/`, from `claude/perf-observe`) measured the installed 2.0.132 signed in. The biggest cause that never warms up is the poster rescale inside `ScaledBitmapPainter.onDraw`: 3.0 s of 16 s hitch time, all of it during Home scrolling. The first Settings open freezes for 990 ms on `settingsSearchEntries`.
+- Fixes: Phase 2's `DesktopImageDownscaler` (cherry-picked `708673199`) and a lazy Settings search index (`be94152d5`). 97 settings/core.ui desktop tests pass. The full suite has not run.
+- **2026-10-07 continuation:** before/after completed on battery, 60 Hz. UI-thread poster scaling and eager Settings indexing disappear; first Settings frame 1,392 -> 229 ms. Maintainer confirms Settings opens like other tabs, Home slightly smoother but still very stuttery, and general tab switching still stutters. See `Docs/PERFORMANCE-STUTTER-2026-10.md` for conditions, raw data and remaining causes. An interrupted after attempt is excluded; detached-observer retry ended normally with exit code 0. Recorder now captures exit codes and its README documents detached launch.
+- **Full verification passed:** split rest/playback/downloads/E2E = 1,898/1,072/457/49 = **3,476**, zero failures/errors/skips/duplicates, all parts rc=0. Fresh summary in `build/perf-stutter-ab-split-20261007`, recorded product-equivalent HEAD `ef54fbdb2`.
+- **Next step prepared:** `codex/perf-stutter-2` adds only Phase 1's settings-sync startup fix (`c401e1bfc`, from `f50962f88`), with its own build and measurement. Matched warm-tab comparison and merge decision remain pending. Canonical PATCH-SURFACE notes use separate mobile documentation branch `codex/perf-stutter-documentation`. Both product fixes remain local and unmerged. Original handoff: `Nuvio Z/HANDOFF-perf-stutter.md`.
 
 ## Final release gate - Stage 1 prepared, QA gates cleared (2026-10-03)
 

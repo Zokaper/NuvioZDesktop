@@ -1,7 +1,10 @@
 package com.nuvio.app.core.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
@@ -10,7 +13,6 @@ import androidx.compose.ui.graphics.DefaultAlpha
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asComposeImageBitmap
-import androidx.compose.ui.graphics.asSkiaBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
@@ -19,22 +21,23 @@ import androidx.compose.ui.unit.IntSize
 import coil3.BitmapImage
 import coil3.Image
 import coil3.PlatformContext
+import coil3.SingletonImageLoader
 import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
 import coil3.compose.LocalPlatformContext
+import coil3.memory.MemoryCache
 import coil3.request.ImageRequest
 import coil3.request.NullRequestDataException
 import org.jetbrains.skia.Bitmap
-import org.jetbrains.skia.FilterMipmap
-import org.jetbrains.skia.FilterMode
-import org.jetbrains.skia.Image as SkiaImage
-import org.jetbrains.skia.MipmapMode
 import kotlin.math.max
 import kotlin.math.roundToInt
 
 private const val MinCustomDownscaleRatio = 1.08f
 private const val MaxDesktopSourceSizePx = 1536
 private const val MaxScaledBitmapPixels = 1_250_000L
+
+// A queued scale is skipped once its card has not drawn for this long: it has left the screen.
+private const val ScaleWantedWindowNanos = 250_000_000L
 
 private val IsWindowsDesktop: Boolean =
     System.getProperty("os.name")
@@ -61,6 +64,7 @@ internal actual fun NuvioAsyncImage(
     desktopImageScaling: NuvioDesktopImageScaling,
 ) {
     val context = LocalPlatformContext.current
+    val memoryCache = remember(context) { SingletonImageLoader.get(context).memoryCache }
     val effectiveDesktopImageScaling = remember(desktopImageScaling) {
         if (IsWindowsDesktop) desktopImageScaling else NuvioDesktopImageScaling.Disabled
     }
@@ -76,6 +80,7 @@ internal actual fun NuvioAsyncImage(
         error,
         fallback,
         effectiveDesktopImageScaling,
+        memoryCache,
     ) {
         { state ->
             when (state) {
@@ -83,7 +88,11 @@ internal actual fun NuvioAsyncImage(
                     placeholder?.let { state.copy(painter = it) } ?: state
                 }
                 is AsyncImagePainter.State.Success -> {
-                    state.result.image.toScaledBitmapPainter(effectiveDesktopImageScaling)
+                    state.result.image.toScaledBitmapPainter(
+                        desktopImageScaling = effectiveDesktopImageScaling,
+                        memoryCache = memoryCache,
+                        memoryCacheKey = state.result.memoryCacheKey,
+                    )
                         ?.let { state.copy(painter = it) }
                         ?: state
                 }
@@ -144,22 +153,46 @@ private fun Any?.withDesktopHighQualitySize(context: PlatformContext): Any? {
     }
 }
 
-private fun Image.toScaledBitmapPainter(desktopImageScaling: NuvioDesktopImageScaling): Painter? {
+private fun Image.toScaledBitmapPainter(
+    desktopImageScaling: NuvioDesktopImageScaling,
+    memoryCache: MemoryCache?,
+    memoryCacheKey: MemoryCache.Key?,
+): Painter? {
     if (desktopImageScaling == NuvioDesktopImageScaling.Disabled) return null
 
     return (this as? BitmapImage)
         ?.bitmap
-        ?.asComposeImageBitmap()
-        ?.let { imageBitmap -> ScaledBitmapPainter(imageBitmap) }
+        ?.let { bitmap -> ScaledBitmapPainter(bitmap, memoryCache, memoryCacheKey) }
 }
 
-private class ScaledBitmapPainter(
-    private val image: ImageBitmap,
-) : Painter() {
-    private var cachedSize: IntSize? = null
-    private var cachedBitmap: ImageBitmap? = null
+/**
+ * Draws a large decoded poster through a sharp, mipmapped downscale to its drawn size.
+ *
+ * The downscale runs on [DesktopImageDownscaler]'s workers; `onDraw` only looks the result up.
+ * Until it lands the card draws nothing for a frame or two (or an earlier size, stretched), rather
+ * than spending 5-14 ms scaling on the UI thread.
+ */
+internal class ScaledBitmapPainter(
+    private val source: Bitmap,
+    private val memoryCache: MemoryCache?,
+    private val memoryCacheKey: MemoryCache.Key?,
+    private val downscaler: DesktopImageDownscaler = DesktopImageDownscaler.Shared,
+) : Painter(), DesktopImageDownscaler.Waiter {
+    private class Scaled(val size: IntSize, val image: ImageBitmap)
+
+    private val image: ImageBitmap = source.asComposeImageBitmap()
+    private var scaled: Scaled? = null
     private var alpha: Float = DefaultAlpha
     private var colorFilter: ColorFilter? = null
+
+    // Written by the downscaler's workers, read by draw.
+    @Volatile private var requestedSize: IntSize? = null
+    @Volatile private var failedSize: IntSize? = null
+    @Volatile private var delivered: Scaled? = null
+    @Volatile private var lastDrawNanos: Long = 0L
+
+    // Read in draw, so a finished (or skipped) scale redraws the card.
+    private var deliveries by mutableIntStateOf(0)
 
     override val intrinsicSize: Size =
         Size(image.width.toFloat(), image.height.toFloat())
@@ -175,22 +208,24 @@ private class ScaledBitmapPainter(
         }
 
         val cacheSize = drawSize.cacheSize()
-        if (cacheSize.pixelCount() > MaxScaledBitmapPixels) {
+        if (cacheSize.pixelCount() > MaxScaledBitmapPixels || cacheSize == failedSize) {
             drawSource(drawSize)
             return
         }
 
-        val bitmap = scaledBitmap(cacheSize)
+        deliveries
+        lastDrawNanos = System.nanoTime()
+        val bitmap = scaledBitmap(cacheSize) ?: return
 
         drawImage(
-            image = bitmap,
+            image = bitmap.image,
             srcOffset = IntOffset.Zero,
-            srcSize = cacheSize,
+            srcSize = bitmap.size,
             dstOffset = IntOffset.Zero,
             dstSize = drawSize,
             alpha = alpha,
             colorFilter = colorFilter,
-            filterQuality = if (cacheSize == drawSize) FilterQuality.None else FilterQuality.Medium,
+            filterQuality = if (bitmap.size == drawSize) FilterQuality.None else FilterQuality.Medium,
         )
     }
 
@@ -204,14 +239,38 @@ private class ScaledBitmapPainter(
         return true
     }
 
-    private fun scaledBitmap(size: IntSize): ImageBitmap {
-        cachedBitmap?.let { bitmap ->
-            if (cachedSize == size) return bitmap
+    override fun wantsScaled(width: Int, height: Int): Boolean =
+        requestedSize == IntSize(width, height) &&
+            System.nanoTime() - lastDrawNanos < ScaleWantedWindowNanos
+
+    override fun onScaled(width: Int, height: Int, bitmap: Bitmap?, failed: Boolean) {
+        val size = IntSize(width, height)
+        if (requestedSize == size) requestedSize = null
+        when {
+            bitmap != null -> delivered = Scaled(size, bitmap.asComposeImageBitmap())
+            failed -> failedSize = size
         }
-        return image.scale(size.width, size.height).also { bitmap ->
-            cachedSize = size
-            cachedBitmap = bitmap
+        deliveries++
+    }
+
+    /** The scaled bitmap for [size], or the nearest thing to it that costs this thread nothing. */
+    private fun scaledBitmap(size: IntSize): Scaled? {
+        scaled?.let { if (it.size == size) return it }
+        delivered?.let {
+            if (it.size == size) {
+                delivered = null
+                scaled = it
+                return it
+            }
         }
+        downscaler.cached(memoryCache, memoryCacheKey, size.width, size.height)?.let { bitmap ->
+            return Scaled(size, bitmap.asComposeImageBitmap()).also { scaled = it }
+        }
+        if (requestedSize != size) {
+            requestedSize = size
+            downscaler.request(source, size.width, size.height, memoryCache, memoryCacheKey, this)
+        }
+        return scaled
     }
 
     private fun DrawScope.drawSource(drawSize: IntSize) {
@@ -258,24 +317,4 @@ private class ScaledBitmapPainter(
 
     private fun IntSize.pixelCount(): Long =
         width.toLong() * height.toLong()
-
-    private fun ImageBitmap.scale(width: Int, height: Int): ImageBitmap {
-        val image = SkiaImage.makeFromBitmap(asSkiaBitmap())
-        return try {
-            image.scale(width, height)
-        } finally {
-            image.close()
-        }
-    }
-
-    private fun SkiaImage.scale(width: Int, height: Int): ImageBitmap {
-        val bitmap = Bitmap()
-        bitmap.allocN32Pixels(width, height)
-        scalePixels(
-            bitmap.peekPixels()!!,
-            FilterMipmap(FilterMode.LINEAR, MipmapMode.LINEAR),
-            false,
-        )
-        return bitmap.asComposeImageBitmap()
-    }
 }
