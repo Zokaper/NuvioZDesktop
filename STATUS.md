@@ -1,3 +1,37 @@
+## 2026-10-11 - Home-scrolling perf pass heading to Desktop 0.1.26-alpha-z2 (serial 133)
+
+Branch `claude/perf-home-smooth` (worktree `.claude-worktrees/perf-stutter-2`), pushed. The maintainer accepted
+the pass on 2026-10-10 after signed-in touchpad runs on the installed app (Home scroll, 60 Hz): frames on time
+60% (JBR 25 only) -> 78% (+ prefetch) -> 80% (+ smoothing) -> **87%** (+ row cache), p90 36 -> 22 ms. The rare long
+frames did not move (~1 in 40 still >= 60 ms, p99 ~100 ms). Raw runs: `perf-observe-data/home-*-20261010-1`.
+
+**What ships (product):**
+- Poster scaling off the UI thread on Windows (`DesktopImageDownscaler`, seam in `AsyncImage.desktop.kt`).
+- Lazy Settings search index (`SettingsScreen.kt`).
+- Settings-sync observer started one frame after AppGate, off the UI thread (`AppGate.kt`, `ProfileSettingsSync.kt`).
+- Upcoming lazy-list items composed between frames (`DesktopPrefetchScheduler`, provided from `Main.kt`).
+- Windows wheel/touchpad smoothing (`DesktopWheelSmoothing`, installed from `Main.kt`).
+- Home rows kept composed behind the viewport on desktop (`HomeListState.kt`; mobile keeps the stock state).
+- **Window-resize crash fix (`5a68eaa51`).** A friend's build closed while the window was resized rapidly. Not
+  reproduced here; the fix removes the most likely cause: every resize event rewrote
+  `nuvio_window_state.properties` four times on the UI thread, and `DesktopStorage.Store.persist` let an
+  `IOException` (file briefly held by Defender/the indexer) escape the window's `LaunchedEffect`. `persist` now
+  writes a sibling and moves it over the original, logging a failure instead of throwing; `Main.kt` writes window
+  state 300 ms after the last change, on `Dispatchers.IO`. Regression: `DesktopStorageTest` (blocked target).
+- The hidden-Home pause (`6f27e2eec`) was measured as no difference and **reverted** (`27c72df53`).
+
+**Runtime (`2f86f313f`):** the Windows jobs of `desktop-release.yml` and `desktop-debug-release.yml` now download
+JetBrains Runtime `jbrsdk_jcef-25.0.4.1-windows-x64-b583.48` from JetBrains' CDN, verify SHA-256
+`b46392a0...203d` (identical to the archive in `~/.gradle/jdks` that every perf build ran on) and run Gradle on it,
+so jpackage bundles it. macOS and Linux stay on Temurin 17 (never measured on 25).
+
+**Release checklist:** full split suite on the final code (running); Debug 90 through the real pipeline (branch
+pushed; dispatch was blocked pending the maintainer's OK) and a physical check of MSI install/upgrade, startup,
+native playback and window resizing; then merge into `Dev`, bump `VERSION_NAME=0.1.26-alpha-z2` /
+`RELEASE_SERIAL=133` as the last commit (folding the ship date into the changelog event), copy `changelog.json`
+byte-for-byte to `nuvio-z` `main`, dry-run, publish. Mobile ships nothing in this release; the four shared
+commonMain files reach `nuvio-z` only by a later merge, which needs its own mobile check.
+
 ## Stable release shipped - Mobile 0.5.4-z1+127 / Desktop 0.1.26-alpha-z1+132 (2026-10-04)
 
 The first stable Nuvio Z release is live on both repositories, published by the release workflows in `publish` mode (dispatched
