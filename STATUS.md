@@ -1,3 +1,10 @@
+## RELEASED 2026-10-11: Desktop 0.1.26-alpha-z2+133 (and Mobile 0.5.4-z2+128)
+
+Desktop publish run `38152244590` from `5379ea27a` (dry run `38150926446`): MSI + arm64 and x86_64 DMGs, macOS
+unsigned. The shared fixes (uncached auto-pick, What's New row, lazy Settings search, settings-sync start) were
+cherry-picked to `nuvio-z` and shipped as mobile `0.5.4-z2+128` the same day (details in `nuvio-z/STATUS.md`).
+`7a51a0e4e` on `Dev` mirrors the mobile changelog event (seq 3). The next desktop release needs a fresh bump.
+
 ## 2026-10-11 - Home-scrolling perf pass heading to Desktop 0.1.26-alpha-z2 (serial 133)
 
 Branch `claude/perf-home-smooth` (worktree `.claude-worktrees/perf-stutter-2`), pushed. The maintainer accepted
