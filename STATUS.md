@@ -43,6 +43,12 @@ always blocks auto-play. Not a regression of this pass (no playback code changed
 Full split at `4e906e57e`: 1,921/1,073/457/49 = **3,500**, zero failures/errors/skips/duplicates
 (`build/perf-ship-split-20261011b/`). Debug 91 (`debug-v0.1.26-alpha-z1.91`, run `38136326166`) published.
 
+**Debug 91 passed the maintainer's check (2026-10-11).** One late fix rides along without a debug build, at the
+maintainer's call: the What's New row under Settings > Setup & about was gone since the 0.4.13 sync (upstream's
+`App.kt` split dropped the `onWhatsNewClick` hand-off; `f521b8c82` restores it and makes the two hops required
+parameters). Compiled, settings + whatsnew tests 63/63; not seen on screen before the stable build. Mobile has the
+same gap and gets it with the shared merge.
+
 **Release checklist:** maintainer's physical check of Debug 91 (MSI upgrade over Debug 89, startup/sign-in,
 native playback, rapid window resize plus geometry restore, Home scroll); then merge into `Dev`, bump `VERSION_NAME=0.1.26-alpha-z2` /
 `RELEASE_SERIAL=133` as the last commit (folding the ship date into the changelog event), copy `changelog.json`
