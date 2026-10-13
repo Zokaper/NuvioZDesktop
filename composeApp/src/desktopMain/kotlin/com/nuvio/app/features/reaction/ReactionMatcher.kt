@@ -51,10 +51,22 @@ internal data class MatchedSegment(
  *     the pause) starts a new segment, and a stray anchor ends up alone instead of splitting one.
  *  4. Line: per chain, the best candidate of each frame near the chain's offset, a trimmed least
  *     squares fit of reaction against episode time. Ties among equally good neighbouring frames go
- *     to the expected offset; picking the earliest biased every segment by a frame.
- *  5. Overlaps in episode time (a replayed scene) go to the better supported segment, segments on
- *     one line are joined across the hole between them, and each is grown along its line while the
- *     frames still agree (through blank episode frames, which cannot disagree).
+ *     to the expected offset; picking the earliest biased every segment by a frame. A vote over the
+ *     whole film adds the offsets most frames agree on, so a line is found even where no single
+ *     window was clear enough to anchor. Lines within a frame of each other are one line.
+ *  5. Path: every episode frame is scored against every line with ALL its frames' distances, not
+ *     only the close ones (a log-likelihood of the distance: on a real line it centres near 22 bits
+ *     even under a channel's logo, at a random offset near 31), and one best path through the film
+ *     picks a line or none per frame, paying for each switch. So a line carries on through weak,
+ *     dark or unread stretches until the evidence says the reaction cut, a stray false match
+ *     cannot split a line, and a gap needs real evidence that the film is not shown.
+ *  6. Each run of the path is refitted on its own frames, averaging which neighbouring reaction
+ *     frame matches best: offsets between two 125 ms grid points come out between them.
+ *
+ * Measured on the first real test (TEM's Interstellar compilation under a full-frame translucent
+ * logo, 2026-10-13): the chain-and-join assembly this replaced matched 32 % of the read film in 33
+ * stretches, the one +10.06 s line split by 60 ms join tolerance on a 125 ms grid and by false
+ * matches; the path put 97 % of it on that line.
  */
 internal class ReactionMatcher(private val liveEpisode: FingerprintTrack, private val liveReaction: FingerprintTrack) {
     private class Candidate(val episodeIndex: Int, val distance: Int, val mirrored: Boolean)
@@ -121,19 +133,161 @@ internal class ReactionMatcher(private val liveEpisode: FingerprintTrack, privat
     private fun align(): List<MatchedSegment> {
         val anchors = anchors()
         val chains = chain(anchors)
-        val lines = chains.mapNotNull(::fit)
-        val resolved = merge(resolve(lines))
-        val grown = resolved.map { grow(it, resolved) }
-        return merge(resolve(grown)).map {
-            MatchedSegment(
-                episodeStartMs = it.episodeStart.roundToLong(),
-                episodeEndMs = it.episodeEnd.roundToLong(),
-                interceptMs = it.intercept,
-                rate = it.rate,
-                mirrored = it.mirrored,
-                support = it.support,
-            )
+        val lines = cluster(chains.mapNotNull(::fit) + globalLines())
+        if (lines.isEmpty()) return emptyList()
+        return bestPath(lines).mapNotNull(::refine)
+    }
+
+    /**
+     * Rate-1 lines from the offsets the closest candidates of every frame vote for, over the whole
+     * film: a compilation that plays the film through shows one offset for minutes on end, even when
+     * its frames are too far from the episode's for any 6 s window to stand out on its own.
+     */
+    private fun globalLines(): List<Line> {
+        val votes = HashMap<Long, Int>()
+        for (r in candidates.indices) {
+            val list = candidates[r] ?: continue
+            val closest = list.firstOrNull()?.distance ?: continue
+            val seen = HashSet<Long>()
+            for (c in list) {
+                if (c.distance > closest + 1) break
+                val k = key(c.mirrored, r - c.episodeIndex)
+                if (seen.add(k)) votes.merge(k, 1, Int::plus)
+            }
         }
+        fun around(k: Long): Int = (-1..1).sumOf { votes[k + (it.toLong() shl 1)] ?: 0 }
+        val peaks = votes.keys
+            .filter { k -> around(k) >= GLOBAL_MIN_VOTES && (-2..2).all { d -> d == 0 || (votes[k + (d.toLong() shl 1)] ?: 0) <= votes.getValue(k) } }
+            .sortedByDescending(::around)
+            .take(GLOBAL_MAX_LINES)
+        val episodeEnd = episode.size * FRAME_MS.toDouble()
+        return peaks.map { k ->
+            Line((k shr 1) * FRAME_MS.toDouble(), 1.0, k and 1L == 1L, 0.0, episodeEnd, around(k))
+        }
+    }
+
+    /** Lines that predict the same reaction time to within about a frame are one line. */
+    private fun cluster(lines: List<Line>): List<Line> {
+        val kept = ArrayList<Line>()
+        for (line in lines.sortedByDescending { it.support }) {
+            val mid = (line.episodeStart + line.episodeEnd) / 2
+            val same = kept.indexOfFirst { k ->
+                k.mirrored == line.mirrored && abs(k.rate - line.rate) < 0.002 &&
+                    abs((k.intercept + k.rate * mid) - (line.intercept + line.rate * mid)) <= SAME_LINE_MS
+            }
+            if (same < 0) {
+                kept += line
+            } else {
+                val k = kept[same]
+                kept[same] = Line(k.intercept, k.rate, k.mirrored, min(k.episodeStart, line.episodeStart), max(k.episodeEnd, line.episodeEnd), k.support + line.support)
+            }
+        }
+        return kept
+    }
+
+    /** What one episode frame says about one line: its log-likelihood, 0 when it cannot tell. */
+    private fun evidence(line: Line, e: Int): Float {
+        val u = (line.intercept + line.rate * e * FRAME_MS) / FRAME_MS
+        val r0 = kotlin.math.floor(u).toInt()
+        if (r0 < 0 || r0 + 1 >= reaction.size) return OUTSIDE
+        if (!episode.has(e) || episode.detail(e) < BLANK_DETAIL) return 0f
+        val h = episode.hash(e)
+        var best = Int.MAX_VALUE
+        for (r in r0..r0 + 1) {
+            if (!reaction.has(r)) continue
+            val d = ReactionFingerprinter.distance(if (line.mirrored) reaction.mirror(r) else reaction.hash(r), h)
+            if (d < best) best = d
+        }
+        if (best == Int.MAX_VALUE) return 0f
+        return (1.9f - 0.5f * (best - 22)).coerceIn(-2f, 4f) * FRAME_WEIGHT
+    }
+
+    private class Run(val line: Line, val from: Int, val until: Int)
+
+    /**
+     * One best path over the episode's frames: in each, one of [lines] or none. Staying is free;
+     * starting, ending or switching a line costs [SWITCH_COST], so a run has to be worth it.
+     */
+    private fun bestPath(lines: List<Line>): List<Run> {
+        val frames = episode.size
+        if (frames == 0) return emptyList()
+        val n = lines.size
+        val none = n
+        val back = Array(frames) { ByteArray(n + 1) }
+        require(n < 127)
+        var cost = DoubleArray(n + 1) { if (it == none) 0.0 else -SWITCH_COST }
+        val next = DoubleArray(n + 1)
+        for (e in 0 until frames) {
+            // The best two line states, for "switch from the best other line".
+            var first = -1
+            var second = -1
+            for (i in 0 until n) {
+                if (first < 0 || cost[i] > cost[first]) { second = first; first = i } else if (second < 0 || cost[i] > cost[second]) second = i
+            }
+            for (j in 0..n) {
+                var from = j
+                var value = cost[j]
+                val other = if (first != j) first else second
+                if (other >= 0 && cost[other] - SWITCH_COST > value) { from = other; value = cost[other] - SWITCH_COST }
+                if (j != none && cost[none] - SWITCH_COST > value) { from = none; value = cost[none] - SWITCH_COST }
+                back[e][j] = from.toByte()
+                next[j] = value + if (j == none) 0.0 else evidence(lines[j], e).toDouble()
+            }
+            cost = next.copyOf()
+        }
+        val path = IntArray(frames)
+        path[frames - 1] = cost.indices.maxBy { cost[it] }
+        for (e in frames - 1 downTo 1) path[e - 1] = back[e][path[e]].toInt()
+        val runs = ArrayList<Run>()
+        var start = 0
+        for (e in 1..frames) {
+            if (e == frames || path[e] != path[start]) {
+                if (path[start] != none && (e - start) * FRAME_MS >= MIN_SEGMENT_MS) runs += Run(lines[path[start]], start, e)
+                start = e
+            }
+        }
+        return runs
+    }
+
+    /**
+     * The run's own line: per informative frame, which of the three reaction frames around the
+     * predicted one is closest (ties to the prediction), and the intercept is their mean offset -
+     * twice, the second time around the first answer. A mean of grid offsets can fall between
+     * grid points; the median a chain uses cannot.
+     */
+    private fun refine(run: Run): MatchedSegment? {
+        val line = run.line
+        var intercept = line.intercept
+        var support = 0
+        repeat(2) {
+            var sum = 0.0
+            var count = 0
+            for (e in run.from until run.until) {
+                if (!episode.has(e) || episode.detail(e) < BLANK_DETAIL) continue
+                val u = (intercept + line.rate * e * FRAME_MS) / FRAME_MS
+                val center = u.roundToInt()
+                var best = Int.MAX_VALUE
+                var bestR = -1
+                for (r in center - 1..center + 1) {
+                    if (!reaction.has(r)) continue
+                    val d = ReactionFingerprinter.distance(if (line.mirrored) reaction.mirror(r) else reaction.hash(r), episode.hash(e))
+                    if (d < best || (d == best && abs(r - u) < abs(bestR - u))) { best = d; bestR = r }
+                }
+                if (bestR < 0 || best > REFINE_DISTANCE) continue
+                sum += bestR * FRAME_MS - line.rate * e * FRAME_MS
+                count++
+            }
+            if (count >= 8) intercept = sum / count
+            support = count
+        }
+        return MatchedSegment(
+            episodeStartMs = run.from * FRAME_MS,
+            episodeEndMs = run.until * FRAME_MS,
+            interceptMs = intercept,
+            rate = line.rate,
+            mirrored = line.mirrored,
+            support = support,
+        )
     }
 
     private fun anchors(): List<Anchor> {
@@ -287,105 +441,6 @@ internal class ReactionMatcher(private val liveEpisode: FingerprintTrack, privat
         return Line(intercept, rate, mirrored, e.min(), e.max() + FRAME_MS, e.size)
     }
 
-    /** Overlapping episode time goes to the better supported line; a line inside another is dropped. */
-    private fun resolve(lines: List<Line>): List<Line> {
-        val kept = ArrayList<Line>()
-        for (line in lines.sortedByDescending { it.support }) {
-            var start = line.episodeStart
-            var end = line.episodeEnd
-            var dropped = false
-            for (k in kept) {
-                if (min(end, k.episodeEnd) <= max(start, k.episodeStart)) continue
-                if (start >= k.episodeStart && end <= k.episodeEnd) { dropped = true; break }
-                if (start < k.episodeStart) end = min(end, k.episodeStart) else start = max(start, k.episodeEnd)
-            }
-            if (!dropped && end - start >= MIN_SEGMENT_MS) {
-                kept += Line(line.intercept, line.rate, line.mirrored, start, end, line.support)
-            }
-        }
-        return kept.sortedBy { it.episodeStart }
-    }
-
-    /**
-     * Joins neighbours that lie on one line, however far apart: nothing in between says otherwise (a
-     * reaction cutting to a full-screen reactor cam while the film runs on, or a dark scene with no
-     * usable frames), and the same line after the hole means the reaction kept playing the episode.
-     * Not across another stretch of the reaction (a replay sitting between them).
-     */
-    private fun merge(lines: List<Line>): List<Line> {
-        val sorted = lines.sortedBy { it.episodeStart }
-        val out = ArrayList<Line>()
-        for (line in sorted) {
-            val previous = out.lastOrNull()
-            val joinable = previous != null && previous.mirrored == line.mirrored && abs(previous.rate - line.rate) < 0.002 &&
-                abs((previous.intercept + previous.rate * line.episodeStart) - (line.intercept + line.rate * line.episodeStart)) <= 60 &&
-                sorted.none { other ->
-                    other !== line && other !== previous &&
-                        overlaps(other.reactionStart, other.reactionEnd, previous.reactionEnd, line.reactionStart)
-                }
-            if (joinable) {
-                out[out.size - 1] = Line(
-                    previous!!.intercept, previous.rate, previous.mirrored,
-                    previous.episodeStart, max(previous.episodeEnd, line.episodeEnd), previous.support + line.support,
-                )
-            } else {
-                out += line
-            }
-        }
-        return out
-    }
-
-    private fun overlaps(a0: Double, a1: Double, b0: Double, b1: Double) = min(a1, b1) > max(a0, b0)
-
-    private val Line.reactionStart get() = intercept + rate * episodeStart
-    private val Line.reactionEnd get() = intercept + rate * episodeEnd
-
-    /**
-     * Extends a line's ends while the frames it predicts still agree. A blank episode frame (black, a
-     * fade) cannot disagree with anything: growth carries on through it, and keeps that stretch once
-     * a frame agrees again or the episode itself begins or ends there (a film opening on black).
-     */
-    private fun grow(line: Line, all: List<Line>): Line {
-        // 1 agrees, 0 says nothing (the episode is blank there), -1 disagrees or is unknown.
-        fun verdict(episodeMs: Double): Int {
-            if (all.any { it !== line && episodeMs >= it.episodeStart && episodeMs < it.episodeEnd }) return -1
-            val ei = (episodeMs / FRAME_MS).roundToInt()
-            val ri = ((line.intercept + line.rate * episodeMs) / FRAME_MS).roundToInt()
-            if (!episode.has(ei) || !reaction.has(ri)) return -1
-            if (episode.detail(ei) < BLANK_DETAIL) return if (reaction.detail(ri) < BLANK_DETAIL) 1 else 0
-            val h = if (line.mirrored) reaction.mirror(ri) else reaction.hash(ri)
-            return if (ReactionFingerprinter.distance(h, episode.hash(ei)) <= GROW_DISTANCE) 1 else -1
-        }
-        var start = line.episodeStart
-        var misses = 0
-        var t = start - FRAME_MS
-        var onlyBlank = true
-        while (t >= 0 && misses < 3) {
-            when (verdict(t)) {
-                1 -> { start = t; misses = 0; onlyBlank = true }
-                0 -> {}
-                else -> { misses++; onlyBlank = false }
-            }
-            t -= FRAME_MS
-        }
-        if (t < 0 && onlyBlank) start = 0.0
-        var end = line.episodeEnd
-        misses = 0
-        t = end
-        onlyBlank = true
-        val episodeEnd = episode.size * FRAME_MS.toDouble()
-        while (misses < 3 && t < episodeEnd) {
-            when (verdict(t)) {
-                1 -> { end = t + FRAME_MS; misses = 0; onlyBlank = true }
-                0 -> {}
-                else -> { misses++; onlyBlank = false }
-            }
-            t += FRAME_MS
-        }
-        if (t >= episodeEnd && onlyBlank) end = episodeEnd
-        return Line(line.intercept, line.rate, line.mirrored, start, end, line.support)
-    }
-
     private fun key(mirrored: Boolean, bin: Int): Long = (bin.toLong() shl 1) or (if (mirrored) 1L else 0L)
 
     private fun binOf(offsetMs: Double): Int = (offsetMs / BIN_MS).roundToInt()
@@ -416,9 +471,21 @@ internal class ReactionMatcher(private val liveEpisode: FingerprintTrack, privat
         private const val INTERCEPT_BIN_MS = 25L
         /** A rate this close to 1 is 1: real speed-ups are 2-10 %. */
         private const val RATE_SNAP = 0.004
-        private const val GROW_DISTANCE = 20
         private const val BLANK_DETAIL = 12f
         private const val MIN_SEGMENT_MS = 2_000.0
+        /** A refit counts a frame whose best neighbour is this close; a real line's median is ~22. */
+        private const val REFINE_DISTANCE = 24
+        /** Two lines this close (well under two grid steps) are one line seen twice. */
+        private const val SAME_LINE_MS = 200.0
+        /** Frames on one offset, across the film, before it is tried as a line. */
+        private const val GLOBAL_MIN_VOTES = 24
+        private const val GLOBAL_MAX_LINES = 12
+        /** Neighbouring frames are far from independent (a still shot repeats its hash). */
+        private const val FRAME_WEIGHT = 0.25f
+        /** A line that would show reaction time outside the video cannot be on screen. */
+        private const val OUTSIDE = -50f
+        /** What a cut, a start or an end of the film on screen must be worth: ~9 s of frames saying no. */
+        private const val SWITCH_COST = 30.0
 
         fun toSyncMap(segments: List<MatchedSegment>, nudgeMs: Long = 0): SyncMap =
             SyncMap(segments.map { it.toSyncSegment().let { s -> s.copy(reactionStartMs = s.reactionStartMs + nudgeMs) } })

@@ -342,10 +342,10 @@
       syncText = "Downloading the reaction to match it… " + pct(sync.download);
     } else if (auto && sync.matching) {
       const reading = [];
-      if (typeof sync.reaction === "number") reading.push("reaction " + pct(sync.reaction));
-      if (typeof sync.episode === "number") reading.push("episode " + pct(sync.episode));
+      if (typeof sync.reaction === "number") reading.push("reading the reaction " + pct(sync.reaction));
+      if (typeof sync.episode === "number") reading.push("checking the episode " + pct(sync.episode));
       syncText = (sync.segments > 0 ? "Matched " + stretches(sync.segments) + " so far" : "Matching the reaction to this episode") +
-        (reading.length ? " · reading " + reading.join(", ") : "…");
+        (reading.length ? " · " + reading.join(", ") : "…");
     } else if (auto && sync.segments > 0) {
       syncText = "Matched " + stretches(sync.segments) +
         (typeof sync.coverage === "number" ? ", " + pct(sync.coverage) + " of the episode" : "");

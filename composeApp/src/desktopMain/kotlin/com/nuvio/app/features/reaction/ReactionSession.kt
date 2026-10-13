@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -96,7 +97,15 @@ internal object ReactionSession {
     private var episodeTrack = FingerprintTrack()
     private var episodeJob: Job? = null
     private var episodeProgress: Double? = null
+    /** Every frame of the episode read (the background fill finished). */
     private var episodeIndexed = false
+    /** Enough of the episode read to trust the map here: see [EpisodeReadPlanner.checked]. */
+    private var episodeChecked = false
+    /** A match ran with the episode checked: until then the map is provisional. */
+    private var matchedWhileChecked = false
+    private var episodePlanner: EpisodeReadPlanner? = null
+    private var playheadMs = 0L
+    private var lastProgressCheck = 0L
     private var episodeError: String? = null
     private var matcher: ReactionMatcher? = null
     private var matchJob: Job? = null
@@ -452,9 +461,12 @@ internal object ReactionSession {
         matchJob = null
         matcher = null
         matched = emptyList()
+        matchedWhileChecked = false
     }
 
-    private fun trackKey(source: ReactionSource) = ReactionLayoutCache.key(source) + "-r"
+    // "-r2": reaction hashes are taken with the overlay normalised out (OverlayNormaliser); "-r" files
+    // hold the old hashes. Episode tracks did not change and stay valid.
+    private fun trackKey(source: ReactionSource) = ReactionLayoutCache.key(source) + "-r2"
 
     // --- Stage -------------------------------------------------------------------------------
 
@@ -553,7 +565,12 @@ internal object ReactionSession {
 
         if (updateEpoch(follower.positionMs)) appliedLayoutKey = null
         applyLayout(m.playerHandle, currentStage)
+        playheadMs = masterSample.positionMs
         ensureEpisodeIndex(m.playerHandle, masterSample.positionMs)
+        if (now - lastProgressCheck >= 500) {
+            lastProgressCheck = now
+            updateEpisodeProgress()
+        }
         noteMainDrops(m.playerHandle, now)
         giveUpOnMatchingIfDone()
 
@@ -563,7 +580,8 @@ internal object ReactionSession {
         if (currentStage.placement is StagePlacement.InPlayer) animateMovie(m.playerHandle, currentStage, decision)
 
         val showing = decision.visibility == StageVisibility.SHOWING
-        val targetDim = if (showing) 0.0 else 1.0
+        // An unsettled gap is not dimmed like a real cut: it may be a part not matched yet.
+        val targetDim = if (showing || !gapSettled(decision)) 0.0 else 1.0
         dim = if (abs(targetDim - dim) <= DIM_STEP) targetDim else dim + if (targetDim > dim) DIM_STEP else -DIM_STEP
         currentStage.setLiveParameters(dim, blackoutMask = 0)
         currentStage.setOverlay(overlayText(decision))
@@ -611,12 +629,12 @@ internal object ReactionSession {
 
     /** Either side still being read, or the latest fingerprints not matched yet. */
     private fun stillMatching(): Boolean =
-        autoSync && (!reactionAnalysed || !episodeIndexed || matchJob?.isActive == true) && episodeError == null && analysisError == null
+        autoSync && (!reactionAnalysed || !episodeChecked || !matchedWhileChecked) && episodeError == null && analysisError == null
 
     /** Both sides read in full and nothing matched: say so, and hand over to the manual offset. */
     private fun giveUpOnMatchingIfDone() {
         if (!autoSync || matched.isNotEmpty() || stillMatching()) return
-        if (!reactionAnalysed || !episodeIndexed) return
+        if (!reactionAnalysed || !episodeChecked || !matchedWhileChecked) return
         autoSync = false
         offsetMs = 0
         engine.reset()
@@ -624,9 +642,25 @@ internal object ReactionSession {
         log.i { "no match between episode and reaction; manual sync" }
     }
 
+    /**
+     * A gap is only shown as one - dimmed, with a countdown - once it is known: the map is past its
+     * provisional stage and the episode from here to where reactions resume has been read. Before
+     * that, a gap may be nothing but a part not matched yet, and a countdown would be a number that
+     * changes under the user (first real test: "Reactions resume in 3:30" at the film's first frame).
+     */
+    private fun gapSettled(decision: SyncDecision): Boolean {
+        if (decision.visibility != StageVisibility.GAP || !autoSync) return true
+        if (stillMatching()) return false
+        val planner = episodePlanner ?: return true
+        val from = (playheadMs / ReactionFingerprinter.FRAME_MS).toInt()
+        val ahead = decision.resumesInMs?.coerceAtMost(EpisodeReadPlanner.CHECKED_AHEAD_FRAMES * ReactionFingerprinter.FRAME_MS)
+            ?: (EpisodeReadPlanner.CHECKED_AHEAD_FRAMES * ReactionFingerprinter.FRAME_MS)
+        return planner.isRead(episodeTrack, from until from + (ahead / ReactionFingerprinter.FRAME_MS).toInt())
+    }
+
     private fun overlayText(decision: SyncDecision): String? {
         if (decision.visibility != StageVisibility.GAP) return null
-        if (stillMatching() && (matched.isEmpty() || decision.resumesInMs == null)) return "Matching the reaction to this episode…"
+        if (!gapSettled(decision)) return "Matching the reaction to this episode…"
         val resumes = decision.resumesInMs ?: return "No more reactions in this episode"
         if (resumes < 1_000) return null
         val seconds = (resumes + 999) / 1000
@@ -742,29 +776,58 @@ internal object ReactionSession {
         matcher = null
         matched = emptyList()
         engine.reset()
+        episodeChecked = false
+        matchedWhileChecked = false
         val track = episodeTrack
+        val fps = ReactionFingerprinter.FPS
         val total = found.durationMs?.let { (it / ReactionFingerprinter.FRAME_MS).toInt() }
-        val position = (positionMs / ReactionFingerprinter.FRAME_MS).toInt()
+            ?: ((positionMs / ReactionFingerprinter.FRAME_MS).toInt() + 3 * 3600 * fps)
+        val planner = EpisodeReadPlanner(total).also { episodePlanner = it }
         log.i { "episode ${found.key}: ${track.count} frames cached" }
+        updateEpisodeProgress()
         episodeJob = scope.launch {
+            val busy = ArrayList<IntRange>()
             try {
-                // What is ahead of playback first (from two minutes back), then whatever is before it.
-                val from = (position - 120 * ReactionFingerprinter.FPS).coerceAtLeast(0)
-                val until = (total ?: (from + 3 * 3600 * ReactionFingerprinter.FPS)) - ReactionFingerprinter.FPS
-                while (true) {
-                    val range = track.missingRange(from, until) ?: track.missingRange(0, from) ?: break
-                    episodeProgress = 0.0
-                    ReactionEpisodeIndexer.index(
-                        found, track, range,
-                        holdWhile = { System.currentTimeMillis() < holdIndexUntil },
-                        onProgress = { p -> scope.launch { episodeProgress = p } },
-                        onFingerprints = { scope.launch { if (episodeTrack === track) scheduleMatch() } },
-                    )
-                    // A run that produced nothing at its start (past the real end) must not repeat.
-                    if (!track.has(range.first)) break
+                // Two readers: a probe is mostly opening the stream and seeking, which overlaps well.
+                coroutineScope {
+                    repeat(EPISODE_READERS) {
+                        launch {
+                            while (true) {
+                                val position = (playheadMs / ReactionFingerprinter.FRAME_MS).toInt()
+                                val plan = planner.next(track, position, matchedEdges(), busy)
+                                if (plan == null) {
+                                    if (busy.isEmpty()) break
+                                    delay(1_000)
+                                    continue
+                                }
+                                busy += plan.range
+                                val started = System.currentTimeMillis()
+                                try {
+                                    ReactionEpisodeIndexer.index(
+                                        found, track, plan.range,
+                                        holdWhile = { System.currentTimeMillis() < holdIndexUntil },
+                                        onProgress = {},
+                                        onFingerprints = { scope.launch { if (episodeTrack === track) scheduleMatch() } },
+                                    )
+                                } finally {
+                                    busy -= plan.range
+                                }
+                                log.i {
+                                    "episode read ${plan.range.first / fps}-${(plan.range.last + 1) / fps}s (${plan.phase}) " +
+                                        "in ${System.currentTimeMillis() - started} ms"
+                                }
+                                // A run that produced nothing at its start (past the real end) must not repeat.
+                                if (!track.has(plan.range.first)) planner.markUnreadable(plan.range)
+                                if (episodeTrack !== track) return@launch
+                                updateEpisodeProgress()
+                                withContext(Dispatchers.IO) { ReactionTrackCache.save(found.key, track) }
+                            }
+                        }
+                    }
                 }
                 if (episodeTrack === track) {
                     episodeIndexed = true
+                    log.i { "episode ${found.key}: read in full, ${track.count} frames" }
                     scheduleMatch()
                 }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -777,6 +840,25 @@ internal object ReactionSession {
                 if (episodeTrack === track) episodeProgress = null
             }
         }
+    }
+
+    /** Where matched stretches start and end, in episode frames: the planner reads around them. */
+    private fun matchedEdges(): List<Int> = matched.flatMap {
+        listOf((it.episodeStartMs / ReactionFingerprinter.FRAME_MS).toInt(), (it.episodeEndMs / ReactionFingerprinter.FRAME_MS).toInt())
+    }
+
+    /** The panel's "checking the episode" share (the probes across the film), and whether it is checked. */
+    private fun updateEpisodeProgress() {
+        val planner = episodePlanner ?: return
+        val track = episodeTrack
+        val position = (playheadMs / ReactionFingerprinter.FRAME_MS).toInt()
+        val checkedNow = planner.checked(track, position, matchedEdges())
+        if (checkedNow != episodeChecked) {
+            episodeChecked = checkedNow
+            if (checkedNow) scheduleMatch() else matchedWhileChecked = false
+        }
+        val done = planner.probesDone(track)
+        episodeProgress = if (done < planner.probeCount) done.toDouble() / planner.probeCount.coerceAtLeast(1) else null
     }
 
     /** While the main player drops frames, the episode index pauses (5 s after the last drop). */
@@ -803,8 +885,13 @@ internal object ReactionSession {
             do {
                 matchAgain = false
                 val started = System.currentTimeMillis()
+                val checked = episodeChecked && reactionAnalysed
                 val segments = withContext(Dispatchers.Default) { m.update() }
                 if (matcher !== m) return@launch
+                if (checked && !matchedWhileChecked) {
+                    matchedWhileChecked = true
+                    log.i { "map settled: ${segments.size} stretches, the episode checked" }
+                }
                 if (segments != matched) {
                     matched = segments
                     log.i {
@@ -1000,7 +1087,7 @@ internal object ReactionSession {
             error != null -> "error" to "Problem"
             loading -> "waiting" to "Loading…"
             decision == null -> "neutral" to "Starting"
-            decision.visibility == StageVisibility.GAP && stillMatching() && matched.isEmpty() -> "waiting" to "Matching…"
+            decision.visibility == StageVisibility.GAP && !gapSettled(decision) -> "waiting" to "Matching…"
             decision.waitingForSeek -> "waiting" to "Syncing"
             decision.visibility == StageVisibility.GAP -> "waiting" to (overlayText(decision)?.replace("Reactions resume", "Resumes") ?: "Paused")
             else -> "good" to "In sync"
@@ -1089,6 +1176,7 @@ internal object ReactionSession {
     }
 
     private const val TICK_MS = 40L
+    private const val EPISODE_READERS = 2
     private const val MAX_WEB_RETRIES = 2
     private const val GAP_GROW_AFTER_MS = 30_000L
     private const val GAP_SHRINK_BEFORE_MS = 3_000L

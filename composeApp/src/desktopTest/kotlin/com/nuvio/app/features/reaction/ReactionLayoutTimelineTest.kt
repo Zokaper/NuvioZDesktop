@@ -85,6 +85,50 @@ class ReactionLayoutTimelineTest {
         assertTrue(!merged.covers(95_000))
     }
 
+    /** TEM's Interstellar compilation, as its 45 s windows saw it (first real test, 2026-10-13). */
+    @Test
+    fun theMovieBoxIsHeldSteadyAndAMistakenReactorGoesBack() {
+        val frame = LayoutRect(0.25, 0.15, 0.50, 0.53)
+        val scope = LayoutRect(0.25, 0.22, 0.50, 0.40)
+        val bigger = LayoutRect(0.25, 0.15, 0.51, 0.56)
+        val leftReactor = LayoutRect(0.0, 0.50, 0.07, 0.11)
+        val other = DetectedTile(LayoutRect(0.0, 0.0, 0.12, 0.12), TileKind.REACTOR)
+        fun layout(movie: LayoutRect, vararg extra: DetectedTile) = DetectedLayout(listOf(other, DetectedTile(movie, TileKind.MOVIE)) + extra)
+        // A piece of the real movie found as a "reactor" while the left reactor was taken for the movie.
+        val moviePiece = DetectedTile(LayoutRect(0.30, 0.25, 0.30, 0.30), TileKind.REACTOR)
+        val epochs = listOf(
+            LayoutEpoch(0, 40_000, layout(frame)),
+            LayoutEpoch(40_000, 70_000, layout(scope)),
+            LayoutEpoch(70_000, 80_000, layout(leftReactor, moviePiece)),
+            LayoutEpoch(80_000, 85_000, layout(bigger)),
+            LayoutEpoch(85_000, 120_000, layout(frame)),
+            LayoutEpoch(120_000, 150_000, layout(scope)),
+        )
+        val steady = ReactionLayoutTimeline(epochs).steadied()
+        steady.epochs.forEach { assertEquals(frame, it.layout.movie?.rect, "epoch ${it.startMs}") }
+        val mistaken = steady.epochs[2].layout
+        assertTrue(mistaken.reactors.any { it.rect == leftReactor }, "the left reactor is a reactor again")
+        assertTrue(mistaken.tiles.none { it == moviePiece }, "the piece of the movie is no reactor")
+        assertTrue(steady.epochs.all { e -> e.layout.reactors.any { it == other } })
+    }
+
+    @Test
+    fun aGenuinelyDifferentArrangementKeepsItsOwnMovie() {
+        val main = LayoutRect(0.25, 0.15, 0.50, 0.53)
+        val fullScreen = LayoutRect(0.0, 0.0, 1.0, 1.0)
+        val reactorOnly = DetectedLayout(listOf(DetectedTile(LayoutRect(0.3, 0.2, 0.4, 0.5), TileKind.REACTOR)))
+        val epochs = listOf(
+            LayoutEpoch(0, 100_000, DetectedLayout(listOf(DetectedTile(main, TileKind.MOVIE)))),
+            LayoutEpoch(100_000, 120_000, DetectedLayout(listOf(DetectedTile(fullScreen, TileKind.MOVIE)))),
+            // A stretch of reactors only, one where the movie usually is: not given a movie.
+            LayoutEpoch(120_000, 130_000, reactorOnly),
+        )
+        val steady = ReactionLayoutTimeline(epochs).steadied()
+        assertEquals(main, steady.epochs[0].layout.movie?.rect)
+        assertEquals(fullScreen, steady.epochs[1].layout.movie?.rect)
+        assertEquals(reactorOnly, steady.epochs[2].layout)
+    }
+
     @Test
     fun timelineLookupFallsBackToTheNearestEpoch() {
         val l1 = DetectedLayout(listOf(DetectedTile(LayoutRect(0.0, 0.0, 0.5, 0.5), TileKind.REACTOR)))

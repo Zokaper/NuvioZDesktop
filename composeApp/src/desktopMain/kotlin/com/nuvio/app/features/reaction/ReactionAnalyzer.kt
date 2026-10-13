@@ -3,6 +3,10 @@ package com.nuvio.app.features.reaction
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.storage.DesktopStorage
 import com.nuvio.app.features.reaction.ReactionFingerprinter.FRAME_MS
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.DataInputStream
@@ -16,9 +20,20 @@ import java.security.MessageDigest
  * every analysis window, and fingerprints of the movie inside it (Stage 4), taken once a stretch's
  * layout is known. Web reactions are analysed from a downloaded copy (ReactionDownloads): YouTube
  * streams at about real time, a download runs at tens of MB/s.
+ *
+ * A long video is read as up to [MAX_PARTS] stretches at once, each by its own decoder: one reader
+ * took 5 m 46 s over a 2 h 45 m compilation on the desktop PC (AV1 at 480p decodes at ~2,200
+ * frames/s even multithreaded, then every frame is analysed in one thread). Stretches are
+ * independent: a layout window or a letterbox verdict never needs more than its own 45 s or +-5 s.
  */
 internal object ReactionTimelineAnalyzer {
     private val log = Logger.withTag("ReactionAnalyzer")
+
+    /** Parallel readers: a quarter of the logical cores, at most four. */
+    private val MAX_PARTS = (Runtime.getRuntime().availableProcessors() / 4).coerceIn(1, 4)
+
+    /** Below this much video one reader is fast enough and starting more is not worth it. */
+    private const val MIN_PART_MS = 10 * 60 * 1000L
 
     suspend fun analyze(
         target: String,
@@ -28,45 +43,80 @@ internal object ReactionTimelineAnalyzer {
         onProgress: (Double) -> Unit,
         onTimeline: (ReactionLayoutTimeline) -> Unit,
         onFingerprints: () -> Unit,
-    ): ReactionLayoutTimeline {
+    ): ReactionLayoutTimeline = coroutineScope {
         val w = ReactionLayoutDetector.ANALYSIS_WIDTH
         val h = ReactionLayoutDetector.ANALYSIS_HEIGHT
         val step = ReactionFingerprinter.FPS / ReactionLayoutDetector.ANALYSIS_FPS
         // Start on an even grid index: the layout builder takes every other frame, at its own 4 fps.
         val fromIndex = ((fromMs / FRAME_MS).toInt() / step) * step
-        val builder = ReactionLayoutTimelineBuilder(startMs = fromIndex * FRAME_MS)
-        val pending = MovieFingerprinter(w / 2, h / 2, fingerprints)
-        ReactionFrames.read(target, emptyList(), w, h, ReactionFingerprinter.FPS, fromIndex) { index, frame ->
-            pending.add(index, ReactionFrames.halve(frame, w, h))
-            if ((index - fromIndex) % step == 0 && builder.add(frame)) {
-                val timeline = builder.timeline()
-                onTimeline(timeline)
-                pending.flush(timeline, untilMs = builder.processedMs)
+        val endIndex = durationMs?.let { (it / FRAME_MS).toInt() }
+        val parts = parts(fromIndex, endIndex, step)
+        val lock = Any()
+        val timelines = arrayOfNulls<ReactionLayoutTimeline>(parts.size)
+        val read = IntArray(parts.size)
+        val total = endIndex?.let { (it - fromIndex).coerceAtLeast(1) }
+        fun merged() = ReactionLayoutTimeline(timelines.filterNotNull().flatMap { it.epochs }.sortedBy { it.startMs }).steadied()
+        val started = System.currentTimeMillis()
+        parts.mapIndexed { k, (first, until) ->
+            async(Dispatchers.IO) {
+                val builder = ReactionLayoutTimelineBuilder(startMs = first * FRAME_MS)
+                val pending = MovieFingerprinter(w / 2, h / 2, fingerprints)
+                ReactionFrames.read(target, emptyList(), w, h, ReactionFingerprinter.FPS, first, until) { index, frame ->
+                    pending.add(index, ReactionFrames.halve(frame, w, h))
+                    if ((index - first) % step == 0 && builder.add(frame)) {
+                        val timeline = synchronized(lock) {
+                            timelines[k] = builder.timeline()
+                            merged()
+                        }
+                        onTimeline(timeline)
+                        pending.flush(timeline, untilMs = builder.processedMs)
+                        onFingerprints()
+                    }
+                    if (index % 40 == 0 && total != null) {
+                        val done = synchronized(lock) { read[k] = index - first; read.sum() }
+                        onProgress((done.toDouble() / total).coerceIn(0.0, 0.99))
+                    }
+                }
+                builder.finish()
+                val timeline = synchronized(lock) {
+                    timelines[k] = builder.timeline()
+                    merged()
+                }
+                pending.flush(timeline, untilMs = Long.MAX_VALUE)
                 onFingerprints()
             }
-            if (index % 40 == 0) durationMs?.let {
-                onProgress(((index * FRAME_MS - fromMs).toDouble() / (it - fromMs).coerceAtLeast(1)).coerceIn(0.0, 0.99))
-            }
-        }
-        builder.finish()
-        val timeline = builder.timeline()
-        pending.flush(timeline, untilMs = Long.MAX_VALUE)
-        onFingerprints()
+        }.awaitAll()
+        val timeline = synchronized(lock) { merged() }
         onProgress(1.0)
-        log.i { "timeline: ${timeline.epochs.size} epochs, " + timeline.epochs.joinToString { "${it.startMs / 1000}-${it.endMs / 1000}s:${it.layout.reactors.size}" } }
+        log.i {
+            "timeline: ${timeline.epochs.size} epochs in ${(System.currentTimeMillis() - started) / 1000} s with ${parts.size} readers, " +
+                "movie ${timeline.epochs.groupingBy { it.layout.movie?.rect }.eachCount().maxByOrNull { it.value }?.key}, " +
+                timeline.epochs.joinToString { "${it.startMs / 1000}-${it.endMs / 1000}s:${it.layout.reactors.size}" }
+        }
         onTimeline(timeline)
-        return timeline
+        timeline
+    }
+
+    /** [fromIndex, end) cut into equal stretches on the layout's grid; the last one runs to the end. */
+    private fun parts(fromIndex: Int, endIndex: Int?, step: Int): List<Pair<Int, Int?>> {
+        if (endIndex == null) return listOf(fromIndex to null)
+        val count = ((endIndex - fromIndex) * FRAME_MS / MIN_PART_MS).toInt().coerceIn(1, MAX_PARTS)
+        val length = ((endIndex - fromIndex) / count / step) * step
+        return (0 until count).map { k ->
+            val first = fromIndex + k * length
+            first to (if (k == count - 1) null else first + length)
+        }
     }
 }
 
 /**
  * Holds half-size reaction frames until the layout of their stretch is known, then fingerprints the
  * movie box in each (the whole frame when no movie was found: a reaction that is mostly movie still
- * matches, one that is all reactors simply does not).
+ * matches, one that is all reactors simply does not), with the channel's overlay taken out.
  */
 internal class MovieFingerprinter(private val width: Int, private val height: Int, track: FingerprintTrack) {
     private val frames = ArrayList<Pair<Int, ByteArray>>()
-    private val sliding = SlidingFingerprinter(width, track)
+    private val sliding = SlidingFingerprinter(width, track, OverlayNormaliser(width * height))
 
     fun add(index: Int, halfFrame: ByteArray) {
         frames += index to halfFrame
@@ -107,7 +157,8 @@ internal object ReactionLayoutCache {
     private data class StoredTile(val x: Double, val y: Double, val w: Double, val h: Double, val kind: String)
 
     // 3: earlier mid-video analyses began at twice the requested position (see ReactionFrames).
-    private const val VERSION = 3
+    // 4: the movie box is steadied over the whole video (ReactionLayoutTimeline.steadied).
+    private const val VERSION = 4
     private val json = Json { ignoreUnknownKeys = true }
 
     private val dir: File by lazy {

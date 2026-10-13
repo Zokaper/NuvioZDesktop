@@ -1,6 +1,54 @@
 ## EXPERIMENTAL branch `claude/reaction-mode`: Reaction Mode, Stages 1-4 (2026-10-13)
 
-**Next agent: start at `HANDOFF-reaction-mode-desktop-pc.md`.** First real test on the desktop PC (2026-10-13, Debug 92, Interstellar + a ~3 h YouTube mashup): automatic sync matched only spotty stretches, and the gap countdown shows a provisional number as fact (confirmed bug). Cause of the spotty match not yet known; five hypotheses there.
+### Desktop Debug 93 (2026-10-13): spotty sync found and fixed; reaction read 3x faster, episode read sampled
+
+First real test on the desktop PC (Debug 92, Interstellar from debrid + TEM's ~2 h 45 m YouTube compilation
+`yt-icWf4O1eac0`): automatic sync matched 32 % of what it had read, in 33 stretches. Evidence (live log and WGC
+screenshots of the running session, then the saved tracks replayed offline) - not hypotheses:
+- **Cause 1, TEM's logo.** A big translucent "TEM" covers ~70 % of the movie box for the whole video, so the
+  reaction's hashes mostly encoded the logo: two unrelated reaction frames were 24 bits apart (episode: 32), and the
+  episode vs the reaction at the same moment was 22 bits (median) - only ~20 % of frames within `MAX_DISTANCE` 14
+  where it matched, ~4 % in the holes. The compilation plays the film through at one offset (+10.11 s) with no cuts.
+- **Cause 2, the assembly.** Stretches on one line were joined only within 60 ms, but offsets come on the 125 ms
+  grid (10.000 vs 10.125 s never joined), and any stray false match between two stretches blocked the join.
+- **Cause 3, the movie box.** A quarter of the 45 s windows took a 0.07 x 0.11 reactor for the movie; the rest
+  flipped between 0.50 x 0.53 (frame) and 0.50 x 0.40 (scope picture: crops the IMAX scenes) every few seconds.
+- Ruled out: dark scenes (holes no darker than matches), the aspect switches in general (both sources switch
+  together), the unread episode tail (only explains past 2 h 1 m).
+
+Fixed (all measured on that session's own data):
+- **Matcher** (`ReactionMatcher`): lines from chains plus a whole-film offset vote, lines within 200 ms merged, then
+  one best path over the episode frames scoring *every* frame's distance as a log-likelihood (true line ~22 bits,
+  random ~31) with a cost per switch, so a line carries through weak, dark or unread parts; each run refitted to a
+  sub-grid offset. Old tracks replayed: 32 % -> 86.7 %.
+- **Box** (`ReactionLayoutTimeline.steadied`): one main movie box per video; a mistaken "movie" goes back to being a
+  reactor, pieces of the movie found as tiles are dropped. All 660 epochs got the frame's box.
+- **Overlay** (`OverlayNormaliser`): reaction pixels standardised against their own ~2 min running mean/spread, so a
+  static logo cancels. 10 min of TEM against the unchanged episode hashes: median 24 -> 18-20 bits, frames within
+  14 bits ~8 % -> ~26 %. Episode hashes unchanged (cached episode tracks stay valid); reaction tracks are now `-r2`.
+- Together, the reaction re-read through the new pipeline (`ReactionReanalyseTest`) vs the saved episode track:
+  **97.8 % matched, essentially one +10.11 s line** (8 stretches: three 6-11 s stray switches; holes of 27 s at
+  58:54 and 96 s at 1:18:50 where the film plays under the logo - Mann's planet, letterboxed in the compilation;
+  open lead: if the episode is the IMAX edition this sequence may be full-height there).
+- **Reaction read 5 m 46 s -> 1 m 54 s**: `ReactionTimelineAnalyzer` reads up to 4 stretches in parallel (a
+  quarter of the cores) for videos over 20 min.
+- **Episode read**: was everything from the playhead on (40+ min for this film at ~4x). Now `EpisodeReadPlanner`:
+  3 min ahead of the playhead densely, then 8 s probes every 2 min over the whole film, then +-60 s around every
+  matched edge, then the rest in the background; two readers; saved after every chunk (it was only saved when the
+  whole read ended). "Checked" (what the matching state waits for) is the first three: ~12 % of the film.
+  Each read logs `episode read A-Bs (PHASE) in N ms` - per-probe cost over debrid is not measured yet.
+- **Countdown bug (confirmed in the handoff)**: a gap shows "Reactions resume in m:ss" and dims only once settled -
+  the map not provisional and the episode read from here to the resume point (`gapSettled`); otherwise "Matching
+  the reaction to this episode..." and no dim.
+- Tests: 62 in `com.nuvio.app.features.reaction.*`. New: `EpisodeReadPlannerTest`, a noisy-film matcher test,
+  box steadying, logo normalisation, and two media-gated real-data tests: `ReactionReplayTest`
+  (`NUVIO_REACTION_REPLAY_DIR`, a copy of `reaction/fingerprints`) and `ReactionReanalyseTest` (re-reads a reaction
+  copy; needs `player_bridge.dll` - point `NUVIO_REACTION_NATIVE_RESOURCES` at the installed debug app's
+  `app\resources`; the native code did not change). JDK 21 builds and tests the desktop app on this PC.
+
+Not done, next: equal-size tiles (plan Decision 7) and starting the reaction read near the playhead (handoff asks the
+maintainer first); the IMAX lead above; per-probe cost over debrid from the Debug 93 log. Retest: same video, same
+film - the episode's partial track is reused, the reaction is re-read (~2 min after the download, which is cached).
 
 **Not for release.** Pushed 2026-10-13; published as Desktop Debug 92 (`debug-v0.1.26-alpha-z2.92`, extension zip attached to the release). Plan, decisions and Stage 0 spike results: `Nuvio Z/PLAN-reaction-mode.md` (workspace root).
 Debug builds only (`isDebugBuild`), or `NUVIO_REACTION_MODE=1`; Windows only. Branched from `origin/Dev` 98d0f06c3, worked in

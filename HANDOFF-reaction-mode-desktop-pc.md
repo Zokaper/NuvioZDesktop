@@ -1,5 +1,11 @@
 # Handoff: Reaction Mode on the maintainer's desktop PC (2026-10-13)
 
+> **Update, later the same day:** the spotty match was diagnosed from the live session and fixed, and the
+> countdown bug is fixed; published as Debug 93. Causes, measurements and what is left are at the top of
+> `STATUS.md`. The rest of this file is the original handoff, kept for its setup notes (data locations,
+> building, publishing). Its five hypotheses: H1 (box) partly true, H6 (the channel's logo, added) the main cause,
+> plus the matcher's 60 ms join tolerance; H2-H5 ruled out as causes of the holes.
+
 You are picking up the experimental **Reaction Mode** feature on the machine where it is finally being
 tested for real. The previous agent worked on a laptop that could not test any of this; you are on
 the PC that can. Read this file, then the top section of `STATUS.md`, then `PLAN-reaction-mode.md`

@@ -50,13 +50,10 @@ internal object ReactionFingerprinter {
 
     private val cosines = Array(K) { u -> DoubleArray(N) { x -> cos(PI * (2 * x + 1) * u / (2 * N)) } }
 
-    fun of(frame: ByteArray, width: Int, region: PixelRect): FrameFingerprint {
+    /** [detailFrame]: the picture [detail] is judged on, when [frame] is a normalised copy of it. */
+    fun of(frame: ByteArray, width: Int, region: PixelRect, detailFrame: ByteArray = frame): FrameFingerprint {
         val small = resample(frame, width, region)
-        var sum = 0.0
-        var sumSq = 0.0
-        for (v in small) { sum += v; sumSq += v * v }
-        val mean = sum / small.size
-        val detail = sqrt(max(sumSq / small.size - mean * mean, 0.0)).toFloat()
+        val detail = deviation(if (detailFrame === frame) small else resample(detailFrame, width, region))
 
         // Only the K x K lowest frequencies are needed: rows first, then columns.
         val rows = Array(N) { DoubleArray(K) }
@@ -76,6 +73,14 @@ internal object ReactionFingerprinter {
         val plain = DoubleArray(K * K - 1) { coef[it + 1] }
         val mirrored = DoubleArray(K * K - 1) { i -> val idx = i + 1; if ((idx % K) % 2 == 1) -coef[idx] else coef[idx] }
         return FrameFingerprint(bits(plain), bits(mirrored), detail)
+    }
+
+    private fun deviation(small: DoubleArray): Float {
+        var sum = 0.0
+        var sumSq = 0.0
+        for (v in small) { sum += v; sumSq += v * v }
+        val mean = sum / small.size
+        return sqrt(max(sumSq / small.size - mean * mean, 0.0)).toFloat()
     }
 
     private fun bits(values: DoubleArray): Long {
@@ -199,29 +204,77 @@ internal class SlidingLetterbox(private val width: Int, private val region: Pixe
 }
 
 /**
- * Fingerprints frames once each has [SlidingLetterbox.REACH] frames of context after it (or the
- * video ended), each inside its own region.
+ * Takes out what stays put on a reaction's picture: a channel's logo or frame laid over the movie.
+ * Each pixel is standardised against its own running mean and spread (about the last two minutes),
+ * so a static overlay - which adds a constant and, translucent, scales the movie under it - cancels,
+ * and the movie's own changes remain. On TEM's Interstellar compilation, whose translucent logo
+ * covers most of the movie box all the way through, this took the median distance to the episode's
+ * hash from 24 to 18-20 bits and the frames within [ReactionMatcher.MAX_DISTANCE] from ~8 % to
+ * ~26 % (10 minutes of it, against the episode's unchanged hashes; measured 2026-10-13).
+ * The episode side is left as it is: a film has no overlay, and its hashes stay valid in the cache.
  */
-internal class SlidingFingerprinter(private val width: Int, private val track: FingerprintTrack) {
-    private val placed = ArrayDeque<Triple<Int, ByteArray, PixelRect>>()
+internal class OverlayNormaliser(private val size: Int) {
+    private val mean = FloatArray(size)
+    private val variance = FloatArray(size)
+    private var frames = 0
+
+    /** Updates the statistics with [frame] and returns it standardised, centred on 128. */
+    fun normalise(frame: ByteArray): ByteArray {
+        require(frame.size == size)
+        frames++
+        // A plain running mean until the window fills, so the first minutes are not skewed.
+        val alpha = max(1f / frames, 1f / WINDOW_FRAMES)
+        val out = ByteArray(size)
+        for (i in 0 until size) {
+            val v = (frame[i].toInt() and 0xFF).toFloat()
+            val d = v - mean[i]
+            mean[i] += alpha * d
+            variance[i] = if (frames == 1) START_VARIANCE else variance[i] + alpha * (d * (v - mean[i]) - variance[i])
+            val z = (v - mean[i]) / sqrt(max(variance[i], MIN_DEVIATION * MIN_DEVIATION))
+            out[i] = (128 + 40 * z).roundToInt().coerceIn(0, 255).toByte()
+        }
+        return out
+    }
+
+    private companion object {
+        const val WINDOW_FRAMES = 120 * ReactionFingerprinter.FPS
+        const val START_VARIANCE = 400f
+        /** Grey levels: a pixel that barely moves (a still border) is not blown up into noise. */
+        const val MIN_DEVIATION = 6f
+    }
+}
+
+/**
+ * Fingerprints frames once each has [SlidingLetterbox.REACH] frames of context after it (or the
+ * video ended), each inside its own region. With a [normaliser] (the reaction side), bars are
+ * still judged on the frame as it is, and the hash is taken of the normalised copy.
+ */
+internal class SlidingFingerprinter(
+    private val width: Int,
+    private val track: FingerprintTrack,
+    private val normaliser: OverlayNormaliser? = null,
+) {
+    private class Placed(val index: Int, val frame: ByteArray, val hashed: ByteArray, val region: PixelRect)
+
+    private val placed = ArrayDeque<Placed>()
     private val letterboxes = HashMap<PixelRect, SlidingLetterbox>()
 
     fun add(index: Int, frame: ByteArray, region: PixelRect) {
         letterboxes.getOrPut(region) { SlidingLetterbox(width, region) }.add(index, frame)
-        placed.addLast(Triple(index, frame, region))
+        placed.addLast(Placed(index, frame, normaliser?.normalise(frame) ?: frame, region))
         drain(all = false)
     }
 
     fun finish() = drain(all = true)
 
     private fun drain(all: Boolean) {
-        val last = placed.lastOrNull()?.first ?: return
-        while (placed.isNotEmpty() && (all || placed.first().first <= last - SlidingLetterbox.REACH)) {
-            val (index, frame, region) = placed.removeFirst()
-            val letterbox = letterboxes.getValue(region)
-            val area = letterbox.activeAt(index)
-            letterbox.forgetBefore(index - SlidingLetterbox.REACH)
-            if (area.width >= 8 && area.height >= 8) track.set(index, ReactionFingerprinter.of(frame, width, area))
+        val last = placed.lastOrNull()?.index ?: return
+        while (placed.isNotEmpty() && (all || placed.first().index <= last - SlidingLetterbox.REACH)) {
+            val p = placed.removeFirst()
+            val letterbox = letterboxes.getValue(p.region)
+            val area = letterbox.activeAt(p.index)
+            letterbox.forgetBefore(p.index - SlidingLetterbox.REACH)
+            if (area.width >= 8 && area.height >= 8) track.set(p.index, ReactionFingerprinter.of(p.hashed, width, area, detailFrame = p.frame))
         }
     }
 }

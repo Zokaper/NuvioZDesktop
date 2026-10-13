@@ -131,6 +131,48 @@ class ReactionMatcherTest {
         }
     }
 
+    /**
+     * TEM's Interstellar compilation, as the first real test saw it: the film played through at one
+     * offset, but under a logo every frame's hash is 14-29 bits from the episode's (so hardly any
+     * frame is within [ReactionMatcher.MAX_DISTANCE]), a recap shows an earlier scene for 5 s, and
+     * of the episode only the planner's probes and the first minutes are read yet.
+     */
+    @Test
+    fun aFilmPlayedThroughIsOneStretchThroughNoisyAndUnreadParts() {
+        val seconds = 1800
+        val ep = episode(seconds, seed = 41)
+        val r = Random(42)
+        val fps = ReactionFingerprinter.FPS
+        val offset = 10 * fps
+        val reaction = FingerprintTrack()
+        for (i in 0 until (seconds + 20) * fps) {
+            val e = i - offset
+            reaction.set(
+                i,
+                if (e in 0 until ep.size) FrameFingerprint(flip(ep.hash(e), 14 + r.nextInt(16), r), r.nextLong() and MASK, ep.detail(e))
+                else FrameFingerprint(r.nextLong() and MASK, r.nextLong() and MASK, 30f),
+            )
+        }
+        for (k in 0 until 5 * fps) reaction.set(1500 * fps + k, FrameFingerprint(noisy(ep.hash(200 * fps + k), 3, r), r.nextLong() and MASK, 30f))
+        val read = FingerprintTrack()
+        for (e in 0 until ep.size) {
+            if (e < 180 * fps || (e / fps) % 120 < 8) read.set(e, FrameFingerprint(ep.hash(e), ep.mirror(e), ep.detail(e)))
+        }
+        // The read part's frames that are close enough for the old rule: a handful.
+        val segments = ReactionMatcher(read, reaction).update()
+        val onLine = segments.filter { !it.mirrored && it.rate == 1.0 && abs(it.interceptMs - offset * FRAME_MS) <= 70 }
+        val covered = onLine.sumOf { it.episodeEndMs - it.episodeStartMs }
+        assertTrue(covered >= 0.9 * seconds * 1000, "${covered / 1000} s on the line of $seconds s: $segments")
+    }
+
+    private fun flip(hash: Long, bits: Int, r: Random): Long {
+        var h = hash
+        val chosen = HashSet<Int>()
+        while (chosen.size < bits) chosen += r.nextInt(63)
+        for (b in chosen) h = h xor (1L shl b)
+        return h
+    }
+
     @Test
     fun theSyncMapCarriesTheNudge() {
         val segment = MatchedSegment(10_000, 20_000, interceptMs = 5_000.0, rate = 1.0, mirrored = false, support = 50)

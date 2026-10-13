@@ -21,6 +21,68 @@ internal class ReactionLayoutTimeline(val epochs: List<LayoutEpoch>) {
 
     fun covers(ms: Long): Boolean = epochs.any { ms in it.startMs until it.endMs }
 
+    /**
+     * The compilation's own movie box, held steady. Each 45 s window finds the movie by itself, and
+     * on TEM's Interstellar compilation (first real test, 2026-10-13) a quarter of the windows took
+     * a 0.07 x 0.11 reactor at the left edge for it, while the rest flipped between the frame's
+     * inside (0.50 x 0.53) and the scope picture within it (0.50 x 0.40) every few seconds. The
+     * smaller box crops the IMAX scenes, and a reactor's box matches nothing. Bars belong to the
+     * content and are found frame by frame (SlidingLetterbox), so the box should be the frame's.
+     *
+     * The main box is the most-seen family of overlapping movie boxes, and within it the largest box
+     * seen for a fair share of that time. Epochs whose movie is in that family, too small to be the
+     * movie, or missing (with no reactor where the movie usually is) get the main box; the small
+     * "movie" goes back to being a reactor and pieces of the movie found as tiles are dropped. A
+     * genuinely different arrangement (a large box elsewhere) is left alone.
+     */
+    fun steadied(): ReactionLayoutTimeline {
+        val movies = epochs.mapNotNull { e -> e.layout.movie?.let { it.rect to (e.endMs - e.startMs) } }
+            .filter { (rect, _) -> rect.w * rect.h >= MIN_MOVIE_AREA }
+        if (movies.isEmpty()) return this
+        val families = ArrayList<MutableList<Pair<LayoutRect, Long>>>()
+        for (m in movies.sortedByDescending { it.second }) {
+            families.firstOrNull { f -> ReactionLayoutTimelineBuilder.iou(f.first().first, m.first) >= 0.5 }?.add(m) ?: families.add(mutableListOf(m))
+        }
+        val main = families.maxBy { f -> f.sumOf { it.second } }
+        val familyMs = main.sumOf { it.second }
+        if (familyMs * 3 < epochs.sumOf { it.endMs - it.startMs }) return this
+        // Windows see the same box a pixel or two apart: those are one size, shown by its most-seen look.
+        val sizes = ArrayList<MutableList<Pair<LayoutRect, Long>>>()
+        for (m in main) {
+            sizes.firstOrNull { s -> ReactionLayoutTimelineBuilder.iou(s.first().first, m.first) >= 0.85 }?.add(m) ?: sizes.add(mutableListOf(m))
+        }
+        val looks = sizes.map { s -> s.groupBy({ it.first }, { it.second }).maxBy { it.value.sum() }.key to s.sumOf { it.second } }
+        val box = looks.filter { it.second * 100 >= familyMs * MAIN_SHARE_PERCENT }.maxByOrNull { it.first.w * it.first.h }?.first
+            ?: looks.maxBy { it.second }.first
+        return ReactionLayoutTimeline(epochs.map { e -> e.copy(layout = steady(e.layout, box)) })
+    }
+
+    private fun steady(layout: DetectedLayout, box: LayoutRect): DetectedLayout {
+        val movie = layout.movie
+        fun insideBox(tile: DetectedTile): Double {
+            val r = tile.rect
+            val ix = max(0.0, min(r.right, box.right) - max(r.x, box.x))
+            val iy = max(0.0, min(r.bottom, box.bottom) - max(r.y, box.y))
+            return if (r.w * r.h <= 0) 0.0 else ix * iy / (r.w * r.h)
+        }
+        val tooSmall = movie != null && movie.rect.w * movie.rect.h < 0.25 * box.w * box.h
+        val sameFamily = movie != null && ReactionLayoutTimelineBuilder.iou(movie.rect, box) >= 0.3
+        when {
+            movie == null -> if (layout.tiles.any { it.kind == TileKind.REACTOR && insideBox(it) > 0.5 }) return layout
+            !tooSmall && !sameFamily -> return layout
+        }
+        if (movie != null && sameFamily && movie.rect == box) return layout
+        val kept = layout.tiles.mapNotNull { t ->
+            when {
+                t === movie && tooSmall -> t.copy(kind = TileKind.REACTOR)
+                t === movie -> null
+                insideBox(t) > 0.5 -> null
+                else -> t
+            }
+        }
+        return DetectedLayout(kept + DetectedTile(box, TileKind.MOVIE))
+    }
+
     /** These epochs, with [newer] laid over them wherever it has something to say. */
     fun overlaidWith(newer: ReactionLayoutTimeline): ReactionLayoutTimeline {
         if (newer.epochs.isEmpty()) return this
@@ -35,6 +97,13 @@ internal class ReactionLayoutTimeline(val epochs: List<LayoutEpoch>) {
             }
         }
         return ReactionLayoutTimeline((kept + newer.epochs).sortedBy { it.startMs })
+    }
+
+    private companion object {
+        /** Below this share of the frame a "movie" is a reactor's box (TEM's mistaken one: 0.008). */
+        const val MIN_MOVIE_AREA = 0.04
+        /** The main box must have been seen for this much of its family's time. */
+        const val MAIN_SHARE_PERCENT = 15
     }
 }
 

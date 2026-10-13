@@ -40,6 +40,50 @@ class ReactionFingerprintTest {
         return frame
     }
 
+    /**
+     * A channel's translucent logo over most of the movie, all the way through (TEM's, on the first
+     * real test): the plain hash mostly sees the logo; normalised, the movie under it shows again.
+     */
+    @Test
+    fun aStaticTranslucentLogoIsNormalisedOut() {
+        val w = 240
+        val h = 136
+        // Three big block "letters" over ~half the picture, 55 % opaque, near white.
+        fun inLogo(x: Int, y: Int): Boolean {
+            if (y !in 20 until 116) return false
+            return (x in 20 until 80 && (y < 44 || x < 44)) ||
+                (x in 90 until 150 && (y < 44 || y in 56 until 76 || y >= 96 || x < 114)) ||
+                (x in 160 until 222 && (x < 182 || x >= 200 || y < 50))
+        }
+        val shots = 60
+        val framesPerShot = 12
+        val plain = ArrayList<Int>()
+        val normalised = ArrayList<Int>()
+        val track = FingerprintTrack()
+        val sliding = SlidingFingerprinter(w, track, OverlayNormaliser(w * h))
+        val episodeHashes = LongArray(shots)
+        for (shot in 0 until shots) {
+            val film = picture(w, h, 100 + shot)
+            episodeHashes[shot] = ReactionFingerprinter.of(film, w, PixelRect(0, 0, w, h)).hash
+            val shown = ByteArray(w * h) { i ->
+                val v = film[i].toInt() and 0xFF
+                (if (inLogo(i % w, i / w)) (0.45 * v + 0.55 * 235).toInt() else v).toByte()
+            }
+            repeat(framesPerShot) { k ->
+                val index = shot * framesPerShot + k
+                sliding.add(index, shown, PixelRect(0, 0, w, h))
+                if (k == 0) plain += ReactionFingerprinter.distance(ReactionFingerprinter.of(shown, w, PixelRect(0, 0, w, h)).hash, episodeHashes[shot])
+            }
+        }
+        sliding.finish()
+        // Past the first shots, while the running statistics settle.
+        for (shot in 10 until shots) normalised += ReactionFingerprinter.distance(track.hash(shot * framesPerShot + framesPerShot / 2), episodeHashes[shot])
+        val plainMedian = plain.drop(10).sorted()[(shots - 10) / 2]
+        val normalisedMedian = normalised.sorted()[normalised.size / 2]
+        assertTrue(plainMedian >= 14, "the logo should hurt the plain hash: median $plainMedian")
+        assertTrue(normalisedMedian <= plainMedian - 6 && normalisedMedian <= 12, "plain median $plainMedian, normalised $normalisedMedian")
+    }
+
     @Test
     fun theSameShotHashesAlikeInsideAReaction() {
         val sw = 128
