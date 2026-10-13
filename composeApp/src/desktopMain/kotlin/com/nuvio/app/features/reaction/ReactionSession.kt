@@ -787,6 +787,7 @@ internal object ReactionSession {
         updateEpisodeProgress()
         episodeJob = scope.launch {
             val busy = ArrayList<IntRange>()
+            val failedReads = HashMap<Int, Int>()
             try {
                 // Two readers: a probe is mostly opening the stream and seeking, which overlaps well.
                 coroutineScope {
@@ -809,6 +810,16 @@ internal object ReactionSession {
                                         onProgress = {},
                                         onFingerprints = { scope.launch { if (episodeTrack === track) scheduleMatch() } },
                                     )
+                                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                    throw cancelled
+                                } catch (failure: Exception) {
+                                    // One stalled or failed read (a debrid stream that hangs) must not end
+                                    // the whole index: try it once more later, then leave it out.
+                                    val tries = (failedReads[plan.range.first] ?: 0) + 1
+                                    failedReads[plan.range.first] = tries
+                                    log.w { "episode read ${plan.range.first / fps}s failed ($tries): ${failure.message}" }
+                                    if (tries >= 2) planner.markUnreadable(plan.range)
+                                    continue
                                 } finally {
                                     busy -= plan.range
                                 }

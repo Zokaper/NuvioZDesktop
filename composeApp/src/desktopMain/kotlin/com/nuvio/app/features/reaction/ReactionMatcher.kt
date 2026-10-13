@@ -484,8 +484,12 @@ internal class ReactionMatcher(private val liveEpisode: FingerprintTrack, privat
         private const val FRAME_WEIGHT = 0.25f
         /** A line that would show reaction time outside the video cannot be on screen. */
         private const val OUTSIDE = -50f
-        /** What a cut, a start or an end of the film on screen must be worth: ~9 s of frames saying no. */
-        private const val SWITCH_COST = 30.0
+        /**
+         * What a cut, a start or an end of the film on screen must be worth: ~12 s of frames saying no.
+         * At 30 one 8 s probe of the episode, read beside an unread stretch, pulled a line 28 s off
+         * (Debug 93); a real cut is minutes of evidence either way.
+         */
+        private const val SWITCH_COST = 40.0
 
         fun toSyncMap(segments: List<MatchedSegment>, nudgeMs: Long = 0): SyncMap =
             SyncMap(segments.map { it.toSyncSegment().let { s -> s.copy(reactionStartMs = s.reactionStartMs + nudgeMs) } })

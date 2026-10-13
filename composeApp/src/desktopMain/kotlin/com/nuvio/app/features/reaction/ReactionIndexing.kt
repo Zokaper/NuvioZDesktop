@@ -176,7 +176,8 @@ internal class EpisodeReadPlanner(private val totalFrames: Int) {
         const val AHEAD_FRAMES = 180 * FPS
         const val AHEAD_BACK_FRAMES = 20 * FPS
         const val CHECKED_AHEAD_FRAMES = 120 * FPS
-        const val PROBE_EVERY_FRAMES = 120 * FPS
+        /** Each probe is a stream open and seek: ~10 s over debrid for a 4K remux (Debug 93). */
+        const val PROBE_EVERY_FRAMES = 180 * FPS
         const val PROBE_FRAMES = 8 * FPS
         const val EDGE_FRAMES = 60 * FPS
         /** One read at a time is at most this long, so the plan follows the playhead. */
@@ -192,6 +193,7 @@ internal class EpisodeReadPlanner(private val totalFrames: Int) {
 internal object ReactionEpisodeIndexer {
     const val WIDTH = 128
     const val HEIGHT = 72
+    private const val READ_PADDING_FRAMES = 2 * ReactionFingerprinter.FPS
 
     fun sourceOf(playerHandle: Long): EpisodeSource? {
         val path = ReactionNative.mainGetProperty(playerHandle, "path")?.takeIf { it.isNotBlank() } ?: return null
@@ -219,7 +221,9 @@ internal object ReactionEpisodeIndexer {
         onFingerprints: () -> Unit,
     ) {
         val fingerprinter = EpisodeFingerprinter(WIDTH, HEIGHT, track)
-        val toIndex = range.last + 1
+        // The decoder stops about a second short of `end`: ask for more, or the tail of every read
+        // comes back missing and costs a second stream open (~10 s over debrid, Debug 93's first test).
+        val toIndex = range.last + 1 + READ_PADDING_FRAMES
         var lastPublish = range.first
         val fps = ReactionFingerprinter.FPS
         ReactionFrames.read(source.target, source.options, WIDTH, HEIGHT, fps, range.first, toIndex, holdWhile) { index, frame ->
