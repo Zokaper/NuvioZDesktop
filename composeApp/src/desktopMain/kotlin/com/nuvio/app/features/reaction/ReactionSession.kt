@@ -76,8 +76,6 @@ internal object ReactionSession {
 
     // Stage 3: the reaction's own layout - which boxes are reactors, where the movie is.
     private var layoutTimeline: ReactionLayoutTimeline? = null
-    /** Where the running analysis started, so a seek far outside it can restart it there. */
-    private var analysisFromMs = 0L
     /** The layout in force at the reaction's current position (it changes mid-video). */
     private var detectedLayout: DetectedLayout? = null
     private var currentEpoch = -1
@@ -86,6 +84,28 @@ internal object ReactionSession {
     private var analysisError: String? = null
     /** The user asked to see the reaction as it is, not rearranged. */
     private var showWholeFrame = false
+
+    // Stage 4: automatic sync - where the episode appears in the reaction, found by fingerprints.
+    // The +/- buttons stay: in automatic mode they fine-tune the matched map.
+    private var autoSync = true
+    private var reactionTrack = FingerprintTrack()
+    private var reactionAnalysed = false
+    private var downloadProgress: Double? = null
+    private var episodeSource: EpisodeSource? = null
+    private var episodeCheckedFor = 0L
+    private var episodeTrack = FingerprintTrack()
+    private var episodeJob: Job? = null
+    private var episodeProgress: Double? = null
+    private var episodeIndexed = false
+    private var episodeError: String? = null
+    private var matcher: ReactionMatcher? = null
+    private var matchJob: Job? = null
+    private var matchAgain = false
+    private var matched: List<MatchedSegment> = emptyList()
+    /** The main player's dropped frames: while they rise, the episode index holds. */
+    private var lastDrops = -1L
+    private var lastDropCheck = 0L
+    @Volatile private var holdIndexUntil = 0L
 
     // The Firefox link (Stage 2). The tab the reaction came from stays linked: when it moves to
     // another video - the next episode's reaction - Nuvio Z follows it.
@@ -243,6 +263,11 @@ internal object ReactionSession {
                 offsetMs += value.toLong()
                 engine.reset()
             }
+            "reactionAutoSync" -> {
+                autoSync = value >= 0.5
+                offsetMs = 0
+                engine.reset()
+            }
             "reactionVolume" -> updateAudio { it.copy(reactionVolume = value.coerceIn(0.0, 100.0)) }
             "reactionMovieVolume" -> updateAudio { it.copy(movieVolumeWithReactions = value.coerceIn(0.0, 100.0)) }
             "reactionGapVolume" -> updateAudio { it.copy(movieVolumeInGaps = value.coerceIn(0.0, 100.0)) }
@@ -251,7 +276,11 @@ internal object ReactionSession {
                 showWholeFrame = !showWholeFrame
                 appliedLayoutKey = null
             }
-            "reactionRedetect" -> stage?.let { beginLayout(it, useCache = false) }
+            "reactionRedetect" -> stage?.let {
+                // The fingerprints were taken inside the old boxes: find both again.
+                resetReactionMatching(FingerprintTrack())
+                beginLayout(it, useCache = false)
+            }
         }
         pushUi(force = true)
     }
@@ -369,6 +398,8 @@ internal object ReactionSession {
         currentEpoch = -1
         analysisProgress = null
         analysisError = null
+        resetReactionMatching(ReactionTrackCache.load(trackKey(newSource)) ?: FingerprintTrack())
+        autoSync = true
         loadRetries = 0
         offsetMs = 0
         reactionDurationMs = null
@@ -403,7 +434,27 @@ internal object ReactionSession {
         tickJob?.cancel()
         tickJob = null
         lastDecision = null
+        analysisJob?.cancel()
+        analysisJob = null
+        resetReactionMatching(FingerprintTrack())
+        episodeJob?.cancel()
+        episodeJob = null
+        episodeSource = null
+        episodeCheckedFor = 0L
     }
+
+    /** A new reaction (or new boxes): its fingerprints, and every match made with them, start over. */
+    private fun resetReactionMatching(track: FingerprintTrack) {
+        reactionTrack = track
+        reactionAnalysed = false
+        downloadProgress = null
+        matchJob?.cancel()
+        matchJob = null
+        matcher = null
+        matched = emptyList()
+    }
+
+    private fun trackKey(source: ReactionSource) = ReactionLayoutCache.key(source) + "-r"
 
     // --- Stage -------------------------------------------------------------------------------
 
@@ -501,11 +552,12 @@ internal object ReactionSession {
         }
 
         if (updateEpoch(follower.positionMs)) appliedLayoutKey = null
-        maybeRestartAnalysis(currentStage, follower.positionMs)
         applyLayout(m.playerHandle, currentStage)
+        ensureEpisodeIndex(m.playerHandle, masterSample.positionMs)
+        noteMainDrops(m.playerHandle, now)
+        giveUpOnMatchingIfDone()
 
-        val map = SyncMap.manualOffset(offsetMs, reactionDurationMs)
-        val decision = engine.step(now, masterSample, follower, map)
+        val decision = engine.step(now, masterSample, follower, currentMap())
         decision.commands.forEach(currentStage::apply)
         lastDecision = decision
         if (currentStage.placement is StagePlacement.InPlayer) animateMovie(m.playerHandle, currentStage, decision)
@@ -542,6 +594,10 @@ internal object ReactionSession {
             sourceLabel = source?.label,
             reactorCount = detectedLayout?.reactors?.size,
             analyzing = analysisProgress != null,
+            autoSync = autoSync,
+            matchedSegments = matched.size,
+            reactionAnalysed = reactionAnalysed,
+            episodeIndexed = episodeIndexed,
         )
         if (mixer.settings != preferences.audio) {
             preferences = preferences.copy(audio = mixer.settings)
@@ -549,8 +605,28 @@ internal object ReactionSession {
         }
     }
 
+    /** Automatic: the matched map (empty while nothing is matched yet); manual: one offset everywhere. */
+    private fun currentMap(): SyncMap =
+        if (autoSync) ReactionMatcher.toSyncMap(matched, offsetMs) else SyncMap.manualOffset(offsetMs, reactionDurationMs)
+
+    /** Either side still being read, or the latest fingerprints not matched yet. */
+    private fun stillMatching(): Boolean =
+        autoSync && (!reactionAnalysed || !episodeIndexed || matchJob?.isActive == true) && episodeError == null && analysisError == null
+
+    /** Both sides read in full and nothing matched: say so, and hand over to the manual offset. */
+    private fun giveUpOnMatchingIfDone() {
+        if (!autoSync || matched.isNotEmpty() || stillMatching()) return
+        if (!reactionAnalysed || !episodeIndexed) return
+        autoSync = false
+        offsetMs = 0
+        engine.reset()
+        error = "Couldn't find this episode in the reaction. Line it up with the buttons under Sync."
+        log.i { "no match between episode and reaction; manual sync" }
+    }
+
     private fun overlayText(decision: SyncDecision): String? {
         if (decision.visibility != StageVisibility.GAP) return null
+        if (stillMatching() && (matched.isEmpty() || decision.resumesInMs == null)) return "Matching the reaction to this episode…"
         val resumes = decision.resumesInMs ?: return "No more reactions in this episode"
         if (resumes < 1_000) return null
         val seconds = (resumes + 999) / 1000
@@ -558,44 +634,53 @@ internal object ReactionSession {
     }
 
     /**
-     * Use this reaction's cached layout timeline, or analyse the whole video in the background.
-     * The timeline is published as it grows, so the start is rearranged within seconds.
+     * Use this reaction's cached layout timeline and fingerprints, or read the whole video in the
+     * background: a local file directly, a web video from a downloaded low-resolution copy. Reading
+     * runs many times faster than playback, so it starts at the beginning (or where an earlier reading
+     * stopped); the timeline and the fingerprints are published as they grow.
      */
-    private fun beginLayout(currentStage: ReactionStage, useCache: Boolean, fromMs: Long? = null) {
+    private fun beginLayout(currentStage: ReactionStage, useCache: Boolean) {
         val current = source ?: return
         val key = ReactionLayoutCache.key(current)
-        val position = fromMs ?: currentStage.double("time-pos")?.let { (it * 1000).toLong() } ?: 0L
+        val track = reactionTrack
+        val duration = currentStage.double("duration")?.let { (it * 1000).toLong() }
+        val totalIndex = duration?.let { (it / ReactionFingerprinter.FRAME_MS).toInt() }
         if (useCache && layoutTimeline == null) {
             ReactionLayoutCache.load(key)?.let {
                 layoutTimeline = it
                 currentEpoch = -1
                 appliedLayoutKey = null
                 log.i { "layout timeline from cache: ${it.epochs.size} epochs" }
-                // A partial timeline (an earlier viewing stopped early): analyse only what is missing.
-                if (it.covers(position)) return
             }
         }
         if (!useCache) layoutTimeline = null
+        // A short tail the encoder never emits does not count as missing.
+        val missing = totalIndex?.let { track.missingRange(0, it - ReactionFingerprinter.FPS) }
+        if (useCache && layoutTimeline != null && totalIndex != null && missing == null) {
+            reactionAnalysed = true
+            scheduleMatch()
+            log.i { "reaction fingerprints from cache: ${track.count} frames" }
+            return
+        }
         val earlier = layoutTimeline
-        // Start a little before the position, on a 5 s boundary, so the epoch around it is whole.
-        val start = ((position - 5_000).coerceAtLeast(0) / 5_000) * 5_000
-        analysisFromMs = start
+        val start = (missing?.first ?: 0) * ReactionFingerprinter.FRAME_MS
         analysisJob?.cancel()
         analysisError = null
         analysisProgress = 0.0
-        // Web: a separate, low-resolution extraction - the detector works at 480x270 anyway.
-        val (target, extra) = when (current) {
-            is ReactionSource.LocalFile -> current.path to emptyList()
-            is ReactionSource.WebVideo -> current.url to (
-                ReactionTools.locate()?.let(ReactionTools::mpvOptions).orEmpty()
-                    .filterNot { it.startsWith("ytdl-format=") } + "ytdl-format=${ReactionTimelineAnalyzer.WEB_ANALYSIS_FORMAT}"
-                )
-        }
-        val duration = currentStage.double("duration")?.let { (it * 1000).toLong() }
         analysisJob = scope.launch {
             try {
+                val target = when (current) {
+                    is ReactionSource.LocalFile -> current.path
+                    is ReactionSource.WebVideo -> {
+                        val tools = ReactionTools.locate() ?: error("YouTube support is not set up")
+                        downloadProgress = 0.0
+                        ReactionDownloads.analysisCopy(current.url, key, tools) { p ->
+                            scope.launch { if (source == current) downloadProgress = p }
+                        }.absolutePath.also { downloadProgress = null }
+                    }
+                }
                 val timeline = ReactionTimelineAnalyzer.analyze(
-                    target, extra, start, duration,
+                    target, start, duration, track,
                     onProgress = { p -> scope.launch { analysisProgress = p } },
                     onTimeline = { t ->
                         scope.launch {
@@ -606,39 +691,133 @@ internal object ReactionSession {
                             }
                         }
                     },
+                    onFingerprints = { scope.launch { if (reactionTrack === track) scheduleMatch() } },
                 )
                 if (source != current) return@launch
                 layoutTimeline = earlier?.overlaidWith(timeline) ?: timeline
                 currentEpoch = -1
                 layoutTimeline?.let { ReactionLayoutCache.save(key, it) }
                 appliedLayoutKey = null
+                if (reactionTrack === track) {
+                    reactionAnalysed = true
+                    scheduleMatch()
+                }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
-                log.w(failure) { "layout analysis failed" }
-                analysisError = "Couldn't find the reactors: ${failure.message}"
+                log.w(failure) { "reaction analysis failed" }
+                analysisError = "Couldn't analyse the reaction: ${failure.message}"
             } finally {
+                ReactionTrackCache.save(trackKey(current), track)
                 if (source == current) {
                     analysisJob = null
                     analysisProgress = null
+                    downloadProgress = null
                 }
                 pushUi(force = true)
             }
         }
     }
 
+    // --- Stage 4: the episode index and the matcher ----------------------------------------------
+
     /**
-     * The reaction jumped somewhere the analysis has not reached and will not soon (a seek, an offset
-     * change): analyse from there instead. Epochs found so far are kept.
+     * Indexes the episode the main player is showing, or picks up its cached index. Called every
+     * tick; does work only when the player (and so possibly the episode) changed.
      */
-    private fun maybeRestartAnalysis(currentStage: ReactionStage, reactionMs: Long?) {
-        val ms = reactionMs ?: return
-        if (layoutTimeline?.covers(ms) == true) return
-        val running = analysisJob?.isActive == true
-        val reachable = running && ms >= analysisFromMs && ms <= (layoutTimeline?.coveredUntilMs ?: analysisFromMs) + 90_000
-        if (reachable || analysisError != null && !running) return
-        log.i { "reaction at ${ms / 1000}s is outside the analysed range; analysing from there" }
-        beginLayout(currentStage, useCache = true, fromMs = ms)
+    private fun ensureEpisodeIndex(playerHandle: Long, positionMs: Long) {
+        if (episodeCheckedFor == playerHandle) return
+        // Until the player has opened its file there is nothing to read; try again next tick.
+        val found = ReactionEpisodeIndexer.sourceOf(playerHandle) ?: return
+        episodeCheckedFor = playerHandle
+        if (found.key == episodeSource?.key) return
+        episodeJob?.cancel()
+        episodeSource = found
+        episodeTrack = ReactionTrackCache.load(found.key) ?: FingerprintTrack()
+        episodeIndexed = false
+        episodeProgress = null
+        episodeError = null
+        matchJob?.cancel()
+        matchJob = null
+        matcher = null
+        matched = emptyList()
+        engine.reset()
+        val track = episodeTrack
+        val total = found.durationMs?.let { (it / ReactionFingerprinter.FRAME_MS).toInt() }
+        val position = (positionMs / ReactionFingerprinter.FRAME_MS).toInt()
+        log.i { "episode ${found.key}: ${track.count} frames cached" }
+        episodeJob = scope.launch {
+            try {
+                // What is ahead of playback first (from two minutes back), then whatever is before it.
+                val from = (position - 120 * ReactionFingerprinter.FPS).coerceAtLeast(0)
+                val until = (total ?: (from + 3 * 3600 * ReactionFingerprinter.FPS)) - ReactionFingerprinter.FPS
+                while (true) {
+                    val range = track.missingRange(from, until) ?: track.missingRange(0, from) ?: break
+                    episodeProgress = 0.0
+                    ReactionEpisodeIndexer.index(
+                        found, track, range,
+                        holdWhile = { System.currentTimeMillis() < holdIndexUntil },
+                        onProgress = { p -> scope.launch { episodeProgress = p } },
+                        onFingerprints = { scope.launch { if (episodeTrack === track) scheduleMatch() } },
+                    )
+                    // A run that produced nothing at its start (past the real end) must not repeat.
+                    if (!track.has(range.first)) break
+                }
+                if (episodeTrack === track) {
+                    episodeIndexed = true
+                    scheduleMatch()
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                log.w(failure) { "episode index failed" }
+                if (episodeTrack === track) episodeError = "Couldn't read the episode to match it: ${failure.message}"
+            } finally {
+                ReactionTrackCache.save(found.key, track)
+                if (episodeTrack === track) episodeProgress = null
+            }
+        }
+    }
+
+    /** While the main player drops frames, the episode index pauses (5 s after the last drop). */
+    private fun noteMainDrops(playerHandle: Long, now: Long) {
+        if (now - lastDropCheck < 500) return
+        lastDropCheck = now
+        val drops = listOf("frame-drop-count", "decoder-frame-drop-count")
+            .sumOf { ReactionNative.mainGetProperty(playerHandle, it)?.toLongOrNull() ?: 0L }
+        if (lastDrops in 0 until drops) holdIndexUntil = now + 5_000
+        lastDrops = drops
+    }
+
+    /**
+     * Matches the fingerprints both sides have so far. One run at a time, each comparing only frames
+     * that arrived since the last; fingerprints arriving meanwhile queue one more run.
+     */
+    private fun scheduleMatch() {
+        if (matchJob?.isActive == true) {
+            matchAgain = true
+            return
+        }
+        val m = matcher ?: ReactionMatcher(episodeTrack, reactionTrack).also { matcher = it }
+        matchJob = scope.launch {
+            do {
+                matchAgain = false
+                val started = System.currentTimeMillis()
+                val segments = withContext(Dispatchers.Default) { m.update() }
+                if (matcher !== m) return@launch
+                if (segments != matched) {
+                    matched = segments
+                    log.i {
+                        "matched ${segments.size} stretches in ${System.currentTimeMillis() - started} ms: " + segments.joinToString {
+                            "ep ${it.episodeStartMs / 1000}-${it.episodeEndMs / 1000}s @${it.reactionAt(it.episodeStartMs) / 1000}s" +
+                                (if (it.rate != 1.0) " x" + String.format(Locale.ROOT, "%.3f", it.rate) else "") +
+                                (if (it.mirrored) " mirrored" else "")
+                        }
+                    }
+                }
+                if (matchAgain) delay(1_000)
+            } while (matchAgain)
+        }
     }
 
     /** Follows the reaction's position into the right layout epoch; true when the layout changed. */
@@ -821,6 +1000,7 @@ internal object ReactionSession {
             error != null -> "error" to "Problem"
             loading -> "waiting" to "Loading…"
             decision == null -> "neutral" to "Starting"
+            decision.visibility == StageVisibility.GAP && stillMatching() && matched.isEmpty() -> "waiting" to "Matching…"
             decision.waitingForSeek -> "waiting" to "Syncing"
             decision.visibility == StageVisibility.GAP -> "waiting" to (overlayText(decision)?.replace("Reactions resume", "Resumes") ?: "Paused")
             else -> "good" to "In sync"
@@ -890,6 +1070,17 @@ internal object ReactionSession {
         )
         put("movieSize", preferences.movieFraction)
         put("offsetMs", offsetMs)
+        putJsonObject("sync") {
+            put("auto", autoSync)
+            put("matching", stillMatching())
+            put("segments", matched.size)
+            downloadProgress?.let { put("download", it) }
+            if (!reactionAnalysed) analysisProgress?.let { put("reaction", it) }
+            if (!episodeIndexed) episodeProgress?.let { put("episode", it) }
+            (episodeError ?: analysisError)?.let { put("error", it) }
+            val matchedMs = matched.sumOf { it.episodeEndMs - it.episodeStartMs }
+            episodeSource?.durationMs?.takeIf { it > 0 }?.let { put("coverage", matchedMs.toDouble() / it) }
+        }
         putJsonObject("volumes") {
             put("reaction", mixer.settings.reactionVolume)
             put("movie", mixer.settings.movieVolumeWithReactions)
@@ -928,4 +1119,8 @@ internal data class ReactionDebugState(
     val sourceLabel: String? = null,
     val reactorCount: Int? = null,
     val analyzing: Boolean = false,
+    val autoSync: Boolean = true,
+    val matchedSegments: Int = 0,
+    val reactionAnalysed: Boolean = false,
+    val episodeIndexed: Boolean = false,
 )

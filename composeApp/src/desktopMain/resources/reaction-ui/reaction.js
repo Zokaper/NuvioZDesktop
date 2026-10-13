@@ -109,6 +109,13 @@
 
       <section class="wt-section" id="reactionSyncSection">
         <div class="wt-section-title">Sync</div>
+        <div class="wt-setting wt-setting-stack">
+          <div class="wt-segments" role="radiogroup" aria-label="Sync">
+            <button type="button" role="radio" data-r="reactionAutoSync" data-v="1">Automatic</button>
+            <button type="button" role="radio" data-r="reactionAutoSync" data-v="0">By hand</button>
+          </div>
+        </div>
+        <p class="wt-message reaction-sync-status" id="reactionSyncStatus" hidden></p>
         <div class="reaction-offset">
           <span id="reactionOffsetText"></span>
         </div>
@@ -120,7 +127,7 @@
           <button type="button" data-r="reactionNudge" data-v="1000">+1s</button>
           <button type="button" data-r="reactionNudge" data-v="5000">+5s</button>
         </div>
-        <p class="wt-hint">If the reactions are ahead of the episode, nudge them back; if they lag, nudge forward.</p>
+        <p class="wt-hint" id="reactionSyncHint"></p>
       </section>
 
       <section class="wt-section" id="reactionAudioSection">
@@ -319,9 +326,38 @@
     $("reactionMovieSizeRow").hidden = s.mode !== "single";
     setSlider("reactionMovieSize", Math.round((s.movieSize || 0.62) * 100), "%");
 
+    const sync = s.sync || {};
+    const auto = sync.auto !== false;
+    panel.querySelectorAll('[data-r="reactionAutoSync"]').forEach(b => {
+      const selected = (auto ? "1" : "0") === b.dataset.v;
+      b.setAttribute("aria-checked", selected ? "true" : "false");
+      b.classList.toggle("selected", selected);
+    });
+    const pct = v => Math.round((v || 0) * 100) + "%";
+    const stretches = n => n + (n === 1 ? " stretch" : " stretches");
+    let syncText = "";
+    if (sync.error) {
+      syncText = sync.error;
+    } else if (auto && typeof sync.download === "number") {
+      syncText = "Downloading the reaction to match it… " + pct(sync.download);
+    } else if (auto && sync.matching) {
+      const reading = [];
+      if (typeof sync.reaction === "number") reading.push("reaction " + pct(sync.reaction));
+      if (typeof sync.episode === "number") reading.push("episode " + pct(sync.episode));
+      syncText = (sync.segments > 0 ? "Matched " + stretches(sync.segments) + " so far" : "Matching the reaction to this episode") +
+        (reading.length ? " · reading " + reading.join(", ") : "…");
+    } else if (auto && sync.segments > 0) {
+      syncText = "Matched " + stretches(sync.segments) +
+        (typeof sync.coverage === "number" ? ", " + pct(sync.coverage) + " of the episode" : "");
+    }
+    $("reactionSyncStatus").hidden = !syncText;
+    $("reactionSyncStatus").textContent = syncText;
     $("reactionOffsetText").textContent = typeof s.offsetMs === "number"
-      ? "Reaction offset " + formatOffset(s.offsetMs)
+      ? (auto ? "Fine-tune " : "Reaction offset ") + formatOffset(s.offsetMs)
       : "";
+    $("reactionSyncHint").textContent = auto
+      ? "The reaction follows the episode wherever the two match. Nudge only if it looks early or late."
+      : "If the reactions are ahead of the episode, nudge them back; if they lag, nudge forward.";
 
     const v = s.volumes || {};
     setSlider("reactionVolume", v.reaction == null ? 100 : v.reaction);

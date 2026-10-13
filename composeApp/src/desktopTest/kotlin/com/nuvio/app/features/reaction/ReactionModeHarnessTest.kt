@@ -115,8 +115,10 @@ class ReactionModeHarnessTest {
             ReactionSession.monitorOverride = Rectangle(1330, 40, 560, 315)
             event("reactionMode", 0.0)
             ReactionSession.startSource(reactionUrl?.let { ReactionSource.WebVideo(it) } ?: ReactionSource.LocalFile(reaction))
+            // These phases exercise the manual offset; automatic matching has its own harness below.
+            event("reactionAutoSync", 0.0)
             waitFor("stage playing", 60_000) {
-                ReactionSession.debugState.takeIf { it.stageOpen && !it.loading && it.followerMs != null }
+                ReactionSession.debugState.takeIf { it.stageOpen && !it.loading && it.followerMs != null && !it.autoSync }
             }
 
             // 1. Offset +5 s while playing: speed nudges hold it.
