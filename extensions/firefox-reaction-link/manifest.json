@@ -1,0 +1,20 @@
+{
+  "manifest_version": 2,
+  "name": "Nuvio Z Reaction Link",
+  "version": "0.1.0",
+  "description": "Lets Nuvio Z Desktop use a YouTube tab as the reaction video for Reaction Mode. Talks only to Nuvio Z on this computer.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "reaction-link@nuvio-z.app",
+      "strict_min_version": "128.0"
+    }
+  },
+  "permissions": ["tabs", "*://*.youtube.com/*"],
+  "background": { "scripts": ["background.js"], "persistent": true },
+  "content_scripts": [{
+    "matches": ["*://*.youtube.com/*"],
+    "js": ["content.js"],
+    "run_at": "document_idle"
+  }],
+  "icons": { "48": "icon.svg", "96": "icon.svg" }
+}

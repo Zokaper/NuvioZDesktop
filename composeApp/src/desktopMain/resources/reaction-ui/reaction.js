@@ -67,6 +67,11 @@
           <span id="reactionSourceSub"></span>
         </div>
         <p class="wt-message" id="reactionIntro">Pick a reaction video. Nuvio Z plays it beside the episode, keeps it in sync, and uses its audio.</p>
+        <div class="reaction-tabs" id="reactionTabsBlock" hidden>
+          <div class="wt-section-title">Open in Firefox</div>
+          <div class="reaction-tab-list" id="reactionTabList"></div>
+        </div>
+        <p class="wt-hint" id="reactionBrowserHint" hidden>Add Nuvio Z Reaction Link to Firefox to pick a YouTube tab here.</p>
         <div class="wt-row reaction-row" id="reactionSourceButtons">
           <button type="button" class="primary" data-r="reactionPasteLink" id="reactionPasteButton">Paste YouTube link</button>
           <button type="button" data-r="reactionPickFile" id="reactionFileButton">Choose file…</button>
@@ -218,6 +223,34 @@
     $("reactionPasteButton").classList.toggle("primary", !source);
     $("reactionPasteButton").textContent = source ? "Paste another link" : "Paste YouTube link";
     $("reactionFileButton").textContent = source ? "Another file…" : "Choose file…";
+
+    const browser = s.browser || {};
+    const tabs = Array.isArray(browser.tabs) ? browser.tabs : [];
+    $("reactionTabsBlock").hidden = !browser.connected || tabs.length === 0;
+    $("reactionBrowserHint").hidden = Boolean(browser.connected) || Boolean(source);
+    const tabList = $("reactionTabList");
+    const tabSignature = JSON.stringify(tabs);
+    if (tabList.dataset.signature !== tabSignature) {
+      tabList.dataset.signature = tabSignature;
+      tabList.innerHTML = "";
+      tabs.forEach(tab => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "reaction-tab" + (tab.linked ? " linked" : "");
+        b.dataset.r = "reactionPickTab";
+        b.dataset.v = String(tab.id);
+        b.title = tab.title;
+        const label = document.createElement("span");
+        label.textContent = tab.title;
+        b.appendChild(label);
+        if (tab.linked) {
+          const badge = document.createElement("em");
+          badge.textContent = "Playing";
+          b.appendChild(badge);
+        }
+        tabList.appendChild(b);
+      });
+    }
 
     gapPill.hidden = !s.gapText;
     gapPill.textContent = s.gapText || "";

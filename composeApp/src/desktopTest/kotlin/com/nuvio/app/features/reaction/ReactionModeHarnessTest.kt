@@ -73,6 +73,25 @@ class ReactionModeHarnessTest {
             ReactionSession.extraStageOptionsForTest = listOf("ao=null")
             fun event(type: String, value: Double = 0.0) = assertTrue(ReactionSession.onControlsEvent(handle, type, value))
 
+            // Optional: a real Firefox with the Reaction Link extension is running (web-ext, throwaway
+            // profile, autoplay blocked) with a YouTube reaction open. Pick that tab, as the panel would.
+            if (System.getenv("NUVIO_REACTION_HARNESS_FIREFOX") == "1") {
+                val tab = waitFor("Firefox tab reported by the extension", 60_000) {
+                    ReactionSession.debugState.browserTabs.firstOrNull { it.videoId != null }
+                }
+                ReactionSession.monitorOverride = Rectangle(1330, 40, 560, 315)
+                event("reactionMode", 0.0)
+                event("reactionPickTab", tab.tabId.toDouble())
+                val linked = waitFor("the picked tab playing on the stage", 60_000) {
+                    ReactionSession.debugState.takeIf { it.stageOpen && !it.loading && it.followerMs != null && it.linkedTabId == tab.tabId }
+                }
+                File(out, "firefox.txt").writeText("tab=${tab}\nstate=$linked\n")
+                record("firefox-playing", 3_000)
+                screenshot("firefox-linked")
+                event("reactionStop")
+                return
+            }
+
             // "Second monitor": a window beside the harness frame on this one-screen machine.
             ReactionSession.monitorOverride = Rectangle(1330, 40, 560, 315)
             event("reactionMode", 0.0)

@@ -74,6 +74,37 @@ internal object ReactionSession {
     /** Web loads fail transiently (YouTube refusing one stream URL); retried before giving up. */
     private var loadRetries = 0
 
+    // The Firefox link (Stage 2). The tab the reaction came from stays linked: when it moves to
+    // another video - the next episode's reaction - Nuvio Z follows it.
+    private var browserConnected = false
+    private var browserTabs: List<BrowserTab> = emptyList()
+    private var linkedTabId: Int? = null
+    private val link: ReactionLinkServer by lazy {
+        ReactionLinkServer(
+            object : ReactionLinkListener {
+                override fun onTabsChanged(tabs: List<BrowserTab>) {
+                    scope.launch {
+                        browserTabs = tabs
+                        debugState = debugState.copy(browserTabs = tabs)
+                        pushUi()
+                    }
+                }
+
+                override fun onTabVideoChanged(tab: BrowserTab) {
+                    scope.launch { followLinkedTab(tab) }
+                }
+
+                override fun onConnectionChanged(connected: Boolean) {
+                    scope.launch {
+                        browserConnected = connected
+                        debugState = debugState.copy(browserConnected = connected)
+                        pushUi(force = true)
+                    }
+                }
+            },
+        )
+    }
+
     // Single-screen: the arrangement for the current surface, and where the episode is drawn right
     // now (it animates between that arrangement and the full surface around long gaps).
     private var singleLayout: SingleScreenLayout? = null
@@ -116,6 +147,7 @@ internal object ReactionSession {
         attachedHandle.set(playerHandle)
         scope.launch {
             master = Master(playerHandle, hostViewPtr)
+            link.start()
             uiReadyFor = 0L
             appliedLayoutKey = null
             mixer.reset()
@@ -179,6 +211,7 @@ internal object ReactionSession {
             "reactionPickFile" -> pickFile()?.let { start(ReactionSource.LocalFile(it)) }
             "reactionPasteLink" -> pasteLink()
             "reactionInstallTools" -> installTools()
+            "reactionPickTab" -> browserTabs.firstOrNull { it.tabId == value.toInt() }?.let { pickTab(it) }
             "reactionMode" -> setMode(if (value >= 0.5) StageMode.SINGLE else StageMode.DUAL)
             "reactionMonitor" -> {
                 val monitors = ReactionMonitors.list()
@@ -251,6 +284,39 @@ internal object ReactionSession {
         start(ReactionSource.WebVideo(text))
     }
 
+    private suspend fun pickTab(tab: BrowserTab) {
+        if (ReactionTools.locate() == null) {
+            error = "YouTube needs a one-time setup first."
+            return
+        }
+        start(ReactionSource.WebVideo(tab.url, tab.title.removeSuffix(" - YouTube").ifBlank { null }))
+        linkedTabId = tab.tabId
+        quietLinkedTab()
+    }
+
+    /** The linked tab now shows another video: that is the reaction to play (same-tab handoff). */
+    private suspend fun followLinkedTab(tab: BrowserTab) {
+        if (tab.tabId != linkedTabId) return
+        val current = (source as? ReactionSource.WebVideo)?.url?.let(ReactionLinkServer::youTubeVideoId)
+        if (tab.videoId == null || tab.videoId == current) return
+        log.i { "linked tab moved to another video; following it" }
+        start(ReactionSource.WebVideo(tab.url, tab.title.removeSuffix(" - YouTube").ifBlank { null }))
+        linkedTabId = tab.tabId
+        quietLinkedTab()
+        pushUi(force = true)
+    }
+
+    /** Pause and mute the tab; again shortly after, since a page that is still loading may autoplay. */
+    private fun quietLinkedTab() {
+        val id = linkedTabId ?: return
+        scope.launch {
+            for (delayMs in listOf(0L, 1_500L, 4_000L)) {
+                delay(delayMs)
+                if (linkedTabId == id) link.quietTab(id)
+            }
+        }
+    }
+
     private fun installTools() {
         if (toolsBusy) return
         toolsBusy = true
@@ -276,6 +342,7 @@ internal object ReactionSession {
         }
         closeStage(keepSource = false)
         source = newSource
+        linkedTabId = null
         resolvedStream = null
         loadRetries = 0
         offsetMs = 0
@@ -300,6 +367,7 @@ internal object ReactionSession {
         closeStage(keepSource = false)
         debugState = debugState.copy(stageOpen = false)
         source = null
+        linkedTabId = null
         panelOpen = false
         val m = master
         if (m != null) {
@@ -441,6 +509,10 @@ internal object ReactionSession {
             resumesInMs = decision.resumesInMs,
             mainVolume = audio.movieVolume,
             error = error,
+            browserConnected = browserConnected,
+            browserTabs = browserTabs,
+            linkedTabId = linkedTabId,
+            sourceLabel = source?.label,
         )
         if (mixer.settings != preferences.audio) {
             preferences = preferences.copy(audio = mixer.settings)
@@ -633,6 +705,23 @@ internal object ReactionSession {
                 put("detail", if (s is ReactionSource.WebVideo) "Streaming from the web" else "Local file")
             }
         }
+        putJsonObject("browser") {
+            put("connected", browserConnected)
+            put(
+                "tabs",
+                buildJsonArray {
+                    browserTabs.forEach { tab ->
+                        add(
+                            buildJsonObject {
+                                put("id", tab.tabId)
+                                put("title", tab.title.removeSuffix(" - YouTube").ifBlank { tab.url })
+                                put("linked", tab.tabId == linkedTabId)
+                            },
+                        )
+                    }
+                },
+            )
+        }
         putJsonObject("tools") {
             put("ready", ReactionTools.locate() != null)
             put("busy", toolsBusy)
@@ -690,4 +779,8 @@ internal data class ReactionDebugState(
     val resumesInMs: Long? = null,
     val mainVolume: Double? = null,
     val error: String? = null,
+    val browserConnected: Boolean = false,
+    val browserTabs: List<BrowserTab> = emptyList(),
+    val linkedTabId: Int? = null,
+    val sourceLabel: String? = null,
 )
