@@ -46,3 +46,15 @@
 .party-panel .reaction-nudges button { min-height: 32px; padding: 0 4px; font-variant-numeric: tabular-nums; }
 
 #reactionFooter { justify-content: flex-end; }
+
+.reaction-row.reaction-change { margin-top: 8px; }
+.party-panel .reaction-row.reaction-change button { min-height: 30px; font-size: 12.5px; }
+
+.reaction-gap-pill {
+  position: absolute; top: calc(84px + env(safe-area-inset-top)); left: 50%; z-index: 7;
+  transform: translateX(-50%); padding: 7px 14px; border-radius: 999px; pointer-events: none;
+  background: rgba(15, 16, 21, .78); border: 1px solid var(--theme-border-default);
+  backdrop-filter: blur(14px); color: var(--theme-text-secondary); font-size: 13px; font-weight: 600;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.reaction-gap-pill[hidden] { display: none; }

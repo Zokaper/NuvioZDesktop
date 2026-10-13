@@ -131,6 +131,19 @@ class ReactionModeHarnessTest {
             val single = record("single-measure", 2_000)
             assertTrue(single.mapNotNull { it.errorMs }.all { abs(it) < 150 }, "single-screen drift: ${single.map { it.errorMs }}")
 
+            // 5b. A long gap in single-screen mode: the episode grows back to full size, then shrinks
+            // again once reactions are near. Offset -95 s puts the next reaction ~45 s away.
+            event("reactionNudge", -60_000.0)
+            record("long-gap", 2_000)
+            val grown = ReactionNative.mainGetProperty(handle, "video-margin-ratio-left")?.toDoubleOrNull() ?: -1.0
+            assertEquals(StageVisibility.GAP, ReactionSession.debugState.visibility)
+            assertTrue(grown < 0.005, "episode did not grow back during a long gap: margin $grown")
+            screenshot("single-long-gap")
+            event("reactionNudge", 60_000.0)
+            record("long-gap-over", 2_000)
+            val shrunk = ReactionNative.mainGetProperty(handle, "video-margin-ratio-left")?.toDoubleOrNull() ?: 0.0
+            assertTrue(shrunk > 0.05, "episode did not shrink back when reactions resumed: margin $shrunk")
+
             // 6. Off: margins and volume restored.
             event("reactionStop")
             record("stopped", 1_000)

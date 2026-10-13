@@ -70,6 +70,13 @@ internal object ReactionSession {
     private var lastUiJson: String? = null
     private var loading = false
 
+    // Single-screen: the arrangement for the current surface, and where the episode is drawn right
+    // now (it animates between that arrangement and the full surface around long gaps).
+    private var singleLayout: SingleScreenLayout? = null
+    private var singleSurface: LayoutRect? = null
+    private var movieNow: LayoutRect? = null
+    private var movieExpanded = false
+
     /** What the session is doing, published every tick for logs and the integration harness. */
     @Volatile
     var debugState: ReactionDebugState = ReactionDebugState()
@@ -352,6 +359,10 @@ internal object ReactionSession {
         stage?.close()
         stage = null
         appliedLayoutKey = null
+        singleLayout = null
+        singleSurface = null
+        movieNow = null
+        movieExpanded = false
         if (!keepSource) source = null
         master?.let { if (preferences.mode == StageMode.SINGLE) resetMainMargins(it.playerHandle) }
     }
@@ -393,6 +404,7 @@ internal object ReactionSession {
         val decision = engine.step(now, masterSample, follower, map)
         decision.commands.forEach(currentStage::apply)
         lastDecision = decision
+        if (currentStage.placement is StagePlacement.InPlayer) animateMovie(m.playerHandle, currentStage, decision)
 
         val showing = decision.visibility == StageVisibility.SHOWING
         val targetDim = if (showing) 0.0 else 1.0
@@ -502,18 +514,54 @@ internal object ReactionSession {
                 if (key == appliedLayoutKey) return
                 appliedLayoutKey = key
                 val layout = ReactionSingleScreenLayout.arrange(w, h, movieAspect, aspects, preferences.movieFraction, TILE_GAP)
-                // The reaction's window only exists once its first frame is up; until then, retry.
-                if (!currentStage.layoutInPlayer(layout.movie)) {
-                    appliedLayoutKey = null
-                    return
-                }
                 currentStage.setTiles(tileSources.zip(layout.tiles) { s, t -> ShaderTile(s, t.normalizedIn(w, h)) })
-                setMainMargins(playerHandle, MovieMargins.of(layout.movie, w, h))
+                singleLayout = layout
+                singleSurface = LayoutRect(0.0, 0.0, w, h)
+                // A new surface size (window resized, fullscreen) moves the episode without animating.
+                if (movieNow != null && movieNow?.let { it.right > w + 1 || it.bottom > h + 1 } == true) movieNow = null
             }
         }
     }
 
+    /**
+     * Single-screen: the episode sits in its arrangement while reactions play, and grows back to the
+     * full surface during a long gap (over 30 s, or nothing left), shrinking again 3 s before
+     * reactions resume. Eased over ~0.4 s; the episode's window region and margins move together.
+     */
+    private fun animateMovie(playerHandle: Long, currentStage: ReactionStage, decision: SyncDecision) {
+        val layout = singleLayout ?: return
+        val full = singleSurface ?: return
+        val resumesIn = decision.resumesInMs
+        movieExpanded = when {
+            decision.visibility == StageVisibility.SHOWING -> false
+            resumesIn != null && resumesIn <= GAP_SHRINK_BEFORE_MS -> false
+            resumesIn == null || resumesIn > GAP_GROW_AFTER_MS -> true
+            else -> movieExpanded
+        }
+        val target = if (movieExpanded) full else layout.movie
+        val from = movieNow ?: full
+        val next = from.approach(target)
+        if (next == movieNow) return
+        // The reaction's own window exists only once its first frame is up; until then, retry.
+        if (!currentStage.layoutInPlayer(next)) return
+        movieNow = next
+        setMainMargins(playerHandle, MovieMargins.of(next, full.w, full.h))
+    }
+
+    /** One easing step towards [target]: a quarter of the way, at least 2 px, snapping when close. */
+    private fun LayoutRect.approach(target: LayoutRect): LayoutRect {
+        fun step(a: Double, b: Double): Double {
+            val d = b - a
+            if (abs(d) <= 2.0) return b
+            return a + d * 0.25 + (if (d > 0) 1.0 else -1.0)
+        }
+        return LayoutRect(step(x, target.x), step(y, target.y), step(w, target.w), step(h, target.h))
+    }
+
     private fun setMainMargins(playerHandle: Long, margins: MovieMargins) {
+        // mpv draws subtitles in the margins by default (measured: below the picture), which the
+        // single-screen clip would cut off. Keep them inside the episode while it is shrunk.
+        ReactionNative.mainSetProperty(playerHandle, "sub-use-margins", if (margins == MovieMargins.NONE) "yes" else "no")
         val f = { v: Double -> String.format(Locale.ROOT, "%.5f", v) }
         ReactionNative.mainSetProperty(playerHandle, "video-margin-ratio-left", f(margins.left))
         ReactionNative.mainSetProperty(playerHandle, "video-margin-ratio-right", f(margins.right))
@@ -557,6 +605,9 @@ internal object ReactionSession {
             put("text", status.second)
         }
         error?.let { put("error", it) }
+        if (source != null && decision?.visibility == StageVisibility.GAP) {
+            overlayText(decision)?.let { put("gapText", it) }
+        }
         source?.let { s ->
             putJsonObject("source") {
                 put("label", s.label)
@@ -596,6 +647,8 @@ internal object ReactionSession {
     }
 
     private const val TICK_MS = 40L
+    private const val GAP_GROW_AFTER_MS = 30_000L
+    private const val GAP_SHRINK_BEFORE_MS = 3_000L
     private const val DIM_STEP = 0.12
     private const val TILE_GAP = 8.0
     private val VIDEO_EXTENSIONS = setOf("mp4", "mkv", "webm", "mov", "avi", "m4v", "ts", "flv", "wmv")

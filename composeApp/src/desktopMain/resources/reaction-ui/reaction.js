@@ -67,9 +67,9 @@
           <span id="reactionSourceSub"></span>
         </div>
         <p class="wt-message" id="reactionIntro">Pick a reaction video. Nuvio Z plays it beside the episode, keeps it in sync, and uses its audio.</p>
-        <div class="wt-row reaction-row">
-          <button type="button" class="primary" data-r="reactionPasteLink">Paste YouTube link</button>
-          <button type="button" data-r="reactionPickFile">Choose file…</button>
+        <div class="wt-row reaction-row" id="reactionSourceButtons">
+          <button type="button" class="primary" data-r="reactionPasteLink" id="reactionPasteButton">Paste YouTube link</button>
+          <button type="button" data-r="reactionPickFile" id="reactionFileButton">Choose file…</button>
         </div>
         <div class="reaction-tools" id="reactionTools" hidden>
           <p class="wt-hint" id="reactionToolsText"></p>
@@ -131,7 +131,18 @@
       <button type="button" data-r="reactionStop">Turn off reactions</button>
     </div>`;
   const partyPanel = document.getElementById("partyPanel");
-  (partyPanel && partyPanel.parentNode ? partyPanel.parentNode : document.body).appendChild(panel);
+  const host = partyPanel && partyPanel.parentNode ? partyPanel.parentNode : document.body;
+  host.appendChild(panel);
+
+  // On the main screen in either layout: when the reactions skip part of the episode, say when they
+  // come back, without opening the panel. Purely informative, so it never takes the pointer.
+  const gapPill = document.createElement("div");
+  gapPill.className = "reaction-gap-pill";
+  gapPill.id = "reactionGapPill";
+  gapPill.setAttribute("role", "status");
+  gapPill.setAttribute("aria-live", "polite");
+  gapPill.hidden = true;
+  host.appendChild(gapPill);
 
   const $ = id => document.getElementById(id);
   const sliderTimers = {};
@@ -202,9 +213,17 @@
       $("reactionSourceTitle").textContent = source.label || "";
       $("reactionSourceSub").textContent = source.detail || "";
     }
+    // Once a reaction is playing, picking another one is secondary: quiet buttons, shorter labels.
+    $("reactionSourceButtons").classList.toggle("reaction-change", Boolean(source));
+    $("reactionPasteButton").classList.toggle("primary", !source);
+    $("reactionPasteButton").textContent = source ? "Paste another link" : "Paste YouTube link";
+    $("reactionFileButton").textContent = source ? "Another file…" : "Choose file…";
+
+    gapPill.hidden = !s.gapText;
+    gapPill.textContent = s.gapText || "";
 
     const tools = s.tools || {};
-    $("reactionTools").hidden = tools.ready !== false && !tools.message;
+    $("reactionTools").hidden = (tools.ready !== false || Boolean(source)) && !tools.message;
     $("reactionToolsText").textContent = tools.message || "YouTube links need yt-dlp and Deno (about 120 MB, downloaded once).";
     $("reactionToolsButton").hidden = Boolean(tools.ready) || Boolean(tools.busy);
 
