@@ -1,46 +1,90 @@
-## EXPERIMENTAL branch `claude/reaction-mode`: Reaction Mode, Stage 1 (2026-10-13)
+## EXPERIMENTAL branch `claude/reaction-mode`: Reaction Mode, Stages 1-4 (2026-10-13)
 
-**Not for release.** Plan, decisions and Stage 0 spike results: `Nuvio Z/PLAN-reaction-mode.md` (workspace root).
-Debug builds only (`isDebugBuild`), or `NUVIO_REACTION_MODE=1`; Windows only. Branched from `origin/Dev` 98d0f06c3.
+**Not for release, not pushed.** Plan, decisions and Stage 0 spike results: `Nuvio Z/PLAN-reaction-mode.md` (workspace root).
+Debug builds only (`isDebugBuild`), or `NUVIO_REACTION_MODE=1`; Windows only. Branched from `origin/Dev` 98d0f06c3, worked in
+the worktree `Nuvio Z/.claude-worktrees/reaction-mode`.
 
 What it is: a Reactions button beside Watch Together opens a panel (injected into the controls page at runtime from
-`resources/reaction-ui`, so `controls.*` are untouched). Pick a local file or paste a YouTube link (yt-dlp + Deno,
-downloaded on request to `%APPDATA%\Nuvio Z[ Debug]\reaction\tools`). A second libmpv plays it, cropped/arranged by
-a generated libplacebo shader, synced to the episode (the master, never written to except volume and, single-screen,
-margins). Two layouts: a popup on another monitor, or single-screen with the episode shrunk into the middle. Sync is a
-manual offset (± buttons) until Stage 4's automatic matching. Box detection (Stage 3) is not built: the whole reaction
-frame is one tile.
+`resources/reaction-ui`, so `controls.*` are untouched). The reaction comes from a local file, a pasted YouTube link
+(yt-dlp + Deno, downloaded on request to `%APPDATA%\Nuvio Z[ Debug]\reaction\tools`), or a Firefox tab through the
+Reaction Link extension. A second libmpv plays it, cropped to the detected reactors and arranged by a generated
+libplacebo shader, and follows the episode (the master: never written to except volume and, single-screen, margins).
+Two layouts: a popup on another monitor, or single-screen with the episode shrunk into the middle.
 
-**Validated here** (AMD 890M, one 1920x1200 screen at 150 %, `ReactionModeHarnessTest` driving the real
-NativePlayerController + bridge + WebView2 page; local media and the real LoneReact YouTube video):
-steady-state sync median 33 ms / worst 66 ms (one frame - the sampling resolution); paused alignment <= 33 ms; master
-pause, seek and offset changes converge (an overshoot is held on its frame until the episode catches up); gaps pause
-and park the reaction, dim it, show "Reactions resume in m:ss", and fade the episode audio up then back down;
-single-screen long gaps grow the episode back to full size and shrink it 3 s before reactions resume; layout switch
-reopens a YouTube stage in ~1 s (resolved streams reused); transient YouTube refusals are retried.
+- **Stage 1 - stage, sync engine, gaps, audio.** Gaps pause and dim the reactions with "Reactions resume in m:ss";
+  the episode's audio fades up and back down; single-screen long gaps grow the episode back to full size.
+- **Stage 2 - Firefox Reaction Link** (`extensions/firefox-reaction-link`, MV2). `ReactionLinkServer`: loopback
+  127.0.0.1:47123-47126, `moz-extension://` origins only, one client. The panel lists YouTube tabs; the picked tab is
+  paused, muted and linked, and when it moves to another video (the next episode's reaction) Nuvio Z follows it.
+  Unsigned: Firefox release only loads it temporarily (`about:debugging`) until the maintainer's AMO keys sign it
+  (steps in the extension's README).
+- **Stage 3 - reactor boxes from motion** (`ReactionLayoutDetector`; prototyped in numpy, ported). On 3-minute samples:
+  movie found in all three reference compilations; TEM 46 of ~64 boxes, VoltReact 19 of ~24, LoneReact 8 of 9.
+  `ReactionLayoutTimeline`: a layout per 45 s window, each 5 s chunk assigned the candidate whose edges show, so
+  mid-video rearrangements are followed. Weaker than a 3-minute sample: some stacked boxes merged, some split by person.
+- **Stage 4 - automatic sync (new).** Both sides are fingerprinted at 8 fps on a shared 125 ms grid and matched; the
+  engine follows the matched map. The +/- buttons stay as a fine-tune; "By hand" brings back the manual offset; a
+  reaction that never matches falls back to it with a message. Pieces: `ReactionFingerprinter` (63-bit DCT hash of the
+  picture squeezed to 32x32 plus a mirror hash), `SlidingLetterbox` (bars judged from +-5 s of frames),
+  `ReactionMatcher` (incremental candidates, per-window offset votes, robust chains, Theil-Sen rate, collinear
+  stretches joined across holes), `ReactionFrames` (windowless decode in 4 s raw parts), `ReactionDownloads` (480p
+  analysis copy via yt-dlp), `ReactionEpisodeIndexer` (a second reader of the episode's own URL and headers at
+  128x72, ahead of playback first, held while the main player drops frames), `ReactionTrackCache` (both sides on disk).
 
-**Not validated / experimental:** dual-monitor placement on real second displays (the harness uses a window; the
-monitor rect assumes the JDK reports device-pixel origins and scaled sizes); 4K HDR alongside a reaction; NVIDIA;
-the real app's Compose window (only the harness frame); next-episode carry-over (single-screen closes the stage with
-the player; dual keeps it); profile switches; the Firefox extension (Stage 2, not built); box detection and automatic
-sync (Stages 3-4).
+**Validated here** (AMD 890M, one 1920x1200 screen at 150 %):
+- Sync engine in the real player (`ReactionModeHarnessTest`): steady-state median 33 ms / worst 66 ms with a manual
+  offset; pause, seek, offset change, gaps, single-screen shrink/grow all converge.
+- Automatic sync on a synthetic compilation with known edits: Tears of Steel (CC BY) composited into the movie box of
+  the real LoneReact video - a 40 s intro of other footage, two copyright cuts, a 12 s freeze, a mirrored stretch sped
+  up 4 %, an 8 % zoom with a colour change, a watermark. Production pipeline (`ReactionSyncFixtureTest`): 97.5 % of the
+  edit list within 100 ms (p50 10 ms, p95 19 ms; plan target 95 %), rate 0.96158 for 0.96154; reading took 26 s
+  (11.7 min reaction) and 18 s (12 min film), matching 72 ms. Real player (`ReactionAutoSyncHarnessTest`, cold
+  caches, episode started at 1:00): joined 8.9 s after choosing the reaction; worst error against the edit list
+  33-50 ms in all four stretches; the cut pauses reactions and resumes them on the far side.
+- YouTube: the 480p analysis copy of LoneReact (20 min) downloads as 65 MB in seconds; 7 reactors found within a 48 s
+  harness run. The Firefox extension end to end in a throwaway web-ext profile.
 
-**Things that were measured, not assumed** (keep them): under the transparent WebView2 controls only a D3D surface
-that is a *direct child of the container* composites - a stage window of our own (any thread, any z-order, with or
-without `WS_CLIPSIBLINGS`) was never on screen, so in single-screen mode the reaction mpv takes the container as its
-`wid` and the main mpv window is clipped with a window region. mpv puts subtitles in the margins by default
-(`sub-use-margins=no` while shrunk). An embedded mpv's `osd-dimensions` is right; the harness frame was 1x1 until
-revalidated. PrintWindow cannot see the in-player stage: use `scripts/reaction/wgc-capture.py` (WGC) for ground truth.
+**Not validated / experimental:** any real compilation matched against its real episode (none on this laptop - the
+episodes come from debrid; that is the first thing to try on the desktop PC); indexing a 4K HDR remux over debrid
+(plan risk R4: a second connection, hwdec=auto-copy); dual-monitor placement on real displays; NVIDIA; 4K HDR beside a
+reaction; the real app's Compose window (harness frames only); next-episode carry-over; profile switches.
+
+**Known weaknesses, next:**
+- A reactor who pauses the movie to talk is skipped: the episode is the master, so the reaction seeks past the pause.
+  That follows Decision 5's model but may not be what the maintainer wants - ask.
+- Matches sit on the 125 ms grid: up to ~62 ms of quantisation when a reaction's offset falls between grid points
+  (seen: <= 50 ms). Sub-frame refinement was prototyped and did not help on 30 fps reactions; dropped.
+- Matcher memory: up to 48 candidate objects per reaction frame; fine at 20 min, unmeasured on 90-minute TEM-length
+  compilations (pack them into an IntArray if it shows).
+- Box quality from 45 s windows (above), and the editor to merge, split or hide tiles (not built). Now that the whole
+  reaction is read from a local copy, longer windows are affordable.
+- Next-episode polish; AMO signing; desktop PC QA (debug build not yet published).
+
+**Things that were measured, not assumed** (keep them):
+- mpv drops frames earlier than `start` *after* the filter chain, so `setpts=PTS-STARTPTS` in an encode-mode chain made
+  every mid-video analysis begin at twice the requested position (start=137 s delivered 274 s). Without it, a run
+  from any grid point is pixel-identical to a run from zero. Layouts cached before this were bumped out (version 3).
+- mpv streams YouTube at about real time (1.3-2x); yt-dlp's own downloader fetched the 20-minute LoneReact 720p in 9 s.
+- ffmpeg's segment muxer works inside libmpv encode mode (`of=segment`, `ofopts=segment_format=rawvideo,segment_time=4`):
+  raw frames are all keyframes, so parts are exact and can be deleted as they are read.
+- Under the transparent WebView2 controls only a D3D surface that is a *direct child of the container* composites, so
+  in single-screen mode the reaction mpv takes the container as its `wid` and the main mpv window is clipped with a
+  window region. mpv puts subtitles in the margins by default (`sub-use-margins=no` while shrunk). PrintWindow cannot
+  see the in-player stage: use `scripts/reaction/wgc-capture.py` (WGC) for ground truth.
 
 **Patch surface** (upstream-owned): `player_bridge.cpp` (public seam block + `#include "reaction_stage.inc.cpp"`),
 `composeApp/build.gradle.kts` (the include as a bridge input), `NativePlayerController.kt` (attach/detach next to
-`NativePlayerDiagnosticsRegistry`, one line routing `reaction*` events).
+`NativePlayerDiagnosticsRegistry`, one line routing `reaction*` events). Stage 4 added none.
 
-**Tests:** 25 pure (`com.nuvio.app.features.reaction.*`) + the harness, which is skipped unless
-`NUVIO_REACTION_HARNESS_EPISODE` / `_REACTION` point at media (optional `_REACTION_URL`, `_WGC_PYTHON`). Make
-silent media with libmpv encode mode (`o=`, `ovc=libx264`, `audio=no`, `av://lavfi:testsrc2=...`); the harness is
-silent and only captures its own windows. Rebuild `player_bridge.dll` after native edits (delete it; the task skips
-when it exists).
+**Tests:** 51 in `com.nuvio.app.features.reaction.*`, green. Media-gated (skipped without their env vars, each run
+with media this session): `ReactionModeHarnessTest` (`NUVIO_REACTION_HARNESS_EPISODE` / `_REACTION`, optional
+`_REACTION_URL`, `_LAYOUT=1`, `_FIREFOX=1`, `_WGC_PYTHON`), `ReactionAutoSyncHarnessTest` and
+`ReactionSyncFixtureTest` (`NUVIO_REACTION_AUTO_*` / `NUVIO_REACTION_SYNC_*`: EPISODE, REACTION, EDL - an edit list
+of `episodeFrom episodeTo reactionAt rate` lines in seconds), `ReactionLayoutDetectorTest`
+(`NUVIO_REACTION_LAYOUT_FIXTURES`). Gradle does not see env vars as inputs: use `--rerun`, or a media-gated test is
+"up to date" and an old report is read as new. Make test media with libmpv encode mode (`o=`, `ovc=libx264`,
+`lavfi-complex` with `external-files` for composites). Rebuild `player_bridge.dll` after native edits (delete it; the
+task skips when it exists).
 
 ## RELEASED 2026-10-11: Desktop 0.1.26-alpha-z2+133 (and Mobile 0.5.4-z2+128)
 
