@@ -5,19 +5,29 @@
 // Everything Reaction Mode needs lives here; player_bridge.cpp carries only the #include and the
 // small "Reaction Mode seam" block of public accessors on WindowsMpvWebPlayer.
 //
-// A stage is an independent libmpv instance rendering (vo=gpu-next) into a window this file owns:
-//   - a borderless popup on another monitor (dual-screen mode), or
-//   - a child window of the main player's container, z-ordered directly below the WebView2
-//     controls and above the main video (single-screen mode). A window region with a hole lets the
-//     main video show through where the movie is.
-// Each stage runs its own UI thread (window + message loop) and its own mpv event thread, so a
-// stalled reaction can never block the main player's threads, and vice versa.
+// A stage is an independent libmpv instance (vo=gpu-next) playing the reaction video:
+//
+//   - Popup (dual-screen): mpv renders into a borderless popup this file creates on a thread of
+//     its own, on another monitor.
+//
+//   - In-player (single-screen): mpv is given the main player's *container* as its wid, so its own
+//     window is a direct child of the container, like the main player's mpv window. It is stacked at
+//     the bottom, and the main player's mpv window is clipped to the movie rectangle with a window
+//     region, so the reactions show around the episode and the WebView2 controls stay on top.
+//
+//     Why this shape (measured 2026-10-13 with Windows Graphics Capture, see STATUS.md): under the
+//     transparent WebView2 controls only a D3D surface that is a direct child of the container is
+//     composited. A stage window of our own between the controls and the video - created on any
+//     thread, stacked anywhere, with or without WS_CLIPSIBLINGS - was never visible; the same mpv
+//     window reparented directly under the container was.
+//
+// mpv runs on its own threads and a stage thread drains its events, so a stalled reaction can never
+// block the main player's threads, and vice versa.
 
 namespace nuvio_reaction {
 
 constexpr int kEventFileLoaded = 8;
 constexpr int kEventSeek = 20;
-constexpr UINT WM_REACTION_TASK = WM_APP + 0x5245;
 const wchar_t *kStageWindowClass = L"NuvioReactionStageWindow";
 
 LRESULT CALLBACK stageWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
@@ -37,18 +47,29 @@ void registerStageClass() {
     });
 }
 
+std::vector<HWND> mpvChildren(HWND parent) {
+    std::vector<HWND> found;
+    HWND child = nullptr;
+    while ((child = FindWindowExW(parent, child, L"mpv", nullptr)) != nullptr) found.push_back(child);
+    return found;
+}
+
 class Stage : public std::enable_shared_from_this<Stage> {
 public:
-    // parent == nullptr -> popup at (x, y, w, h) in virtual-screen coordinates.
-    // parent != nullptr -> child of parent at (x, y, w, h) in parent client coordinates.
-    void start(HWND parent, int x, int y, int w, int h, const std::vector<std::string> &options) {
+    // Dual-screen: a popup at (x, y, w, h) in virtual-screen pixels, on a UI thread of its own.
+    void startPopup(int x, int y, int w, int h, const std::vector<std::string> &options) {
         auto init = std::make_shared<std::pair<std::mutex, std::condition_variable>>();
         auto done = std::make_shared<bool>(false);
         auto failure = std::make_shared<std::string>();
         auto self = shared_from_this();
-        uiThread = std::thread([self, parent, x, y, w, h, options, init, done, failure]() {
+        uiThread = std::thread([self, x, y, w, h, options, init, done, failure]() {
             try {
-                self->createOnUiThread(parent, x, y, w, h, options);
+                registerStageClass();
+                self->popup = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kStageWindowClass,
+                    L"Nuvio Z Reactions", WS_POPUP | WS_VISIBLE, x, y, std::max(1, w), std::max(1, h),
+                    nullptr, nullptr, gModule, self.get());
+                if (!self->popup) throw std::runtime_error("Unable to create the reaction stage window.");
+                self->createMpv(self->popup, options);
             } catch (const std::exception &error) {
                 *failure = error.what();
             }
@@ -71,16 +92,27 @@ public:
             if (uiThread.joinable()) uiThread.join();
             throw std::runtime_error(*failure);
         }
-        eventThread = std::thread([self]() { self->drainEvents(); });
+        startEventThread();
+    }
+
+    // Single-screen: mpv's own window becomes a direct child of the player's container.
+    void startInPlayer(HWND playerContainer, const std::vector<std::string> &options) {
+        if (!playerContainer || !IsWindow(playerContainer)) throw std::runtime_error("The player has no container window.");
+        container = playerContainer;
+        // The main player's mpv window already exists; anything new under the container is ours.
+        auto existing = mpvChildren(container);
+        mainVideo = existing.empty() ? nullptr : existing.front();
+        createMpv(container, options);
+        startEventThread();
     }
 
     void shutdown() {
         if (stopping.exchange(true)) return;
-        HWND window = hwnd;
-        if (window && IsWindow(window)) {
-            SetWindowPos(window, nullptr, 0, 0, 0, 0,
+        if (popup && IsWindow(popup)) {
+            SetWindowPos(popup, nullptr, 0, 0, 0, 0,
                 SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
         }
+        clearMainClip();
         {
             std::lock_guard<std::mutex> lock(mpvMutex);
             if (mpv && mpvApi().wakeup) mpvApi().wakeup(mpv);
@@ -89,12 +121,13 @@ public:
         {
             std::lock_guard<std::mutex> lock(mpvMutex);
             if (mpv) {
+                // Destroys mpv's own window too, which is all an in-player stage has.
                 mpvApi().terminateDestroy(mpv);
                 mpv = nullptr;
             }
         }
-        if (window) PostMessageW(window, WM_CLOSE, 0, 0);
-        WindowsMpvWebPlayer::joinOrDetach(uiThread);
+        if (popup) PostMessageW(popup, WM_CLOSE, 0, 0);
+        if (uiThread.joinable()) WindowsMpvWebPlayer::joinOrDetach(uiThread);
     }
 
     int command(const std::vector<std::string> &args) {
@@ -136,65 +169,48 @@ public:
         return joined;
     }
 
-    void setBounds(int x, int y, int w, int h) {
-        if (!hwnd) return;
-        SetWindowPos(hwnd, nullptr, x, y, std::max(1, w), std::max(1, h),
+    void setPopupBounds(int x, int y, int w, int h) {
+        if (!popup) return;
+        SetWindowPos(popup, nullptr, x, y, std::max(1, w), std::max(1, h),
             SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
     }
 
     void setVisible(bool visible) {
-        if (!hwnd) return;
-        SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+        HWND target = popup ? popup : stageVideo();
+        if (!target) return;
+        SetWindowPos(target, nullptr, 0, 0, 0, 0,
             (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW) | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
                 SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
     }
 
-    // A hole (in client coordinates) the main video shows through. w <= 0 removes it.
-    void setHole(int x, int y, int w, int h) {
-        postTask([self = shared_from_this(), x, y, w, h]() {
-            if (!self->hwnd) return;
-            if (w <= 0 || h <= 0) {
-                SetWindowRgn(self->hwnd, nullptr, TRUE);
-                return;
-            }
-            RECT client = {};
-            GetClientRect(self->hwnd, &client);
-            HRGN full = CreateRectRgn(0, 0, client.right, client.bottom);
-            HRGN hole = CreateRectRgn(x, y, x + w, y + h);
-            CombineRgn(full, full, hole, RGN_DIFF);
-            DeleteObject(hole);
-            // The system owns the region after a successful SetWindowRgn.
-            if (!SetWindowRgn(self->hwnd, full, TRUE)) DeleteObject(full);
-        });
+    // In-player: the episode is drawn in `movie` (container client pixels); reactions everywhere else.
+    // Returns false until mpv has created its window (after the reaction's first frame); call again.
+    bool layoutInPlayer(int x, int y, int w, int h) {
+        if (!container) return false;
+        HWND ours = stageVideo();
+        if (!ours) return false;
+        SetWindowPos(ours, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
+        HWND main = mainVideoWindow();
+        if (!main) return false;
+        // The system owns the region after a successful SetWindowRgn.
+        HRGN region = CreateRectRgn(x, y, x + w, y + h);
+        if (!SetWindowRgn(main, region, TRUE)) DeleteObject(region);
+        clippedMain = main;
+        return true;
     }
 
-    // Single-screen mode: keep the stage directly below the WebView2 controls, whatever order the
-    // container's children were created in. Called after start and again when asked.
-    void restack() {
-        postTask([self = shared_from_this()]() {
-            HWND parent = GetParent(self->hwnd);
-            if (!parent) return;
-            HWND web = FindWindowExW(parent, nullptr, L"Chrome_WidgetWin_0", nullptr);
-            // SetWindowPos(hwnd, after) places hwnd *behind* `after`: just under the controls.
-            SetWindowPos(self->hwnd, web ? web : HWND_TOP, 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        });
+    void clearMainClip() {
+        HWND main = clippedMain;
+        clippedMain = nullptr;
+        if (main && IsWindow(main)) SetWindowRgn(main, nullptr, TRUE);
     }
 
-    long long nativeHandle() const { return (long long)(intptr_t)hwnd; }
-
-    void processTasks() {
-        std::deque<std::function<void()>> pending;
-        {
-            std::lock_guard<std::mutex> lock(taskMutex);
-            pending.swap(tasks);
-        }
-        for (auto &task : pending) task();
-    }
-
-    HWND hwnd = nullptr;
+    HWND popup = nullptr;
 
 private:
+    HWND container = nullptr;
+    HWND mainVideo = nullptr;
+    HWND clippedMain = nullptr;
     std::thread uiThread;
     std::thread eventThread;
     std::mutex mpvMutex;
@@ -202,16 +218,29 @@ private:
     std::atomic_bool stopping = false;
     std::mutex eventMutex;
     std::deque<std::string> events;
-    std::mutex taskMutex;
-    std::deque<std::function<void()>> tasks;
 
-    void postTask(std::function<void()> task) {
-        if (stopping.load() || !hwnd) return;
-        {
-            std::lock_guard<std::mutex> lock(taskMutex);
-            tasks.push_back(std::move(task));
+    HWND mainVideoWindow() {
+        if (mainVideo && IsWindow(mainVideo)) return mainVideo;
+        // The main player had no video window yet when the stage started: it is whichever mpv
+        // child of the container is not ours.
+        HWND ours = stageVideo();
+        for (HWND candidate : mpvChildren(container)) {
+            if (candidate != ours) return mainVideo = candidate;
         }
-        PostMessageW(hwnd, WM_REACTION_TASK, 0, 0);
+        return nullptr;
+    }
+
+    HWND stageVideo() {
+        if (!container) return nullptr;
+        for (HWND candidate : mpvChildren(container)) {
+            if (candidate != mainVideo) return candidate;
+        }
+        return nullptr;
+    }
+
+    void startEventThread() {
+        auto self = shared_from_this();
+        eventThread = std::thread([self]() { self->drainEvents(); });
     }
 
     void pushEvent(std::string line) {
@@ -220,14 +249,7 @@ private:
         events.push_back(std::move(line));
     }
 
-    void createOnUiThread(HWND parent, int x, int y, int w, int h, const std::vector<std::string> &options) {
-        registerStageClass();
-        DWORD style = parent ? (WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS) : (WS_POPUP | WS_VISIBLE);
-        DWORD exStyle = parent ? 0 : (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
-        hwnd = CreateWindowExW(exStyle, kStageWindowClass, L"Nuvio Z Reactions", style,
-            x, y, std::max(1, w), std::max(1, h), parent, nullptr, gModule, this);
-        if (!hwnd) throw std::runtime_error("Unable to create the reaction stage window.");
-
+    void createMpv(HWND wid, const std::vector<std::string> &options) {
         MpvApi &api = mpvApi();
         std::lock_guard<std::mutex> lock(mpvMutex);
         mpv = api.create();
@@ -249,8 +271,8 @@ private:
             if (eq == std::string::npos) continue;
             api.setOptionString(mpv, option.substr(0, eq).c_str(), option.substr(eq + 1).c_str());
         }
-        int64_t wid = (int64_t)(intptr_t)hwnd;
-        if (api.setOption(mpv, "wid", MPV_FORMAT_INT64, &wid) < 0) {
+        int64_t widValue = (int64_t)(intptr_t)wid;
+        if (api.setOption(mpv, "wid", MPV_FORMAT_INT64, &widValue) < 0) {
             throw std::runtime_error("mpv wid option failed for the reaction stage.");
         }
         int initResult = api.initialize(mpv);
@@ -263,14 +285,8 @@ private:
 
     void drainEvents() {
         while (!stopping.load()) {
-            mpv_event *event = nullptr;
-            {
-                // mpv_wait_event is documented as safe alongside other API calls on the same handle,
-                // but the handle itself is destroyed under mpvMutex, so read it under the lock.
-                std::lock_guard<std::mutex> lock(mpvMutex);
-                if (!mpv) return;
-            }
-            event = mpvApi().waitEvent(mpv, 0.25);
+            // Safe without the lock: shutdown() stops this thread before destroying the handle.
+            mpv_event *event = mpvApi().waitEvent(mpv, 0.25);
             if (!event || event->event_id == MPV_EVENT_NONE) continue;
             switch ((int)event->event_id) {
                 case MPV_EVENT_SHUTDOWN:
@@ -316,9 +332,6 @@ LRESULT CALLBACK stageWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
     }
     auto *stage = reinterpret_cast<Stage *>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     switch (message) {
-        case WM_REACTION_TASK:
-            if (stage) stage->processTasks();
-            return 0;
         case WM_ERASEBKGND: {
             RECT rect = {};
             GetClientRect(hwnd, &rect);
@@ -326,16 +339,16 @@ LRESULT CALLBACK stageWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
             return 1;
         }
         case WM_MOUSEACTIVATE:
-            // Never steal focus from the main window, whichever mode the stage is in.
+            // Never steal focus from the main window.
             return MA_NOACTIVATE;
         case WM_CLOSE:
             DestroyWindow(hwnd);
             return 0;
         case WM_DESTROY:
-            PostQuitMessage(0);
+            PostQuitMessage(0);  // the popup's own UI thread
             return 0;
         case WM_NCDESTROY:
-            if (stage) stage->hwnd = nullptr;
+            if (stage) stage->popup = nullptr;
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             return DefWindowProcW(hwnd, message, wParam, lParam);
         default:
@@ -353,22 +366,40 @@ std::shared_ptr<Stage> stageFromHandle(jlong handle) {
     return *reinterpret_cast<std::shared_ptr<Stage> *>(handle);
 }
 
+jlong registerStage(const std::shared_ptr<Stage> &stage) {
+    auto *holder = new std::shared_ptr<Stage>(stage);
+    jlong handle = (jlong)(intptr_t)holder;
+    std::lock_guard<std::mutex> lock(gStagesMutex);
+    gStages.insert(handle);
+    return handle;
+}
+
 } // namespace nuvio_reaction
 
 #define NUVIO_REACTION_JNI(name) Java_com_nuvio_app_features_reaction_ReactionNative_##name
 
-extern "C" JNIEXPORT jlong JNICALL NUVIO_REACTION_JNI(createStage)(
-    JNIEnv *env, jobject, jlong parentHwnd, jint x, jint y, jint w, jint h, jobjectArray options
+extern "C" JNIEXPORT jlong JNICALL NUVIO_REACTION_JNI(createPopupStage)(
+    JNIEnv *env, jobject, jint x, jint y, jint w, jint h, jobjectArray options
 ) {
     try {
         auto stage = std::make_shared<nuvio_reaction::Stage>();
-        stage->start((HWND)(intptr_t)parentHwnd, x, y, w, h, jstringArrayToVector(env, options));
-        if (parentHwnd) stage->restack();
-        auto *holder = new std::shared_ptr<nuvio_reaction::Stage>(stage);
-        jlong handle = (jlong)(intptr_t)holder;
-        std::lock_guard<std::mutex> lock(nuvio_reaction::gStagesMutex);
-        nuvio_reaction::gStages.insert(handle);
-        return handle;
+        stage->startPopup(x, y, w, h, jstringArrayToVector(env, options));
+        return nuvio_reaction::registerStage(stage);
+    } catch (const std::exception &error) {
+        throwJavaError(env, error.what());
+        return 0;
+    }
+}
+
+extern "C" JNIEXPORT jlong JNICALL NUVIO_REACTION_JNI(createInPlayerStage)(
+    JNIEnv *env, jobject, jlong playerHandle, jobjectArray options
+) {
+    try {
+        auto player = playerFromHandle(playerHandle);
+        if (!player) throw std::runtime_error("The player is gone.");
+        auto stage = std::make_shared<nuvio_reaction::Stage>();
+        stage->startInPlayer(player->reactionContainerHwnd(), jstringArrayToVector(env, options));
+        return nuvio_reaction::registerStage(stage);
     } catch (const std::exception &error) {
         throwJavaError(env, error.what());
         return 0;
@@ -409,20 +440,24 @@ extern "C" JNIEXPORT jstring JNICALL NUVIO_REACTION_JNI(stageTakeEvents)(JNIEnv 
     return newJavaStringUtf8(env, stage ? stage->takeEvents() : std::string());
 }
 
-extern "C" JNIEXPORT void JNICALL NUVIO_REACTION_JNI(stageSetBounds)(JNIEnv *, jobject, jlong handle, jint x, jint y, jint w, jint h) {
-    if (auto stage = nuvio_reaction::stageFromHandle(handle)) stage->setBounds(x, y, w, h);
+extern "C" JNIEXPORT void JNICALL NUVIO_REACTION_JNI(stageSetPopupBounds)(JNIEnv *, jobject, jlong handle, jint x, jint y, jint w, jint h) {
+    if (auto stage = nuvio_reaction::stageFromHandle(handle)) stage->setPopupBounds(x, y, w, h);
 }
 
 extern "C" JNIEXPORT void JNICALL NUVIO_REACTION_JNI(stageSetVisible)(JNIEnv *, jobject, jlong handle, jboolean visible) {
     if (auto stage = nuvio_reaction::stageFromHandle(handle)) stage->setVisible(visible == JNI_TRUE);
 }
 
-extern "C" JNIEXPORT void JNICALL NUVIO_REACTION_JNI(stageSetHole)(JNIEnv *, jobject, jlong handle, jint x, jint y, jint w, jint h) {
-    if (auto stage = nuvio_reaction::stageFromHandle(handle)) stage->setHole(x, y, w, h);
+extern "C" JNIEXPORT jboolean JNICALL NUVIO_REACTION_JNI(stageLayoutInPlayer)(JNIEnv *, jobject, jlong handle, jint x, jint y, jint w, jint h) {
+    auto stage = nuvio_reaction::stageFromHandle(handle);
+    return stage && stage->layoutInPlayer(x, y, w, h) ? JNI_TRUE : JNI_FALSE;
 }
 
-extern "C" JNIEXPORT void JNICALL NUVIO_REACTION_JNI(stageRestack)(JNIEnv *, jobject, jlong handle) {
-    if (auto stage = nuvio_reaction::stageFromHandle(handle)) stage->restack();
+extern "C" JNIEXPORT jlong JNICALL NUVIO_REACTION_JNI(windowClientSize)(JNIEnv *, jobject, jlong hwndValue) {
+    HWND hwnd = (HWND)(intptr_t)hwndValue;
+    RECT rect = {};
+    if (!hwnd || !IsWindow(hwnd) || !GetClientRect(hwnd, &rect)) return 0;
+    return ((jlong)(rect.right - rect.left) << 32) | (jlong)(uint32_t)(rect.bottom - rect.top);
 }
 
 // --- The main player, through the "Reaction Mode seam" accessors on WindowsMpvWebPlayer. ---

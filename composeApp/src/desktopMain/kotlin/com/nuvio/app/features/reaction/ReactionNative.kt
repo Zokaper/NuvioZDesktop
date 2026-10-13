@@ -20,17 +20,24 @@ internal object ReactionNative {
         stageTakeEvents(0L)
     }
 
-    /** parentHwnd 0 = popup at virtual-screen coordinates; otherwise a child at parent coordinates. */
-    external fun createStage(parentHwnd: Long, x: Int, y: Int, width: Int, height: Int, options: Array<String>): Long
+    /** Dual-screen: a borderless popup at virtual-screen pixel coordinates. */
+    external fun createPopupStage(x: Int, y: Int, width: Int, height: Int, options: Array<String>): Long
+
+    /** Single-screen: mpv's own window as a direct child of the main player's container. */
+    external fun createInPlayerStage(playerHandle: Long, options: Array<String>): Long
     external fun destroyStage(handle: Long)
     external fun stageCommand(handle: Long, args: Array<String>): Int
     external fun stageSetProperty(handle: Long, name: String, value: String): Int
     external fun stageGetProperty(handle: Long, name: String): String?
     external fun stageTakeEvents(handle: Long): String
-    external fun stageSetBounds(handle: Long, x: Int, y: Int, width: Int, height: Int)
+    external fun stageSetPopupBounds(handle: Long, x: Int, y: Int, width: Int, height: Int)
     external fun stageSetVisible(handle: Long, visible: Boolean)
-    external fun stageSetHole(handle: Long, x: Int, y: Int, width: Int, height: Int)
-    external fun stageRestack(handle: Long)
+
+    /** Single-screen: episode drawn in this rect (container pixels). False until the stage has a window. */
+    external fun stageLayoutInPlayer(handle: Long, x: Int, y: Int, width: Int, height: Int): Boolean
+
+    /** Client size of any window in physical pixels, packed as (width shl 32) or height; 0 if gone. */
+    external fun windowClientSize(hwnd: Long): Long
 
     external fun mainContainerHwnd(playerHandle: Long): Long
     external fun mainSetProperty(playerHandle: Long, name: String, value: String)

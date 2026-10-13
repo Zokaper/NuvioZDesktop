@@ -70,6 +70,34 @@ internal object ReactionSession {
     private var lastUiJson: String? = null
     private var loading = false
 
+    /** What the session is doing, published every tick for logs and the integration harness. */
+    @Volatile
+    var debugState: ReactionDebugState = ReactionDebugState()
+        private set
+
+    /** Harness only: put the "second monitor" stage here instead of on a real display. */
+    @Volatile
+    var monitorOverride: java.awt.Rectangle? = null
+
+    /** Harness only: extra mpv options for the stage (the harness passes ao=null so it is silent). */
+    @Volatile
+    var extraStageOptionsForTest: List<String> = emptyList()
+
+    /** Harness only: mpv's own screenshot of the stage window, so nothing else on screen is captured. */
+    fun stagePropertyForTest(name: String): String? = stage?.get(name)
+
+    fun stageScreenshotForTest(path: String) {
+        scope.launch { stage?.command("screenshot-to-file", path, "window") }
+    }
+
+    /** Starts (or replaces) the reaction video. The panel's buttons and the browser link both end here. */
+    fun startSource(newSource: ReactionSource) {
+        scope.launch {
+            start(newSource)
+            pushUi(force = true)
+        }
+    }
+
     // --- Called by the player (NativePlayerController seams) ---------------------------------
 
     fun onPlayerAttached(playerHandle: Long, hostViewPtr: Long) {
@@ -131,8 +159,8 @@ internal object ReactionSession {
         when (type) {
             "reactionReady" -> {
                 uiReadyFor = playerHandle
+                debugState = debugState.copy(playerHandle = playerHandle, uiReady = true)
                 lastUiJson = null
-                stage?.restack()
             }
             "reactionToggle" -> panelOpen = !panelOpen
             "reactionClose" -> panelOpen = false
@@ -241,6 +269,7 @@ internal object ReactionSession {
         reactionDurationMs = null
         reactionAspect = null
         engine.reset()
+        engine.seedSeekLatency(if (newSource is ReactionSource.WebVideo) 1_500.0 else 100.0)
         mixer.reset()
         openStage()
         val m = master
@@ -256,6 +285,7 @@ internal object ReactionSession {
 
     private suspend fun stop() {
         closeStage(keepSource = false)
+        debugState = debugState.copy(stageOpen = false)
         source = null
         panelOpen = false
         val m = master
@@ -289,16 +319,14 @@ internal object ReactionSession {
         val currentSource = source ?: return
         val placement = when (preferences.mode) {
             StageMode.DUAL -> {
-                val monitor = ReactionMonitors.choose(ReactionMonitors.list(), preferences.monitorId)
+                val bounds = monitorOverride
+                    ?: ReactionMonitors.choose(ReactionMonitors.list(), preferences.monitorId)?.physicalBounds
                     ?: run { error = "No display found for the reactions."; return }
-                StagePlacement.Monitor(monitor.physicalBounds)
+                StagePlacement.Monitor(bounds)
             }
             StageMode.SINGLE -> {
                 val m = master ?: return
-                val container = ReactionNative.mainContainerHwnd(m.playerHandle)
-                if (container == 0L) return
-                val (w, h) = mainSurfaceSize(m.playerHandle) ?: (1280 to 720)
-                StagePlacement.InPlayer(container, w, h)
+                StagePlacement.InPlayer(m.playerHandle)
             }
         }
         val extra = mutableListOf<String>()
@@ -306,6 +334,7 @@ internal object ReactionSession {
             val tools = ReactionTools.locate() ?: run { error = "YouTube links need a one-time setup first."; return }
             extra += ReactionTools.mpvOptions(tools)
         }
+        extra += extraStageOptionsForTest
         if (resumeAtMs != null && resumeAtMs > 0) extra += "start=" + String.format(Locale.ROOT, "%.3f", resumeAtMs / 1000.0)
         val opened = runCatching { ReactionStage.open(placement, extra) }
             .onFailure { log.w(it) { "stage failed to open" }; error = "Couldn't open the reaction player: ${it.message}" }
@@ -375,6 +404,23 @@ internal object ReactionSession {
         val audio = mixer.step(now, showing, observed)
         if (observed == null || abs(observed - audio.movieVolume) > 0.5) setMainVolume(m.playerHandle, audio.movieVolume)
         currentStage.setVolume(audio.reactionVolume)
+        debugState = ReactionDebugState(
+            playerHandle = m.playerHandle,
+            uiReady = uiReadyFor == m.playerHandle,
+            stageOpen = true,
+            loading = loading,
+            mode = preferences.mode,
+            offsetMs = offsetMs,
+            masterMs = masterSample.positionMs,
+            masterPaused = masterSample.paused,
+            followerMs = follower.positionMs,
+            followerPaused = follower.paused,
+            errorMs = decision.errorMs,
+            visibility = decision.visibility,
+            resumesInMs = decision.resumesInMs,
+            mainVolume = audio.movieVolume,
+            error = error,
+        )
         if (mixer.settings != preferences.audio) {
             preferences = preferences.copy(audio = mixer.settings)
             ReactionPreferencesStore.save(preferences)
@@ -419,10 +465,16 @@ internal object ReactionSession {
         return MasterSample((position * 1000).toLong(), paused, speed, stalled)
     }
 
+    /**
+     * The main player's surface in physical pixels, read from its container window - the window the
+     * stage is a child of and the size the hole and margins are computed against.
+     */
     private fun mainSurfaceSize(playerHandle: Long): Pair<Int, Int>? {
-        val w = ReactionNative.mainGetProperty(playerHandle, "osd-dimensions/w")?.toIntOrNull() ?: return null
-        val h = ReactionNative.mainGetProperty(playerHandle, "osd-dimensions/h")?.toIntOrNull() ?: return null
-        return if (w > 0 && h > 0) w to h else null
+        val container = ReactionNative.mainContainerHwnd(playerHandle).takeIf { it != 0L } ?: return null
+        val packed = ReactionNative.windowClientSize(container)
+        val w = (packed ushr 32).toInt()
+        val h = (packed and 0xFFFFFFFFL).toInt()
+        return if (w > 1 && h > 1) w to h else null
     }
 
     /** Recomputes tiles (and, single-screen, the episode's margins) when anything they depend on changes. */
@@ -450,11 +502,13 @@ internal object ReactionSession {
                 if (key == appliedLayoutKey) return
                 appliedLayoutKey = key
                 val layout = ReactionSingleScreenLayout.arrange(w, h, movieAspect, aspects, preferences.movieFraction, TILE_GAP)
-                currentStage.setBounds(0, 0, sw, sh)
-                currentStage.setHole(layout.movie)
+                // The reaction's window only exists once its first frame is up; until then, retry.
+                if (!currentStage.layoutInPlayer(layout.movie)) {
+                    appliedLayoutKey = null
+                    return
+                }
                 currentStage.setTiles(tileSources.zip(layout.tiles) { s, t -> ShaderTile(s, t.normalizedIn(w, h)) })
                 setMainMargins(playerHandle, MovieMargins.of(layout.movie, w, h))
-                currentStage.restack()
             }
         }
     }
@@ -546,3 +600,21 @@ internal object ReactionSession {
     private const val TILE_GAP = 8.0
     private val VIDEO_EXTENSIONS = setOf("mp4", "mkv", "webm", "mov", "avi", "m4v", "ts", "flv", "wmv")
 }
+
+internal data class ReactionDebugState(
+    val playerHandle: Long = 0,
+    val uiReady: Boolean = false,
+    val stageOpen: Boolean = false,
+    val loading: Boolean = false,
+    val mode: StageMode = StageMode.DUAL,
+    val offsetMs: Long = 0,
+    val masterMs: Long? = null,
+    val masterPaused: Boolean? = null,
+    val followerMs: Long? = null,
+    val followerPaused: Boolean? = null,
+    val errorMs: Long? = null,
+    val visibility: StageVisibility? = null,
+    val resumesInMs: Long? = null,
+    val mainVolume: Double? = null,
+    val error: String? = null,
+)

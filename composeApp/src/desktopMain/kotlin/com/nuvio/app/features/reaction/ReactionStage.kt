@@ -10,8 +10,8 @@ internal sealed interface StagePlacement {
     /** Borderless popup covering [bounds] (virtual-screen pixels) - a second monitor. */
     data class Monitor(val bounds: java.awt.Rectangle) : StagePlacement
 
-    /** Inside the main player, between the episode and the controls (single-screen mode). */
-    data class InPlayer(val containerHwnd: Long, val width: Int, val height: Int) : StagePlacement
+    /** Inside the main player, around the episode, under the controls (single-screen mode). */
+    data class InPlayer(val playerHandle: Long) : StagePlacement
 }
 
 /**
@@ -100,7 +100,8 @@ internal class ReactionStage private constructor(
         if (text == lastOverlay) return
         lastOverlay = text
         if (text == null) {
-            command("osd-overlay", "1", "none", "")
+            // mpv refuses an empty data argument even for format=none.
+            command("osd-overlay", "1", "none", " ")
             return
         }
         val escaped = text.replace("\\", "\\\\").replace("{", "(").replace("}", ")")
@@ -109,26 +110,17 @@ internal class ReactionStage private constructor(
         command("osd-overlay", "1", "ass-events", ass, "1920", "1080")
     }
 
-    fun setBounds(x: Int, y: Int, width: Int, height: Int) {
-        if (!closed) ReactionNative.stageSetBounds(handle, x, y, width, height)
-    }
-
-    fun setHole(rect: LayoutRect?) {
-        if (closed) return
-        if (rect == null) {
-            ReactionNative.stageSetHole(handle, 0, 0, 0, 0)
-        } else {
-            ReactionNative.stageSetHole(handle, rect.x.toInt(), rect.y.toInt(), rect.w.toInt(), rect.h.toInt())
-        }
+    fun setPopupBounds(x: Int, y: Int, width: Int, height: Int) {
+        if (!closed) ReactionNative.stageSetPopupBounds(handle, x, y, width, height)
     }
 
     fun setVisible(visible: Boolean) {
         if (!closed) ReactionNative.stageSetVisible(handle, visible)
     }
 
-    fun restack() {
-        if (!closed) ReactionNative.stageRestack(handle)
-    }
+    /** Single-screen: clip the episode to [movie] and keep the reactions under it. False = retry later. */
+    fun layoutInPlayer(movie: LayoutRect): Boolean =
+        !closed && ReactionNative.stageLayoutInPlayer(handle, movie.x.toInt(), movie.y.toInt(), movie.w.toInt(), movie.h.toInt())
 
     fun takeEvents(): List<String> =
         if (closed) emptyList() else ReactionNative.stageTakeEvents(handle).lines().filter { it.isNotBlank() }
@@ -145,11 +137,9 @@ internal class ReactionStage private constructor(
             val options = (BASE_OPTIONS + extraOptions).toTypedArray()
             val handle = when (placement) {
                 is StagePlacement.Monitor -> with(placement.bounds) {
-                    ReactionNative.createStage(0L, x, y, width, height, options)
+                    ReactionNative.createPopupStage(x, y, width, height, options)
                 }
-                is StagePlacement.InPlayer -> ReactionNative.createStage(
-                    placement.containerHwnd, 0, 0, placement.width, placement.height, options,
-                )
+                is StagePlacement.InPlayer -> ReactionNative.createInPlayerStage(placement.playerHandle, options)
             }
             check(handle != 0L) { "the reaction stage did not start" }
             return ReactionStage(handle, placement)
@@ -157,6 +147,9 @@ internal class ReactionStage private constructor(
 
         private val BASE_OPTIONS = listOf(
             "pause=yes",
+            // Left on auto, gpu-next picked Vulkan and hardware decoding failed over to software.
+            "gpu-api=d3d11",
+            "hwdec=auto",
             "audio-pitch-correction=yes",
             // The whole reaction stays in memory once read, so seeks back within it are instant
             // (a network seek costs 2-3 s; Stage 0, S1).

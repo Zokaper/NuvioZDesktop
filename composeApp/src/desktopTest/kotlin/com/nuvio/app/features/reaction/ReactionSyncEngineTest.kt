@@ -64,9 +64,29 @@ class ReactionSyncEngineTest {
         assertTrue(speed > 1.0 && speed <= 1.05, "behind by 300 ms should speed up gently, got $speed")
         assertTrue(behind.commands.none { it is FollowerCommand.Seek })
 
-        val ahead = ReactionSyncEngine().step(0, playing(30_000), follower(40_400), map)
+        val ahead = ReactionSyncEngine().step(0, playing(30_000), follower(40_100), map)
         val slower = ahead.commands.filterIsInstance<FollowerCommand.SetSpeed>().single().speed
-        assertTrue(slower < 1.0 && slower >= 0.95, "ahead by 400 ms should slow down, got $slower")
+        assertTrue(slower < 1.0 && slower >= 0.95, "ahead by 100 ms should slow down, got $slower")
+    }
+
+    @Test
+    fun farAheadHoldsOnItsFrameUntilTheEpisodeCatchesUp() {
+        val engine = ReactionSyncEngine()
+        // 400 ms ahead (e.g. a seek that overshot): freeze, don't seek, don't speed-shift.
+        val hold = engine.step(0, playing(30_000), follower(40_400), map)
+        assertEquals(listOf<FollowerCommand>(FollowerCommand.SetPaused(true)), hold.commands)
+        // Still ahead by 200 ms while held: keep holding.
+        val still = engine.step(200, playing(30_200), follower(40_400, paused = true), map)
+        assertTrue(still.commands.isEmpty())
+        // The episode reaches the held frame: release.
+        val release = engine.step(400, playing(30_395), follower(40_400, paused = true), map)
+        assertTrue(release.commands.contains(FollowerCommand.SetPaused(false)), "${release.commands}")
+    }
+
+    @Test
+    fun farBehindSeeksRatherThanSpeedingUpForever() {
+        val decision = ReactionSyncEngine().step(0, playing(30_000), follower(39_000), map)
+        assertTrue(decision.commands.any { it is FollowerCommand.Seek })
     }
 
     @Test

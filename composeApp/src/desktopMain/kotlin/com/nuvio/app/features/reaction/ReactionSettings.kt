@@ -32,7 +32,12 @@ internal data class ReactionPreferences(
 
 /** A small properties file beside the app's other state; nothing here is per-profile. */
 internal object ReactionPreferencesStore {
-    private val file: File by lazy { DesktopStorage.resolveAppDataDir().resolve("reaction").resolve("settings.properties").toFile() }
+    private val file: File by lazy {
+        // The harness points this at its own folder so a test run never rewrites the app's settings.
+        val dir = System.getProperty("nuvio.reactionDataDir")?.let(::File)
+            ?: DesktopStorage.resolveAppDataDir().resolve("reaction").toFile()
+        File(dir, "settings.properties")
+    }
 
     fun load(): ReactionPreferences = runCatching {
         if (!file.isFile) return ReactionPreferences()

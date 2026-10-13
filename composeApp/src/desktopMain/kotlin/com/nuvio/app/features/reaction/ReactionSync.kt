@@ -107,8 +107,14 @@ internal data class SyncDecision(
 )
 
 internal data class SyncTuning(
-    /** Error that is fixed by seeking while the master plays. Seeks cost ~2-3 s on a network source. */
-    val seekThresholdPlayingMs: Long = 1_200,
+    /** Reaction behind by more than this while playing: seek (with lead) rather than speed up. */
+    val seekThresholdBehindMs: Long = 600,
+    /** Reaction ahead by more than this: hold it on its frame until the episode catches up... */
+    val holdThresholdAheadMs: Long = 120,
+    /** ...unless it is so far ahead that waiting would freeze it for too long: then seek. */
+    val holdMaxAheadMs: Long = 2_500,
+    /** A hold ends when the episode is within this of the held frame. */
+    val holdReleaseMs: Long = 15,
     /** Paused, nothing moves, so line it up exactly. */
     val seekThresholdPausedMs: Long = 60,
     /** Below this the two are considered in sync. */
@@ -136,9 +142,17 @@ internal class ReactionSyncEngine(private val tuning: SyncTuning = SyncTuning())
     var seekLatencyMs: Double = tuning.initialSeekLatencyMs
         private set
 
+    private var holding = false
+
     fun reset() {
         pendingSeekTarget = null
         pendingSeekSawSeeking = false
+        holding = false
+    }
+
+    /** A first guess before any seek has been measured: ~100 ms for a local file, ~1.5 s for the web. */
+    fun seedSeekLatency(ms: Double) {
+        seekLatencyMs = ms
     }
 
     fun step(nowMs: Long, master: MasterSample, follower: FollowerSample, map: SyncMap): SyncDecision {
@@ -165,7 +179,6 @@ internal class ReactionSyncEngine(private val tuning: SyncTuning = SyncTuning())
 
         location as SyncLocation.InSegment
         val masterRunning = !master.paused && !master.stalled
-        val wantPaused = !masterRunning
         val reactionDuration = follower.durationMs
         if (reactionDuration != null && location.reactionMs >= reactionDuration) {
             // The map runs past the end of the reaction video: nothing left to show.
@@ -187,17 +200,37 @@ internal class ReactionSyncEngine(private val tuning: SyncTuning = SyncTuning())
         }
 
         val error = position - location.reactionMs
-        val threshold = if (masterRunning) tuning.seekThresholdPlayingMs else tuning.seekThresholdPausedMs
-        if (abs(error) > threshold) {
-            // Aim where the episode will be when the seek lands, not where it is now.
-            val lead = if (masterRunning) (seekLatencyMs * baseSpeed).roundToLong() else 0L
+        if (!masterRunning) {
+            holding = false
+            if (abs(error) > tuning.seekThresholdPausedMs) issueSeek(nowMs, location.reactionMs, commands)
+            if (!follower.paused) commands += FollowerCommand.SetPaused(true)
+            return SyncDecision(commands, StageVisibility.SHOWING, null, error, pendingSeekTarget != null)
+        }
+
+        // Ahead: freeze on the current frame and let the episode catch up. Exact to a tick, and
+        // costs nothing - no seek, no speed change.
+        if (holding) {
+            if (error > tuning.holdReleaseMs && error <= tuning.holdMaxAheadMs) {
+                if (!follower.paused) commands += FollowerCommand.SetPaused(true)
+                return SyncDecision(commands, StageVisibility.SHOWING, null, error, false)
+            }
+            holding = false
+        } else if (error > tuning.holdThresholdAheadMs && error <= tuning.holdMaxAheadMs) {
+            holding = true
+            if (!follower.paused) commands += FollowerCommand.SetPaused(true)
+            return SyncDecision(commands, StageVisibility.SHOWING, null, error, false)
+        }
+
+        if (error > tuning.holdMaxAheadMs || -error > tuning.seekThresholdBehindMs) {
+            // Aim where the episode will be when the seek lands; any overshoot is absorbed by a hold.
+            val lead = (seekLatencyMs * baseSpeed).roundToLong()
             issueSeek(nowMs, location.reactionMs + lead, commands)
             if (!follower.paused) commands += FollowerCommand.SetPaused(true)
             return SyncDecision(commands, StageVisibility.SHOWING, null, error, true)
         }
 
-        if (follower.paused != wantPaused) commands += FollowerCommand.SetPaused(wantPaused)
-        val desiredSpeed = if (masterRunning && abs(error) > tuning.deadbandMs) {
+        if (follower.paused) commands += FollowerCommand.SetPaused(false)
+        val desiredSpeed = if (abs(error) > tuning.deadbandMs) {
             val correction = (-error / tuning.correctionHorizonMs)
                 .coerceIn(-tuning.maxSpeedCorrection, tuning.maxSpeedCorrection)
             baseSpeed * (1.0 + correction)
