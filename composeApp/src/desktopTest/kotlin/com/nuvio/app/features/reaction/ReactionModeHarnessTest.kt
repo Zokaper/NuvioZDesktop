@@ -36,6 +36,10 @@ class ReactionModeHarnessTest {
     fun theReactionFollowsTheEpisode() {
         val episode = System.getenv("NUVIO_REACTION_HARNESS_EPISODE") ?: return
         val reaction = System.getenv("NUVIO_REACTION_HARNESS_REACTION") ?: return
+        // Optional: stream the reaction from YouTube instead (needs yt-dlp + Deno, e.g. NUVIO_YTDLP_PATH /
+        // NUVIO_DENO_PATH). Network seeks take seconds, so settling phases are given longer.
+        val reactionUrl = System.getenv("NUVIO_REACTION_HARNESS_REACTION_URL")
+        val settle = if (reactionUrl != null) 3 else 1
         System.setProperty("nuvio.reactionMode", "1")
         System.setProperty("nuvio.reactionDataDir", File(out, "data").absolutePath)
         assertTrue(ReactionModeFlag.enabled, "flag")
@@ -72,28 +76,28 @@ class ReactionModeHarnessTest {
             // "Second monitor": a window beside the harness frame on this one-screen machine.
             ReactionSession.monitorOverride = Rectangle(1330, 40, 560, 315)
             event("reactionMode", 0.0)
-            ReactionSession.startSource(ReactionSource.LocalFile(reaction))
-            waitFor("stage playing", 20_000) {
+            ReactionSession.startSource(reactionUrl?.let { ReactionSource.WebVideo(it) } ?: ReactionSource.LocalFile(reaction))
+            waitFor("stage playing", 60_000) {
                 ReactionSession.debugState.takeIf { it.stageOpen && !it.loading && it.followerMs != null }
             }
 
             // 1. Offset +5 s while playing: speed nudges hold it.
             event("reactionNudge", 5_000.0)
-            record("settle-offset", 4_000)
+            record("settle-offset", 4_000L * settle)
             val playing = record("measure-offset", 3_000)
             val worst = playing.mapNotNull { it.errorMs }.maxOf { abs(it) }
             assertTrue(worst < 150, "playing drift too large: $worst ms")
 
             // 2. The master pauses: the reaction pauses on the same frame.
             NativePlayerBridge.setPaused(handle, true)
-            val paused = record("master-paused", 1_500).last()
+            val paused = record("master-paused", 1_500L * settle).last()
             assertEquals(true, paused.followerPaused, "reaction kept playing while the episode paused")
             assertTrue(abs(paused.errorMs ?: 9_999) <= 80, "paused misalignment ${paused.errorMs} ms")
 
             // 3. The master seeks: the reaction follows.
             NativePlayerBridge.setPaused(handle, false)
             NativePlayerBridge.seekTo(handle, 30_000)
-            record("after-seek", 3_000)
+            record("after-seek", 3_000L * settle)
             val afterSeek = record("measure-seek", 1_500)
             assertTrue(afterSeek.mapNotNull { it.errorMs }.all { abs(it) < 150 }, "after a seek: ${afterSeek.map { it.errorMs }}")
 
@@ -105,16 +109,19 @@ class ReactionModeHarnessTest {
             assertEquals(true, gap.followerPaused)
             assertTrue((gap.mainVolume ?: 0.0) > 50.0, "episode audio did not come up in the gap: ${gap.mainVolume}")
             screenshot("gap-dual")
-            val resumed = waitFor("reactions resume at 35 s", 10_000) {
+            val resumed = waitFor("reactions resume at 35 s", 10_000L * settle) {
                 ReactionSession.debugState.takeIf { it.visibility == StageVisibility.SHOWING && (it.masterMs ?: 0) > 35_500 }
             }
-            record("resumed", 1_500)
+            record("resumed", 1_500L * settle)
             assertTrue((ReactionSession.debugState.mainVolume ?: 100.0) < 5.0, "episode not muted under reactions: ${resumed.mainVolume}")
             screenshot("showing-dual")
 
             // 5. Single-screen mode: the episode shrinks into the middle, reactions around it.
             event("reactionMode", 1.0)
-            record("single", 3_000)
+            waitFor("single-screen stage playing", 30_000) {
+                ReactionSession.debugState.takeIf { it.mode == StageMode.SINGLE && !it.loading && it.followerMs != null }
+            }
+            record("single", 3_000L * settle)
             val margin = ReactionNative.mainGetProperty(handle, "video-margin-ratio-left")?.toDoubleOrNull() ?: 0.0
             assertTrue(margin > 0.05, "episode was not shrunk: margin $margin")
             event("reactionToggle")

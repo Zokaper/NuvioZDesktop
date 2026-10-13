@@ -69,6 +69,10 @@ internal object ReactionSession {
     private var restoreMainVolume: Double? = null
     private var lastUiJson: String? = null
     private var loading = false
+    /** What yt-dlp resolved for the current web source; reused when the stage is reopened. */
+    private var resolvedStream: String? = null
+    /** Web loads fail transiently (YouTube refusing one stream URL); retried before giving up. */
+    private var loadRetries = 0
 
     // Single-screen: the arrangement for the current surface, and where the episode is drawn right
     // now (it animates between that arrangement and the full surface around long gaps).
@@ -272,6 +276,8 @@ internal object ReactionSession {
         }
         closeStage(keepSource = false)
         source = newSource
+        resolvedStream = null
+        loadRetries = 0
         offsetMs = 0
         reactionDurationMs = null
         reactionAspect = null
@@ -351,7 +357,7 @@ internal object ReactionSession {
         dim = 0.0
         loading = true
         opened.setTiles(listOf(ShaderTile(LayoutRect.FULL, LayoutRect.FULL)))
-        opened.load(currentSource)
+        opened.load(currentSource, resolvedStream)
         log.i { "stage opened mode=${preferences.mode} source=${currentSource.label}" }
     }
 
@@ -396,7 +402,10 @@ internal object ReactionSession {
         val masterSample = sampleMaster(m.playerHandle) ?: return
         val follower = currentStage.sample()
         reactionDurationMs = follower.durationMs ?: reactionDurationMs
-        if (loading && follower.durationMs == null) return
+        if (loading && follower.durationMs == null) {
+            debugState = debugState.copy(loading = true, mode = preferences.mode, stageOpen = true)
+            return
+        }
 
         applyLayout(m.playerHandle, currentStage)
 
@@ -452,6 +461,7 @@ internal object ReactionSession {
             when {
                 event == "file-loaded" -> {
                     loading = false
+                    if (source is ReactionSource.WebVideo && resolvedStream == null) resolvedStream = currentStage.resolvedStream()
                     reactionAspect = currentStage.double("video-params/aspect")
                     appliedLayoutKey = null
                     error = null
@@ -459,8 +469,17 @@ internal object ReactionSession {
                 event.startsWith("end-file") -> {
                     val reason = event.split(' ').getOrNull(1)?.toIntOrNull()
                     if (reason == 4) {
-                        loading = false
-                        error = "Couldn't play the reaction video."
+                        val current = source
+                        if (current is ReactionSource.WebVideo && loadRetries < MAX_WEB_RETRIES) {
+                            // Resolve again from scratch: the URLs that failed may be the stale part.
+                            loadRetries++
+                            resolvedStream = null
+                            log.w { "reaction load failed, retry $loadRetries of $MAX_WEB_RETRIES" }
+                            currentStage.load(current)
+                        } else {
+                            loading = false
+                            error = "Couldn't play the reaction video."
+                        }
                     }
                 }
                 event.startsWith("log") -> log.w { "stage $event" }
@@ -647,6 +666,7 @@ internal object ReactionSession {
     }
 
     private const val TICK_MS = 40L
+    private const val MAX_WEB_RETRIES = 2
     private const val GAP_GROW_AFTER_MS = 30_000L
     private const val GAP_SHRINK_BEFORE_MS = 3_000L
     private const val DIM_STEP = 0.12

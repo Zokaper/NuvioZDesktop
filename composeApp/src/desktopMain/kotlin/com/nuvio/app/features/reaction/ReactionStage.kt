@@ -29,13 +29,22 @@ internal class ReactionStage private constructor(
     @Volatile var closed = false
         private set
 
-    fun load(source: ReactionSource) {
-        val target = when (source) {
+    /** [resolved] is what mpv actually opened last time (see [resolvedStream]); reusing it skips yt-dlp. */
+    fun load(source: ReactionSource, resolved: String? = null) {
+        val target = resolved ?: when (source) {
             is ReactionSource.LocalFile -> source.path
             is ReactionSource.WebVideo -> source.url
         }
         command("loadfile", target, "replace")
     }
+
+    /**
+     * For a web video, the stream URLs yt-dlp resolved (mpv's ytdl hook leaves them in
+     * `stream-open-filename`, as an edl:// of video + audio). Reopening the stage with these takes
+     * about a second instead of ~8 s of extraction. They expire after hours, so they are only kept
+     * for the session.
+     */
+    fun resolvedStream(): String? = get("stream-open-filename")?.takeIf { it.startsWith("edl://") || it.startsWith("http") }
 
     fun command(vararg args: String): Int =
         if (closed) -1 else ReactionNative.stageCommand(handle, arrayOf(*args))
