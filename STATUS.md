@@ -1,3 +1,47 @@
+## EXPERIMENTAL branch `claude/reaction-mode`: Reaction Mode, Stage 1 (2026-10-13)
+
+**Not for release.** Plan, decisions and Stage 0 spike results: `Nuvio Z/PLAN-reaction-mode.md` (workspace root).
+Debug builds only (`isDebugBuild`), or `NUVIO_REACTION_MODE=1`; Windows only. Branched from `origin/Dev` 98d0f06c3.
+
+What it is: a Reactions button beside Watch Together opens a panel (injected into the controls page at runtime from
+`resources/reaction-ui`, so `controls.*` are untouched). Pick a local file or paste a YouTube link (yt-dlp + Deno,
+downloaded on request to `%APPDATA%\Nuvio Z[ Debug]\reaction\tools`). A second libmpv plays it, cropped/arranged by
+a generated libplacebo shader, synced to the episode (the master, never written to except volume and, single-screen,
+margins). Two layouts: a popup on another monitor, or single-screen with the episode shrunk into the middle. Sync is a
+manual offset (± buttons) until Stage 4's automatic matching. Box detection (Stage 3) is not built: the whole reaction
+frame is one tile.
+
+**Validated here** (AMD 890M, one 1920x1200 screen at 150 %, `ReactionModeHarnessTest` driving the real
+NativePlayerController + bridge + WebView2 page; local media and the real LoneReact YouTube video):
+steady-state sync median 33 ms / worst 66 ms (one frame - the sampling resolution); paused alignment <= 33 ms; master
+pause, seek and offset changes converge (an overshoot is held on its frame until the episode catches up); gaps pause
+and park the reaction, dim it, show "Reactions resume in m:ss", and fade the episode audio up then back down;
+single-screen long gaps grow the episode back to full size and shrink it 3 s before reactions resume; layout switch
+reopens a YouTube stage in ~1 s (resolved streams reused); transient YouTube refusals are retried.
+
+**Not validated / experimental:** dual-monitor placement on real second displays (the harness uses a window; the
+monitor rect assumes the JDK reports device-pixel origins and scaled sizes); 4K HDR alongside a reaction; NVIDIA;
+the real app's Compose window (only the harness frame); next-episode carry-over (single-screen closes the stage with
+the player; dual keeps it); profile switches; the Firefox extension (Stage 2, not built); box detection and automatic
+sync (Stages 3-4).
+
+**Things that were measured, not assumed** (keep them): under the transparent WebView2 controls only a D3D surface
+that is a *direct child of the container* composites - a stage window of our own (any thread, any z-order, with or
+without `WS_CLIPSIBLINGS`) was never on screen, so in single-screen mode the reaction mpv takes the container as its
+`wid` and the main mpv window is clipped with a window region. mpv puts subtitles in the margins by default
+(`sub-use-margins=no` while shrunk). An embedded mpv's `osd-dimensions` is right; the harness frame was 1x1 until
+revalidated. PrintWindow cannot see the in-player stage: use `scripts/reaction/wgc-capture.py` (WGC) for ground truth.
+
+**Patch surface** (upstream-owned): `player_bridge.cpp` (public seam block + `#include "reaction_stage.inc.cpp"`),
+`composeApp/build.gradle.kts` (the include as a bridge input), `NativePlayerController.kt` (attach/detach next to
+`NativePlayerDiagnosticsRegistry`, one line routing `reaction*` events).
+
+**Tests:** 25 pure (`com.nuvio.app.features.reaction.*`) + the harness, which is skipped unless
+`NUVIO_REACTION_HARNESS_EPISODE` / `_REACTION` point at media (optional `_REACTION_URL`, `_WGC_PYTHON`). Make
+silent media with libmpv encode mode (`o=`, `ovc=libx264`, `audio=no`, `av://lavfi:testsrc2=...`); the harness is
+silent and only captures its own windows. Rebuild `player_bridge.dll` after native edits (delete it; the task skips
+when it exists).
+
 ## RELEASED 2026-10-11: Desktop 0.1.26-alpha-z2+133 (and Mobile 0.5.4-z2+128)
 
 Desktop publish run `38152244590` from `5379ea27a` (dry run `38150926446`): MSI + arm64 and x86_64 DMGs, macOS
