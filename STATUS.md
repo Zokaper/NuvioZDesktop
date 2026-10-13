@@ -51,7 +51,7 @@ reaction; the real app's Compose window (harness frames only); next-episode carr
 
 **Known weaknesses, next:**
 - A reactor who pauses the movie to talk is skipped: the episode is the master, so the reaction seeks past the pause.
-  That follows Decision 5's model but may not be what the maintainer wants - ask.
+  Maintainer (2026-10-13): fine as built - compilations cut those pauses out and single reactors avoid pausing (plan Decision 8).
 - Matches sit on the 125 ms grid: up to ~62 ms of quantisation when a reaction's offset falls between grid points
   (seen: <= 50 ms). Sub-frame refinement was prototyped and did not help on 30 fps reactions; dropped.
 - Matcher memory: up to 48 candidate objects per reaction frame; fine at 20 min, unmeasured on 90-minute TEM-length
