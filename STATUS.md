@@ -1,6 +1,6 @@
 ## EXPERIMENTAL branch `claude/reaction-mode`: Reaction Mode, Stages 1-4 (2026-10-13)
 
-**Not for release, not pushed.** Plan, decisions and Stage 0 spike results: `Nuvio Z/PLAN-reaction-mode.md` (workspace root).
+**Not for release.** Pushed 2026-10-13; published as Desktop Debug 92 (`debug-v0.1.26-alpha-z2.92`, extension zip attached to the release). Plan, decisions and Stage 0 spike results: `Nuvio Z/PLAN-reaction-mode.md` (workspace root).
 Debug builds only (`isDebugBuild`), or `NUVIO_REACTION_MODE=1`; Windows only. Branched from `origin/Dev` 98d0f06c3, worked in
 the worktree `Nuvio Z/.claude-worktrees/reaction-mode`.
 
@@ -58,7 +58,7 @@ reaction; the real app's Compose window (harness frames only); next-episode carr
   compilations (pack them into an IntArray if it shows).
 - Box quality from 45 s windows (above), and the editor to merge, split or hide tiles (not built). Now that the whole
   reaction is read from a local copy, longer windows are affordable.
-- Next-episode polish; AMO signing; desktop PC QA (debug build not yet published).
+- Next-episode polish; AMO signing; desktop PC QA on Debug 92.
 
 **Things that were measured, not assumed** (keep them):
 - mpv drops frames earlier than `start` *after* the filter chain, so `setpts=PTS-STARTPTS` in an encode-mode chain made
