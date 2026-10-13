@@ -5,6 +5,33 @@ tested for real. The previous agent worked on a laptop that could not test any o
 the PC that can. Read this file, then the top section of `STATUS.md`, then `PLAN-reaction-mode.md`
 (a copy of the plan, which normally lives outside the repo). This file wins where they disagree.
 
+## The test may still be running: look at it live first
+
+The maintainer left the Debug 92 session open (Interstellar playing, reactions loaded). **Do not
+close, restart or kill Nuvio Z Debug** until you have what you need, and ask before doing anything
+that would. A lot of the evidence exists only in that process:
+
+- The episode's fingerprint track is written to disk only when indexing finishes or fails
+  (`ReactionSession.kt`, the `finally` around `ReactionTrackCache.save(found.key, ...)`). Mid-run, the
+  episode `.bin` may be missing or stale, and a JVM exit is not guaranteed to run that `finally`.
+  The reaction's track is saved when its read ends (it was at ~75% when this was written).
+- The matcher's state is in memory only. Its output is logged every time it changes:
+  `matched N stretches in X ms: ep A-Bs @Cs [xRATE] [mirrored], ...`. Tail the newest file in
+  `%APPDATA%\Nuvio Z Debug\logs\` and read those lines as the live sync map. Each entry says which
+  episode seconds A-B map to reaction second C. The holes between entries are the gaps the
+  maintainer sees.
+- There is no mpv IPC socket and the Compose window cannot be driven by synthetic input. **What you
+  can see is the log and screenshots.** Use `scripts/reaction/wgc-capture.py` (`pip install
+  windows-capture pillow` in a throwaway venv) on the main window and, in two-screen mode, on the popup
+  titled `Nuvio Z Reactions`. Enumerate top-level windows to get the main window's exact title.
+  `PrintWindow` misses the single-screen stage.
+- Ask the maintainer to drive: seek to a hole, play across a hole boundary, switch on
+  **Show whole video**, and tell you the playback time on screen. Pair each of their actions with a
+  screenshot and the log lines from that moment.
+
+Once the live evidence is collected, and only with the maintainer's OK, let the reads finish (or close
+the app normally) so both tracks are on disk for the offline replay below.
+
 ## Where things are
 
 - Repository: `Zokaper/NuvioZDesktop`, branch **`claude/reaction-mode`** (off `Dev`). Commit here.
@@ -84,9 +111,9 @@ a fix. The previous agent got this wrong once already by presenting a guess as t
 
 ## Suggested order
 
-1. **Collect evidence, no code.** Copy the latest log's `Reaction*` lines and the two caches into a
-   scratch folder (not the repo; they can be large). Ask the maintainer what episode position they
-   were at and when Reactions was opened.
+1. **Collect evidence, no code.** Start with the live session (section above). Then copy the latest
+   log's `Reaction*` lines and the two caches into a scratch folder (not the repo; they can be large).
+   Ask the maintainer what episode position they were at when Reactions was opened.
 2. **Offline replay.** Write a media-gated test (pattern: `ReactionSyncFixtureTest`, env-var gated)
    that loads both cached tracks with `-Dnuvio.reactionDataDir`, runs `ReactionMatcher` to completion,
    and prints coverage plus, for every hole: its episode range, episode-side coverage, mean frame
