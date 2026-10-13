@@ -14,106 +14,111 @@ import java.util.Locale
 import kotlin.coroutines.coroutineContext
 
 /**
- * Samples a stretch of the reaction video and finds its layout. A windowless libmpv in encode mode
- * writes 480x270 greyscale frames at 4 fps to a scratch file (no ffmpeg needed: libmpv carries
- * it), which [ReactionLayoutDetector] then reads in one streaming pass.
+ * The whole video, streamed: frames are read while libmpv is still writing them, a layout timeline
+ * is published after every analysis window, so the start of the video is usable within seconds.
  */
-internal object ReactionAnalyzer {
+internal object ReactionTimelineAnalyzer {
     private val log = Logger.withTag("ReactionAnalyzer")
 
-    /** The stretch analysed: long enough for motion statistics, skipping the usual intro. */
-    data class Window(val startMs: Long, val lengthMs: Long)
-
-    fun window(durationMs: Long?): Window {
-        val length = 150_000L
-        if (durationMs == null || durationMs <= length) return Window(0, durationMs ?: length)
-        val start = (durationMs * 0.25).toLong().coerceAtMost(durationMs - length)
-        return Window(start, length)
-    }
+    /** Layout analysis needs no more than this; YouTube's 480p decodes several times faster. */
+    const val WEB_ANALYSIS_FORMAT = "bestvideo[height<=480]/best[height<=480]/worst"
 
     /**
-     * [target] is what mpv should open (a file path, or the reaction's resolved stream URLs);
-     * [extraOptions] the yt-dlp options when it is a page URL instead.
+     * Analyses from [fromMs] to the end. YouTube serves each connection at roughly real time (measured
+     * 1.3-2x, at 240p as at 480p), so the whole video cannot be had up front; started at the playback
+     * position, the analysis stays ahead of playback and every later viewing comes from the cache.
      */
-    suspend fun detectLayout(
+    suspend fun analyze(
         target: String,
         extraOptions: List<String>,
+        fromMs: Long,
         durationMs: Long?,
         onProgress: (Double) -> Unit,
-    ): DetectedLayout = withContext(Dispatchers.IO) {
+        onTimeline: (ReactionLayoutTimeline) -> Unit,
+    ): ReactionLayoutTimeline = withContext(Dispatchers.IO) {
         val w = ReactionLayoutDetector.ANALYSIS_WIDTH
         val h = ReactionLayoutDetector.ANALYSIS_HEIGHT
         val fps = ReactionLayoutDetector.ANALYSIS_FPS
-        val window = window(durationMs)
         val dir = DesktopStorage.cacheDir.resolve("reaction").resolve("analysis").toFile().apply { mkdirs() }
-        val frames = File(dir, "frames-${System.nanoTime()}.gray")
-        val f = { ms: Long -> String.format(Locale.ROOT, "%.3f", ms / 1000.0) }
+        val frames = File(dir, "timeline-${System.nanoTime()}.gray")
         val options = extraOptions + listOf(
             "o=${frames.absolutePath}",
             "of=rawvideo",
             "ovc=rawvideo",
-            "vf=lavfi=[fps=$fps,scale=$w:$h,format=gray]",
+            // setpts: started mid-video, a YouTube stream's timestamps made the fps filter pad the
+            // output with the whole skipped stretch as duplicate frames (measured).
+            "vf=lavfi=[setpts=PTS-STARTPTS,fps=$fps,scale=$w:$h,format=gray]",
             "audio=no",
             "keep-open=no",
-            "start=${f(window.startMs)}",
-            "end=${f(window.startMs + window.lengthMs)}",
+            "sub=no",
+            "start=" + String.format(Locale.ROOT, "%.3f", fromMs / 1000.0),
         )
-        val expectedBytes = window.lengthMs / 1000.0 * fps * w * h
+        val builder = ReactionLayoutTimelineBuilder(startMs = fromMs)
         val handle = ReactionNative.createHeadlessStage(options.toTypedArray())
+        var finished = false
         try {
             ReactionNative.stageCommand(handle, arrayOf("loadfile", target))
-            val deadline = System.currentTimeMillis() + 8 * 60_000L
-            var finished = false
-            while (!finished && System.currentTimeMillis() < deadline) {
-                coroutineContext.ensureActive()
-                delay(500)
-                onProgress((frames.length() / expectedBytes).coerceIn(0.0, 0.99))
-                for (event in ReactionNative.stageTakeEvents(handle).lines()) {
-                    if (event.startsWith("end-file")) {
-                        finished = true
-                        val reason = event.split(' ').getOrNull(1)?.toIntOrNull()
-                        if (reason == 4) error("the reaction video could not be read for analysis")
-                    }
-                }
-            }
-            check(finished) { "analysis timed out" }
-        } finally {
-            // Finalises the encoder too.
-            ReactionNative.destroyStage(handle)
-        }
-        try {
-            val detector = ReactionLayoutDetector(w, h)
             val frameBytes = w * h
-            frames.inputStream().buffered(1 shl 20).use { input ->
-                val buffer = ByteArray(frameBytes)
-                while (true) {
-                    var read = 0
-                    while (read < frameBytes) {
-                        val got = input.read(buffer, read, frameBytes - read)
-                        if (got < 0) break
-                        read += got
-                    }
-                    if (read < frameBytes) break
-                    detector.add(buffer.copyOf())
+            val buffer = ByteArray(frameBytes)
+            var stalledSince = System.currentTimeMillis()
+            // Wait for the encoder to create the file.
+            while (!frames.exists() && System.currentTimeMillis() - stalledSince < 60_000) {
+                coroutineContext.ensureActive()
+                delay(250)
+                if (ReactionNative.stageTakeEvents(handle).lines().any { it.startsWith("end-file 4") }) {
+                    error("the reaction video could not be read for analysis")
                 }
             }
-            onProgress(1.0)
-            detector.detect().also { log.i { "layout: ${it.reactors.size} reactors, movie=${it.movie != null}" } }
+            java.io.RandomAccessFile(frames, "r").use { input ->
+                var offset = 0L
+                while (true) {
+                    coroutineContext.ensureActive()
+                    for (event in ReactionNative.stageTakeEvents(handle).lines()) {
+                        if (event.startsWith("end-file")) {
+                            finished = true
+                            if (event.split(' ').getOrNull(1)?.toIntOrNull() == 4) error("the reaction video could not be read for analysis")
+                        }
+                    }
+                    var progressed = false
+                    while (input.length() - offset >= frameBytes) {
+                        input.seek(offset)
+                        input.readFully(buffer)
+                        offset += frameBytes
+                        progressed = true
+                        if (builder.add(buffer.copyOf())) onTimeline(builder.timeline())
+                    }
+                    durationMs?.let { onProgress(((builder.processedMs - fromMs).toDouble() / (it - fromMs).coerceAtLeast(1)).coerceIn(0.0, 0.99)) }
+                    if (finished && !progressed && input.length() - offset < frameBytes) break
+                    if (progressed) stalledSince = System.currentTimeMillis()
+                    check(System.currentTimeMillis() - stalledSince < 120_000) { "analysis stalled" }
+                    if (!progressed) delay(300)
+                }
+            }
         } finally {
+            ReactionNative.destroyStage(handle)
             frames.delete()
+        }
+        builder.finish()
+        onProgress(1.0)
+        builder.timeline().also { t ->
+            log.i { "timeline: ${t.epochs.size} epochs, " + t.epochs.joinToString { "${it.startMs / 1000}-${it.endMs / 1000}s:${it.layout.reactors.size}" } }
+            onTimeline(t)
         }
     }
 }
 
-/** Layouts are cached per reaction video, so one is analysed once (Stage 3). */
+/** Layout timelines are cached per reaction video, so one is analysed once (Stage 3). */
 internal object ReactionLayoutCache {
     @Serializable
-    private data class Stored(val version: Int, val tiles: List<StoredTile>)
+    private data class Stored(val version: Int, val epochs: List<StoredEpoch>)
+
+    @Serializable
+    private data class StoredEpoch(val startMs: Long, val endMs: Long, val tiles: List<StoredTile>)
 
     @Serializable
     private data class StoredTile(val x: Double, val y: Double, val w: Double, val h: Double, val kind: String)
 
-    private const val VERSION = 1
+    private const val VERSION = 2
     private val json = Json { ignoreUnknownKeys = true }
 
     private val dir: File by lazy {
@@ -128,15 +133,24 @@ internal object ReactionLayoutCache {
         is ReactionSource.LocalFile -> File(source.path).let { "file-" + sha("${it.absolutePath}|${it.length()}|${it.lastModified()}") }
     }
 
-    fun load(key: String): DetectedLayout? = runCatching {
+    fun load(key: String): ReactionLayoutTimeline? = runCatching {
         val stored = json.decodeFromString(Stored.serializer(), File(dir, "$key.json").readText())
         if (stored.version != VERSION) return null
-        DetectedLayout(stored.tiles.map { DetectedTile(LayoutRect(it.x, it.y, it.w, it.h), TileKind.valueOf(it.kind)) })
+        ReactionLayoutTimeline(
+            stored.epochs.map { e ->
+                LayoutEpoch(e.startMs, e.endMs, DetectedLayout(e.tiles.map { DetectedTile(LayoutRect(it.x, it.y, it.w, it.h), TileKind.valueOf(it.kind)) }))
+            },
+        )
     }.getOrNull()
 
-    fun save(key: String, layout: DetectedLayout) {
+    fun save(key: String, timeline: ReactionLayoutTimeline) {
         runCatching {
-            val stored = Stored(VERSION, layout.tiles.map { StoredTile(it.rect.x, it.rect.y, it.rect.w, it.rect.h, it.kind.name) })
+            val stored = Stored(
+                VERSION,
+                timeline.epochs.map { e ->
+                    StoredEpoch(e.startMs, e.endMs, e.layout.tiles.map { StoredTile(it.rect.x, it.rect.y, it.rect.w, it.rect.h, it.kind.name) })
+                },
+            )
             File(dir, "$key.json").writeText(json.encodeToString(Stored.serializer(), stored))
         }
     }

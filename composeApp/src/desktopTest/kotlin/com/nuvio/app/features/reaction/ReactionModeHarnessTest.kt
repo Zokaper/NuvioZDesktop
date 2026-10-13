@@ -99,8 +99,9 @@ class ReactionModeHarnessTest {
                 event("reactionMode", 0.0)
                 event("reactionRedetect")
                 ReactionSession.startSource(ReactionSource.WebVideo(reactionUrl))
-                val found = waitFor("reactors detected", 9 * 60_000) {
-                    ReactionSession.debugState.takeIf { !it.analyzing && (it.reactorCount ?: 0) > 0 }
+                // Analysis runs ahead of playback; wait for the layout where the reaction is now.
+                val found = waitFor("reactors detected", 5 * 60_000) {
+                    ReactionSession.debugState.takeIf { (it.reactorCount ?: 0) > 0 }
                 }
                 File(out, "layout.txt").writeText("$found\n")
                 record("layout-playing", 4_000)

@@ -75,7 +75,12 @@ internal object ReactionSession {
     private var loadRetries = 0
 
     // Stage 3: the reaction's own layout - which boxes are reactors, where the movie is.
+    private var layoutTimeline: ReactionLayoutTimeline? = null
+    /** Where the running analysis started, so a seek far outside it can restart it there. */
+    private var analysisFromMs = 0L
+    /** The layout in force at the reaction's current position (it changes mid-video). */
     private var detectedLayout: DetectedLayout? = null
+    private var currentEpoch = -1
     private var analysisJob: Job? = null
     private var analysisProgress: Double? = null
     private var analysisError: String? = null
@@ -359,7 +364,9 @@ internal object ReactionSession {
         resolvedStream = null
         analysisJob?.cancel()
         analysisJob = null
+        layoutTimeline = null
         detectedLayout = null
+        currentEpoch = -1
         analysisProgress = null
         analysisError = null
         loadRetries = 0
@@ -493,6 +500,8 @@ internal object ReactionSession {
             return
         }
 
+        if (updateEpoch(follower.positionMs)) appliedLayoutKey = null
+        maybeRestartAnalysis(currentStage, follower.positionMs)
         applyLayout(m.playerHandle, currentStage)
 
         val map = SyncMap.manualOffset(offsetMs, reactionDurationMs)
@@ -548,37 +557,60 @@ internal object ReactionSession {
         return "Reactions resume in ${seconds / 60}:${String.format(Locale.ROOT, "%02d", seconds % 60)}"
     }
 
-    /** Use the cached layout for this reaction, or analyse a stretch of it in the background. */
-    private fun beginLayout(currentStage: ReactionStage, useCache: Boolean) {
+    /**
+     * Use this reaction's cached layout timeline, or analyse the whole video in the background.
+     * The timeline is published as it grows, so the start is rearranged within seconds.
+     */
+    private fun beginLayout(currentStage: ReactionStage, useCache: Boolean, fromMs: Long? = null) {
         val current = source ?: return
         val key = ReactionLayoutCache.key(current)
-        if (useCache) {
+        val position = fromMs ?: currentStage.double("time-pos")?.let { (it * 1000).toLong() } ?: 0L
+        if (useCache && layoutTimeline == null) {
             ReactionLayoutCache.load(key)?.let {
-                detectedLayout = it
+                layoutTimeline = it
+                currentEpoch = -1
                 appliedLayoutKey = null
-                log.i { "layout from cache: ${it.reactors.size} reactors" }
-                return
+                log.i { "layout timeline from cache: ${it.epochs.size} epochs" }
+                // A partial timeline (an earlier viewing stopped early): analyse only what is missing.
+                if (it.covers(position)) return
             }
         }
+        if (!useCache) layoutTimeline = null
+        val earlier = layoutTimeline
+        // Start a little before the position, on a 5 s boundary, so the epoch around it is whole.
+        val start = ((position - 5_000).coerceAtLeast(0) / 5_000) * 5_000
+        analysisFromMs = start
         analysisJob?.cancel()
         analysisError = null
         analysisProgress = 0.0
-        val target = resolvedStream ?: when (current) {
-            is ReactionSource.LocalFile -> current.path
-            is ReactionSource.WebVideo -> current.url
-        }
-        val extra = if (current is ReactionSource.WebVideo && resolvedStream == null) {
-            ReactionTools.locate()?.let(ReactionTools::mpvOptions).orEmpty()
-        } else {
-            emptyList()
+        // Web: a separate, low-resolution extraction - the detector works at 480x270 anyway.
+        val (target, extra) = when (current) {
+            is ReactionSource.LocalFile -> current.path to emptyList()
+            is ReactionSource.WebVideo -> current.url to (
+                ReactionTools.locate()?.let(ReactionTools::mpvOptions).orEmpty()
+                    .filterNot { it.startsWith("ytdl-format=") } + "ytdl-format=${ReactionTimelineAnalyzer.WEB_ANALYSIS_FORMAT}"
+                )
         }
         val duration = currentStage.double("duration")?.let { (it * 1000).toLong() }
         analysisJob = scope.launch {
             try {
-                val layout = ReactionAnalyzer.detectLayout(target, extra, duration) { p -> scope.launch { analysisProgress = p } }
+                val timeline = ReactionTimelineAnalyzer.analyze(
+                    target, extra, start, duration,
+                    onProgress = { p -> scope.launch { analysisProgress = p } },
+                    onTimeline = { t ->
+                        scope.launch {
+                            if (source == current) {
+                                layoutTimeline = earlier?.overlaidWith(t) ?: t
+                                currentEpoch = -1
+                                appliedLayoutKey = null
+                            }
+                        }
+                    },
+                )
                 if (source != current) return@launch
-                detectedLayout = layout
-                ReactionLayoutCache.save(key, layout)
+                layoutTimeline = earlier?.overlaidWith(timeline) ?: timeline
+                currentEpoch = -1
+                layoutTimeline?.let { ReactionLayoutCache.save(key, it) }
                 appliedLayoutKey = null
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
@@ -593,6 +625,31 @@ internal object ReactionSession {
                 pushUi(force = true)
             }
         }
+    }
+
+    /**
+     * The reaction jumped somewhere the analysis has not reached and will not soon (a seek, an offset
+     * change): analyse from there instead. Epochs found so far are kept.
+     */
+    private fun maybeRestartAnalysis(currentStage: ReactionStage, reactionMs: Long?) {
+        val ms = reactionMs ?: return
+        if (layoutTimeline?.covers(ms) == true) return
+        val running = analysisJob?.isActive == true
+        val reachable = running && ms >= analysisFromMs && ms <= (layoutTimeline?.coveredUntilMs ?: analysisFromMs) + 90_000
+        if (reachable || analysisError != null && !running) return
+        log.i { "reaction at ${ms / 1000}s is outside the analysed range; analysing from there" }
+        beginLayout(currentStage, useCache = true, fromMs = ms)
+    }
+
+    /** Follows the reaction's position into the right layout epoch; true when the layout changed. */
+    private fun updateEpoch(reactionMs: Long?): Boolean {
+        val timeline = layoutTimeline ?: return false
+        val ms = reactionMs ?: return false
+        val index = timeline.epochIndexAt(ms)
+        if (index == currentEpoch && detectedLayout != null) return false
+        currentEpoch = index
+        detectedLayout = timeline.at(ms)
+        return true
     }
 
     /** The parts of the reaction frame to show: detected reactors (slightly inset), or all of it. */
@@ -611,7 +668,7 @@ internal object ReactionSession {
                 event == "file-loaded" -> {
                     loading = false
                     if (source is ReactionSource.WebVideo && resolvedStream == null) resolvedStream = currentStage.resolvedStream()
-                    if (detectedLayout == null && analysisJob == null) beginLayout(currentStage, useCache = true)
+                    if (layoutTimeline == null && analysisJob == null) beginLayout(currentStage, useCache = true)
                     reactionAspect = currentStage.double("video-params/aspect")
                     appliedLayoutKey = null
                     error = null
@@ -667,7 +724,7 @@ internal object ReactionSession {
             is StagePlacement.Monitor -> {
                 val w = placement.bounds.width.toDouble()
                 val h = placement.bounds.height.toDouble()
-                val key = "dual:$w:$h:$aspects"
+                val key = "dual:$w:$h:$tileSources:$sourceAspect"
                 if (key == appliedLayoutKey) return
                 appliedLayoutKey = key
                 val targets = ReactionGridLayout.justify(aspects, w, h, TILE_GAP)
@@ -678,7 +735,7 @@ internal object ReactionSession {
                 val movieAspect = ReactionNative.mainGetProperty(playerHandle, "video-params/aspect")?.toDoubleOrNull() ?: (16.0 / 9.0)
                 val w = sw.toDouble()
                 val h = sh.toDouble()
-                val key = "single:$w:$h:$movieAspect:${preferences.movieFraction}:$aspects"
+                val key = "single:$w:$h:$movieAspect:${preferences.movieFraction}:$tileSources:$sourceAspect"
                 if (key == appliedLayoutKey) return
                 appliedLayoutKey = key
                 val layout = ReactionSingleScreenLayout.arrange(w, h, movieAspect, aspects, preferences.movieFraction, TILE_GAP)
@@ -804,6 +861,7 @@ internal object ReactionSession {
             analysisProgress?.let { put("progress", it) }
             put("count", detectedLayout?.reactors?.size ?: 0)
             put("found", detectedLayout != null)
+            put("epochs", layoutTimeline?.epochs?.size ?: 0)
             put("showWhole", showWholeFrame)
             analysisError?.let { put("error", it) }
         }
