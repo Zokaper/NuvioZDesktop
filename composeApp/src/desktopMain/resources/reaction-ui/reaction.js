@@ -84,6 +84,13 @@
 
       <section class="wt-section" id="reactionLayoutSection">
         <div class="wt-section-title">Layout</div>
+        <div class="reaction-reactors">
+          <span id="reactionReactorsText"></span>
+          <span class="reaction-reactors-actions">
+            <button type="button" data-r="reactionShowWhole" id="reactionShowWholeButton"></button>
+            <button type="button" data-r="reactionRedetect" id="reactionRedetectButton">Find again</button>
+          </span>
+        </div>
         <div class="wt-setting wt-setting-stack">
           <div class="wt-segments" role="radiogroup" aria-label="Layout">
             <button type="button" role="radio" data-r="reactionMode" data-v="0">Two screens</button>
@@ -251,6 +258,22 @@
         tabList.appendChild(b);
       });
     }
+
+    const reactors = s.reactors || {};
+    let reactorText = "";
+    if (reactors.analyzing) {
+      reactorText = "Finding reactors… " + Math.round((reactors.progress || 0) * 100) + "%";
+    } else if (reactors.error) {
+      reactorText = reactors.error;
+    } else if (reactors.found && reactors.count > 0) {
+      reactorText = reactors.count + (reactors.count === 1 ? " reactor" : " reactors");
+    } else if (reactors.found) {
+      reactorText = "No separate reactors found";
+    }
+    $("reactionReactorsText").textContent = reactorText;
+    $("reactionShowWholeButton").textContent = reactors.showWhole ? "Show reactors" : "Show whole video";
+    $("reactionShowWholeButton").hidden = !reactors.found || reactors.count === 0;
+    $("reactionRedetectButton").hidden = Boolean(reactors.analyzing) || !(reactors.found || reactors.error);
 
     gapPill.hidden = !s.gapText;
     gapPill.textContent = s.gapText || "";

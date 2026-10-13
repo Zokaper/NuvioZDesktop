@@ -92,6 +92,24 @@ class ReactionModeHarnessTest {
                 return
             }
 
+            // Optional: a real compilation (NUVIO_REACTION_HARNESS_LAYOUT=1 with _REACTION_URL): let the
+            // analyser find its reactors, then capture the rearranged grid on the dual-screen stage.
+            if (System.getenv("NUVIO_REACTION_HARNESS_LAYOUT") == "1" && reactionUrl != null) {
+                ReactionSession.monitorOverride = Rectangle(560, 60, 1280, 720)
+                event("reactionMode", 0.0)
+                event("reactionRedetect")
+                ReactionSession.startSource(ReactionSource.WebVideo(reactionUrl))
+                val found = waitFor("reactors detected", 9 * 60_000) {
+                    ReactionSession.debugState.takeIf { !it.analyzing && (it.reactorCount ?: 0) > 0 }
+                }
+                File(out, "layout.txt").writeText("$found\n")
+                record("layout-playing", 4_000)
+                screenshot("layout-grid")
+                assertTrue((found.reactorCount ?: 0) >= 6, "only ${found.reactorCount} reactors found")
+                event("reactionStop")
+                return
+            }
+
             // "Second monitor": a window beside the harness frame on this one-screen machine.
             ReactionSession.monitorOverride = Rectangle(1330, 40, 560, 315)
             event("reactionMode", 0.0)

@@ -25,6 +25,8 @@ internal object ReactionNative {
 
     /** Single-screen: mpv's own window as a direct child of the main player's container. */
     external fun createInPlayerStage(playerHandle: Long, options: Array<String>): Long
+    /** Analysis: an mpv with no window (encode mode writes the sampled frames to a file). */
+    external fun createHeadlessStage(options: Array<String>): Long
     external fun destroyStage(handle: Long)
     external fun stageCommand(handle: Long, args: Array<String>): Int
     external fun stageSetProperty(handle: Long, name: String, value: String): Int

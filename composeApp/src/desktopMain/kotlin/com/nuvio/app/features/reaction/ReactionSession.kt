@@ -74,6 +74,14 @@ internal object ReactionSession {
     /** Web loads fail transiently (YouTube refusing one stream URL); retried before giving up. */
     private var loadRetries = 0
 
+    // Stage 3: the reaction's own layout - which boxes are reactors, where the movie is.
+    private var detectedLayout: DetectedLayout? = null
+    private var analysisJob: Job? = null
+    private var analysisProgress: Double? = null
+    private var analysisError: String? = null
+    /** The user asked to see the reaction as it is, not rearranged. */
+    private var showWholeFrame = false
+
     // The Firefox link (Stage 2). The tab the reaction came from stays linked: when it moves to
     // another video - the next episode's reaction - Nuvio Z follows it.
     private var browserConnected = false
@@ -234,6 +242,11 @@ internal object ReactionSession {
             "reactionMovieVolume" -> updateAudio { it.copy(movieVolumeWithReactions = value.coerceIn(0.0, 100.0)) }
             "reactionGapVolume" -> updateAudio { it.copy(movieVolumeInGaps = value.coerceIn(0.0, 100.0)) }
             "reactionStop" -> stop()
+            "reactionShowWhole" -> {
+                showWholeFrame = !showWholeFrame
+                appliedLayoutKey = null
+            }
+            "reactionRedetect" -> stage?.let { beginLayout(it, useCache = false) }
         }
         pushUi(force = true)
     }
@@ -344,6 +357,11 @@ internal object ReactionSession {
         source = newSource
         linkedTabId = null
         resolvedStream = null
+        analysisJob?.cancel()
+        analysisJob = null
+        detectedLayout = null
+        analysisProgress = null
+        analysisError = null
         loadRetries = 0
         offsetMs = 0
         reactionDurationMs = null
@@ -513,6 +531,8 @@ internal object ReactionSession {
             browserTabs = browserTabs,
             linkedTabId = linkedTabId,
             sourceLabel = source?.label,
+            reactorCount = detectedLayout?.reactors?.size,
+            analyzing = analysisProgress != null,
         )
         if (mixer.settings != preferences.audio) {
             preferences = preferences.copy(audio = mixer.settings)
@@ -528,12 +548,70 @@ internal object ReactionSession {
         return "Reactions resume in ${seconds / 60}:${String.format(Locale.ROOT, "%02d", seconds % 60)}"
     }
 
+    /** Use the cached layout for this reaction, or analyse a stretch of it in the background. */
+    private fun beginLayout(currentStage: ReactionStage, useCache: Boolean) {
+        val current = source ?: return
+        val key = ReactionLayoutCache.key(current)
+        if (useCache) {
+            ReactionLayoutCache.load(key)?.let {
+                detectedLayout = it
+                appliedLayoutKey = null
+                log.i { "layout from cache: ${it.reactors.size} reactors" }
+                return
+            }
+        }
+        analysisJob?.cancel()
+        analysisError = null
+        analysisProgress = 0.0
+        val target = resolvedStream ?: when (current) {
+            is ReactionSource.LocalFile -> current.path
+            is ReactionSource.WebVideo -> current.url
+        }
+        val extra = if (current is ReactionSource.WebVideo && resolvedStream == null) {
+            ReactionTools.locate()?.let(ReactionTools::mpvOptions).orEmpty()
+        } else {
+            emptyList()
+        }
+        val duration = currentStage.double("duration")?.let { (it * 1000).toLong() }
+        analysisJob = scope.launch {
+            try {
+                val layout = ReactionAnalyzer.detectLayout(target, extra, duration) { p -> scope.launch { analysisProgress = p } }
+                if (source != current) return@launch
+                detectedLayout = layout
+                ReactionLayoutCache.save(key, layout)
+                appliedLayoutKey = null
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                log.w(failure) { "layout analysis failed" }
+                analysisError = "Couldn't find the reactors: ${failure.message}"
+            } finally {
+                if (source == current) {
+                    analysisJob = null
+                    analysisProgress = null
+                }
+                pushUi(force = true)
+            }
+        }
+    }
+
+    /** The parts of the reaction frame to show: detected reactors (slightly inset), or all of it. */
+    private fun currentTileSources(): List<LayoutRect> {
+        val reactors = detectedLayout?.reactors.orEmpty()
+        if (showWholeFrame || reactors.isEmpty()) return listOf(LayoutRect.FULL)
+        // About one analysis pixel in from every side, so a neighbour's edge never shows.
+        val ix = 1.5 / ReactionLayoutDetector.ANALYSIS_WIDTH
+        val iy = 1.5 / ReactionLayoutDetector.ANALYSIS_HEIGHT
+        return reactors.map { LayoutRect(it.rect.x + ix, it.rect.y + iy, it.rect.w - 2 * ix, it.rect.h - 2 * iy) }
+    }
+
     private fun drainStageEvents(currentStage: ReactionStage) {
         for (event in currentStage.takeEvents()) {
             when {
                 event == "file-loaded" -> {
                     loading = false
                     if (source is ReactionSource.WebVideo && resolvedStream == null) resolvedStream = currentStage.resolvedStream()
+                    if (detectedLayout == null && analysisJob == null) beginLayout(currentStage, useCache = true)
                     reactionAspect = currentStage.double("video-params/aspect")
                     appliedLayoutKey = null
                     error = null
@@ -582,8 +660,7 @@ internal object ReactionSession {
 
     /** Recomputes tiles (and, single-screen, the episode's margins) when anything they depend on changes. */
     private fun applyLayout(playerHandle: Long, currentStage: ReactionStage) {
-        // Stage 1 has no box detection yet: the whole reaction frame is one tile.
-        val tileSources = listOf(LayoutRect.FULL)
+        val tileSources = currentTileSources()
         val sourceAspect = reactionAspect ?: (16.0 / 9.0)
         val aspects = tileSources.map { it.w / it.h * sourceAspect }
         when (val placement = currentStage.placement) {
@@ -722,6 +799,14 @@ internal object ReactionSession {
                 },
             )
         }
+        putJsonObject("reactors") {
+            put("analyzing", analysisProgress != null)
+            analysisProgress?.let { put("progress", it) }
+            put("count", detectedLayout?.reactors?.size ?: 0)
+            put("found", detectedLayout != null)
+            put("showWhole", showWholeFrame)
+            analysisError?.let { put("error", it) }
+        }
         putJsonObject("tools") {
             put("ready", ReactionTools.locate() != null)
             put("busy", toolsBusy)
@@ -783,4 +868,6 @@ internal data class ReactionDebugState(
     val browserTabs: List<BrowserTab> = emptyList(),
     val linkedTabId: Int? = null,
     val sourceLabel: String? = null,
+    val reactorCount: Int? = null,
+    val analyzing: Boolean = false,
 )

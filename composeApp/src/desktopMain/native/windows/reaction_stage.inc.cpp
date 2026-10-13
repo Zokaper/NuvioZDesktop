@@ -95,6 +95,12 @@ public:
         startEventThread();
     }
 
+    // Analysis: no window at all (e.g. encode mode writing sampled frames to a file).
+    void startHeadless(const std::vector<std::string> &options) {
+        createMpv(nullptr, options);
+        startEventThread();
+    }
+
     // Single-screen: mpv's own window becomes a direct child of the player's container.
     void startInPlayer(HWND playerContainer, const std::vector<std::string> &options) {
         if (!playerContainer || !IsWindow(playerContainer)) throw std::runtime_error("The player has no container window.");
@@ -271,9 +277,11 @@ private:
             if (eq == std::string::npos) continue;
             api.setOptionString(mpv, option.substr(0, eq).c_str(), option.substr(eq + 1).c_str());
         }
-        int64_t widValue = (int64_t)(intptr_t)wid;
-        if (api.setOption(mpv, "wid", MPV_FORMAT_INT64, &widValue) < 0) {
-            throw std::runtime_error("mpv wid option failed for the reaction stage.");
+        if (wid) {
+            int64_t widValue = (int64_t)(intptr_t)wid;
+            if (api.setOption(mpv, "wid", MPV_FORMAT_INT64, &widValue) < 0) {
+                throw std::runtime_error("mpv wid option failed for the reaction stage.");
+            }
         }
         int initResult = api.initialize(mpv);
         if (initResult < 0) {
@@ -399,6 +407,17 @@ extern "C" JNIEXPORT jlong JNICALL NUVIO_REACTION_JNI(createInPlayerStage)(
         if (!player) throw std::runtime_error("The player is gone.");
         auto stage = std::make_shared<nuvio_reaction::Stage>();
         stage->startInPlayer(player->reactionContainerHwnd(), jstringArrayToVector(env, options));
+        return nuvio_reaction::registerStage(stage);
+    } catch (const std::exception &error) {
+        throwJavaError(env, error.what());
+        return 0;
+    }
+}
+
+extern "C" JNIEXPORT jlong JNICALL NUVIO_REACTION_JNI(createHeadlessStage)(JNIEnv *env, jobject, jobjectArray options) {
+    try {
+        auto stage = std::make_shared<nuvio_reaction::Stage>();
+        stage->startHeadless(jstringArrayToVector(env, options));
         return nuvio_reaction::registerStage(stage);
     } catch (const std::exception &error) {
         throwJavaError(env, error.what());
