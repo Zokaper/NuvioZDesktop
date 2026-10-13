@@ -61,21 +61,36 @@ internal object ReactionFrames {
         var index = fromIndex
         var finished = false
         var held = false
+        val recentLog = ArrayDeque<String>()
         var lastProgress = System.currentTimeMillis()
         try {
             ReactionNative.stageCommand(handle, arrayOf("loadfile", target))
             while (true) {
                 coroutineContext.ensureActive()
                 for (event in ReactionNative.stageTakeEvents(handle).lines()) {
+                    // mpv's own warnings and errors: kept, so a failure can say what went wrong.
+                    if (event.startsWith("log")) {
+                        recentLog.addLast(event.take(200))
+                        if (recentLog.size > 4) recentLog.removeFirst()
+                        continue
+                    }
                     if (!event.startsWith("end-file")) continue
                     finished = true
-                    if (event.split(' ').getOrNull(1)?.toIntOrNull() == 4) error("the video could not be read for analysis")
+                    if (event.split(' ').getOrNull(1)?.toIntOrNull() == 4) {
+                        error("the video could not be read for analysis (at ${index / fps}s: ${recentLog.joinToString(" | ")})")
+                    }
                 }
-                val hold = holdWhile()
-                if (hold != held) {
-                    held = hold
-                    ReactionNative.stageSetProperty(handle, "pause", if (hold) "yes" else "no")
+                // Hold while asked to (the main player drops frames), and while the decoder is more than
+                // MAX_PENDING_PARTS ahead of the reading: unread raw parts otherwise pile up on disk
+                // (four readers at ~20x real time filled the last 2 GB of C: - "Writing packet failed").
+                fun updateHold() {
+                    val hold = holdWhile() || File(dir, partName(part + MAX_PENDING_PARTS)).exists()
+                    if (hold != held) {
+                        held = hold
+                        ReactionNative.stageSetProperty(handle, "pause", if (hold) "yes" else "no")
+                    }
                 }
+                updateHold()
                 var progressed = false
                 while (true) {
                     val current = File(dir, partName(part))
@@ -96,6 +111,7 @@ internal object ReactionFrames {
                     current.delete()
                     part++
                     offset = 0
+                    updateHold()
                 }
                 if (progressed || held) lastProgress = System.currentTimeMillis()
                 if (finished && !File(dir, partName(part)).exists()) break
@@ -108,6 +124,9 @@ internal object ReactionFrames {
             dir.delete()
         }
     }
+
+    /** 4 s parts the decoder may run ahead: ~4 MB at 480x270 grey, 8 fps. */
+    private const val MAX_PENDING_PARTS = 8
 
     private fun partName(part: Int) = String.format(Locale.ROOT, "part-%05d.gray", part)
 

@@ -1,6 +1,61 @@
 # Handoff: Reaction Mode on the maintainer's desktop PC (2026-10-13)
 
-> **Update, later the same day:** the spotty match was diagnosed from the live session and fixed, and the
+## Start here (end of 2026-10-13, after Debug 93-95 and the border cutter)
+
+The maintainer stopped testing for the day and went back to the release app. **Debug 96 has the latest work and
+has not been tried by the maintainer yet**: install it, play Interstellar with TEM's compilation
+(`https://www.youtube.com/watch?v=icWf4O1eac0`), and watch the stage on Display 2 and the log
+(`%APPDATA%\Nuvio Z Debug\logs\`, newest file). WGC screenshot helpers and their quirks on this PC are in the
+evidence folder below; `PrintWindow` cannot see the stage and `wgc-capture.py` needs `draw_border` removed on
+this Windows 10.
+
+**State of the three things the maintainer cares about:**
+1. **Sync** - solved for this test. One +10.11 s line, 97-98 % of the film (holes: 58:54 for 27 s and 1:18:50 for
+   96 s, Mann's planet - the film plays there under the logo; IMAX-crop lead, unconfirmed). The gap countdown no
+   longer shows a provisional number (`gapSettled`).
+2. **Speed** - reaction read 146 s for 2 h 45 m (4 parallel readers, two layout detectors). Episode: sampled
+   (`EpisodeReadPlanner`), but every probe over debrid is a ~10 s stream open; a fresh 2 h 49 m film needs ~57
+   probes on 2 readers, so ~5 minutes before the whole map is "checked". Sync near the playhead comes first.
+   Ideas not tried: keep one mpv open and seek instead of reopening; a third reader.
+3. **Reactors** - the maintainer's last words on Debug 95: "completely broken", "misalignments on the cutouts",
+   "a bunch of missing ones". Diagnosed and fixed, **not yet seen by the maintainer**:
+   - Debug 95 built no layout for the first 41 minutes: Debug 94's parallel readers each lost the last second
+     before their boundary, so the next session "resumed" from 41:19 with the layout cache invalidated. Fixed:
+     readers read 2 s past their end; a run under 2 s missing is not a resume point; no cached layout -> read
+     from the start.
+   - Misaligned cutouts: Debug 95 split merged blocks into an even grid, which cut through faces. Replaced by
+     `ReactionGridCutter`: a recursive XY-cut of each arrangement's long-term mean picture along straight lines
+     (TEM's borders are invisible to motion at 480x270 but sharp in a 45 s+ average). Result on TEM: 79 of ~84
+     cameras, boxes on their borders (`reaction-evidence-2026-10-13/shots/steady-cut-v6.png`). Known leftovers:
+     the top-left camera is cut into two slivers, two narrow cells in the bottom middle, a two-person camera
+     becomes two tiles.
+   - "Writing packet failed" (analysis aborts): unread raw frames filled C: (only ~2 GB free on this PC). Fixed:
+     the decoder pauses when 8 parts (32 s) are waiting.
+   - Equal tiles: every reactor is cropped to the median camera's shape.
+
+**Evidence and tools** (outside the repo): `A:\Antigravity Projects\Nuvio Z\reaction-evidence-2026-10-13\` -
+`data/` (episode + old reaction tracks, Debug 92 session), `data2..7/` (re-reads through each pipeline version,
+`-r2.bin` + `layouts/layout.json`), `live/` (Debug 92 logs + layout), `shots/` (key screenshots), and the Python
+used (`viterbi.py` matcher prototype, `xycut.py` cutter prototype, `drawset.py` draws a layout's main set on a frame,
+`loop.py`/`snap.py`/`snapmon.py` WGC capture of the running app). A Python venv with `windows-capture pillow numpy
+av` is needed (use `%LOCALAPPDATA%\Python\bin\python3.12.exe`; the `python` on PATH is Inkscape's).
+
+**Real-data tests** (all env-gated, run with `--rerun`, output in `composeApp/build/test-results/desktopTest/*.xml`):
+`ReactionReplayTest` (matcher on saved tracks), `ReactionReanalyseTest` (re-reads the reaction through today's
+pipeline, needs `NUVIO_REACTION_NATIVE_RESOURCES=C:\Program Files\Nuvio Z Debug\app\resources`; saves the track
+and layout), `ReactionLayoutReplayTest` (re-steadies a saved layout JSON). JDK 21 at `C:\Program Files\Java\jdk-21`
+builds and tests the app here.
+
+**Maintainer preference from this session:** while they are testing live, do not publish a CI debug release per
+iteration - build locally and swap it in (Program Files is not writable: copy the install to a user folder, replace
+`app\composeApp-desktop-<hash>.jar` with `./gradlew :composeApp:desktopJar -Pnuvio.desktop.debugChannel=true`'s
+jar under the same name, close their app, launch the copy). Not done yet; C: is nearly full, so check space first.
+
+Not done: starting the reaction read near the playhead; AMO signing; the remaining cutter leftovers; Mann's planet.
+
+---
+
+> **Update, earlier the same day:** the spotty match was diagnosed from the live session and fixed, and the
 > countdown bug is fixed; published as Debug 93. Causes, measurements and what is left are at the top of
 > `STATUS.md`. The rest of this file is the original handoff, kept for its setup notes (data locations,
 > building, publishing). Its five hypotheses: H1 (box) partly true, H6 (the channel's logo, added) the main cause,

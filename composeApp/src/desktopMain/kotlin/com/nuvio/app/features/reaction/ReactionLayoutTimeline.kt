@@ -35,7 +35,16 @@ internal class ReactionLayoutTimeline(val epochs: List<LayoutEpoch>) {
      * "movie" goes back to being a reactor and pieces of the movie found as tiles are dropped. A
      * genuinely different arrangement (a large box elsewhere) is left alone.
      */
-    fun steadied(wideLayouts: List<DetectedLayout> = emptyList()): ReactionLayoutTimeline = steadyMovie().steadyReactors(wideLayouts)
+    fun steadied(
+        wideLayouts: List<DetectedLayout> = emptyList(),
+        /** Each window's long-term picture (final timeline only): reactors are then cut on their borders. */
+        pictures: List<Triple<DetectedLayout, WindowPicture, Int>>? = null,
+    ): ReactionLayoutTimeline {
+        val box = mainMovieBox()
+        fun moved(layout: DetectedLayout) = if (box == null) layout else steady(layout, box)
+        return ReactionLayoutTimeline(epochs.map { it.copy(layout = moved(it.layout)) })
+            .steadyReactors(wideLayouts.map(::moved), pictures?.map { Triple(moved(it.first), it.second, it.third) })
+    }
 
     /**
      * Every reactor of an arrangement, in every epoch of it. A 45 s window only sees the people who
@@ -50,7 +59,10 @@ internal class ReactionLayoutTimeline(val epochs: List<LayoutEpoch>) {
      * more kept boxes covering half of it is a block and gives way to them, and every epoch of the
      * arrangement shows the whole set (plus any box only its own window saw, there only).
      */
-    private fun steadyReactors(wideLayouts: List<DetectedLayout>): ReactionLayoutTimeline {
+    private fun steadyReactors(
+        wideLayouts: List<DetectedLayout>,
+        pictures: List<Triple<DetectedLayout, WindowPicture, Int>>?,
+    ): ReactionLayoutTimeline {
         if (epochs.isEmpty()) return this
         // Distinct layouts (the builder's candidates), with how long each was on. Wide layouts (from
         // 3 min windows) only lend their boxes to the sets: they cover cameras the 45 s windows never
@@ -66,7 +78,8 @@ internal class ReactionLayoutTimeline(val epochs: List<LayoutEpoch>) {
         val steady = HashMap<DetectedLayout, DetectedLayout>()
         for (group in arrangements) {
             if (group.none { it in epochLayouts }) continue
-            val reactors = reactorSet(group, layouts)
+            val motion = reactorSet(group, layouts)
+            val reactors = pictures?.let { cutReactors(group, it, motion) } ?: motion
             for (layout in group.filter { it in epochLayouts }) {
                 val movie = layout.movie
                 // A box only this window saw is not spread over the video, but it stays here.
@@ -76,6 +89,28 @@ internal class ReactionLayoutTimeline(val epochs: List<LayoutEpoch>) {
             }
         }
         return ReactionLayoutTimeline(epochs.map { it.copy(layout = steady.getValue(it.layout)) })
+    }
+
+    /**
+     * The arrangement's cameras cut from its long-term picture on their borders (ReactionGridCutter),
+     * when that agrees with motion: most cameras motion found alone must be a cut cell (IoU 0.4+), or
+     * the picture is not one arrangement after all (a rearrangement inside a window) and motion stands.
+     * A camera motion found that no cell covers is added.
+     */
+    private fun cutReactors(group: List<DetectedLayout>, pictures: List<Triple<DetectedLayout, WindowPicture, Int>>, motion: List<DetectedTile>): List<DetectedTile>? {
+        val inGroup = group.toSet()
+        val picture = LayoutPicture.average(pictures.filter { it.first in inGroup }.map { it.second to it.third }) ?: return null
+        if (motion.isEmpty()) return null
+        val singles = motion.filter { s -> motion.none { it !== s && insideShare(it.rect, s.rect) >= 0.8 && area(it.rect) < 0.6 * area(s.rect) } }
+        val cw = singles.map { it.rect.w }.sorted()[singles.size / 2]
+        val ch = singles.map { it.rect.h }.sorted()[singles.size / 2]
+        val movie = group.firstNotNullOfOrNull { it.movie }?.rect
+        val cells = ReactionGridCutter.cells(picture, (cw * 0.6 * picture.width).toInt(), (ch * 0.6 * picture.height).toInt(), movie)
+        if (cells.isEmpty()) return null
+        val agreeing = singles.count { s -> cells.any { ReactionLayoutTimelineBuilder.iou(it, s.rect) >= 0.4 } }
+        if (agreeing < 0.6 * singles.size) return null
+        val missed = singles.filter { s -> cells.none { overlapShare(it, s.rect) > 0.25 } }
+        return cells.map { DetectedTile(it, TileKind.REACTOR) } + missed
     }
 
     private class Box(var rect: LayoutRect, val members: MutableList<LayoutRect>, var windows: Int, var ms: Long, val cell: Boolean = false)
@@ -172,26 +207,25 @@ internal class ReactionLayoutTimeline(val epochs: List<LayoutEpoch>) {
         return LayoutRect(mid(rects.map { it.x }), mid(rects.map { it.y }), mid(rects.map { it.w }), mid(rects.map { it.h }))
     }
 
-    private fun steadyMovie(): ReactionLayoutTimeline {
+    private fun mainMovieBox(): LayoutRect? {
         val movies = epochs.mapNotNull { e -> e.layout.movie?.let { it.rect to (e.endMs - e.startMs) } }
             .filter { (rect, _) -> rect.w * rect.h >= MIN_MOVIE_AREA }
-        if (movies.isEmpty()) return this
+        if (movies.isEmpty()) return null
         val families = ArrayList<MutableList<Pair<LayoutRect, Long>>>()
         for (m in movies.sortedByDescending { it.second }) {
             families.firstOrNull { f -> ReactionLayoutTimelineBuilder.iou(f.first().first, m.first) >= 0.5 }?.add(m) ?: families.add(mutableListOf(m))
         }
         val main = families.maxBy { f -> f.sumOf { it.second } }
         val familyMs = main.sumOf { it.second }
-        if (familyMs * 3 < epochs.sumOf { it.endMs - it.startMs }) return this
+        if (familyMs * 3 < epochs.sumOf { it.endMs - it.startMs }) return null
         // Windows see the same box a pixel or two apart: those are one size, shown by its most-seen look.
         val sizes = ArrayList<MutableList<Pair<LayoutRect, Long>>>()
         for (m in main) {
             sizes.firstOrNull { s -> ReactionLayoutTimelineBuilder.iou(s.first().first, m.first) >= 0.85 }?.add(m) ?: sizes.add(mutableListOf(m))
         }
         val looks = sizes.map { s -> s.groupBy({ it.first }, { it.second }).maxBy { it.value.sum() }.key to s.sumOf { it.second } }
-        val box = looks.filter { it.second * 100 >= familyMs * MAIN_SHARE_PERCENT }.maxByOrNull { it.first.w * it.first.h }?.first
+        return looks.filter { it.second * 100 >= familyMs * MAIN_SHARE_PERCENT }.maxByOrNull { it.first.w * it.first.h }?.first
             ?: looks.maxBy { it.second }.first
-        return ReactionLayoutTimeline(epochs.map { e -> e.copy(layout = steady(e.layout, box)) })
     }
 
     private fun steady(layout: DetectedLayout, box: LayoutRect): DetectedLayout {
@@ -266,6 +300,8 @@ internal class ReactionLayoutTimelineBuilder(
     private val startMs: Long = 0,
     private val windowFrames: Int = 180,
     private val chunkFrames: Int = 20,
+    /** Keep each window's long-term picture for ReactionGridCutter (~260 KB per window). */
+    private val keepPictures: Boolean = true,
 ) {
     private val cw = width / 2
     private val ch = height / 2
@@ -276,10 +312,19 @@ internal class ReactionLayoutTimelineBuilder(
     private var framesInChunk = 0
     private val chunks = ArrayList<ByteArray>()
     private val candidates = ArrayList<DetectedLayout>()
+    // Per window, its long-term picture (ReactionGridCutter) and which candidate it proposed.
+    private val windowSum = FloatArray(width * height)
+    private val windowSumSq = FloatArray(width * height)
+    private val windowPictures = ArrayList<Triple<Int, WindowPicture, Int>>()
 
     /** Returns true when a window just finished (the timeline may have changed). */
     fun add(frame: ByteArray): Boolean {
         detector.add(frame)
+        for (i in windowSum.indices) {
+            val v = (frame[i].toInt() and 0xFF).toFloat()
+            windowSum[i] += v
+            windowSumSq[i] += v * v
+        }
         framesInWindow++
         framesTotal++
         for (y in 0 until ch) for (x in 0 until cw) {
@@ -310,7 +355,18 @@ internal class ReactionLayoutTimelineBuilder(
     private fun closeWindow() {
         val layout = runCatching { detector.detect() }.getOrNull()
         detector = ReactionLayoutDetector(width, height)
+        val frames = framesInWindow
         framesInWindow = 0
+        val picture = if (!keepPictures) null else WindowPicture(
+            width, height,
+            ByteArray(windowSum.size) { (windowSum[it] / frames).toInt().coerceIn(0, 255).toByte() },
+            ByteArray(windowSum.size) { i ->
+                val mean = windowSum[i] / frames
+                kotlin.math.sqrt(max(0f, windowSumSq[i] / frames - mean * mean)).toInt().coerceIn(0, 255).toByte()
+            },
+        )
+        windowSum.fill(0f)
+        windowSumSq.fill(0f)
         if (layout == null || (layout.reactors.isEmpty() && layout.movie == null)) return
         val same = candidates.indexOfFirst { similarity(it, layout) >= 0.7 }
         when {
@@ -318,7 +374,12 @@ internal class ReactionLayoutTimelineBuilder(
             // Two looks at the same arrangement: keep the one that found more boxes.
             layout.reactors.size > candidates[same].reactors.size -> candidates[same] = layout
         }
+        if (picture != null) windowPictures += Triple(if (same < 0) candidates.size - 1 else same, picture, frames)
     }
+
+    /** Each window's long-term picture with the layout it stands for now, and its frame count. */
+    val pictures: List<Triple<DetectedLayout, WindowPicture, Int>>
+        get() = windowPictures.map { (index, picture, frames) -> Triple(candidates[index], picture, frames) }
 
     fun timeline(): ReactionLayoutTimeline {
         if (candidates.isEmpty() || chunks.isEmpty()) return ReactionLayoutTimeline(emptyList())

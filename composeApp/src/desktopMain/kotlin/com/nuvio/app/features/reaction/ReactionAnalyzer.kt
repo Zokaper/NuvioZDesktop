@@ -63,17 +63,25 @@ internal object ReactionTimelineAnalyzer {
         val lock = Any()
         val timelines = arrayOfNulls<ReactionLayoutTimeline>(parts.size)
         val wideLayouts = Array(parts.size) { emptyList<DetectedLayout>() }
+        val pictures = Array(parts.size) { emptyList<Triple<DetectedLayout, WindowPicture, Int>>() }
         val read = IntArray(parts.size)
         val total = endIndex?.let { (it - fromIndex).coerceAtLeast(1) }
-        fun merged() = ReactionLayoutTimeline(timelines.filterNotNull().flatMap { it.epochs }.sortedBy { it.startMs })
-            .steadied(wideLayouts.flatMap { it })
+        // While reading, the motion-based steady set (cheap, and only the movie box matters for the
+        // fingerprints); the final timeline also cuts reactors on their borders (ReactionGridCutter).
+        fun merged(final: Boolean = false) = ReactionLayoutTimeline(timelines.filterNotNull().flatMap { it.epochs }.sortedBy { it.startMs })
+            .steadied(wideLayouts.flatMap { it }, if (final) pictures.flatMap { it } else null)
         val started = System.currentTimeMillis()
         parts.mapIndexed { k, (first, until) ->
             async(Dispatchers.IO) {
                 val builder = ReactionLayoutTimelineBuilder(startMs = first * FRAME_MS)
-                val wide = ReactionLayoutTimelineBuilder(startMs = first * FRAME_MS, windowFrames = WIDE_WINDOW_FRAMES)
+                val wide = ReactionLayoutTimelineBuilder(startMs = first * FRAME_MS, windowFrames = WIDE_WINDOW_FRAMES, keepPictures = false)
                 val pending = MovieFingerprinter(w / 2, h / 2, fingerprints)
-                ReactionFrames.read(target, emptyList(), w, h, ReactionFingerprinter.FPS, first, until) { index, frame ->
+                // The decoder stops about a second short of `end`: read on 2 s and drop the extra, or the
+                // last second before every boundary goes missing (Debug 94: the next session then
+                // "resumed" from the first boundary and built no layout for the first 41 minutes).
+                val readUntil = until?.let { it + 2 * ReactionFingerprinter.FPS }
+                ReactionFrames.read(target, emptyList(), w, h, ReactionFingerprinter.FPS, first, readUntil) { index, frame ->
+                    if (until != null && index >= until) return@read
                     pending.add(index, ReactionFrames.halve(frame, w, h))
                     if ((index - first) % step == 0 && wide.add(frame)) synchronized(lock) { wideLayouts[k] = wide.layouts }
                     if ((index - first) % step == 0 && builder.add(frame)) {
@@ -94,6 +102,7 @@ internal object ReactionTimelineAnalyzer {
                 wide.finish()
                 val timeline = synchronized(lock) {
                     wideLayouts[k] = wide.layouts
+                    pictures[k] = builder.pictures
                     timelines[k] = builder.timeline()
                     merged()
                 }
@@ -101,7 +110,7 @@ internal object ReactionTimelineAnalyzer {
                 onFingerprints()
             }
         }.awaitAll()
-        val timeline = synchronized(lock) { merged() }
+        val timeline = synchronized(lock) { merged(final = true) }
         onProgress(1.0)
         log.i {
             "timeline: ${timeline.epochs.size} epochs in ${(System.currentTimeMillis() - started) / 1000} s with ${parts.size} readers, " +
@@ -174,7 +183,8 @@ internal object ReactionLayoutCache {
     // 3: earlier mid-video analyses began at twice the requested position (see ReactionFrames).
     // 4: the movie box is steadied over the whole video (ReactionLayoutTimeline.steadied).
     // 5: so is the set of reactors, per arrangement.
-    private const val VERSION = 5
+    // 6: reactors cut on their borders from the long-term picture (ReactionGridCutter).
+    private const val VERSION = 6
     private val json = Json { ignoreUnknownKeys = true }
 
     private val dir: File by lazy {

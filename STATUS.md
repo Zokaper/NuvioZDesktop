@@ -1,5 +1,26 @@
 ## EXPERIMENTAL branch `claude/reaction-mode`: Reaction Mode, Stages 1-4 (2026-10-13)
 
+### Desktop Debug 96 (2026-10-13): reactors cut on their borders; Debug 95's layout and disk bugs fixed
+
+**Next agent: start at the "Start here" section of `HANDOFF-reaction-mode-desktop-pc.md`.** The maintainer has
+not tried Debug 96 yet; their verdict on 95 was "completely broken", misaligned cutouts, missing reactors.
+- **No layout for the first 41 minutes (95).** Debug 94's parallel readers each lost the second before their
+  boundary (the decoder stops short of `end`), so the next session took 41:19 as "where an earlier reading
+  stopped" - with the layout cache invalidated. Readers now read 2 s on and drop it; a missing run under 2 s is
+  not a resume point; with no cached layout the read starts at 0.
+- **Misaligned cutouts (95).** Blocks were split into an even grid and the cuts went through faces.
+  `ReactionGridCutter`: per arrangement, the mean of its 45 s windows' frames at 480x270 (borders sharp, faces
+  soft) is cut recursively along rows/columns whose pixels step on 70 %+ of their length, while both halves stay
+  0.6 of a camera (from the cameras motion found); leaves that change over time (std >= 3 grey levels; cameras
+  measured 12-19, borders/backgrounds < 1) and are not the movie are cameras. Used only for the final timeline
+  and only when 60 %+ of motion's single cameras agree with a cell. TEM: 79 of ~84 cameras on their borders.
+  Layout cache version 6.
+- **"Writing packet failed" aborting the read.** Four decoders at ~20x real time outran the analysis and their
+  unread raw parts filled C: (2 GB free on this PC). `ReactionFrames` now pauses the decoder with 8 parts waiting,
+  and a decode failure carries mpv's last log lines.
+- Measured on TEM after all of it (`ReactionReanalyseTest`): read 146 s, 79 reactors in most epochs, matching
+  97.2 % in 3 stretches on +10.11 s. 66 reaction tests.
+
 ### Desktop Debug 94-95 (2026-10-13): episode reads survive a stall; every reactor, steady and equal
 
 Maintainer's run of Debug 93 (live log + WGC screenshots):

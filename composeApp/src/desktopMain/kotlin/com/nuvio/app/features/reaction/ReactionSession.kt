@@ -466,6 +466,16 @@ internal object ReactionSession {
 
     // "-r2": reaction hashes are taken with the overlay normalised out (OverlayNormaliser); "-r" files
     // hold the old hashes. Episode tracks did not change and stay valid.
+    /** The first run of at least 2 s of frames not in [track], below [until]. */
+    private fun firstLongMissing(track: FingerprintTrack, until: Int): IntRange? {
+        var from = 0
+        while (true) {
+            val run = track.missingRange(from, until) ?: return null
+            if (run.last - run.first + 1 >= 2 * ReactionFingerprinter.FPS) return run
+            from = run.last + 1
+        }
+    }
+
     private fun trackKey(source: ReactionSource) = ReactionLayoutCache.key(source) + "-r2"
 
     // --- Stage -------------------------------------------------------------------------------
@@ -688,8 +698,8 @@ internal object ReactionSession {
             }
         }
         if (!useCache) layoutTimeline = null
-        // A short tail the encoder never emits does not count as missing.
-        val missing = totalIndex?.let { track.missingRange(0, it - ReactionFingerprinter.FPS) }
+        // A short tail the encoder never emits, or a second lost between two readers, does not count.
+        val missing = totalIndex?.let { firstLongMissing(track, it - ReactionFingerprinter.FPS) }
         if (useCache && layoutTimeline != null && totalIndex != null && missing == null) {
             reactionAnalysed = true
             scheduleMatch()
@@ -697,7 +707,9 @@ internal object ReactionSession {
             return
         }
         val earlier = layoutTimeline
-        val start = (missing?.first ?: 0) * ReactionFingerprinter.FRAME_MS
+        // Resume where an earlier reading stopped only when its layout is here too; a layout from a new
+        // version of the analysis needs the whole video.
+        val start = if (earlier == null) 0L else (missing?.first ?: 0) * ReactionFingerprinter.FRAME_MS
         analysisJob?.cancel()
         analysisError = null
         analysisProgress = 0.0
