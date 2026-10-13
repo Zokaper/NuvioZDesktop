@@ -1,0 +1,548 @@
+package com.nuvio.app.features.reaction
+
+import co.touchlab.kermit.Logger
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
+import java.awt.FileDialog
+import java.awt.Frame
+import java.awt.KeyboardFocusManager
+import java.awt.Toolkit
+import java.awt.datatransfer.DataFlavor
+import java.io.File
+import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
+import javax.swing.SwingUtilities
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
+import kotlin.math.abs
+
+/**
+ * Reaction Mode's single owner of state. App-scoped on purpose: Nuvio Z tears the native player
+ * down and builds a new one for every source and every episode, and the reaction session has to
+ * outlive that. Every mutable field is confined to [scope]'s single thread.
+ *
+ * The episode is the playback master and is never paused, seeked or sped up from here; the only
+ * things written to the main player are its volume (reaction audio is primary) and, in
+ * single-screen mode, the margins that shrink the episode into the middle of the window.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+internal object ReactionSession {
+    private val log = Logger.withTag("ReactionMode")
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1))
+
+    private data class Master(val playerHandle: Long, val hostViewPtr: Long)
+
+    /** Written from the controller's threads, read from [scope]. 0 = no player. */
+    private val attachedHandle = AtomicLong(0)
+    private var master: Master? = null
+    private var uiReadyFor = 0L
+    private var injectJob: Job? = null
+
+    private var preferences = ReactionPreferencesStore.load()
+    private var panelOpen = false
+    private var source: ReactionSource? = null
+    private var stage: ReactionStage? = null
+    private var offsetMs = 0L
+    private val engine = ReactionSyncEngine()
+    private val mixer = ReactionAudioMixer(preferences.audio)
+    private var tickJob: Job? = null
+    private var error: String? = null
+    private var toolsBusy = false
+    private var toolsMessage: String? = null
+    private var reactionDurationMs: Long? = null
+    private var reactionAspect: Double? = null
+    private var appliedLayoutKey: String? = null
+    private var dim = 0.0
+    private var lastDecision: SyncDecision? = null
+    private var restoreMainVolume: Double? = null
+    private var lastUiJson: String? = null
+    private var loading = false
+
+    // --- Called by the player (NativePlayerController seams) ---------------------------------
+
+    fun onPlayerAttached(playerHandle: Long, hostViewPtr: Long) {
+        if (!ReactionModeFlag.enabled || !ReactionNative.available) return
+        attachedHandle.set(playerHandle)
+        scope.launch {
+            master = Master(playerHandle, hostViewPtr)
+            uiReadyFor = 0L
+            appliedLayoutKey = null
+            mixer.reset()
+            engine.reset()
+            startInjection(playerHandle)
+            if (stage != null && preferences.mode == StageMode.SINGLE) {
+                // The previous player's container (the stage's parent) is gone; rebuild inside the new one.
+                reopenStage()
+            }
+            log.i { "player attached handle=$playerHandle session=${source != null}" }
+        }
+    }
+
+    /** Called with the controller's lifecycle lock held: must not block or touch native code. */
+    fun onPlayerDetached(playerHandle: Long) {
+        if (!attachedHandle.compareAndSet(playerHandle, 0L)) return
+        scope.launch {
+            if (master?.playerHandle != playerHandle) return@launch
+            master = null
+            injectJob?.cancel()
+            stage?.apply(FollowerCommand.SetPaused(true))
+            if (preferences.mode == StageMode.SINGLE) closeStage(keepSource = true)
+            log.i { "player detached handle=$playerHandle" }
+        }
+    }
+
+    /** Page messages; true when the event belonged to Reaction Mode. */
+    fun onControlsEvent(playerHandle: Long, type: String, value: Double): Boolean {
+        if (!type.startsWith("reaction")) return false
+        scope.launch { handleEvent(playerHandle, type, value) }
+        return true
+    }
+
+    // --- Page --------------------------------------------------------------------------------
+
+    private fun startInjection(playerHandle: Long) {
+        injectJob?.cancel()
+        injectJob = scope.launch {
+            val script = ReactionControlsUi.installScript()
+            // The page may not be ready yet; the script is idempotent and acknowledges with reactionReady.
+            repeat(60) {
+                if (uiReadyFor == playerHandle || master?.playerHandle != playerHandle) return@launch
+                ReactionNative.mainRunControlsScript(playerHandle, script)
+                delay(500)
+            }
+            log.w { "controls page never acknowledged the reaction UI handle=$playerHandle" }
+        }
+    }
+
+    private suspend fun handleEvent(playerHandle: Long, type: String, value: Double) {
+        if (master?.playerHandle != playerHandle) return
+        when (type) {
+            "reactionReady" -> {
+                uiReadyFor = playerHandle
+                lastUiJson = null
+                stage?.restack()
+            }
+            "reactionToggle" -> panelOpen = !panelOpen
+            "reactionClose" -> panelOpen = false
+            "reactionDismissError" -> error = null
+            "reactionPickFile" -> pickFile()?.let { start(ReactionSource.LocalFile(it)) }
+            "reactionPasteLink" -> pasteLink()
+            "reactionInstallTools" -> installTools()
+            "reactionMode" -> setMode(if (value >= 0.5) StageMode.SINGLE else StageMode.DUAL)
+            "reactionMonitor" -> {
+                val monitors = ReactionMonitors.list()
+                monitors.getOrNull(value.toInt())?.let { chosen ->
+                    preferences = preferences.copy(monitorId = chosen.id)
+                    ReactionPreferencesStore.save(preferences)
+                    if (stage != null && preferences.mode == StageMode.DUAL) reopenStage()
+                }
+            }
+            "reactionMovieSize" -> {
+                preferences = preferences.copy(movieFraction = (value / 100.0).coerceIn(0.4, 0.85))
+                ReactionPreferencesStore.save(preferences)
+                appliedLayoutKey = null
+            }
+            "reactionNudge" -> {
+                offsetMs += value.toLong()
+                engine.reset()
+            }
+            "reactionVolume" -> updateAudio { it.copy(reactionVolume = value.coerceIn(0.0, 100.0)) }
+            "reactionMovieVolume" -> updateAudio { it.copy(movieVolumeWithReactions = value.coerceIn(0.0, 100.0)) }
+            "reactionGapVolume" -> updateAudio { it.copy(movieVolumeInGaps = value.coerceIn(0.0, 100.0)) }
+            "reactionStop" -> stop()
+        }
+        pushUi(force = true)
+    }
+
+    private fun updateAudio(change: (ReactionAudioSettings) -> ReactionAudioSettings) {
+        val next = change(mixer.settings)
+        mixer.update(next)
+        preferences = preferences.copy(audio = next)
+        ReactionPreferencesStore.save(preferences)
+    }
+
+    // --- Sources -------------------------------------------------------------------------------
+
+    private suspend fun pickFile(): String? = withContext(Dispatchers.Default) {
+        suspendCoroutine { continuation ->
+            SwingUtilities.invokeLater {
+                val owner = KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow as? Frame
+                    ?: Frame.getFrames().firstOrNull { it.isVisible }
+                val dialog = FileDialog(owner, "Choose a reaction video", FileDialog.LOAD)
+                dialog.setFilenameFilter { _, name ->
+                    name.substringAfterLast('.', "").lowercase(Locale.ROOT) in VIDEO_EXTENSIONS
+                }
+                dialog.isVisible = true
+                val chosen = dialog.file?.let { File(dialog.directory, it).absolutePath }
+                continuation.resume(chosen)
+            }
+        }
+    }
+
+    private suspend fun pasteLink() {
+        val text = suspendCoroutine<String?> { continuation ->
+            SwingUtilities.invokeLater {
+                continuation.resume(
+                    runCatching {
+                        Toolkit.getDefaultToolkit().systemClipboard.getData(DataFlavor.stringFlavor) as? String
+                    }.getOrNull(),
+                )
+            }
+        }?.trim()
+        if (text.isNullOrBlank() || !(text.startsWith("http://") || text.startsWith("https://"))) {
+            error = "Copy a YouTube link first, then press Paste."
+            return
+        }
+        if (ReactionTools.locate() == null) {
+            error = "YouTube links need a one-time setup first."
+            return
+        }
+        start(ReactionSource.WebVideo(text))
+    }
+
+    private fun installTools() {
+        if (toolsBusy) return
+        toolsBusy = true
+        toolsMessage = "Preparing…"
+        scope.launch(Dispatchers.IO) {
+            val result = runCatching { ReactionTools.install { message -> scope.launch { toolsMessage = message; pushUi() } } }
+            scope.launch {
+                toolsBusy = false
+                toolsMessage = result.fold(
+                    onSuccess = { null },
+                    onFailure = { "Setup failed: ${it.message}" },
+                )
+                pushUi(force = true)
+            }
+        }
+    }
+
+    private suspend fun start(newSource: ReactionSource) {
+        error = null
+        if (newSource is ReactionSource.LocalFile && !File(newSource.path).isFile) {
+            error = "That file is no longer there."
+            return
+        }
+        closeStage(keepSource = false)
+        source = newSource
+        offsetMs = 0
+        reactionDurationMs = null
+        reactionAspect = null
+        engine.reset()
+        mixer.reset()
+        openStage()
+        val m = master
+        if (m != null && restoreMainVolume == null) {
+            restoreMainVolume = ReactionNative.mainGetProperty(m.playerHandle, "volume")?.toDoubleOrNull()
+            if (mixer.settings.movieVolumeInGaps >= 100.0 && restoreMainVolume != null) {
+                // "Movie when reactions skip" defaults to the volume the user was already watching at.
+                updateAudio { it.copy(movieVolumeInGaps = restoreMainVolume!!.coerceIn(0.0, 100.0)) }
+            }
+        }
+        ensureTicking()
+    }
+
+    private suspend fun stop() {
+        closeStage(keepSource = false)
+        source = null
+        panelOpen = false
+        val m = master
+        if (m != null) {
+            resetMainMargins(m.playerHandle)
+            restoreMainVolume?.let { setMainVolume(m.playerHandle, it) }
+        }
+        restoreMainVolume = null
+        tickJob?.cancel()
+        tickJob = null
+        lastDecision = null
+    }
+
+    // --- Stage -------------------------------------------------------------------------------
+
+    private fun setMode(mode: StageMode) {
+        if (preferences.mode == mode) return
+        preferences = preferences.copy(mode = mode)
+        ReactionPreferencesStore.save(preferences)
+        master?.let { resetMainMargins(it.playerHandle) }
+        if (stage != null) reopenStage()
+    }
+
+    private fun reopenStage() {
+        val resumeAt = stage?.sample()?.positionMs
+        closeStage(keepSource = true)
+        openStage(resumeAt)
+    }
+
+    private fun openStage(resumeAtMs: Long? = null) {
+        val currentSource = source ?: return
+        val placement = when (preferences.mode) {
+            StageMode.DUAL -> {
+                val monitor = ReactionMonitors.choose(ReactionMonitors.list(), preferences.monitorId)
+                    ?: run { error = "No display found for the reactions."; return }
+                StagePlacement.Monitor(monitor.physicalBounds)
+            }
+            StageMode.SINGLE -> {
+                val m = master ?: return
+                val container = ReactionNative.mainContainerHwnd(m.playerHandle)
+                if (container == 0L) return
+                val (w, h) = mainSurfaceSize(m.playerHandle) ?: (1280 to 720)
+                StagePlacement.InPlayer(container, w, h)
+            }
+        }
+        val extra = mutableListOf<String>()
+        if (currentSource is ReactionSource.WebVideo) {
+            val tools = ReactionTools.locate() ?: run { error = "YouTube links need a one-time setup first."; return }
+            extra += ReactionTools.mpvOptions(tools)
+        }
+        if (resumeAtMs != null && resumeAtMs > 0) extra += "start=" + String.format(Locale.ROOT, "%.3f", resumeAtMs / 1000.0)
+        val opened = runCatching { ReactionStage.open(placement, extra) }
+            .onFailure { log.w(it) { "stage failed to open" }; error = "Couldn't open the reaction player: ${it.message}" }
+            .getOrNull() ?: return
+        stage = opened
+        appliedLayoutKey = null
+        dim = 0.0
+        loading = true
+        opened.setTiles(listOf(ShaderTile(LayoutRect.FULL, LayoutRect.FULL)))
+        opened.load(currentSource)
+        log.i { "stage opened mode=${preferences.mode} source=${currentSource.label}" }
+    }
+
+    private fun closeStage(keepSource: Boolean) {
+        stage?.close()
+        stage = null
+        appliedLayoutKey = null
+        if (!keepSource) source = null
+        master?.let { if (preferences.mode == StageMode.SINGLE) resetMainMargins(it.playerHandle) }
+    }
+
+    // --- The loop ------------------------------------------------------------------------------
+
+    private fun ensureTicking() {
+        if (tickJob?.isActive == true) return
+        tickJob = scope.launch {
+            var lastUiPush = 0L
+            while (isActive) {
+                val now = System.currentTimeMillis()
+                runCatching { tick(now) }.onFailure { log.w(it) { "tick failed" } }
+                if (now - lastUiPush >= 250) {
+                    pushUi()
+                    lastUiPush = now
+                }
+                delay(TICK_MS)
+            }
+        }
+    }
+
+    private fun tick(now: Long) {
+        val currentStage = stage ?: return
+        drainStageEvents(currentStage)
+        val m = master
+        if (m == null || attachedHandle.get() != m.playerHandle) {
+            currentStage.apply(FollowerCommand.SetPaused(true))
+            return
+        }
+        val masterSample = sampleMaster(m.playerHandle) ?: return
+        val follower = currentStage.sample()
+        reactionDurationMs = follower.durationMs ?: reactionDurationMs
+        if (loading && follower.durationMs == null) return
+
+        applyLayout(m.playerHandle, currentStage)
+
+        val map = SyncMap.manualOffset(offsetMs, reactionDurationMs)
+        val decision = engine.step(now, masterSample, follower, map)
+        decision.commands.forEach(currentStage::apply)
+        lastDecision = decision
+
+        val showing = decision.visibility == StageVisibility.SHOWING
+        val targetDim = if (showing) 0.0 else 1.0
+        dim = if (abs(targetDim - dim) <= DIM_STEP) targetDim else dim + if (targetDim > dim) DIM_STEP else -DIM_STEP
+        currentStage.setLiveParameters(dim, blackoutMask = 0)
+        currentStage.setOverlay(overlayText(decision))
+
+        val observed = ReactionNative.mainGetProperty(m.playerHandle, "volume")?.toDoubleOrNull()
+        val audio = mixer.step(now, showing, observed)
+        if (observed == null || abs(observed - audio.movieVolume) > 0.5) setMainVolume(m.playerHandle, audio.movieVolume)
+        currentStage.setVolume(audio.reactionVolume)
+        if (mixer.settings != preferences.audio) {
+            preferences = preferences.copy(audio = mixer.settings)
+            ReactionPreferencesStore.save(preferences)
+        }
+    }
+
+    private fun overlayText(decision: SyncDecision): String? {
+        if (decision.visibility != StageVisibility.GAP) return null
+        val resumes = decision.resumesInMs ?: return "No more reactions in this episode"
+        if (resumes < 1_000) return null
+        val seconds = (resumes + 999) / 1000
+        return "Reactions resume in ${seconds / 60}:${String.format(Locale.ROOT, "%02d", seconds % 60)}"
+    }
+
+    private fun drainStageEvents(currentStage: ReactionStage) {
+        for (event in currentStage.takeEvents()) {
+            when {
+                event == "file-loaded" -> {
+                    loading = false
+                    reactionAspect = currentStage.double("video-params/aspect")
+                    appliedLayoutKey = null
+                    error = null
+                }
+                event.startsWith("end-file") -> {
+                    val reason = event.split(' ').getOrNull(1)?.toIntOrNull()
+                    if (reason == 4) {
+                        loading = false
+                        error = "Couldn't play the reaction video."
+                    }
+                }
+                event.startsWith("log") -> log.w { "stage $event" }
+            }
+        }
+    }
+
+    private fun sampleMaster(playerHandle: Long): MasterSample? {
+        val position = ReactionNative.mainGetProperty(playerHandle, "time-pos")?.toDoubleOrNull() ?: return null
+        val paused = ReactionNative.mainGetProperty(playerHandle, "pause") == "yes"
+        val speed = ReactionNative.mainGetProperty(playerHandle, "speed")?.toDoubleOrNull() ?: 1.0
+        val stalled = ReactionNative.mainGetProperty(playerHandle, "paused-for-cache") == "yes" ||
+            ReactionNative.mainGetProperty(playerHandle, "seeking") == "yes"
+        return MasterSample((position * 1000).toLong(), paused, speed, stalled)
+    }
+
+    private fun mainSurfaceSize(playerHandle: Long): Pair<Int, Int>? {
+        val w = ReactionNative.mainGetProperty(playerHandle, "osd-dimensions/w")?.toIntOrNull() ?: return null
+        val h = ReactionNative.mainGetProperty(playerHandle, "osd-dimensions/h")?.toIntOrNull() ?: return null
+        return if (w > 0 && h > 0) w to h else null
+    }
+
+    /** Recomputes tiles (and, single-screen, the episode's margins) when anything they depend on changes. */
+    private fun applyLayout(playerHandle: Long, currentStage: ReactionStage) {
+        // Stage 1 has no box detection yet: the whole reaction frame is one tile.
+        val tileSources = listOf(LayoutRect.FULL)
+        val sourceAspect = reactionAspect ?: (16.0 / 9.0)
+        val aspects = tileSources.map { it.w / it.h * sourceAspect }
+        when (val placement = currentStage.placement) {
+            is StagePlacement.Monitor -> {
+                val w = placement.bounds.width.toDouble()
+                val h = placement.bounds.height.toDouble()
+                val key = "dual:$w:$h:$aspects"
+                if (key == appliedLayoutKey) return
+                appliedLayoutKey = key
+                val targets = ReactionGridLayout.justify(aspects, w, h, TILE_GAP)
+                currentStage.setTiles(tileSources.zip(targets) { s, t -> ShaderTile(s, t.normalizedIn(w, h)) })
+            }
+            is StagePlacement.InPlayer -> {
+                val (sw, sh) = mainSurfaceSize(playerHandle) ?: return
+                val movieAspect = ReactionNative.mainGetProperty(playerHandle, "video-params/aspect")?.toDoubleOrNull() ?: (16.0 / 9.0)
+                val w = sw.toDouble()
+                val h = sh.toDouble()
+                val key = "single:$w:$h:$movieAspect:${preferences.movieFraction}:$aspects"
+                if (key == appliedLayoutKey) return
+                appliedLayoutKey = key
+                val layout = ReactionSingleScreenLayout.arrange(w, h, movieAspect, aspects, preferences.movieFraction, TILE_GAP)
+                currentStage.setBounds(0, 0, sw, sh)
+                currentStage.setHole(layout.movie)
+                currentStage.setTiles(tileSources.zip(layout.tiles) { s, t -> ShaderTile(s, t.normalizedIn(w, h)) })
+                setMainMargins(playerHandle, MovieMargins.of(layout.movie, w, h))
+                currentStage.restack()
+            }
+        }
+    }
+
+    private fun setMainMargins(playerHandle: Long, margins: MovieMargins) {
+        val f = { v: Double -> String.format(Locale.ROOT, "%.5f", v) }
+        ReactionNative.mainSetProperty(playerHandle, "video-margin-ratio-left", f(margins.left))
+        ReactionNative.mainSetProperty(playerHandle, "video-margin-ratio-right", f(margins.right))
+        ReactionNative.mainSetProperty(playerHandle, "video-margin-ratio-top", f(margins.top))
+        ReactionNative.mainSetProperty(playerHandle, "video-margin-ratio-bottom", f(margins.bottom))
+    }
+
+    private fun resetMainMargins(playerHandle: Long) = setMainMargins(playerHandle, MovieMargins.NONE)
+
+    private fun setMainVolume(playerHandle: Long, percent: Double) {
+        ReactionNative.mainSetProperty(playerHandle, "volume", String.format(Locale.ROOT, "%.1f", percent))
+    }
+
+    // --- UI state ------------------------------------------------------------------------------
+
+    private fun pushUi(force: Boolean = false) {
+        val m = master ?: return
+        if (uiReadyFor != m.playerHandle) return
+        val json = uiState().toString()
+        if (!force && json == lastUiJson) return
+        lastUiJson = json
+        ReactionNative.mainRunControlsScript(m.playerHandle, "window.reactionUpdate && window.reactionUpdate($json)")
+    }
+
+    private fun uiState(): JsonObject = buildJsonObject {
+        put("enabled", true)
+        put("open", panelOpen)
+        put("active", source != null)
+        val decision = lastDecision
+        val status: Pair<String, String>? = when {
+            source == null -> null
+            error != null -> "error" to "Problem"
+            loading -> "waiting" to "Loading…"
+            decision == null -> "neutral" to "Starting"
+            decision.waitingForSeek -> "waiting" to "Syncing"
+            decision.visibility == StageVisibility.GAP -> "waiting" to (overlayText(decision)?.replace("Reactions resume", "Resumes") ?: "Paused")
+            else -> "good" to "In sync"
+        }
+        if (status != null) putJsonObject("status") {
+            put("tone", status.first)
+            put("text", status.second)
+        }
+        error?.let { put("error", it) }
+        source?.let { s ->
+            putJsonObject("source") {
+                put("label", s.label)
+                put("detail", if (s is ReactionSource.WebVideo) "Streaming from the web" else "Local file")
+            }
+        }
+        putJsonObject("tools") {
+            put("ready", ReactionTools.locate() != null)
+            put("busy", toolsBusy)
+            toolsMessage?.let { put("message", it) }
+        }
+        put("mode", if (preferences.mode == StageMode.SINGLE) "single" else "dual")
+        val monitors = ReactionMonitors.list()
+        val chosen = ReactionMonitors.choose(monitors, preferences.monitorId)
+        put(
+            "monitors",
+            buildJsonArray {
+                monitors.forEachIndexed { index, monitor ->
+                    add(
+                        buildJsonObject {
+                            put("index", index)
+                            put("label", monitor.label)
+                            put("detail", monitor.detail)
+                            put("selected", monitor.id == chosen?.id)
+                        },
+                    )
+                }
+            },
+        )
+        put("movieSize", preferences.movieFraction)
+        put("offsetMs", offsetMs)
+        putJsonObject("volumes") {
+            put("reaction", mixer.settings.reactionVolume)
+            put("movie", mixer.settings.movieVolumeWithReactions)
+            put("gap", mixer.settings.movieVolumeInGaps)
+        }
+    }
+
+    private const val TICK_MS = 40L
+    private const val DIM_STEP = 0.12
+    private const val TILE_GAP = 8.0
+    private val VIDEO_EXTENSIONS = setOf("mp4", "mkv", "webm", "mov", "avi", "m4v", "ts", "flv", "wmv")
+}

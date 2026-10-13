@@ -2,6 +2,7 @@ package com.nuvio.app.features.player.desktop
 
 import androidx.compose.ui.graphics.Color
 import co.touchlab.kermit.Logger
+import com.nuvio.app.features.reaction.ReactionSession
 import com.nuvio.app.core.debug.isDebugBuild
 import com.nuvio.app.features.player.PlayerControlAddonSubtitleItem
 import com.nuvio.app.features.player.PlayerControlEpisodeItem
@@ -445,6 +446,7 @@ internal class NativePlayerController(
                         // After the handle is accepted, so the harness never sees a published
                         // controller with a dead handle. No-op outside a debug build.
                         NativePlayerDiagnosticsRegistry.publish(this@NativePlayerController)
+                        ReactionSession.onPlayerAttached(created, hostViewPtr) // Nuvio Z Reaction Mode (experimental)
                         openingAttachedAtMs = System.currentTimeMillis()
                         log.d {
                             "attach created handle=$created source=${resolvedSource.toPlaybackLogKey()} " +
@@ -665,6 +667,7 @@ internal class NativePlayerController(
         if (type.shouldLogNativeControlEvent()) {
             log.d { "event received handle=$handle type=$type value=$value" }
         }
+        if (ReactionSession.onControlsEvent(handle, type, value)) return // Nuvio Z Reaction Mode (experimental)
         when (type) {
             "cursorActivity" -> host.noteCursorActivity()
             "firstFrame" -> {
@@ -1203,6 +1206,7 @@ internal class NativePlayerController(
 
     /** Must be called while holding [lifecycleLock]. */
     private fun startTrackedDisposeLocked(current: Long) {
+        ReactionSession.onPlayerDetached(current) // Nuvio Z Reaction Mode (experimental); non-blocking
         val prior = disposeInFlight?.takeIf { it.isAlive }
         disposeInFlight = Thread(
             {

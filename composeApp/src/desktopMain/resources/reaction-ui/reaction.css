@@ -1,0 +1,48 @@
+/* Nuvio Z Reaction Mode - only what the Watch Together sheet's classes do not already cover. */
+
+.header-button.reaction-button { position: relative; }
+.header-button.reaction-button svg { width: var(--header-icon); height: var(--header-icon); }
+.header-button.reaction-button .reaction-dot {
+  position: absolute; top: 5px; right: 5px; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--theme-accent-strong); box-shadow: 0 0 0 2px rgba(0, 0, 0, .45); display: none;
+}
+.header-button.reaction-button.active .reaction-dot { display: block; }
+
+/* The same sheet as Watch Together; when both are open, reactions sit to its left. */
+.party-panel.reaction-panel { z-index: 9; }
+#partyPanel.visible ~ .reaction-panel.visible { right: calc(var(--hp) + min(340px, 40vw) + 12px); }
+
+.reaction-chip[data-tone="good"] { color: #6fd08c; background: rgba(111, 208, 140, .16); }
+.reaction-chip[data-tone="waiting"] { color: #e0a458; background: rgba(224, 164, 88, .16); }
+.reaction-chip[data-tone="waiting"]::before { animation: party-banner-pulse 1.2s ease-in-out infinite; }
+.reaction-chip[data-tone="error"] { color: #ef7a90; background: rgba(239, 122, 144, .16); }
+.reaction-chip[data-tone="neutral"] { color: var(--theme-text-secondary); background: rgba(255, 255, 255, .08); }
+
+.reaction-row { margin-top: 2px; }
+.reaction-row button { flex: 1 1 auto; min-height: 36px; }
+.reaction-source span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reaction-tools { margin-top: 10px; display: grid; gap: 8px; justify-items: start; }
+
+.reaction-monitors { flex-wrap: wrap; }
+.party-panel .reaction-monitors button { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.reaction-slider { display: grid; gap: 6px; margin-top: 10px; font-size: 13px; color: var(--theme-text-secondary); }
+.reaction-slider > span { display: flex; justify-content: space-between; gap: 12px; }
+.reaction-slider output { color: var(--theme-text-primary); font-variant-numeric: tabular-nums; }
+.reaction-slider input[type="range"] {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 22px; margin: 0; background: transparent; cursor: pointer;
+}
+.reaction-slider input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 999px; background: var(--theme-timeline-track);
+}
+.reaction-slider input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 14px; height: 14px; margin-top: -5px; border-radius: 50%;
+  background: var(--theme-timeline-fill); box-shadow: 0 1px 4px rgba(0, 0, 0, .4);
+}
+.reaction-slider input[type="range"]:focus-visible { outline: 2px solid var(--theme-focus); outline-offset: 2px; border-radius: 6px; }
+
+.reaction-offset { font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums; margin-bottom: 8px; }
+.reaction-nudges { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+.party-panel .reaction-nudges button { min-height: 32px; padding: 0 4px; font-variant-numeric: tabular-nums; }
+
+#reactionFooter { justify-content: flex-end; }

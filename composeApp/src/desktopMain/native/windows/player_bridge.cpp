@@ -1486,6 +1486,19 @@ public:
         appliedSubtitleStripSdh = stripSdh;
     }
 
+    // --- Reaction Mode seam (Nuvio Z, experimental). Used only by reaction_stage.inc.cpp. ---
+    HWND reactionContainerHwnd() const { return containerHwnd; }
+    void reactionSetProperty(const std::string &name, const std::string &value) { setStringProperty(name.c_str(), value); }
+    std::string reactionGetProperty(const std::string &name) { return stringProperty(name.c_str(), ""); }
+    void reactionRunControlsScript(const std::string &script) {
+        postUiTask([self = shared_from_this(), script]() {
+            if (self->webView && self->controlsWebReady.load()) {
+                self->webView->ExecuteScript(toWide(script).c_str(), nullptr);
+            }
+        });
+    }
+    // --- end Reaction Mode seam ---
+
 private:
     HWND hostHwnd = nullptr;
     HWND containerHwnd = nullptr;
@@ -2958,3 +2971,6 @@ Java_com_nuvio_app_features_player_desktop_NativePlayerBridge_applySubtitleStyle
         stripSdh == JNI_TRUE
     );
 }
+
+// Nuvio Z Reaction Mode (experimental): the reaction stage shares this translation unit.
+#include "reaction_stage.inc.cpp"

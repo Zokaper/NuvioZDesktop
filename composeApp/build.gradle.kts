@@ -1114,6 +1114,8 @@ val buildWindowsPlayerBridge = tasks.register<Exec>("buildWindowsPlayerBridge") 
     notCompatibleWithConfigurationCache("Builds a host-local player bridge against WebView2 and libmpv for Windows.")
     enabled = isWindowsHost
     inputs.file(windowsPlayerBridgeSource)
+    // Nuvio Z Reaction Mode: #included by player_bridge.cpp.
+    inputs.file(layout.projectDirectory.file("src/desktopMain/native/windows/reaction_stage.inc.cpp"))
     if (windowsWebView2IncludeDir.exists()) {
         inputs.dir(windowsWebView2IncludeDir)
     }
