@@ -1,5 +1,27 @@
 ## EXPERIMENTAL branch `claude/reaction-mode`: Reaction Mode, Stages 1-4 (2026-10-13)
 
+### Desktop Debug 94-95 (2026-10-13): episode reads survive a stall; every reactor, steady and equal
+
+Maintainer's run of Debug 93 (live log + WGC screenshots):
+- **Debug 94.** Each 8 s probe over debrid cost ~13 s (a stream open + seek is ~10 s) and came back ~1 s short,
+  so every probe opened the stream twice; then one read hung 120 s and "analysis stalled" ended the whole
+  episode index. Now: a failed/stalled read is retried once then left out; reads ask for 2 s past their end;
+  probes every 3 min; `SWITCH_COST` 30 -> 40 (one 8 s probe beside an unread stretch had pulled a line 28 s off).
+  Sync itself held: 34 s - 2 h 28 m on the +10.11 s line while playing.
+- **Debug 95, "the reactors randomly change layout, some are small, half are gone".** Each 45 s window only finds
+  cameras that moved in it (2-34 of TEM's ~84), merges borderless neighbours into blocks (TEM's borders are under a
+  pixel at 480x270), and the stage switched between those sets every few seconds. `ReactionLayoutTimeline.steadied`
+  now groups windows into arrangements (layouts whose boxes never cross; a real rearrangement stays separate),
+  keeps every box seen twice or for a minute, splits blocks into a grid on the size of the cameras found inside
+  them (or, with 12+ cameras found, on that size when a box is 3+ cameras' worth), and shows the whole set in
+  every epoch. A second detector per reader with 3 min windows (which sees every camera, as blocks) feeds only
+  that set. On TEM: 66 cameras in most epochs (was 2-34, median 9); reaction read 132 s (+18 s for the second
+  detector); matching 98.2 % in 3 stretches. Tiles: every reactor cropped to the median camera's shape (cut
+  more from the bottom), so the grid gives everyone the same size (plan Decision 7). ~18 of TEM's cameras are
+  still not found (top-row middle, top-left pair). Layout cache version 5.
+- `ReactionLayoutReplayTest` (`NUVIO_REACTION_LAYOUT_REPLAY=<layout json>`) re-steadies a saved layout;
+  `ReactionReanalyseTest` now also saves the layout it reads. 65 reaction tests.
+
 ### Desktop Debug 93 (2026-10-13): spotty sync found and fixed; reaction read 3x faster, episode read sampled
 
 First real test on the desktop PC (Debug 92, Interstellar from debrid + TEM's ~2 h 45 m YouTube compilation

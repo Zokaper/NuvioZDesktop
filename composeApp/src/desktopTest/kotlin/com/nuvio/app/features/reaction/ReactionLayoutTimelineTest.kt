@@ -129,6 +129,39 @@ class ReactionLayoutTimelineTest {
         assertEquals(reactorOnly, steady.epochs[2].layout)
     }
 
+    /** A 4 x 3 wall of cameras; each window sees a different part of it, one sees a block as one box. */
+    @Test
+    fun everyReactorOfAnArrangementIsShownInEveryEpoch() {
+        val cams = List(12) { i -> LayoutRect((i % 4) * 0.25, (i / 4) * 0.2, 0.25, 0.2) }
+        fun reactors(vararg rects: LayoutRect) = DetectedLayout(rects.map { DetectedTile(it, TileKind.REACTOR) })
+        val blockOfFour = LayoutRect(0.0, 0.0, 0.5, 0.4) // cameras 0, 1, 4, 5 with their borders unseen
+        val epochs = listOf(
+            LayoutEpoch(0, 45_000, reactors(*cams.subList(0, 6).toTypedArray())),
+            LayoutEpoch(45_000, 90_000, reactors(*cams.subList(6, 12).toTypedArray(), cams[0])),
+            LayoutEpoch(90_000, 135_000, reactors(blockOfFour, cams[2], cams[3], cams[7], cams[11])),
+            LayoutEpoch(135_000, 180_000, reactors(cams[1], cams[4], cams[5], cams[8], cams[9], cams[10])),
+            // The block again, so it is as steady as the cameras inside it and has to give way.
+            LayoutEpoch(180_000, 225_000, reactors(blockOfFour, cams[6], cams[10])),
+        )
+        val steady = ReactionLayoutTimeline(epochs).steadied()
+        steady.epochs.forEach { e ->
+            assertEquals(cams.toSet(), e.layout.reactors.map { it.rect }.toSet(), "epoch ${e.startMs}")
+        }
+    }
+
+    @Test
+    fun aRealRearrangementKeepsItsOwnReactors() {
+        // LoneReact-style: two cameras side by side, later three across - their boxes cross.
+        val two = DetectedLayout(listOf(DetectedTile(LayoutRect(0.0, 0.0, 0.5, 1.0), TileKind.REACTOR), DetectedTile(LayoutRect(0.5, 0.0, 0.5, 1.0), TileKind.REACTOR)))
+        val three = DetectedLayout(List(3) { DetectedTile(LayoutRect(it / 3.0, 0.0, 1 / 3.0, 1.0), TileKind.REACTOR) })
+        val steady = ReactionLayoutTimeline(
+            listOf(LayoutEpoch(0, 100_000, two), LayoutEpoch(100_000, 200_000, three), LayoutEpoch(200_000, 300_000, two)),
+        ).steadied()
+        assertEquals(2, steady.epochs[0].layout.reactors.size)
+        assertEquals(3, steady.epochs[1].layout.reactors.size)
+        assertEquals(2, steady.epochs[2].layout.reactors.size)
+    }
+
     @Test
     fun timelineLookupFallsBackToTheNearestEpoch() {
         val l1 = DetectedLayout(listOf(DetectedTile(LayoutRect(0.0, 0.0, 0.5, 0.5), TileKind.REACTOR)))

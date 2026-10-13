@@ -28,6 +28,8 @@ class ReactionReanalyseTest {
         val episodeFile = File(System.getenv("NUVIO_REACTION_REANALYSE_EPISODE") ?: return)
         val out = File(System.getenv("NUVIO_REACTION_REANALYSE_OUT") ?: return).apply { mkdirs() }
         System.getenv("NUVIO_REACTION_NATIVE_RESOURCES")?.let { System.setProperty("compose.application.resources.dir", it) }
+        System.setProperty("nuvio.reactionDataDir", out.absolutePath)
+        System.getenv("NUVIO_REACTION_LAYOUT_WINDOW_S")?.let { System.setProperty("nuvio.reactionLayoutWindowS", it) }
         assertTrue(ReactionNative.available, "player_bridge.dll with the reaction exports is needed")
 
         val reaction = FingerprintTrack()
@@ -47,6 +49,7 @@ class ReactionReanalyseTest {
             reaction.write(it)
         }
 
+        ReactionLayoutCache.save("layout", timeline!!)
         val episode = DataInputStream(episodeFile.inputStream().buffered()).use { check(it.readInt() == 1); FingerprintTrack.read(it) }
         val matchStarted = System.currentTimeMillis()
         val segments = ReactionMatcher(episode, reaction).update()

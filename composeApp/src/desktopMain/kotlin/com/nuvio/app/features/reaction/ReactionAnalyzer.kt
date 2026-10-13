@@ -32,6 +32,15 @@ internal object ReactionTimelineAnalyzer {
     /** Parallel readers: a quarter of the logical cores, at most four. */
     private val MAX_PARTS = (Runtime.getRuntime().availableProcessors() / 4).coerceIn(1, 4)
 
+    /**
+     * A second detector per reader with 3 minute windows, whose layouts only lend their boxes to the
+     * steady reactor set (ReactionLayoutTimeline.steadied). A camera is found only if it moved in its
+     * window: 45 s windows found 2-34 of TEM's ~84 cameras each and never saw some at all (Debug 93);
+     * 3 min windows see them all, but as blocks of a dozen, which the steady set splits. The epochs
+     * still come from 45 s windows.
+     */
+    private val WIDE_WINDOW_FRAMES = (System.getProperty("nuvio.reactionLayoutWindowS")?.toIntOrNull() ?: 180) * ReactionLayoutDetector.ANALYSIS_FPS
+
     /** Below this much video one reader is fast enough and starting more is not worth it. */
     private const val MIN_PART_MS = 10 * 60 * 1000L
 
@@ -53,16 +62,20 @@ internal object ReactionTimelineAnalyzer {
         val parts = parts(fromIndex, endIndex, step)
         val lock = Any()
         val timelines = arrayOfNulls<ReactionLayoutTimeline>(parts.size)
+        val wideLayouts = Array(parts.size) { emptyList<DetectedLayout>() }
         val read = IntArray(parts.size)
         val total = endIndex?.let { (it - fromIndex).coerceAtLeast(1) }
-        fun merged() = ReactionLayoutTimeline(timelines.filterNotNull().flatMap { it.epochs }.sortedBy { it.startMs }).steadied()
+        fun merged() = ReactionLayoutTimeline(timelines.filterNotNull().flatMap { it.epochs }.sortedBy { it.startMs })
+            .steadied(wideLayouts.flatMap { it })
         val started = System.currentTimeMillis()
         parts.mapIndexed { k, (first, until) ->
             async(Dispatchers.IO) {
                 val builder = ReactionLayoutTimelineBuilder(startMs = first * FRAME_MS)
+                val wide = ReactionLayoutTimelineBuilder(startMs = first * FRAME_MS, windowFrames = WIDE_WINDOW_FRAMES)
                 val pending = MovieFingerprinter(w / 2, h / 2, fingerprints)
                 ReactionFrames.read(target, emptyList(), w, h, ReactionFingerprinter.FPS, first, until) { index, frame ->
                     pending.add(index, ReactionFrames.halve(frame, w, h))
+                    if ((index - first) % step == 0 && wide.add(frame)) synchronized(lock) { wideLayouts[k] = wide.layouts }
                     if ((index - first) % step == 0 && builder.add(frame)) {
                         val timeline = synchronized(lock) {
                             timelines[k] = builder.timeline()
@@ -78,7 +91,9 @@ internal object ReactionTimelineAnalyzer {
                     }
                 }
                 builder.finish()
+                wide.finish()
                 val timeline = synchronized(lock) {
+                    wideLayouts[k] = wide.layouts
                     timelines[k] = builder.timeline()
                     merged()
                 }
@@ -158,7 +173,8 @@ internal object ReactionLayoutCache {
 
     // 3: earlier mid-video analyses began at twice the requested position (see ReactionFrames).
     // 4: the movie box is steadied over the whole video (ReactionLayoutTimeline.steadied).
-    private const val VERSION = 4
+    // 5: so is the set of reactors, per arrangement.
+    private const val VERSION = 5
     private val json = Json { ignoreUnknownKeys = true }
 
     private val dir: File by lazy {

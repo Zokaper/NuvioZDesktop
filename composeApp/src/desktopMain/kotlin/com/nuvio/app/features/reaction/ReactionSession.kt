@@ -929,14 +929,33 @@ internal object ReactionSession {
         return true
     }
 
-    /** The parts of the reaction frame to show: detected reactors (slightly inset), or all of it. */
+    /**
+     * The parts of the reaction frame to show: detected reactors (slightly inset), or all of it.
+     * Every reactor is cropped to one shape (the median camera's), so the grid gives everyone the
+     * same size (plan Decision 7: "everyone, equal grid"); a wide two-person camera is not shown big
+     * beside single ones. Height is cut more from the bottom than the top: faces sit high.
+     */
     private fun currentTileSources(): List<LayoutRect> {
         val reactors = detectedLayout?.reactors.orEmpty()
         if (showWholeFrame || reactors.isEmpty()) return listOf(LayoutRect.FULL)
         // About one analysis pixel in from every side, so a neighbour's edge never shows.
         val ix = 1.5 / ReactionLayoutDetector.ANALYSIS_WIDTH
         val iy = 1.5 / ReactionLayoutDetector.ANALYSIS_HEIGHT
-        return reactors.map { LayoutRect(it.rect.x + ix, it.rect.y + iy, it.rect.w - 2 * ix, it.rect.h - 2 * iy) }
+        val inset = reactors.map { LayoutRect(it.rect.x + ix, it.rect.y + iy, it.rect.w - 2 * ix, it.rect.h - 2 * iy) }
+        val frameAspect = reactionAspect ?: (16.0 / 9.0)
+        val shape = inset.map { it.w / it.h * frameAspect }.sorted()[inset.size / 2]
+        return inset.map { r -> cropToShape(r, shape, frameAspect) }
+    }
+
+    private fun cropToShape(r: LayoutRect, shape: Double, frameAspect: Double): LayoutRect {
+        val aspect = r.w / r.h * frameAspect
+        return if (aspect > shape) {
+            val w = r.w * shape / aspect
+            LayoutRect(r.x + (r.w - w) / 2, r.y, w, r.h)
+        } else {
+            val h = r.h * aspect / shape
+            LayoutRect(r.x, r.y + (r.h - h) * 0.3, r.w, h)
+        }
     }
 
     private fun drainStageEvents(currentStage: ReactionStage) {

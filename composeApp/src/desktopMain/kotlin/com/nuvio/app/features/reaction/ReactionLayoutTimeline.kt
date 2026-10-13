@@ -35,7 +35,144 @@ internal class ReactionLayoutTimeline(val epochs: List<LayoutEpoch>) {
      * "movie" goes back to being a reactor and pieces of the movie found as tiles are dropped. A
      * genuinely different arrangement (a large box elsewhere) is left alone.
      */
-    fun steadied(): ReactionLayoutTimeline {
+    fun steadied(wideLayouts: List<DetectedLayout> = emptyList()): ReactionLayoutTimeline = steadyMovie().steadyReactors(wideLayouts)
+
+    /**
+     * Every reactor of an arrangement, in every epoch of it. A 45 s window only sees the people who
+     * moved in it: on TEM's compilation (~90 cameras) windows found anywhere from 3 to 34 boxes, some
+     * of them blocks of a dozen cameras whose borders went unseen, and the stage jumped between
+     * those sets every few seconds (Debug 93: "half of the reactors are gone", tiny faces in one tile).
+     *
+     * Epochs are grouped into arrangements: two layouts belong together when none of their boxes
+     * cross (one inside another is the same cameras seen more or less finely; two boxes that
+     * partly overlap are different arrangements, e.g. LoneReact rearranging mid-video). Per
+     * arrangement, every box seen in two windows or for a minute is kept, a box that holds two or
+     * more kept boxes covering half of it is a block and gives way to them, and every epoch of the
+     * arrangement shows the whole set (plus any box only its own window saw, there only).
+     */
+    private fun steadyReactors(wideLayouts: List<DetectedLayout>): ReactionLayoutTimeline {
+        if (epochs.isEmpty()) return this
+        // Distinct layouts (the builder's candidates), with how long each was on. Wide layouts (from
+        // 3 min windows) only lend their boxes to the sets: they cover cameras the 45 s windows never
+        // saw move, as blocks.
+        val layouts = LinkedHashMap<DetectedLayout, Long>()
+        for (e in epochs) layouts[e.layout] = (layouts[e.layout] ?: 0L) + (e.endMs - e.startMs)
+        val epochLayouts = layouts.keys.toSet()
+        for (wide in wideLayouts) if (wide !in layouts) layouts[wide] = WIDE_WINDOW_MS
+        val arrangements = ArrayList<MutableList<DetectedLayout>>()
+        for (layout in layouts.keys.sortedByDescending { layouts.getValue(it) }) {
+            arrangements.firstOrNull { group -> group.all { compatible(it, layout) } }?.add(layout) ?: arrangements.add(mutableListOf(layout))
+        }
+        val steady = HashMap<DetectedLayout, DetectedLayout>()
+        for (group in arrangements) {
+            if (group.none { it in epochLayouts }) continue
+            val reactors = reactorSet(group, layouts)
+            for (layout in group.filter { it in epochLayouts }) {
+                val movie = layout.movie
+                // A box only this window saw is not spread over the video, but it stays here.
+                val own = layout.reactors.filter { t -> reactors.none { overlapShare(it.rect, t.rect) > 0.25 } }
+                val kept = (reactors + own).filter { r -> movie == null || insideShare(r.rect, movie.rect) <= 0.5 }
+                steady[layout] = DetectedLayout(layout.tiles.filter { it.kind != TileKind.REACTOR } + kept)
+            }
+        }
+        return ReactionLayoutTimeline(epochs.map { it.copy(layout = steady.getValue(it.layout)) })
+    }
+
+    private class Box(var rect: LayoutRect, val members: MutableList<LayoutRect>, var windows: Int, var ms: Long, val cell: Boolean = false)
+
+    private fun reactorSet(group: List<DetectedLayout>, onMs: Map<DetectedLayout, Long>): List<DetectedTile> {
+        val boxes = ArrayList<Box>()
+        for (layout in group) {
+            val seen = HashSet<Box>()
+            for (tile in layout.tiles.filter { it.kind == TileKind.REACTOR }) {
+                val box = boxes.firstOrNull { ReactionLayoutTimelineBuilder.iou(it.rect, tile.rect) >= 0.5 }
+                    ?: Box(tile.rect, ArrayList(), 0, 0L).also { boxes += it }
+                box.members += tile.rect
+                if (seen.add(box)) {
+                    box.windows++
+                    box.ms += onMs.getValue(layout)
+                }
+                box.rect = median(box.members)
+            }
+        }
+        val solid = if (group.size == 1) boxes else boxes.filter { it.windows >= 2 || it.ms >= MIN_REACTOR_MS }
+        val singles = solid.filter { s -> solid.none { it !== s && insideShare(it.rect, s.rect) >= 0.8 && area(it.rect) < 0.6 * area(s.rect) } }
+        val split = ArrayList<Box>()
+        for (box in solid) {
+            val inside = solid.filter { it !== box && insideShare(it.rect, box.rect) >= 0.8 && area(it.rect) < 0.6 * area(box.rect) }
+            if (inside.isEmpty()) {
+                // A wall of small cameras seen as one box, with none of them found alone inside it:
+                // split it on the cameras' own size when it is clearly several of them.
+                val cells = if (singles.size >= GRID_MIN_SINGLES) gridCells(box.rect, singles, minCells = 3) else null
+                if (cells == null) split += box else cells.forEach { split += Box(it, mutableListOf(it), box.windows, box.ms, cell = true) }
+                continue
+            }
+            // A block of cameras found as one box: split on the size of the cameras found inside it, or
+            // give way to them when it does not divide evenly and they cover half of it.
+            val cells = gridCells(box.rect, inside, minCells = 2)
+            when {
+                cells != null -> cells.forEach { split += Box(it, mutableListOf(it), box.windows, box.ms, cell = true) }
+                inside.sumOf { area(it.rect) } < 0.5 * area(box.rect) -> split += box
+            }
+        }
+        // Whatever still overlaps: a box seen as it is beats a cell cut from a block, then the steadier
+        // box wins, then the smaller one.
+        val chosen = ArrayList<Box>()
+        for (box in split.sortedWith(compareBy<Box> { it.cell }.thenByDescending { it.windows }.thenBy { area(it.rect) })) {
+            if (chosen.none { overlapShare(it.rect, box.rect) > 0.25 }) chosen += box
+        }
+        return chosen.map { DetectedTile(it.rect, TileKind.REACTOR) }
+    }
+
+    /**
+     * [block] as an even grid of cameras the size of [like]'s median, if it is one: both sides within
+     * a quarter of a camera of a whole number of them, and at least [minCells] cells.
+     */
+    private fun gridCells(block: LayoutRect, like: List<Box>, minCells: Int): List<LayoutRect>? {
+        if (like.isEmpty()) return null
+        val cw = like.map { it.rect.w }.sorted()[like.size / 2]
+        val ch = like.map { it.rect.h }.sorted()[like.size / 2]
+        if (cw <= 0 || ch <= 0) return null
+        val nx = kotlin.math.round(block.w / cw).toInt()
+        val ny = kotlin.math.round(block.h / ch).toInt()
+        if (nx < 1 || ny < 1 || nx * ny < minCells) return null
+        if (abs(block.w / cw - nx) > 0.25 || abs(block.h / ch - ny) > 0.25) return null
+        val w = block.w / nx
+        val h = block.h / ny
+        return (0 until ny).flatMap { row -> (0 until nx).map { col -> LayoutRect(block.x + col * w, block.y + row * h, w, h) } }
+    }
+
+    private fun area(r: LayoutRect) = r.w * r.h
+
+    /** No two reactor boxes of [a] and [b] cross: each pair is apart, the same, or one inside the other. */
+    private fun compatible(a: DetectedLayout, b: DetectedLayout): Boolean {
+        val ra = a.tiles.filter { it.kind == TileKind.REACTOR }
+        val rb = b.tiles.filter { it.kind == TileKind.REACTOR }
+        var crossings = 0
+        for (x in ra) for (y in rb) {
+            val share = overlapShare(x.rect, y.rect)
+            if (share > 0.3 && share < 0.8 && ReactionLayoutTimelineBuilder.iou(x.rect, y.rect) < 0.5) crossings++
+        }
+        return crossings <= max(1, min(ra.size, rb.size) / 10)
+    }
+
+    /** How much of [inner] lies inside [outer]. */
+    private fun insideShare(inner: LayoutRect, outer: LayoutRect): Double {
+        val ix = max(0.0, min(inner.right, outer.right) - max(inner.x, outer.x))
+        val iy = max(0.0, min(inner.bottom, outer.bottom) - max(inner.y, outer.y))
+        return if (inner.w * inner.h <= 0) 0.0 else ix * iy / (inner.w * inner.h)
+    }
+
+    /** Their overlap as a share of the smaller one. */
+    private fun overlapShare(a: LayoutRect, b: LayoutRect): Double =
+        if (a.w * a.h <= b.w * b.h) insideShare(a, b) else insideShare(b, a)
+
+    private fun median(rects: List<LayoutRect>): LayoutRect {
+        fun mid(values: List<Double>) = values.sorted().let { (it[it.size / 2] + it[(it.size - 1) / 2]) / 2 }
+        return LayoutRect(mid(rects.map { it.x }), mid(rects.map { it.y }), mid(rects.map { it.w }), mid(rects.map { it.h }))
+    }
+
+    private fun steadyMovie(): ReactionLayoutTimeline {
         val movies = epochs.mapNotNull { e -> e.layout.movie?.let { it.rect to (e.endMs - e.startMs) } }
             .filter { (rect, _) -> rect.w * rect.h >= MIN_MOVIE_AREA }
         if (movies.isEmpty()) return this
@@ -104,6 +241,12 @@ internal class ReactionLayoutTimeline(val epochs: List<LayoutEpoch>) {
         const val MIN_MOVIE_AREA = 0.04
         /** The main box must have been seen for this much of its family's time. */
         const val MAIN_SHARE_PERCENT = 15
+        /** A reactor box seen in one window only is kept when that window was on this long. */
+        const val MIN_REACTOR_MS = 60_000L
+        /** How long a wide (3 min) layout window counts for, among the 45 s ones. */
+        const val WIDE_WINDOW_MS = 180_000L
+        /** Cameras found alone before a box with none inside it may be split on their size. */
+        const val GRID_MIN_SINGLES = 12
     }
 }
 
@@ -224,6 +367,9 @@ internal class ReactionLayoutTimelineBuilder(
     }
 
     val processedMs: Long get() = startMs + framesTotal * 1000L / fps
+
+    /** The distinct layouts the windows proposed so far. */
+    val layouts: List<DetectedLayout> get() = candidates.toList()
 
     companion object {
         /** Share of boxes (by overlap) two layouts have in common. */
