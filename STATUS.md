@@ -1,5 +1,7 @@
 ## EXPERIMENTAL branch `claude/reaction-mode`: Reaction Mode, Stages 1-4 (2026-10-13)
 
+**Next agent: start at `HANDOFF-reaction-mode-desktop-pc.md`.** First real test on the desktop PC (2026-10-13, Debug 92, Interstellar + a ~3 h YouTube mashup): automatic sync matched only spotty stretches, and the gap countdown shows a provisional number as fact (confirmed bug). Cause of the spotty match not yet known; five hypotheses there.
+
 **Not for release.** Pushed 2026-10-13; published as Desktop Debug 92 (`debug-v0.1.26-alpha-z2.92`, extension zip attached to the release). Plan, decisions and Stage 0 spike results: `Nuvio Z/PLAN-reaction-mode.md` (workspace root).
 Debug builds only (`isDebugBuild`), or `NUVIO_REACTION_MODE=1`; Windows only. Branched from `origin/Dev` 98d0f06c3, worked in
 the worktree `Nuvio Z/.claude-worktrees/reaction-mode`.
