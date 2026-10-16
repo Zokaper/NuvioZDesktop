@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,6 +43,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -214,7 +217,7 @@ class SocialSettingsTrayHarness {
         val failures = mutableListOf<String>()
         val kinds = PopupKind.entries
         for (style in PopupStyle.entries) {
-            renderScene("popups-${style.name}", 860, 120 + kinds.size * 150, failures) {
+            renderScene("popups-${style.name}", 860, 120 + kinds.size * 190, failures) {
                 Column(Modifier.fillMaxSize().background(WallpaperBrush).padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                     Caption(style.caption, color = Color.White)
                     kinds.forEach { kind ->
@@ -247,6 +250,12 @@ class SocialSettingsTrayHarness {
                 Popup(PopupStyle.A, PopupKind.Watching, Modifier.align(Alignment.TopEnd).padding(top = 28.dp, end = 28.dp), inPlayer = true)
             }
         }
+        renderScene("popup-in-player-D1-1920x1080", 1920, 1080, failures, density = 1f) {
+            Box(Modifier.fillMaxSize().background(Color.Black)) {
+                art("tt0149460")?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                Popup(PopupStyle.D1, PopupKind.Invite, Modifier.align(Alignment.TopEnd).padding(top = 28.dp, end = 28.dp))
+            }
+        }
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
     }
 
@@ -254,12 +263,14 @@ class SocialSettingsTrayHarness {
     fun renderClosePrompt() {
         outputDir.mkdirs()
         val failures = mutableListOf<String>()
-        for (variant in listOf("A", "B")) {
-            renderScene("close-prompt-$variant-1280x820", 1280, 820, failures) {
+        val variants = listOf("A" to PopupStyle.D1) + listOf(PopupStyle.D1, PopupStyle.D2, PopupStyle.D3).map { "B" to it }
+        for ((variant, picture) in variants) {
+            val name = if (variant == "A") "close-prompt-A-1280x820" else "close-prompt-B-${picture.name}-1280x820"
+            renderScene(name, 1280, 820, failures) {
                 Box(Modifier.fillMaxSize()) {
                     DashboardBackground()
                     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)))
-                    ClosePrompt(variant, Modifier.align(Alignment.Center))
+                    ClosePrompt(variant, Modifier.align(Alignment.Center), picture)
                 }
             }
         }
@@ -473,6 +484,9 @@ class SocialSettingsTrayHarness {
         A("A - compact strip (Steam-like): click opens Nuvio on the right sheet"),
         B("B - backdrop card, the Watching Now family: click opens Nuvio"),
         C("C - compact strip with the actions inline"),
+        D1("D1 - artwork card, buttons under the text"),
+        D2("D2 - artwork card, same height as B, buttons bottom-right"),
+        D3("D3 - artwork banner on top, who + buttons underneath"),
     }
 
     private enum class PopupKind(val note: String) {
@@ -565,15 +579,109 @@ class SocialSettingsTrayHarness {
                         fontSize = 9.sp, letterSpacing = 1.5.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.55f),
                     )
                 }
+                PopupStyle.D1, PopupStyle.D2 -> Box(
+                    modifier.width(380.dp).then(if (style == PopupStyle.D2) Modifier.height(132.dp) else Modifier.height(IntrinsicSize.Min))
+                        .clip(RoundedCornerShape(16.dp)).background(Color(0xFF17181C)),
+                ) {
+                    PopupArt(c, Modifier.matchParentSize())
+                    Box(
+                        Modifier.matchParentSize().background(
+                            Brush.horizontalGradient(listOf(Color.Black.copy(alpha = 0.92f), Color.Black.copy(alpha = 0.6f), Color.Black.copy(alpha = 0.1f))),
+                        ),
+                    )
+                    Column(Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            SocialFaces(listOf(c.who), 46.dp, liveRing = kind == PopupKind.Watching)
+                            PopupText(c, Modifier.widthIn(max = 250.dp))
+                        }
+                        if (style == PopupStyle.D1) {
+                            Spacer(Modifier.height(12.dp))
+                            Row(Modifier.padding(start = 58.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                c.actions.forEachIndexed { i, a -> DarkPill(a, primary = i == 0) }
+                            }
+                        }
+                    }
+                    if (style == PopupStyle.D2) {
+                        Row(Modifier.align(Alignment.BottomEnd).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            c.actions.reversed().forEach { a -> DarkPill(a, primary = a == c.actions.first()) }
+                        }
+                    }
+                    NuvioMark(Modifier.align(Alignment.TopEnd).padding(10.dp))
+                }
+                PopupStyle.D3 -> Column(
+                    modifier.width(360.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFF17181C))
+                        .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(16.dp)),
+                ) {
+                    Box(Modifier.fillMaxWidth().height(116.dp)) {
+                        PopupArt(c, Modifier.matchParentSize())
+                        Box(
+                            Modifier.matchParentSize().background(
+                                Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.25f), Color.Transparent, Color.Black.copy(alpha = 0.85f))),
+                            ),
+                        )
+                        Column(Modifier.align(Alignment.BottomStart).padding(horizontal = 14.dp, vertical = 10.dp)) {
+                            Text(c.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            c.meta?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.75f), maxLines = 1) }
+                        }
+                        NuvioMark(Modifier.align(Alignment.TopEnd).padding(10.dp))
+                    }
+                    Row(
+                        Modifier.fillMaxWidth().padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        SocialFaces(listOf(c.who), 34.dp, liveRing = kind == PopupKind.Watching)
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                c.who.displayName, style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(c.line, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.75f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        c.actions.forEachIndexed { i, a -> DarkPill(a, primary = i == 0, small = true) }
+                    }
+                }
             }
         }
     }
 
+    /** The title's backdrop, or for a friend request (no title) a wash of the friend's own colour. */
     @Composable
-    private fun DarkPill(text: String, primary: Boolean) {
+    private fun PopupArt(c: PopupCopy, modifier: Modifier) {
+        val bitmap = c.art?.let(::art)
+        if (bitmap != null) {
+            Image(bitmap, null, modifier, contentScale = ContentScale.Crop)
+        } else {
+            val tint = c.who.avatarColorHex?.removePrefix("#")?.toLongOrNull(16)?.let { Color(0xFF000000 or it) } ?: Color(0xFF3A2B5C)
+            Box(modifier.background(Brush.linearGradient(listOf(Color.Black, tint.copy(alpha = 0.55f), tint))))
+        }
+    }
+
+    @Composable
+    private fun PopupText(c: PopupCopy, modifier: Modifier) {
+        Column(modifier) {
+            // The name gives way, never the verb: "A Friend With A Ve... wants to be friends".
+            Row {
+                Text(
+                    c.who.displayName, Modifier.weight(1f, fill = false), style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                Text(" ${c.line}", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.8f), maxLines = 1, softWrap = false)
+            }
+            Text(c.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            c.meta?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.7f), maxLines = 1) }
+        }
+    }
+
+    @Composable
+    private fun NuvioMark(modifier: Modifier) {
+        Text("NUVIO", modifier, fontSize = 9.sp, letterSpacing = 1.5.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.55f))
+    }
+
+    @Composable
+    private fun DarkPill(text: String, primary: Boolean, small: Boolean = false) {
         Box(
-            Modifier.clip(RoundedCornerShape(999.dp)).background(if (primary) Color.White else Color.White.copy(alpha = 0.12f))
-                .padding(horizontal = 14.dp, vertical = 6.dp),
+            Modifier.clip(RoundedCornerShape(999.dp)).background(if (primary) Color.White else Color.White.copy(alpha = 0.16f))
+                .padding(horizontal = if (small) 11.dp else 14.dp, vertical = if (small) 5.dp else 6.dp),
         ) {
             Text(text, color = if (primary) Color.Black else Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
         }
@@ -597,19 +705,29 @@ class SocialSettingsTrayHarness {
     // --- close prompt ------------------------------------------------------------------------
 
     @Composable
-    private fun ClosePrompt(variant: String, modifier: Modifier) {
+    private fun ClosePrompt(variant: String, modifier: Modifier, pictureStyle: PopupStyle = PopupStyle.D1) {
         Surface(modifier.width(440.dp), shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surface) {
             CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
                 Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     if (variant == "B") {
+                        // A miniature desktop corner: the pop-up sits wholly inside, above a taskbar whose tray
+                        // shows the Nuvio dot. Scaled from its bottom-right corner so nothing crosses the frame.
                         Box(
-                            Modifier.fillMaxWidth().height(120.dp).clip(RoundedCornerShape(16.dp)).background(WallpaperBrush),
+                            Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(16.dp)).background(WallpaperBrush),
                         ) {
-                            Popup(PopupStyle.A, PopupKind.Watching, Modifier.align(Alignment.TopEnd).padding(10.dp).offset(x = 70.dp).width(300.dp))
+                            Popup(
+                                pictureStyle, PopupKind.Watching,
+                                Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 22.dp + 12.dp)
+                                    .wrapContentSize(Alignment.BottomEnd, unbounded = true)
+                                    .graphicsLayer { scaleX = 0.72f; scaleY = 0.72f; transformOrigin = TransformOrigin(1f, 1f) },
+                            )
                             Row(
                                 Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(22.dp).background(Color(0xFF1C1C22)).padding(horizontal = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End,
-                            ) { Box(Modifier.size(10.dp).clip(CircleShape).background(SocialLiveColor)) }
+                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                            ) {
+                                Box(Modifier.size(10.dp).clip(CircleShape).background(SocialLiveColor))
+                                Text("12:00", color = Color.White, fontSize = 8.sp)
+                            }
                         }
                     }
                     Text("Keep Nuvio in the tray?", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
