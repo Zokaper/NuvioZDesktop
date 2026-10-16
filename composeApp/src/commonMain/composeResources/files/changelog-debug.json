@@ -89,6 +89,10 @@
     {
       "build": 98,
       "text": "Tray and pop-ups: the first time you close Nuvio it asks whether to keep it in the tray (next to the clock) so friends' pop-ups can still reach you; it then uses little memory until you open it again from the tray icon. Pop-ups show friend requests, party invites and requests to join you - click one to open Nuvio right there. Social settings now live behind a gear in the Social tab (privacy, pop-ups, closing the window, Show friends on Home), and Inbox opens as a side panel. Settings -> Downloads now looks and works like the other Settings pages and keeps the sidebar."
+    },
+    {
+      "build": 99,
+      "text": "Opening Nuvio from the Start menu or a shortcut while it is already running (minimised, or in the tray) now brings that window back instead of starting a second copy; links that open Nuvio go to the running copy too. Friends' \"started watching\" pop-ups now work: turn on Notify on a friend's profile to get them. On the Home friends shelf, the \"3h ago\" label sits on a small dark chip so it reads on bright pictures. Everything in 98 is here too."
     }
   ]
 }
