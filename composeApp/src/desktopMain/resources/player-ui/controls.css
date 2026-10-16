@@ -830,6 +830,9 @@ button:disabled {
 .wt-invite { display: grid; gap: 6px; margin-top: 6px; }
 .wt-invite-row { display: flex; align-items: center; gap: 10px; }
 .wt-invite-row .party-member-avatar { width: 28px; height: 28px; font-size: 12px; }
+.wt-invite-row .wt-invite-cancel { min-width: 0; padding: 0 9px; }
+.wt-invite-row .wt-invite-declined:disabled { color: #e8a0a0; }
+.wt-request-actions .wt-request-dismiss { min-width: 0; padding: 0 9px; }
 .wt-invite-row span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .wt-invite-code { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--theme-text-muted); font-size: 12.5px; }
 .wt-invite-code strong { color: var(--theme-text-primary); letter-spacing: .08em; user-select: text; }

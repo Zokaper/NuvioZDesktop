@@ -75,6 +75,8 @@ class NativePlayerControlsPageTest {
             "wtAcceptRequest",
             "wtDeclineRequest",
             "wtCancelOutgoing",
+            "wtAskAgainOutgoing",
+            "wtDismissOutgoing",
             "wtJoinAccepted",
             "wtDismissAccepted",
             "wtDismissError",
@@ -91,7 +93,7 @@ class NativePlayerControlsPageTest {
         listOf("wtSetJoinPolicy", "wtEndConfirm").forEach { command ->
             assertTrue(html.contains("data-wt-command=\"$command\""), "missing valued command $command")
         }
-        listOf("wtSetGuestControl", "wtSetWaitForEveryone", "wtInviteFriend").forEach { command ->
+        listOf("wtSetGuestControl", "wtSetWaitForEveryone", "wtInviteFriend", "wtCancelInvite").forEach { command ->
             assertTrue(script.contains("\"$command\""), "missing dynamic panel command $command")
         }
         // Gone: the header policy pill, the old action buttons, and the centred end-of-party modal.

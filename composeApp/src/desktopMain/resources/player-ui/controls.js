@@ -84,6 +84,8 @@ const wtOutgoingAvatar = document.getElementById("wtOutgoingAvatar");
 const wtOutgoingHeadline = document.getElementById("wtOutgoingHeadline");
 const wtOutgoingDetail = document.getElementById("wtOutgoingDetail");
 const wtCancelOutgoingButton = document.getElementById("wtCancelOutgoingButton");
+const wtAskAgainOutgoingButton = document.getElementById("wtAskAgainOutgoingButton");
+const wtDismissOutgoingButton = document.getElementById("wtDismissOutgoingButton");
 const wtDismissAcceptedButton = document.getElementById("wtDismissAcceptedButton");
 const wtJoinAcceptedButton = document.getElementById("wtJoinAcceptedButton");
 const wtStartSection = document.getElementById("wtStartSection");
@@ -2324,13 +2326,21 @@ const renderPartyPanel = suppress => {
     const name = wt.outgoingName || "your friend";
     fillAvatar(wtOutgoingAvatar, name, wt.outgoingAvatarUrl, wt.outgoingColorHex);
     const phase = wt.outgoingPhase;
+    // The answer stays for the few seconds the store keeps it: the app's dock is hidden over the player.
     wtOutgoingHeadline.textContent = phase === "accepted" ? `${name} let you in`
-      : phase === "joining" ? `Joining ${name}…` : `Asking ${name} to join…`;
+      : phase === "joining" ? `Joining ${name}…`
+      : phase === "declined" ? `${name} can't have company right now`
+      : phase === "expired" ? `No answer from ${name}`
+      : phase === "stopped" ? `${name} stopped watching`
+      : phase === "failed" ? `Couldn't join ${name}`
+      : `Asking ${name} to join…`;
     const remaining = Number(wt.outgoingExpiresAtMs) - Date.now();
     wtOutgoingDetail.textContent = phase === "pending" && remaining > 0 ? formatClock(remaining) : "";
     wtCancelOutgoingButton.hidden = phase !== "pending";
     wtJoinAcceptedButton.hidden = phase !== "accepted";
     wtDismissAcceptedButton.hidden = phase !== "accepted";
+    wtAskAgainOutgoingButton.hidden = !["declined", "expired", "failed"].includes(phase);
+    wtDismissOutgoingButton.hidden = !["declined", "expired", "stopped", "failed"].includes(phase);
   }
 
   wtStartSection.hidden = !(kind === "idle" || kind === "starting");
@@ -2370,6 +2380,7 @@ const renderPartyPanel = suppress => {
       partyMemberList.append(row);
     });
   }
+  const INVITE_LABELS = { invite: "Invite", sending: "Sending…", sent: "Sent", cancelling: "Cancelling…", declined: "Declined" };
   const invites = wt.inviteTargets || [];
   const inviteCode = String(wt.inviteCode || "").trim();
   const canInvite = active && wt.isHost && (invites.length > 0 || Boolean(inviteCode));
@@ -2385,13 +2396,30 @@ const renderPartyPanel = suppress => {
     fillAvatar(avatar, target.name, target.avatarUrl, "");
     const name = document.createElement("span");
     name.textContent = target.name || "Friend";
+    // Sent with a ✕ to withdraw it while it waits; Declined for the re-invite cooldown.
+    const state = String(target.state || "invite");
+    const index = String(Number(target.index) || 0);
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = target.invited ? "Invited ✓" : "Invite";
-    button.disabled = Boolean(target.invited);
-    button.dataset.wtCommand = "wtInviteFriend";
-    button.dataset.wtValue = String(Number(target.index) || 0);
+    button.textContent = INVITE_LABELS[state] || "Invite";
+    button.disabled = state !== "invite";
+    if (state === "declined") button.className = "wt-invite-declined";
+    if (state === "invite") {
+      button.dataset.wtCommand = "wtInviteFriend";
+      button.dataset.wtValue = index;
+    }
     row.append(avatar, name, button);
+    if (state === "sent") {
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.className = "wt-invite-cancel";
+      cancel.textContent = "✕";
+      cancel.title = `Cancel the invite to ${target.name || "your friend"}`;
+      cancel.setAttribute("aria-label", cancel.title);
+      cancel.dataset.wtCommand = "wtCancelInvite";
+      cancel.dataset.wtValue = index;
+      row.append(cancel);
+    }
     wtInviteList.append(row);
   });
   wtInviteCodeRow.hidden = !inviteCode;

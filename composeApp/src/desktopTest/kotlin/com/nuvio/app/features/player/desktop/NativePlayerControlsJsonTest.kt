@@ -29,7 +29,7 @@ class NativePlayerControlsJsonTest {
                     title = "Mayday",
                     joinPolicy = 2,
                     people = listOf(WatchTogetherBridgePerson("You", "", "#111111", true, true, "Playing", "ready")),
-                    inviteTargets = listOf(WatchTogetherBridgeInvite(0, "Seraph", "", invited = true)),
+                    inviteTargets = listOf(WatchTogetherBridgeInvite(0, "Seraph", "", state = "sent")),
                     incomingVisible = true,
                     incomingName = "Ahmed \"A\"",
                 ),
@@ -47,7 +47,7 @@ class NativePlayerControlsJsonTest {
         assertEquals(2, wt.getValue("joinPolicy").jsonPrimitive.int)
         assertEquals("Ahmed \"A\"", wt.getValue("incomingName").jsonPrimitive.content)
         assertEquals("You", wt.getValue("people").jsonArray.single().jsonObject.getValue("name").jsonPrimitive.content)
-        assertEquals(true, wt.getValue("inviteTargets").jsonArray.single().jsonObject.getValue("invited").jsonPrimitive.boolean)
+        assertEquals("sent", wt.getValue("inviteTargets").jsonArray.single().jsonObject.getValue("state").jsonPrimitive.content)
         assertEquals(true, payload.getValue("socialNotificationVisible").jsonPrimitive.boolean)
         assertEquals(true, payload.getValue("partyTransportLocked").jsonPrimitive.boolean)
         assertEquals("Seraph", payload.getValue("partyHostName").jsonPrimitive.content)

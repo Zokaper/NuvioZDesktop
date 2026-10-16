@@ -53,8 +53,8 @@ class PlayerUiGallery {
     )
     private val incoming = IncomingJoinRequestRow("r1", "ahmed", "Ahmed", null, "#8E24AA", System.currentTimeMillis() + 90_000)
     private val invites = listOf(
-        WatchTogetherBridgeInvite(0, "Big Z", "", invited = false),
-        WatchTogetherBridgeInvite(1, "Zokaper", "", invited = true),
+        WatchTogetherBridgeInvite(0, "Big Z", ""),
+        WatchTogetherBridgeInvite(1, "Zokaper", "", state = "sent"),
     )
 
     private fun active(role: WatchTogetherRole, connection: PartyConnectionChip = PartyConnectionChip.Live, withIncoming: Boolean = false) =
