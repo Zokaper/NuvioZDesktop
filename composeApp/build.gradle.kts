@@ -1590,8 +1590,6 @@ compose.desktop {
             "-XX:G1PeriodicGCInterval=60000",
             "-XX:MinHeapFreeRatio=10",
             "-XX:MaxHeapFreeRatio=30",
-            // The tray's working-set trim and fullscreen check call Windows through java.lang.foreign.
-            "--enable-native-access=ALL-UNNAMED",
             smokePlayerUrl?.takeIf { it.isNotBlank() }?.let { "-Dnuvio.desktop.smokePlayerUrl=$it" },
             debugTools?.takeIf { it.equals("true", ignoreCase = true) }?.let { "-Dnuvio.debugTools=true" },
             autoSelfTest?.takeIf { it.equals("true", ignoreCase = true) }?.let { "-Dnuvio.selfTest=true" },

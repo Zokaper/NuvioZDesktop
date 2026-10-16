@@ -82,6 +82,6 @@ class ZSettingsHubDesktopTest {
             }
             assertTrue(page == SettingsPage.Root || current == SettingsPage.Root, "$page is not under Root")
         }
-        assertEquals(listOf(SettingsPage.Navigation, SettingsPage.About), SettingsPage.entries.takeLast(2))
+        assertEquals(listOf(SettingsPage.Navigation, SettingsPage.About, SettingsPage.Downloads), SettingsPage.entries.takeLast(3))
     }
 }
