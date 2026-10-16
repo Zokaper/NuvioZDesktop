@@ -81,6 +81,10 @@
     {
       "build": 82,
       "text": "What's New is now one changelog across Desktop, Android and iPhone. This build previews the next release's notes: they open once after this update, and stay in Settings → What's New, which shows a New badge while something is unseen. Entries for phones sit at the end of each update. Everything in 81 is here too."
+    },
+    {
+      "build": 97,
+      "text": "Social V2 on top of 0.1.26-alpha-z2: Watching Now as backdrop cards with a join sheet, Recently watched as a per-friend timeline of stacked stills, Friends / Inbox / profile sheet, sent requests you can cancel, and an unread dot on Social. No Reaction Mode in this build."
     }
   ]
 }
