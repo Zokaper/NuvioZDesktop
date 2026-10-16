@@ -1777,6 +1777,7 @@ internal fun MainAppContent(
                                 } else {
                                     null
                                 },
+                                onWhatsNewClick = onWhatsNewClick,
                                 onRunSetupAgainClick = onRunSetupAgainClick,
                                 onCollectionsSettingsClick = { navController.navigate(CollectionsRoute(collectionsTitle)) },
                                 onFolderClick = { collectionId, folderId ->
@@ -2007,6 +2008,7 @@ internal fun MainAppContent(
                         onTestUpdateBanner = if (
                             AppFeaturePolicy.inAppUpdaterEnabled && AppUpdaterPlatform.isDebugBuild
                         ) appUpdaterController::showDebugTestUpdate else null,
+                        onWhatsNew = onWhatsNewClick,
                         onRunSetupAgain = onRunSetupAgainClick,
                     )
                 }
