@@ -59,6 +59,7 @@ import com.nuvio.app.features.tray.DesktopSocialPopupInAppHost
 import com.nuvio.app.features.tray.DesktopSocialPopupWindow
 import com.nuvio.app.features.tray.DesktopSocialPopups
 import com.nuvio.app.features.tray.DesktopSocialSettingsSections
+import com.nuvio.app.features.tray.DesktopSingleInstance
 import com.nuvio.app.features.tray.DesktopTrayController
 import com.nuvio.app.features.tray.DesktopTrayPreferences
 import androidx.compose.ui.window.Tray
@@ -84,6 +85,13 @@ private const val WindowStateSaveDelayMillis = 300L
 fun main(args: Array<String>) {
     // First, so the rest of startup is inside the capture. No-op unless -Dnuvio.debugTools=true.
     DesktopDebugLog.install()?.let { logFile -> println("Nuvio debug log: $logFile") }
+    // Before anything else starts: a second launch hands its links to the running copy, which shows its
+    // window, and exits here. The player smoke run is its own throwaway process.
+    if (System.getProperty("nuvio.desktop.smokePlayerUrl").isNullOrBlank() &&
+        System.getenv("NUVIO_DESKTOP_SMOKE_PLAYER_URL").isNullOrBlank()
+    ) {
+        DesktopSingleInstance.enforce(args.map(String::trim).filter(::isDesktopAppUrl))
+    }
     // Second, so a stall in the rest of startup is attributed rather than guessed at. Also a no-op
     // outside a debug build.
     EdtStallWatchdog.install()

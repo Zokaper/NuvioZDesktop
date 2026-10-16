@@ -4,7 +4,7 @@ import java.lang.invoke.MethodHandle
 import java.lang.reflect.Array as JArray
 
 /**
- * The two Windows calls the tray needs, through the JDK's foreign-function API **looked up at run time**.
+ * The Windows calls the tray and the single-instance hand-off need, through the JDK's foreign-function API **looked up at run time**.
  *
  * ⚠ **Reflection on purpose.** The shipped Windows runtime is JBR 25, where `java.lang.foreign` is final,
  * but CI also compiles this source set on JDK 17 (the macOS release-selection tests), which has no such
@@ -48,17 +48,18 @@ internal object WindowsForeign {
         }.getOrNull()
     }
 
-    /** A downcall to [function] in [library] returning an int and taking pointer arguments, or null. */
-    private fun intFunction(library: String, function: String, pointerArgs: Int): MethodHandle? {
+    /** A downcall to [function] in [library] returning an int and taking [argLayouts], or null. */
+    private fun intFunction(library: String, function: String, argLayouts: (Api) -> List<Any>): MethodHandle? {
         val api = api ?: return null
+        val layouts = argLayouts(api)
         return runCatching {
             val lookupClass = Class.forName("java.lang.foreign.SymbolLookup")
             val lookup = lookupClass.getMethod("libraryLookup", String::class.java, api.arenaClass)
                 .invoke(null, library, api.arenaGlobal)
             val symbol = (lookupClass.getMethod("find", String::class.java).invoke(lookup, function) as java.util.Optional<*>)
                 .orElse(null) ?: return null
-            val args = JArray.newInstance(api.memoryLayoutClass, pointerArgs)
-            repeat(pointerArgs) { JArray.set(args, it, api.address) }
+            val args = JArray.newInstance(api.memoryLayoutClass, layouts.size)
+            layouts.forEachIndexed { index, layout -> JArray.set(args, index, layout) }
             val descriptor = api.functionDescriptorClass
                 .getMethod("of", api.memoryLayoutClass, args.javaClass)
                 .invoke(null, api.javaInt, args)
@@ -77,14 +78,29 @@ internal object WindowsForeign {
         }.getOrNull()
     }
 
-    private val emptyWorkingSet: MethodHandle? by lazy { intFunction("kernel32", "K32EmptyWorkingSet", 1) }
-    private val queryNotificationState: MethodHandle? by lazy { intFunction("shell32", "SHQueryUserNotificationState", 1) }
+    private val emptyWorkingSet: MethodHandle? by lazy { intFunction("kernel32", "K32EmptyWorkingSet") { listOf(it.address) } }
+    private val queryNotificationState: MethodHandle? by lazy {
+        intFunction("shell32", "SHQueryUserNotificationState") { listOf(it.address) }
+    }
+    private val allowSetForegroundWindow: MethodHandle? by lazy {
+        intFunction("user32", "AllowSetForegroundWindow") { listOf(it.javaInt) }
+    }
 
     /** `K32EmptyWorkingSet(GetCurrentProcess())`; false when unavailable or refused. */
     fun emptyWorkingSet(): Boolean {
         val handle = emptyWorkingSet ?: return false
         val process = currentProcess() ?: return false
         return runCatching { (handle.invokeWithArguments(process) as Int) != 0 }.getOrDefault(false)
+    }
+
+    /**
+     * `AllowSetForegroundWindow(processId)`: lets that process take the foreground, which only a process
+     * that has it (the one the user just launched) can grant. False when refused (a process without the
+     * foreground cannot grant it), null when the call cannot be made at all.
+     */
+    fun allowSetForegroundWindow(processId: Long): Boolean? {
+        val handle = allowSetForegroundWindow ?: return null
+        return runCatching { (handle.invokeWithArguments(processId.toInt()) as Int) != 0 }.getOrNull()
     }
 
     /** `SHQueryUserNotificationState`'s answer, or null when it cannot be asked. */
