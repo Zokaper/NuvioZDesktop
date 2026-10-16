@@ -52,6 +52,18 @@ import com.nuvio.app.features.settings.previewResource
 import com.nuvio.app.features.watchparty.PartyDepartureMode
 import com.nuvio.app.features.watchparty.WatchPartyRepository
 import com.nuvio.app.features.settings.transparentPreviewResource
+import com.nuvio.app.features.settings.SocialSettingsExtensions
+import com.nuvio.app.features.tray.DesktopClosePromptHost
+import com.nuvio.app.features.tray.DesktopCloseAction
+import com.nuvio.app.features.tray.DesktopSocialPopupInAppHost
+import com.nuvio.app.features.tray.DesktopSocialPopupWindow
+import com.nuvio.app.features.tray.DesktopSocialPopups
+import com.nuvio.app.features.tray.DesktopSocialSettingsSections
+import com.nuvio.app.features.tray.DesktopTrayController
+import com.nuvio.app.features.tray.DesktopTrayPreferences
+import androidx.compose.ui.window.Tray
+import java.awt.event.WindowAdapter
+import java.awt.event.WindowEvent
 import java.awt.Desktop
 import javax.imageio.ImageIO
 import java.awt.Color as AwtColor
@@ -100,6 +112,10 @@ fun main(args: Array<String>) {
     ProfileRepository.loadCachedProfiles()
     AppIconRepository.ensureLoaded()
     DiscordPresenceManager.start()
+    // Social V2 tray mode: the window can close while the process (and Social) carries on.
+    AppGateResume.enabled = true
+    SocialSettingsExtensions.platformSections = { isTablet -> DesktopSocialSettingsSections(isTablet) }
+    DesktopSocialPopups.start()
 
     application {
         val appIconState by AppIconRepository.state.collectAsState()
@@ -151,11 +167,42 @@ fun main(args: Array<String>) {
             placement = initialPlacement,
         )
         val fullscreenController = remember { DesktopAppFullscreenController() }
+        val windowVisible by DesktopTrayController.windowVisible.collectAsState()
+        val trayPreferences by DesktopTrayPreferences.state.collectAsState()
 
-        SwingWindow(
+        fun quitApp() {
+            P2pStreamingEngine.shutdown()
+            DiscordPresenceManager.shutdown()
+            SentryInitializer.close()
+            exitApplication()
+        }
+
+        fun openFromTray() {
+            DesktopTrayController.show()
+            DesktopTrayController.bringToFront()
+        }
+
+        // The tray icon is where Nuvio lives once closing hides it: shown unless closing quits, and always
+        // while the window is hidden (otherwise there would be no way back).
+        if (smokePlayerUrl == null && (trayPreferences.closeAction != DesktopCloseAction.Quit || !windowVisible)) {
+            Tray(
+                icon = painterResource(appIconState.selected.transparentPreviewResource),
+                tooltip = "Nuvio Z",
+                onAction = ::openFromTray,
+                menu = {
+                    Item("Open Nuvio Z", onClick = ::openFromTray)
+                    Separator()
+                    Item("Quit Nuvio Z", onClick = ::quitApp)
+                },
+            )
+        }
+        if (smokePlayerUrl == null) DesktopSocialPopupWindow()
+
+        if (windowVisible) SwingWindow(
             onCloseRequest = {
                 val partyState = WatchPartyRepository.uiState.value
                 val party = partyState.party
+                // Hiding to the tray tears the player down too, so a party is left first either way.
                 if (party != null) {
                     val isHost = party.hostProfileId == partyState.activeProfileId
                     val options = if (isHost) {
@@ -181,10 +228,7 @@ fun main(args: Array<String>) {
                     }
                     runBlocking { WatchPartyRepository.depart(mode) }
                 }
-                P2pStreamingEngine.shutdown()
-                DiscordPresenceManager.shutdown()
-                SentryInitializer.close()
-                exitApplication()
+                if (smokePlayerUrl != null) quitApp() else DesktopTrayController.onCloseRequested(::quitApp)
             },
             title = if (smokePlayerUrl == null) "Nuvio Z" else "Nuvio Z Player Smoke",
             state = windowState,
@@ -213,7 +257,9 @@ fun main(args: Array<String>) {
                 DesktopWheelSmoothing.install()
                 // Windows fullscreen is emulated natively and isn't reflected by
                 // WindowPlacement, so it must be re-applied once the window peer exists.
-                fullscreenController.applyRestoredFullscreenState(window, windowState, wasFullscreenOnLastExit)
+                // Read again rather than the launch-time value: a window re-created from the tray restores
+                // the mode it was last in, not the one Nuvio started in.
+                fullscreenController.applyRestoredFullscreenState(window, windowState, DesktopWindowModeStorage.loadWasFullscreen())
             }
             LaunchedEffect(windowState) {
                 // Covers OS-driven placement changes too (e.g. the native macOS
@@ -299,12 +345,30 @@ fun main(args: Array<String>) {
                 onDispose { SelfTestHooks.launch = null }
             }
 
+            // Pop-ups draw inside this window while it is the focused one, and in their own window otherwise.
+            DisposableEffect(window) {
+                DesktopTrayController.mainWindow = window
+                val focusListener = object : WindowAdapter() {
+                    override fun windowGainedFocus(e: WindowEvent?) = DesktopSocialPopups.setWindowFocused(true)
+                    override fun windowLostFocus(e: WindowEvent?) = DesktopSocialPopups.setWindowFocused(false)
+                }
+                window.addWindowFocusListener(focusListener)
+                DesktopSocialPopups.setWindowFocused(window.isFocused)
+                onDispose {
+                    window.removeWindowFocusListener(focusListener)
+                    DesktopSocialPopups.setWindowFocused(false)
+                    if (DesktopTrayController.mainWindow === window) DesktopTrayController.mainWindow = null
+                }
+            }
+
             if (smokePlayerUrl == null) {
                 DesktopWheelSmoothing.FrameDriver()
                 ProvideDesktopPrefetchScheduler {
                     App()
                 }
                 SelfTestOverlay()
+                DesktopSocialPopupInAppHost()
+                DesktopClosePromptHost(onQuit = ::quitApp)
             } else {
                 // The player surface reads LocalNuvioPlatformDensity, which only
                 // NuvioTheme provides — the bare smoke harness must supply it too.

@@ -1584,6 +1584,14 @@ compose.desktop {
             "--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED",
             "--add-opens=java.desktop/sun.awt.windows=ALL-UNNAMED",
             "--add-opens=java.desktop/sun.awt.X11=ALL-UNNAMED",
+            // Social V2 tray mode: let G1 hand freed heap back to the OS while Nuvio sits hidden. Stage T0
+            // measured these (with a 5 s interval) at ~437 MB hidden against ~565 MB on the defaults; 60 s
+            // keeps an idle, hidden Nuvio from waking every few seconds. See PLAN-social-v2.md.
+            "-XX:G1PeriodicGCInterval=60000",
+            "-XX:MinHeapFreeRatio=10",
+            "-XX:MaxHeapFreeRatio=30",
+            // The tray's working-set trim and fullscreen check call Windows through java.lang.foreign.
+            "--enable-native-access=ALL-UNNAMED",
             smokePlayerUrl?.takeIf { it.isNotBlank() }?.let { "-Dnuvio.desktop.smokePlayerUrl=$it" },
             debugTools?.takeIf { it.equals("true", ignoreCase = true) }?.let { "-Dnuvio.debugTools=true" },
             autoSelfTest?.takeIf { it.equals("true", ignoreCase = true) }?.let { "-Dnuvio.selfTest=true" },

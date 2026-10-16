@@ -259,6 +259,32 @@ class SocialSettingsTrayHarness {
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
     }
 
+    /** The built panels (not prototypes): Social settings and Inbox as the Social tab draws them. */
+    @Test
+    fun renderBuiltPanels() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        for ((w, h) in listOf(1280 to 820, 411 to 914)) {
+            for ((name, overlay) in listOf("settings" to SocialOverlay.Settings, "inbox" to SocialOverlay.Inbox)) {
+                renderScene("built-$name-${w}x$h", w, h, failures) {
+                    SocialFeed(
+                        model = SocialFeedModel(
+                            state = feedState,
+                            activityGroups = groupFriendActivity(feedState.activity),
+                            activityTimeline = friendActivityTimeline(feedState.activity, nowMs),
+                            activityNowMs = nowMs,
+                            joinAffordance = { watchingNowJoinAffordance(it, OutgoingJoinRequestState.Idle, null) },
+                            initialOverlay = overlay,
+                        ),
+                        actions = SocialFeedActions(),
+                        listState = rememberLazyListState(),
+                    )
+                }
+            }
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
     @Test
     fun renderClosePrompt() {
         outputDir.mkdirs()
