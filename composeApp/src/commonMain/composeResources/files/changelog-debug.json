@@ -84,7 +84,11 @@
     },
     {
       "build": 97,
-      "text": "Social V2 on top of 0.1.26-alpha-z2: Watching Now as backdrop cards with a join sheet, Recently watched as a per-friend timeline of stacked stills, Friends / Inbox / profile sheet, sent requests you can cancel, and an unread dot on Social. No Reaction Mode in this build."
+      "text": "Social V2 on top of 0.1.26-alpha-z2: Watching Now as backdrop cards with a join sheet, Recently watched as a per-friend timeline of stacked stills, Friends / Inbox / profile sheet, and an unread dot on Social (sent requests and per-friend switches appear once the Social server update is live). No Reaction Mode in this build."
+    },
+    {
+      "build": 98,
+      "text": "Tray and pop-ups: the first time you close Nuvio it asks whether to keep it in the tray (next to the clock) so friends' pop-ups can still reach you; it then uses little memory until you open it again from the tray icon. Pop-ups show friend requests, party invites and requests to join you - click one to open Nuvio right there. Social settings now live behind a gear in the Social tab (privacy, pop-ups, closing the window, Show friends on Home), and Inbox opens as a side panel."
     }
   ]
 }
