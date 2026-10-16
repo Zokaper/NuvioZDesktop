@@ -403,7 +403,7 @@ class DownloadsScreenRenderHarness {
 
     /** Settings -> Downloads (stage 8): an unanswered mode on a derived Assisted, device defaults. */
     @Composable
-    private fun Settings() {
+    private fun Settings(tablet: Boolean = false) {
         NuvioScreen(topPadding = 0.dp) {
             stickyHeader {
                 Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
@@ -417,6 +417,7 @@ class DownloadsScreenRenderHarness {
                 effectiveMode = DownloadMode.ASSISTED,
                 deviceSettings = DownloadDeviceSettings(),
                 onOpenFolder = {},
+                isTablet = tablet,
             )
         }
     }
@@ -439,7 +440,7 @@ class DownloadsScreenRenderHarness {
             render("show-$sizeName-full", size.first, if (phone) 3000 else 2200, failures) { Show() }
             render("show-$sizeName-season1", size.first, size.second, failures) { Show(season = 1) }
             render("detail-$sizeName", size.first, 520, failures) { Detail() }
-            render("settings-$sizeName", size.first, if (phone) 1500 else 1300, failures) { Settings() }
+            render("settings-$sizeName", size.first, if (phone) 1500 else 1300, failures) { Settings(tablet = !phone) }
         }
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
     }
