@@ -6,6 +6,8 @@ import androidx.compose.ui.awt.SwingWindow
 import androidx.compose.ui.configureSwingGlobalsForCompose
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -98,6 +100,8 @@ fun main(args: Array<String>) {
     // Load cached profile data synchronously so the profile color is available
     // on the very first Compose frame (matching Android's SharedPreferences behavior).
     ProfileRepository.loadCachedProfiles()
+    // SPIKE: the tray probe measures Home, so it skips the profile picker (maintainer-approved setting change).
+    if (DesktopTrayProbe.openSeconds != null) ProfileRepository.setRememberLastProfileEnabled(true)
     AppIconRepository.ensureLoaded()
     DiscordPresenceManager.start()
 
@@ -152,7 +156,12 @@ fun main(args: Array<String>) {
         )
         val fullscreenController = remember { DesktopAppFullscreenController() }
 
-        SwingWindow(
+        // SPIKE: tray memory probe (DesktopTrayProbe). Off unless -Dnuvio.trayProbe is set.
+        var windowShown by remember { mutableStateOf(true) }
+        with(DesktopTrayProbe) {
+            Run(icon = painterResource(appIconState.selected.transparentPreviewResource), onHide = { windowShown = false })
+        }
+        if (windowShown) SwingWindow(
             onCloseRequest = {
                 val partyState = WatchPartyRepository.uiState.value
                 val party = partyState.party
