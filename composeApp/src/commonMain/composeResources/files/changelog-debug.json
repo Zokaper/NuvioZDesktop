@@ -105,6 +105,10 @@
     {
       "build": 102,
       "text": "Social pop-ups show while you're watching: they appear at the top-right over the player, and clicking one there just closes it."
+    },
+    {
+      "build": 103,
+      "text": "Social pop-ups always appear in their own corner of the screen, like Steam, whether Nuvio is in front, behind something or playing a video."
     }
   ]
 }
