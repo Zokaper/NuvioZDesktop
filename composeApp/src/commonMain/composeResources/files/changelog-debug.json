@@ -109,6 +109,10 @@
     {
       "build": 103,
       "text": "Social pop-ups always appear in their own corner of the screen, like Steam, whether Nuvio is in front, behind something or playing a video."
+    },
+    {
+      "build": 104,
+      "text": "Pop-ups now share their rules and card with the phone. Nothing should look different; tell me if anything pops twice or not at all."
     }
   ]
 }
