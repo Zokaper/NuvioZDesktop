@@ -39,6 +39,7 @@ import com.nuvio.app.features.player.desktop.NativePlayerController
 import com.nuvio.app.features.player.desktop.NativePlayerHost
 import com.nuvio.app.features.player.desktop.PrematureEndOfStreamGuard
 import com.nuvio.app.features.player.desktop.desktopFullscreenChanges
+import com.nuvio.app.features.tray.DesktopSocialPopups
 import co.touchlab.kermit.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -243,11 +244,14 @@ private fun NativePlayerSurface(
 
     var isSurfacePromoted by remember(controller) { mutableStateOf(controller.isNativeSurfacePromoted()) }
     DisposableEffect(controller) {
+        DesktopSocialPopups.setPlayerOnScreen(controller.isNativeSurfacePromoted())
         controller.onSurfacePromotedChanged = { promoted ->
             isSurfacePromoted = promoted
+            DesktopSocialPopups.setPlayerOnScreen(promoted)
         }
         onDispose {
             controller.onSurfacePromotedChanged = null
+            DesktopSocialPopups.setPlayerOnScreen(false)
         }
     }
 

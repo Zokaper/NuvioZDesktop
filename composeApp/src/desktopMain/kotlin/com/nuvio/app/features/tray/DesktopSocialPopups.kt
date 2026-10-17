@@ -17,6 +17,7 @@ import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.ApplicationScope
+import co.touchlab.kermit.Logger
 import com.nuvio.app.core.storage.DesktopStorage
 import com.nuvio.app.core.ui.NuvioTheme
 import com.nuvio.app.features.social.SocialArtRef
@@ -31,6 +32,7 @@ import com.nuvio.app.features.social.artRef
 import com.nuvio.app.features.social.parseSocialTimestampMs
 import com.nuvio.app.features.social.socialNavigationKey
 import java.awt.GraphicsEnvironment
+import java.awt.Rectangle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -59,13 +61,18 @@ import kotlinx.serialization.json.Json
  *
  * Over the desktop, bottom-right above the taskbar, in a small always-on-top window that never takes
  * focus and has no taskbar entry - when Nuvio is hidden in the tray or not the focused window. Inside
- * Nuvio's own window when it is the one in front, so the card is drawn on the app (and over the player
- * while watching) instead of on a separate window over it. Over a fullscreen game or app only when the
- * user allowed it.
+ * Nuvio's own window when it is the one in front, so the card is drawn on the app instead of on a
+ * separate window over it. Over a fullscreen game or app only when the user allowed it.
  *
- * A click opens Nuvio on the relevant place ([SocialNavigation]) and dismisses the card. No buttons.
+ * While a video is on screen the same pop-up window moves to the top-right of Nuvio's window instead:
+ * the mpv surface and the WebView2 controls are native windows, and anything Compose draws inside the
+ * app sits underneath them (2026-10-17: a friend-started-watching card never showed during playback).
+ *
+ * A click opens Nuvio on the relevant place ([SocialNavigation]) and dismisses the card - except over
+ * the player, where it only dismisses, because opening Social would end what is playing. No buttons.
  */
 internal object DesktopSocialPopups {
+    private val log = Logger.withTag("SocialPopups")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val json = Json { ignoreUnknownKeys = true }
     private val store = DesktopStorage.store("nuvio_social_popups")
@@ -78,6 +85,13 @@ internal object DesktopSocialPopups {
     /** Where the current cards are drawn: inside Nuvio's window, or in the pop-up window over the desktop. */
     private val _inApp = MutableStateFlow(false)
     val inApp: StateFlow<Boolean> = _inApp.asStateFlow()
+
+    /** The player's video is on screen; it covers anything drawn inside the window. */
+    private val _playerOnScreen = MutableStateFlow(false)
+
+    /** Nuvio's window, on screen, while the cards float over the player; null for the desktop corner. */
+    private val _overPlayerBounds = MutableStateFlow<Rectangle?>(null)
+    val overPlayerBounds: StateFlow<Rectangle?> = _overPlayerBounds.asStateFlow()
 
     private var seenProfileId: String? = null
     private val seen = LinkedHashSet<String>()
@@ -97,8 +111,14 @@ internal object DesktopSocialPopups {
         _windowFocused.value = focused
     }
 
+    /** The native player surface was promoted (true) or concealed (false). */
+    fun setPlayerOnScreen(onScreen: Boolean) {
+        _playerOnScreen.value = onScreen
+    }
+
     fun onClick(popup: SocialPopup) {
         dismiss(popup.key)
+        if (_overPlayerBounds.value != null) return
         SocialNavigation.open(popup.target)
         DesktopTrayController.show()
         DesktopTrayController.bringToFront()
@@ -138,9 +158,29 @@ internal object DesktopSocialPopups {
             (createdAtMs[popup.key] ?: 0L) >= nowMs - FreshnessMs && prefs.allows(popup.kind)
         }
         if (allowed.isEmpty()) return
-        val inApp = _windowFocused.value && DesktopTrayController.windowVisible.value
-        if (!inApp && !prefs.popupsOverFullscreen && WindowsNotificationState.isFullscreenBusy()) return
-        _inApp.value = inApp
+        val window = DesktopTrayController.mainWindow
+        // Activation as well as focus: with keyboard focus inside the player's native child windows, AWT
+        // can report the frame as unfocused while it is still the window in front.
+        val front = DesktopTrayController.windowVisible.value &&
+            (_windowFocused.value || window?.isActive == true)
+        val playerBounds = window?.takeIf { front && _playerOnScreen.value }?.let { frame ->
+            runCatching { Rectangle(frame.locationOnScreen, frame.size) }.getOrNull()
+        }
+        val kinds = allowed.joinToString { it.kind.name }
+        if (!front && !prefs.popupsOverFullscreen && WindowsNotificationState.isFullscreenBusy()) {
+            log.i { "held $kinds: another app is fullscreen" }
+            return
+        }
+        _overPlayerBounds.value = playerBounds
+        _inApp.value = front && playerBounds == null
+        log.i {
+            val where = when {
+                playerBounds != null -> "over the player"
+                front -> "in the window"
+                else -> "on the desktop"
+            }
+            "popped $kinds $where"
+        }
         allowed.forEach(::show)
     }
 
@@ -261,14 +301,17 @@ internal object DesktopSocialPopups {
 internal fun ApplicationScope.DesktopSocialPopupWindow() {
     val popups by DesktopSocialPopups.visible.collectAsState()
     val inApp by DesktopSocialPopups.inApp.collectAsState()
+    val overPlayer by DesktopSocialPopups.overPlayerBounds.collectAsState()
     if (popups.isEmpty() || inApp) return
     val workArea = remember { GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds }
     val margin = 14
     val gap = 10
     val width = SocialPopupWidth.value.toInt() + margin * 2
     val height = popups.size * SocialPopupHeight.value.toInt() + (popups.size - 1) * gap + margin * 2
-    val x = workArea.x + workArea.width - width
-    val y = workArea.y + workArea.height - height
+    // Over the player: the top-right of Nuvio's window, 28px in like the in-app copy.
+    val anchor = overPlayer
+    val x = if (anchor != null) anchor.x + anchor.width - width - margin else workArea.x + workArea.width - width
+    val y = if (anchor != null) anchor.y + margin else workArea.y + workArea.height - height
     Window(
         create = {
             ComposeWindow().apply {
@@ -289,7 +332,10 @@ internal fun ApplicationScope.DesktopSocialPopupWindow() {
         },
     ) {
         NuvioTheme {
-            Box(Modifier.fillMaxSize().padding(margin.dp), contentAlignment = Alignment.BottomEnd) {
+            Box(
+                Modifier.fillMaxSize().padding(margin.dp),
+                contentAlignment = if (anchor != null) Alignment.TopEnd else Alignment.BottomEnd,
+            ) {
                 SocialPopupStack(popups)
             }
         }
