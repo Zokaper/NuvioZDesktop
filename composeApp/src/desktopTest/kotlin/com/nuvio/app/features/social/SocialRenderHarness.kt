@@ -522,6 +522,47 @@ class SocialRenderHarness {
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
     }
 
+    private fun popupFixtures(): List<SocialPopup> {
+        val seraph = profile()
+        val long = profile(name = "A Friend With A Very Long Display Name", handle = "longname")
+        return listOf(
+            SocialPopup("w", SocialPopupKind.FriendWatching, seraph, "is watching", "Andor", "S1 E2",
+                SocialArtRef("Andor", "series", "tt-andor", null), SocialNavigationTarget.Inbox),
+            SocialPopup("r", SocialPopupKind.FriendRequest, long, "wants to be friends", "@longname", null,
+                SocialArtRef("longname", null, null, null), SocialNavigationTarget.FriendRequests),
+            SocialPopup("i", SocialPopupKind.PartyInvite, seraph, "invited you to watch",
+                "The Lord of the Rings: The Return of the King", "Watch party",
+                SocialArtRef("Lord", "movie", "tt-lotr", null), SocialNavigationTarget.Inbox),
+            SocialPopup("j", SocialPopupKind.JoinRequest, seraph, "asked to join", "Daredevil", "Your playback · S2 E6",
+                SocialArtRef("Daredevil", "series", "tt-dd", null), SocialNavigationTarget.Inbox),
+        )
+    }
+
+    /** The shared pop-up card: the phone's compact banner at phone widths, the desktop's full card. */
+    @Test
+    fun renderSocialPopupCards() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        for ((w, h) in listOf(411 to 420, 360 to 420, 320 to 420, 800 to 420)) {
+            renderPhone("popup-banners-${w}x$h", w, h, failures) {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                    Column(
+                        Modifier.align(Alignment.TopCenter).padding(horizontal = 12.dp, vertical = 8.dp).widthIn(max = 440.dp).fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) { popupFixtures().forEach { SocialPopupCard(it, compact = true) } }
+                }
+            }
+        }
+        render("popup-cards-440x640", 440, 640, failures) {
+            Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                Column(Modifier.align(Alignment.BottomEnd).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    popupFixtures().forEach { SocialPopupCard(it) }
+                }
+            }
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
     /** A sheet's body on the sheet's surface, as the bottom sheet hosts it. */
     @Composable
     private fun SheetFrame(content: @Composable () -> Unit) {
