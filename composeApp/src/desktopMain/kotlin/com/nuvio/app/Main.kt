@@ -55,7 +55,6 @@ import com.nuvio.app.features.settings.transparentPreviewResource
 import com.nuvio.app.features.settings.SocialSettingsExtensions
 import com.nuvio.app.features.tray.DesktopClosePromptHost
 import com.nuvio.app.features.tray.DesktopCloseAction
-import com.nuvio.app.features.tray.DesktopSocialPopupInAppHost
 import com.nuvio.app.features.tray.DesktopSocialPopupWindow
 import com.nuvio.app.features.tray.DesktopSocialPopups
 import com.nuvio.app.features.tray.DesktopSocialSettingsSections
@@ -353,7 +352,8 @@ fun main(args: Array<String>) {
                 onDispose { SelfTestHooks.launch = null }
             }
 
-            // Pop-ups draw inside this window while it is the focused one, and in their own window otherwise.
+            // Pop-ups always use their own window; whether this one is in front only decides whether another
+            // app's fullscreen may hold them back.
             DisposableEffect(window) {
                 DesktopTrayController.mainWindow = window
                 val focusListener = object : WindowAdapter() {
@@ -375,7 +375,6 @@ fun main(args: Array<String>) {
                     App()
                 }
                 SelfTestOverlay()
-                DesktopSocialPopupInAppHost()
                 DesktopClosePromptHost(onQuit = ::quitApp)
             } else {
                 // The player surface reads LocalNuvioPlatformDensity, which only
