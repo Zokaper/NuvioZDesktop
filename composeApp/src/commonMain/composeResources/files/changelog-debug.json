@@ -97,6 +97,10 @@
     {
       "build": 100,
       "text": "Party invites now say Sent, with an x to take one back; an invite that is ignored just stays Sent, and one that is declined says Declined (you can invite that friend again after 5 minutes). If someone turns down your request to join, you are told, even while you are watching something. Recently watched shows the show's name and picture instead of an episode's, and reads \"Latest S5 E7 · 38 watched\". Everything in 99 is here too."
+    },
+    {
+      "build": 101,
+      "text": "Check for updates finds the newest debug build again; it was picking whichever one GitHub listed first."
     }
   ]
 }
