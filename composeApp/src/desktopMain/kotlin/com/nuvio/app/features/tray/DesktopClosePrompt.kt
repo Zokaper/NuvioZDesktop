@@ -42,6 +42,9 @@ import com.nuvio.app.core.ui.NuvioTheme
 import com.nuvio.app.features.social.SocialArtRef
 import com.nuvio.app.features.social.SocialLiveColor
 import com.nuvio.app.features.social.SocialNavigationTarget
+import com.nuvio.app.features.social.SocialPopup
+import com.nuvio.app.features.social.SocialPopupCard
+import com.nuvio.app.features.social.SocialPopupKind
 import com.nuvio.app.features.social.SocialProfileSummary
 import com.nuvio.app.features.social.SocialPillButton
 import com.nuvio.app.features.social.SocialRepository

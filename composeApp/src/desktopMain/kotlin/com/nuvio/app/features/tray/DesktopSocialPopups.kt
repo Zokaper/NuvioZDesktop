@@ -18,19 +18,18 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.ApplicationScope
 import co.touchlab.kermit.Logger
-import com.nuvio.app.core.storage.DesktopStorage
 import com.nuvio.app.core.ui.NuvioTheme
-import com.nuvio.app.features.social.SocialArtRef
 import com.nuvio.app.features.social.SocialFeaturePreferencesRepository
-import com.nuvio.app.features.social.SocialInboxEvent
 import com.nuvio.app.features.social.SocialNavigation
-import com.nuvio.app.features.social.SocialNavigationTarget
-import com.nuvio.app.features.social.SocialNotificationKind
+import com.nuvio.app.features.social.SocialPopup
+import com.nuvio.app.features.social.SocialPopupCard
+import com.nuvio.app.features.social.SocialPopupHeight
+import com.nuvio.app.features.social.SocialPopupKind
+import com.nuvio.app.features.social.SocialPopupLedger
+import com.nuvio.app.features.social.SocialPopupWidth
+import com.nuvio.app.features.social.SocialStorage
 import com.nuvio.app.features.social.SocialRepository
 import com.nuvio.app.features.social.SocialUiState
-import com.nuvio.app.features.social.artRef
-import com.nuvio.app.features.social.parseSocialTimestampMs
-import com.nuvio.app.features.social.socialNavigationKey
 import java.awt.GraphicsEnvironment
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,20 +40,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 
 /**
  * Steam-style Social pop-ups on the desktop (Social V2, 2026-10-16).
  *
  * ## What pops
  *
- * Friend requests, party invites, requests to join your playback, and "a friend started watching" for
- * friends you asked to be told about (an inbox event the backend only writes for them). Each is popped
- * **once**: the keys of everything ever popped - or present when a profile was first seen on this
- * machine - are kept per profile, so a restart, a refresh or a reconnect never repeats one. Something
- * older than [FreshnessMs] is not popped at all; it is history, and the Inbox holds it.
+ * What [socialPopupCandidates][com.nuvio.app.features.social.socialPopupCandidates] offers, once each
+ * ([SocialPopupLedger], shared with the phone's banners), filtered by the tray settings. Something older
+ * than [FreshnessMs] is not popped at all; it is history, and the Inbox holds it.
  *
  * ## Where it pops
  *
@@ -72,8 +66,8 @@ import kotlinx.serialization.json.Json
 internal object DesktopSocialPopups {
     private val log = Logger.withTag("SocialPopups")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val json = Json { ignoreUnknownKeys = true }
-    private val store = DesktopStorage.store("nuvio_social_popups")
+    // Same store and keys as before the ledger was shared: SocialStorage's desktop actual reads them.
+    private val ledger = SocialPopupLedger(SocialStorage::loadPopupSeen, SocialStorage::savePopupSeen, FreshnessMs)
 
     private val _visible = MutableStateFlow<List<SocialPopup>>(emptyList())
     val visible: StateFlow<List<SocialPopup>> = _visible.asStateFlow()
@@ -83,8 +77,6 @@ internal object DesktopSocialPopups {
     /** The player's video is on screen: a click must not navigate away from it. */
     private val _playerOnScreen = MutableStateFlow(false)
 
-    private var seenProfileId: String? = null
-    private val seen = LinkedHashSet<String>()
     private val dismissJobs = mutableMapOf<String, Job>()
     private var started = false
 
@@ -121,32 +113,11 @@ internal object DesktopSocialPopups {
 
     @Synchronized
     private fun onState(state: SocialUiState) {
-        val profileId = state.activeProfileId ?: return
-        // A loading or offline-cache state is a replay of what this machine already had; baselining or
-        // popping from it would either swallow fresh items or pop stale ones.
-        if (state.isLoading || state.isOfflineCache) return
         if (!SocialFeaturePreferencesRepository.isEnabledNow) return
-        if (seenProfileId != profileId) {
-            seenProfileId = profileId
-            seen.clear()
-            val stored = store.getString(seenKey(profileId))
-            if (stored == null) {
-                // First time this profile is seen on this machine: everything already here is history.
-                seen += candidates(state).map(SocialPopup::key)
-                persist(profileId)
-                return
-            }
-            runCatching { json.decodeFromString<List<String>>(stored) }.getOrNull()?.let(seen::addAll)
-        }
-        val nowMs = System.currentTimeMillis()
-        val fresh = candidates(state).filter { it.key !in seen }
+        val fresh = ledger.take(state, System.currentTimeMillis())
         if (fresh.isEmpty()) return
-        fresh.forEach { seen += it.key }
-        persist(profileId)
         val prefs = DesktopTrayPreferences.current
-        val allowed = fresh.filter { popup ->
-            (createdAtMs[popup.key] ?: 0L) >= nowMs - FreshnessMs && prefs.allows(popup.kind)
-        }
+        val allowed = fresh.filter { prefs.allows(it.kind) }
         if (allowed.isEmpty()) return
         // Nuvio in front means any fullscreen is Nuvio's own player, which never holds a pop-up back.
         // Activation as well as focus: with keyboard focus inside the player's native child windows, AWT
@@ -177,98 +148,9 @@ internal object DesktopSocialPopups {
         SocialPopupKind.FriendWatching -> popupFriendWatching
     }
 
-    /** When each candidate was created, by key, for the freshness check. Filled by [candidates]. */
-    private val createdAtMs = mutableMapOf<String, Long>()
-
-    /** Everything in [state] that could pop: pending actionable notices and friend-started-watching events. */
-    private fun candidates(state: SocialUiState): List<SocialPopup> {
-        createdAtMs.clear()
-        val popups = mutableListOf<SocialPopup>()
-        state.notifications
-            .filter { it.readAt == null && it.state == "pending" && it.availableActions.isNotEmpty() }
-            .forEach { notice ->
-                val content = notice.contentSummary
-                val popup = when (notice.kind) {
-                    SocialNotificationKind.FriendRequest -> SocialPopup(
-                        key = "notice:${notice.id}",
-                        kind = SocialPopupKind.FriendRequest,
-                        person = notice.actor,
-                        line = "wants to be friends",
-                        title = "@${notice.actor.handle}",
-                        meta = null,
-                        art = SocialArtRef(title = notice.actor.handle, contentType = null, contentId = null, poster = null),
-                        target = SocialNavigationTarget.FriendRequests,
-                    )
-                    SocialNotificationKind.PartyInvitation -> SocialPopup(
-                        key = "notice:${notice.id}",
-                        kind = SocialPopupKind.PartyInvite,
-                        person = notice.actor,
-                        line = "invited you to watch",
-                        title = content?.title ?: "a Watch Together party",
-                        meta = listOfNotNull("Watch party", episodeLabel(content?.season, content?.episode)).joinToString(" · "),
-                        art = content?.artRef() ?: SocialArtRef("party", null, null, null),
-                        target = SocialNavigationTarget.Inbox,
-                    )
-                    SocialNotificationKind.WatchingNowJoinRequest -> SocialPopup(
-                        key = "notice:${notice.id}",
-                        kind = SocialPopupKind.JoinRequest,
-                        person = notice.actor,
-                        line = "asked to join",
-                        title = content?.title ?: "your playback",
-                        meta = listOfNotNull("Your playback", episodeLabel(content?.season, content?.episode)).joinToString(" · "),
-                        art = content?.artRef() ?: SocialArtRef("join", null, null, null),
-                        target = SocialNavigationTarget.Inbox,
-                    )
-                }
-                createdAtMs[popup.key] = parseSocialTimestampMs(notice.createdAt) ?: 0L
-                popups += popup
-            }
-        state.inbox
-            .filter { it.kind == SocialInboxEvent.FriendWatching && it.readAt == null }
-            .filter { event -> state.prefsFor(event.actor.profileId).notifyWhenWatching }
-            .forEach { event ->
-                val payload = event.payload
-                val live = state.watchingNow.firstOrNull { it.profile.profileId == event.actor.profileId }
-                val popup = SocialPopup(
-                    key = "inbox:${event.id}",
-                    kind = SocialPopupKind.FriendWatching,
-                    person = event.actor,
-                    line = "is watching",
-                    title = payload.title ?: live?.title ?: "something",
-                    meta = episodeLabel(payload.season, payload.episode),
-                    art = SocialArtRef(
-                        title = payload.title.orEmpty(),
-                        contentType = payload.contentType,
-                        contentId = payload.contentId,
-                        poster = payload.poster,
-                        landscape = listOf(payload.background),
-                        videoId = payload.videoId,
-                        season = payload.season,
-                        episode = payload.episode,
-                    ),
-                    target = live?.let { SocialNavigationTarget.WatchingSession(it.socialNavigationKey()) }
-                        ?: SocialNavigationTarget.Inbox,
-                )
-                createdAtMs[popup.key] = parseSocialTimestampMs(event.createdAt) ?: 0L
-                popups += popup
-            }
-        return popups
-    }
-
-    private fun episodeLabel(season: Int?, episode: Int?): String? =
-        if (season != null && episode != null) "S$season E$episode" else null
-
-    private fun persist(profileId: String) {
-        val keys = seen.toList().takeLast(MaxRemembered)
-        store.putString(seenKey(profileId), json.encodeToString(keys))
-    }
-
-    private fun seenKey(profileId: String) = "seen_$profileId"
-
     private const val FreshnessMs = 6L * 60L * 60L * 1000L
     private const val VisibleMs = 7_000L
     private const val MaxVisible = 3
-    private const val MaxRemembered = 400
 }
 
 /**

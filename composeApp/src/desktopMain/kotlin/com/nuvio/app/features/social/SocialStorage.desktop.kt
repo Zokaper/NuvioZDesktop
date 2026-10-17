@@ -22,4 +22,14 @@ internal actual object SocialStorage {
     actual fun saveAbandonedJoinRequests(profileId: String, payload: String?) {
         if (payload == null) store.remove("abandoned_join_$profileId") else store.putString("abandoned_join_$profileId", payload)
     }
+
+    // The pop-up window kept these in its own store before the ledger was shared; same store and keys,
+    // so nothing already popped pops again after the update.
+    private val popupStore = DesktopStorage.store("nuvio_social_popups")
+
+    actual fun loadPopupSeen(profileId: String): String? = popupStore.getString("seen_$profileId")
+
+    actual fun savePopupSeen(profileId: String, payload: String) {
+        popupStore.putString("seen_$profileId", payload)
+    }
 }
