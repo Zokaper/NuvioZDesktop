@@ -482,9 +482,9 @@ class SocialRenderHarness {
             renderPhone("phone-social-friends-${w}x$h", w, h, failures) { SocialFeedScene(tab = SocialTab.Friends) }
             renderPhone("phone-social-inbox-${w}x$h", w, h, failures) { SocialFeedScene(overlay = SocialOverlay.Inbox) }
             renderPhone("phone-sheet-join-${w}x$h", w, h, failures) {
-                SheetFrame {
+                SheetFrame(edgeToEdge = true) {
                     val item = orderWatchingNowForDisplay(watchingNow).first()
-                    SocialJoinSheetContent(item, affordanceFor(item), {}, {}, {})
+                    SocialJoinSheetContent(item, affordanceFor(item), wide = false, onJoin = {}, onCancelRequest = {}, onDetails = {})
                 }
             }
             renderPhone("phone-sheet-profile-${w}x$h", w, h, failures) {
@@ -565,12 +565,12 @@ class SocialRenderHarness {
 
     /** A sheet's body on the sheet's surface, as the bottom sheet hosts it. */
     @Composable
-    private fun SheetFrame(content: @Composable () -> Unit) {
+    private fun SheetFrame(edgeToEdge: Boolean = false, content: @Composable () -> Unit) {
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             Column(
                 Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surface)
-                    .padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 24.dp),
+                    .then(if (edgeToEdge) Modifier else Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 24.dp)),
             ) {
                 CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) { content() }
             }
