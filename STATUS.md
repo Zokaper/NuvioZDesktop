@@ -1,3 +1,10 @@
+## Mobile iOS release preparation (2026-10-18)
+
+Mirrored mobile's global changelog event seq 4 (planned mobile 0.5.4-z3, serial 129)
+by cherry-picking `9a4619cac`. This event ships on Android/iOS only and remains
+undated until mobile publishes. No desktop version or product code changes.
+Validated with `python scripts/check-changelog.py validate`.
+
 ## RELEASED 2026-10-11: Desktop 0.1.26-alpha-z2+133 (and Mobile 0.5.4-z2+128)
 
 Desktop publish run `38152244590` from `5379ea27a` (dry run `38150926446`): MSI + arm64 and x86_64 DMGs, macOS
