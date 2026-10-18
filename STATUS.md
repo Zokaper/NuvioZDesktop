@@ -8,8 +8,10 @@ installer links now serve Installer 3.0.0-alpha.0 for Windows x64 and Intel/Appl
 Silicon Macs (macOS 11+). No desktop version or product code changes.
 
 The maintainer explicitly deferred the upstream sync for this installer release
-only: **Social V2 must sync upstream before its release**. Fresh phone/PC testing
-follows quiet publication; no announcement was sent. See canonical mobile STATUS.
+only: **Social V2 must sync upstream before its release**. On 2026-10-18 the maintainer
+confirmed installation on a friend's phone, successfully ran the renewal automation,
+and announced the update. The new iOS install flow is accepted as released.
+See canonical mobile STATUS for acceptance details and remaining physical coverage.
 
 ## RELEASED 2026-10-11: Desktop 0.1.26-alpha-z2+133 (and Mobile 0.5.4-z2+128)
 
