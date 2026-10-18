@@ -117,6 +117,10 @@
     {
       "build": 105,
       "text": "Social V2 rebuilt on the latest trunk, nothing new in it; this is the build to test Social from scratch: the Social tab, the gear for Social settings, per-friend Hide / Notify, invites and join requests, the tray, and the corner pop-ups."
+    },
+    {
+      "build": 106,
+      "text": "Watch Together: a guest who goes back to the lobby now shows as In lobby (in the lobby and the player's party panel) and gets a Rejoin button. The info button on the Friends shelf matches Continue watching's. Watching Now no longer shuffles when several friends are watching. (Started-watching notifications for a new title, and not telling party members about each other, are fixed on the server for every build.)"
     }
   ]
 }
