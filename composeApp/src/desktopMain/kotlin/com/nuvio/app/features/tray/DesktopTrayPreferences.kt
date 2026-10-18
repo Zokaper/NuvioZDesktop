@@ -16,6 +16,8 @@ internal data class DesktopTrayPreferencesState(
     val popupParties: Boolean = true,
     /** Still gated per friend by "Notify me when they start watching" on their profile. */
     val popupFriendWatching: Boolean = true,
+    /** A friend recommends a title, or starts one you recommended. */
+    val popupRecommendations: Boolean = true,
     /** Off by default: a game or a fullscreen video should not get a card drawn over it. */
     val popupsOverFullscreen: Boolean = false,
 )
@@ -33,6 +35,7 @@ internal object DesktopTrayPreferences {
     private const val PopupFriendRequestsKey = "popup_friend_requests"
     private const val PopupPartiesKey = "popup_parties"
     private const val PopupFriendWatchingKey = "popup_friend_watching"
+    private const val PopupRecommendationsKey = "popup_recommendations"
     private const val PopupsOverFullscreenKey = "popups_over_fullscreen"
 
     private val store = DesktopStorage.store("nuvio_tray")
@@ -47,6 +50,7 @@ internal object DesktopTrayPreferences {
     fun setPopupFriendRequests(enabled: Boolean) = update { it.copy(popupFriendRequests = enabled) }
     fun setPopupParties(enabled: Boolean) = update { it.copy(popupParties = enabled) }
     fun setPopupFriendWatching(enabled: Boolean) = update { it.copy(popupFriendWatching = enabled) }
+    fun setPopupRecommendations(enabled: Boolean) = update { it.copy(popupRecommendations = enabled) }
     fun setPopupsOverFullscreen(enabled: Boolean) = update { it.copy(popupsOverFullscreen = enabled) }
 
     private fun update(transform: (DesktopTrayPreferencesState) -> DesktopTrayPreferencesState) {
@@ -58,6 +62,7 @@ internal object DesktopTrayPreferences {
         store.putBoolean(PopupFriendRequestsKey, next.popupFriendRequests)
         store.putBoolean(PopupPartiesKey, next.popupParties)
         store.putBoolean(PopupFriendWatchingKey, next.popupFriendWatching)
+        store.putBoolean(PopupRecommendationsKey, next.popupRecommendations)
         store.putBoolean(PopupsOverFullscreenKey, next.popupsOverFullscreen)
     }
 
@@ -71,6 +76,7 @@ internal object DesktopTrayPreferences {
             popupFriendRequests = store.getBoolean(PopupFriendRequestsKey) ?: defaults.popupFriendRequests,
             popupParties = store.getBoolean(PopupPartiesKey) ?: defaults.popupParties,
             popupFriendWatching = store.getBoolean(PopupFriendWatchingKey) ?: defaults.popupFriendWatching,
+            popupRecommendations = store.getBoolean(PopupRecommendationsKey) ?: defaults.popupRecommendations,
             popupsOverFullscreen = store.getBoolean(PopupsOverFullscreenKey) ?: defaults.popupsOverFullscreen,
         )
     }

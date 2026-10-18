@@ -522,6 +522,36 @@ class SocialRecommendHarness {
         }
     }
 
+    // --- the shipped components (not prototypes) --------------------------------------------------
+
+    private val shipped = recs.map { r ->
+        RecommendedTitle(
+            contentType = if (r.meta.startsWith("Series")) "series" else "movie", contentId = r.id, title = r.title,
+            poster = null, background = null,
+            from = r.from.mapIndexed { i, (who, note) -> RecommendationFrom(who, note, "${r.id}-$i") },
+        )
+    }
+
+    @Test
+    fun renderShippedRecommendationComponents() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        for ((name, w, wide) in listOf(Triple("phone", 411, false), Triple("narrow", 320, false), Triple("desktop", 1280, true))) {
+            renderScene("shipped-shelf-$name", w, 420, failures) {
+                Box(Modifier.fillMaxSize().background(Color(0xFF0B0B0D)).padding(top = 16.dp)) {
+                    SocialRecommendedShelfContent(shipped, horizontalPadding = 16.dp, wide = wide, onOpenContent = { _, _, _ -> }, onDismiss = {})
+                }
+            }
+            renderScene("shipped-line-$name", w, 220, failures) {
+                Column(Modifier.fillMaxSize().background(Color(0xFF0B0B0D)).padding(16.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                    SocialRecommendedByContent(shipped.first())
+                    SocialRecommendedByContent(shipped.last())
+                }
+            }
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
     // --- frames and art ---------------------------------------------------------------------------------
 
     @Composable

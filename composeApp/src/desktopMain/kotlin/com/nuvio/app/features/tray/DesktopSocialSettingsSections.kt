@@ -53,6 +53,15 @@ internal fun DesktopSocialSettingsSections(isTablet: Boolean) {
             )
             SettingsGroupDivider(isTablet = isTablet)
             SettingsSwitchRow(
+                title = "Recommendations",
+                description = "Titles friends recommend, and when they start one you recommended",
+                checked = prefs.popupRecommendations,
+                enabled = prefs.popupsEnabled,
+                isTablet = isTablet,
+                onCheckedChange = DesktopTrayPreferences::setPopupRecommendations,
+            )
+            SettingsGroupDivider(isTablet = isTablet)
+            SettingsSwitchRow(
                 title = "Over fullscreen apps and games",
                 description = "Off: they wait in your Inbox",
                 checked = prefs.popupsOverFullscreen,

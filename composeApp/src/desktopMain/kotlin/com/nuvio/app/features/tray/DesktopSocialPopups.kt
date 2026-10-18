@@ -171,6 +171,7 @@ internal object DesktopSocialPopups {
         SocialPopupKind.FriendRequest -> popupFriendRequests
         SocialPopupKind.PartyInvite, SocialPopupKind.JoinRequest -> popupParties
         SocialPopupKind.FriendWatching -> popupFriendWatching
+        SocialPopupKind.Recommendation -> popupRecommendations
     }
 
     private const val FreshnessMs = 6L * 60L * 60L * 1000L
