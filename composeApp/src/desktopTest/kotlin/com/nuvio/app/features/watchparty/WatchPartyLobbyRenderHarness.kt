@@ -67,6 +67,7 @@ class WatchPartyLobbyRenderHarness {
         error: String? = null,
         match: PartySourceMatch? = null,
         color: String = "#1E88E5",
+        location: WatchPartyClientLocation = WatchPartyClientLocation.lobby,
     ) = WatchPartyParticipant(
         profileId = id,
         role = "member",
@@ -75,6 +76,7 @@ class WatchPartyLobbyRenderHarness {
         profile = PartyParticipantProfile(displayName = name, handle = name.lowercase().take(12), avatarColorHex = color),
         connected = connected,
         sourceMatch = match,
+        clientLocation = location,
         joinedAt = "2026-09-21T12:00:00Z",
     )
 
@@ -83,10 +85,11 @@ class WatchPartyLobbyRenderHarness {
         stage: WatchPartyStage = WatchPartyStage.lobby,
         episode: Boolean = false,
         title: String = "Obsession",
+        status: WatchPartyStatus = WatchPartyStatus.lobby,
     ) = WatchPartyState(
         id = "party",
         hostProfileId = members.first().profileId,
-        status = WatchPartyStatus.lobby,
+        status = status,
         controlMode = WatchPartyControlMode.host_only,
         contentGeneration = 1,
         stage = stage,
@@ -121,6 +124,7 @@ class WatchPartyLobbyRenderHarness {
         error: String? = null,
         staged: Boolean = false,
         invitable: List<SocialProfileSummary> = friends,
+        canRejoin: Boolean = false,
     ): PartyLobbyModel {
         val sync = WatchPartySyncState(clockLocked = true, bestRttMs = 362)
         val presentation = PartyPresentationProjector.project(
@@ -143,6 +147,7 @@ class WatchPartyLobbyRenderHarness {
             hostSourceStaged = staged,
             hasSource = staged,
             sourceLabel = if (staged) "1080p · WEB-DL · Torrentio" else null,
+            canRejoin = canRejoin,
             waitForEveryone = true,
             pauseForAwayUsers = false,
             invitableFriends = invitable,
@@ -180,6 +185,22 @@ class WatchPartyLobbyRenderHarness {
                 ),
                 viewer = "host",
                 staged = true,
+                invitable = emptyList(),
+            ),
+            // The party is watching and this guest backed out of the player: Rejoin, and "In lobby".
+            "rejoin" to model(
+                party(
+                    listOf(
+                        member("host", "main debug", SourceResolutionState.ready, color = "#E53935", location = WatchPartyClientLocation.player),
+                        member("you", "zokaper", SourceResolutionState.ready),
+                        member("b", "Seraph", SourceResolutionState.ready, color = "#8E24AA", location = WatchPartyClientLocation.player),
+                    ),
+                    stage = WatchPartyStage.playing,
+                    status = WatchPartyStatus.playing,
+                ),
+                viewer = "you",
+                inviteCode = null,
+                canRejoin = true,
                 invitable = emptyList(),
             ),
             // A full room with an error, as the guest.
@@ -220,7 +241,7 @@ class WatchPartyLobbyRenderHarness {
         val failures = mutableListOf<String>()
         for ((name, model) in scenes) {
             for ((w, h) in phoneSizes) render("$name-${w}x$h", w, h, phone = true, model, failures)
-            if (name == "host" || name == "staged") {
+            if (name == "host" || name == "staged" || name == "rejoin") {
                 for ((w, h) in desktopSizes) render("desktop-$name-${w}x$h", w, h, phone = false, model, failures)
             }
         }

@@ -997,7 +997,8 @@ button:disabled {
 .party-member-status.working { color: #e0a458; background: rgba(224, 164, 88, .16); }
 .party-member-status.working::before { animation: party-banner-pulse 1.6s ease-in-out infinite; }
 .party-member-status.failed { color: #ef7a90; background: rgba(239, 122, 144, .16); }
-.party-member-status.offline { color: var(--theme-text-muted); background: rgba(255, 255, 255, .08); }
+.party-member-status.offline,
+.party-member-status.lobby { color: var(--theme-text-muted); background: rgba(255, 255, 255, .08); }
 
 .party-member.offline { opacity: .5; }
 

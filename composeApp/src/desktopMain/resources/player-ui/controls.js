@@ -2258,7 +2258,7 @@ partyBanner.addEventListener("click", event => {
   send(target.dataset.statusCommand, 0);
 });
 
-const PARTY_STATUS_TONES = ["ready", "working", "failed", "offline", "paused", "buffering", "reconnecting"];
+const PARTY_STATUS_TONES = ["ready", "working", "failed", "offline", "paused", "buffering", "reconnecting", "lobby"];
 
 let wtInviteExpanded = false;
 
