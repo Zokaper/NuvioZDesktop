@@ -1,6 +1,7 @@
 package com.nuvio.app.features.tray
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import com.nuvio.app.features.settings.SettingsChoiceRow
@@ -16,6 +17,8 @@ import com.nuvio.app.features.settings.SettingsSwitchRow
 @Composable
 internal fun DesktopSocialSettingsSections(isTablet: Boolean) {
     val prefs by DesktopTrayPreferences.state.collectAsState()
+    val startWithWindows by DesktopStartWithWindows.enabled.collectAsState()
+    LaunchedEffect(Unit) { DesktopStartWithWindows.refresh() }
 
     SettingsSection(title = "Pop-ups", isTablet = isTablet) {
         SettingsGroup(isTablet = isTablet) {
@@ -84,6 +87,19 @@ internal fun DesktopSocialSettingsSections(isTablet: Boolean) {
                 selected = prefs.closeAction,
                 isTablet = isTablet,
                 onSelect = DesktopTrayPreferences::setCloseAction,
+            )
+            SettingsGroupDivider(isTablet = isTablet)
+            SettingsSwitchRow(
+                title = "Start with Windows",
+                description = if (DesktopStartWithWindows.isAvailable) {
+                    "Opens in the tray when you sign in, so pop-ups reach you without opening Nuvio"
+                } else {
+                    "Available in the installed app"
+                },
+                checked = startWithWindows == true,
+                enabled = DesktopStartWithWindows.isAvailable && startWithWindows != null,
+                isTablet = isTablet,
+                onCheckedChange = DesktopStartWithWindows::setEnabled,
             )
         }
     }

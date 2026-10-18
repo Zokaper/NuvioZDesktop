@@ -75,6 +75,21 @@ internal object DesktopTrayController {
         releaseJob?.cancel()
         releaseJob = null
         _windowVisible.value = true
+        val pending = synchronized(this) { onFirstShow.also { onFirstShow = null } }
+        pending?.invoke()
+    }
+
+    /** Work a start straight to the tray put off until there is a window; see [startHidden]. */
+    private var onFirstShow: (() -> Unit)? = null
+
+    /**
+     * A start straight to the tray ([DesktopStartWithWindows]): no window until the user opens one.
+     * [onFirstShow] is what only a window needs - the player and WebView2 warm-up, ~80 MB of helper
+     * processes on their own - run the first time it opens.
+     */
+    fun startHidden(onFirstShow: () -> Unit) {
+        synchronized(this) { this.onFirstShow = onFirstShow }
+        hide()
     }
 
     /** The live main window, while there is one; set and cleared by `Main.kt`. */

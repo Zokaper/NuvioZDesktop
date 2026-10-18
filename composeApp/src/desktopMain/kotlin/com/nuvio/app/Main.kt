@@ -53,12 +53,14 @@ import com.nuvio.app.features.watchparty.PartyDepartureMode
 import com.nuvio.app.features.watchparty.WatchPartyRepository
 import com.nuvio.app.features.settings.transparentPreviewResource
 import com.nuvio.app.features.settings.SocialSettingsExtensions
+import com.nuvio.app.features.tray.DesktopBackgroundStart
 import com.nuvio.app.features.tray.DesktopClosePromptHost
 import com.nuvio.app.features.tray.DesktopCloseAction
 import com.nuvio.app.features.tray.DesktopSocialPopupWindow
 import com.nuvio.app.features.tray.DesktopSocialPopups
 import com.nuvio.app.features.tray.DesktopSocialSettingsSections
 import com.nuvio.app.features.tray.DesktopSingleInstance
+import com.nuvio.app.features.tray.DesktopStartWithWindows
 import com.nuvio.app.features.tray.DesktopTrayController
 import com.nuvio.app.features.tray.DesktopTrayPreferences
 import androidx.compose.ui.window.Tray
@@ -84,12 +86,14 @@ private const val WindowStateSaveDelayMillis = 300L
 fun main(args: Array<String>) {
     // First, so the rest of startup is inside the capture. No-op unless -Dnuvio.debugTools=true.
     DesktopDebugLog.install()?.let { logFile -> println("Nuvio debug log: $logFile") }
+    // Start with Windows: straight to the tray, with no window until the user opens one.
+    val startInTray = DesktopStartWithWindows.isBackgroundLaunch(args)
     // Before anything else starts: a second launch hands its links to the running copy, which shows its
     // window, and exits here. The player smoke run is its own throwaway process.
     if (System.getProperty("nuvio.desktop.smokePlayerUrl").isNullOrBlank() &&
         System.getenv("NUVIO_DESKTOP_SMOKE_PLAYER_URL").isNullOrBlank()
     ) {
-        DesktopSingleInstance.enforce(args.map(String::trim).filter(::isDesktopAppUrl))
+        DesktopSingleInstance.enforce(args.map(String::trim).filter(::isDesktopAppUrl), background = startInTray)
     }
     // Second, so a stall in the rest of startup is attributed rather than guessed at. Also a no-op
     // outside a debug build.
@@ -109,11 +113,15 @@ fun main(args: Array<String>) {
     configureLinuxSwingGlobalsBeforeAwt()
     installDesktopOpenUriHandler()
     handleDesktopLaunchArgs(args)
-    preloadNativePlayerBridgeAsync()
-    // Same reason, one subsystem over: the player screen touches `P2pStreamingEngine` while it
-    // composes, so without this its class loading lands on the UI thread at the exact moment a
-    // source is chosen. See the note on the function.
-    preloadP2pStreamingEngineAsync()
+    // In the tray these wait for the window: the player warm-up alone starts ~80 MB of WebView2 helpers.
+    val warmUpPlayer = {
+        preloadNativePlayerBridgeAsync()
+        // Same reason, one subsystem over: the player screen touches `P2pStreamingEngine` while it
+        // composes, so without this its class loading lands on the UI thread at the exact moment a
+        // source is chosen. See the note on the function.
+        preloadP2pStreamingEngineAsync()
+    }
+    if (startInTray) DesktopTrayController.startHidden(onFirstShow = warmUpPlayer) else warmUpPlayer()
     // Load cached profile data synchronously so the profile color is available
     // on the very first Compose frame (matching Android's SharedPreferences behavior).
     ProfileRepository.loadCachedProfiles()
@@ -123,6 +131,8 @@ fun main(args: Array<String>) {
     AppGateResume.enabled = true
     SocialSettingsExtensions.platformSections = { isTablet -> DesktopSocialSettingsSections(isTablet) }
     DesktopSocialPopups.start()
+    if (startInTray) DesktopBackgroundStart.start()
+    DesktopStartWithWindows.refresh()
 
     application {
         val appIconState by AppIconRepository.state.collectAsState()

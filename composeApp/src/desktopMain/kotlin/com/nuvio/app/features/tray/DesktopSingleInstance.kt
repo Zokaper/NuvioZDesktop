@@ -45,10 +45,28 @@ internal object DesktopSingleInstance {
     @Volatile
     private var held: Primary? = null
 
-    /** Becomes the one Nuvio, or hands [urls] to the running one and exits the process. */
-    fun enforce(urls: List<String>) {
+    /**
+     * Becomes the one Nuvio, or hands [urls] to the running one and exits the process. A [background]
+     * launch (Start with Windows) that finds Nuvio already running just exits: it has nothing to hand
+     * over, and asking the running copy to show its window is the opposite of what it was started for.
+     */
+    fun enforce(urls: List<String>, background: Boolean = false) {
         if (System.getProperty("jpackage.app-path").isNullOrBlank()) return
         val dir = runCatching { DesktopStorage.rootDir }.getOrNull() ?: return
+        if (background) {
+            val primary = try {
+                Primary.tryStart(dir, ::onMessage)
+            } catch (e: IOException) {
+                log.w { "single-instance lock unavailable; starting without it" }
+                return
+            }
+            if (primary == null) {
+                log.i { "background launch while Nuvio is running; exiting" }
+                exitProcess(0)
+            }
+            held = primary
+            return
+        }
         when (val outcome = acquireOrHandOff(dir, urls, ::onMessage)) {
             is Outcome.Claimed -> held = outcome.primary
             Outcome.HandedOff -> {
