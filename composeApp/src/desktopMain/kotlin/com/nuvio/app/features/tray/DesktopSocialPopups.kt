@@ -1,7 +1,28 @@
 package com.nuvio.app.features.tray
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,7 +44,6 @@ import com.nuvio.app.features.social.SocialFeaturePreferencesRepository
 import com.nuvio.app.features.social.SocialNavigation
 import com.nuvio.app.features.social.SocialPopup
 import com.nuvio.app.features.social.SocialPopupCard
-import com.nuvio.app.features.social.SocialPopupHeight
 import com.nuvio.app.features.social.SocialPopupKind
 import com.nuvio.app.features.social.SocialPopupLedger
 import com.nuvio.app.features.social.SocialPopupWidth
@@ -77,7 +97,8 @@ internal object DesktopSocialPopups {
     /** The player's video is on screen: a click must not navigate away from it. */
     private val _playerOnScreen = MutableStateFlow(false)
 
-    private val dismissJobs = mutableMapOf<String, Job>()
+    private val queue = SocialPopupQueue(maxVisible = MaxVisible, visibleMs = VisibleMs)
+    private var expiryJob: Job? = null
     private var started = false
 
     fun start() {
@@ -106,9 +127,22 @@ internal object DesktopSocialPopups {
         DesktopTrayController.bringToFront()
     }
 
-    fun dismiss(key: String) {
-        dismissJobs.remove(key)?.cancel()
-        _visible.value = _visible.value.filterNot { it.key == key }
+    fun dismiss(key: String) = mutate { queue.dismiss(key, it) }
+
+    /** The pointer is over the stack: nothing goes until it leaves. */
+    fun setHovered(hovered: Boolean) = mutate { now -> if (hovered) queue.hold(now) else queue.release(now) }
+
+    /** Every change goes through here: publish what is on screen, then wait for the next card's time. */
+    @Synchronized
+    private fun mutate(change: (nowMs: Long) -> Unit) {
+        change(System.currentTimeMillis())
+        _visible.value = queue.visible
+        expiryJob?.cancel()
+        val due = queue.nextDueAtMs() ?: return
+        expiryJob = scope.launch {
+            delay((due - System.currentTimeMillis()).coerceAtLeast(0L))
+            mutate { now -> queue.expire(now) }
+        }
     }
 
     @Synchronized
@@ -130,16 +164,7 @@ internal object DesktopSocialPopups {
             return
         }
         log.i { "popped $kinds (nuvio in front=$front, video on screen=${_playerOnScreen.value})" }
-        allowed.forEach(::show)
-    }
-
-    private fun show(popup: SocialPopup) {
-        _visible.value = (_visible.value.filterNot { it.key == popup.key } + popup).takeLast(MaxVisible)
-        dismissJobs[popup.key]?.cancel()
-        dismissJobs[popup.key] = scope.launch {
-            delay(VisibleMs)
-            dismiss(popup.key)
-        }
+        mutate { now -> allowed.forEach { queue.offer(it, now) } }
     }
 
     private fun DesktopTrayPreferencesState.allows(kind: SocialPopupKind): Boolean = popupsEnabled && when (kind) {
@@ -155,17 +180,28 @@ internal object DesktopSocialPopups {
 
 /**
  * The pop-up window over the desktop: undecorated, transparent, always on top, never focusable, no taskbar
- * entry, sized to its cards and pinned to the bottom-right of the primary screen's work area.
+ * entry, pinned to the bottom-right of the primary screen's work area.
+ *
+ * Cards slide in from the screen edge and back out (2026-10-18; they used to just appear). A card stays
+ * composed until its exit has finished, so the window is sized from the stack's measured height rather
+ * than a count of cards: it follows the stack as cards expand and collapse, and it is not created at all
+ * while nothing is on screen or leaving. A window the size of three slots would be simpler, but its
+ * transparent part would swallow clicks meant for whatever is under it.
  */
 @Composable
 internal fun ApplicationScope.DesktopSocialPopupWindow() {
     val popups by DesktopSocialPopups.visible.collectAsState()
-    if (popups.isEmpty()) return
+    // On screen, plus the ones still sliding out. Oldest first, like the queue.
+    val rendered = remember { mutableStateListOf<SocialPopup>() }
+    LaunchedEffect(popups) {
+        popups.forEach { popup -> if (rendered.none { it.key == popup.key }) rendered += popup }
+    }
+    if (rendered.isEmpty()) return
     val workArea = remember { GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds }
     val margin = 14
-    val gap = 10
+    var stackHeight by remember { mutableStateOf(0) }
     val width = SocialPopupWidth.value.toInt() + margin * 2
-    val height = popups.size * SocialPopupHeight.value.toInt() + (popups.size - 1) * gap + margin * 2
+    val height = stackHeight.coerceAtLeast(1) + margin * 2
     val x = workArea.x + workArea.width - width
     val y = workArea.y + workArea.height - height
     Window(
@@ -188,20 +224,58 @@ internal fun ApplicationScope.DesktopSocialPopupWindow() {
         },
     ) {
         NuvioTheme {
+            val density = LocalDensity.current
             Box(Modifier.fillMaxSize().padding(margin.dp), contentAlignment = Alignment.BottomEnd) {
-                SocialPopupStack(popups)
+                SocialPopupStack(
+                    rendered = rendered,
+                    showing = popups,
+                    onGone = { key -> rendered.removeAll { it.key == key } },
+                    // Measured unbounded, so a card expanding past the window's current height is
+                    // still counted, and the window grows to it on the next frame.
+                    modifier = Modifier
+                        .wrapContentHeight(align = Alignment.Bottom, unbounded = true)
+                        .onSizeChanged { stackHeight = with(density) { it.height.toDp().value.toInt() } },
+                )
             }
         }
     }
 }
 
 @Composable
-private fun SocialPopupStack(popups: List<SocialPopup>) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.End) {
-        popups.forEach { popup ->
+private fun SocialPopupStack(
+    rendered: List<SocialPopup>,
+    showing: List<SocialPopup>,
+    onGone: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val hover = remember { MutableInteractionSource() }
+    val hovered by hover.collectIsHoveredAsState()
+    LaunchedEffect(hovered) { DesktopSocialPopups.setHovered(hovered) }
+    Column(modifier.hoverable(hover), horizontalAlignment = Alignment.End) {
+        rendered.forEach { popup ->
             key(popup.key) {
-                SocialPopupCard(popup, Modifier.clickable { DesktopSocialPopups.onClick(popup) })
+                val visible = remember { MutableTransitionState(false) }
+                visible.targetState = showing.any { it.key == popup.key }
+                AnimatedVisibility(
+                    visibleState = visible,
+                    enter = slideInHorizontally(PopupMotion) { it } + fadeIn(PopupFade) + expandVertically(PopupResize, expandFrom = Alignment.Top),
+                    exit = slideOutHorizontally(PopupMotion) { it } + fadeOut(PopupFade) + shrinkVertically(PopupResize, shrinkTowards = Alignment.Top),
+                ) {
+                    // The gap travels with its card, so a collapsing slot takes its spacing with it.
+                    SocialPopupCard(
+                        popup,
+                        Modifier.padding(top = PopupGap).clickable(enabled = visible.targetState) { DesktopSocialPopups.onClick(popup) },
+                    )
+                }
+                if (visible.isIdle && !visible.currentState && !visible.targetState) {
+                    LaunchedEffect(Unit) { onGone(popup.key) }
+                }
             }
         }
     }
 }
+
+private val PopupGap = 10.dp
+private val PopupMotion = tween<IntOffset>(durationMillis = 280, easing = FastOutSlowInEasing)
+private val PopupFade = tween<Float>(durationMillis = 220)
+private val PopupResize = tween<IntSize>(durationMillis = 240, easing = FastOutSlowInEasing)
