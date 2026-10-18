@@ -125,6 +125,10 @@
     {
       "build": 107,
       "text": "Pop-ups slide in and out, stay put while your mouse is over them, and queue up instead of pushing each other off screen (more than three at once used to lose the oldest). The Watching Now sheet leads with the title's art: who, what and the episode on the picture, Join and Details side by side."
+    },
+    {
+      "build": 108,
+      "text": "Recommendations: on a title's page, tap the three dots, then Recommend, pick friends and add a message. What friends recommend to you shows in the Social tab under Recommended to you (click and hold a card to remove it), and on the title's page. When someone starts a title you recommended, you are told."
     }
   ]
 }
