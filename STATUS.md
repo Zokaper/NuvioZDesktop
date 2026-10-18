@@ -1,3 +1,18 @@
+## Mobile 0.5.4-z3 and Installer 3 released (2026-10-18; desktop product unchanged)
+
+Mirrored mobile's global changelog event seq 4 (0.5.4-z3, serial 129), including
+Windows + universal Mac installer wording and its 2026-10-18 ship date. Changelog
+commits: `7ece3093a`, `3005df79f`, `1c6c83ab6`; validated and identical to mobile.
+Mobile publish `39121198530` and installer publish `39126092595` passed. The rolling
+installer links now serve Installer 3.0.0-alpha.0 for Windows x64 and Intel/Apple
+Silicon Macs (macOS 11+). No desktop version or product code changes.
+
+The maintainer explicitly deferred the upstream sync for this installer release
+only: **Social V2 must sync upstream before its release**. On 2026-10-18 the maintainer
+confirmed installation on a friend's phone, successfully ran the renewal automation,
+and announced the update. The new iOS install flow is accepted as released.
+See canonical mobile STATUS for acceptance details and remaining physical coverage.
+
 ## RELEASED 2026-10-11: Desktop 0.1.26-alpha-z2+133 (and Mobile 0.5.4-z2+128)
 
 Desktop publish run `38152244590` from `5379ea27a` (dry run `38150926446`): MSI + arm64 and x86_64 DMGs, macOS
