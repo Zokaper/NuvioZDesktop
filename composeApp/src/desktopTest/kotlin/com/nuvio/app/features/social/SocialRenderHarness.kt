@@ -465,6 +465,55 @@ class SocialRenderHarness {
     )
 
     /**
+     * Where "Recommended to you" lives (2026-10-18 candidates, see [RecommendedPlacement]): the real tab,
+     * once per placement, desktop and phone. PNGs: `build/social-render/placement-*`.
+     */
+    @Test
+    fun renderRecommendedPlacements() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        val recs = listOf(
+            Triple("tt-carrie", "Carrie", listOf(profile("debug", "debug") to "ts peak. Said the Liar Man.")),
+            Triple("tt7282468", "Burning", listOf(profile("Ana", "ana") to "slow but trust me", profile("Ben", "ben") to null)),
+        ).flatMapIndexed { i, (id, title, from) ->
+            from.mapIndexed { j, (who, note) ->
+                SocialInboxEvent(
+                    id = "e-rec-$i-$j", kind = SocialInboxEvent.Recommendation, actor = who,
+                    createdAt = "2026-09-15T1${i}:0$j:00Z",
+                    payload = SocialInboxPayload(contentId = id, contentType = if (id == "tt-carrie") "series" else "movie", title = title, note = note),
+                )
+            }
+        }
+        val state = feedState.copy(inbox = recs + inboxEvents, watchingNow = watchingNow.take(1))
+        for (placement in RecommendedPlacement.entries) {
+            val overlay = when (placement) {
+                RecommendedPlacement.ForYou -> SocialOverlay.ForYou
+                RecommendedPlacement.Inbox -> SocialOverlay.Inbox
+                else -> null
+            }
+            val name = "placement-${placement.ordinal + 1}-${placement.name.lowercase()}"
+            render("$name-desktop", 1280, 820, failures) {
+                CompositionLocalProvider(LocalRecommendedPlacement provides placement) { SocialFeedScene(state, overlay = overlay) }
+            }
+            if (placement == RecommendedPlacement.ForYou) {
+                // The closed state too: what the pill looks like in the header.
+                render("$name-desktop-closed", 1280, 820, failures) {
+                    CompositionLocalProvider(LocalRecommendedPlacement provides placement) { SocialFeedScene(state) }
+                }
+                renderPhone("$name-phone-closed", 411, 914, failures) {
+                    CompositionLocalProvider(LocalRecommendedPlacement provides placement) { SocialFeedScene(state) }
+                }
+            }
+            renderPhone("$name-phone", 411, 914, failures) {
+                CompositionLocalProvider(LocalRecommendedPlacement provides placement) {
+                    SocialFeedScene(state, tab = if (placement == RecommendedPlacement.Rail) SocialTab.Friends else SocialTab.Activity, overlay = overlay)
+                }
+            }
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
+    /**
      * The phone scenes, at a phone's own scale: density 2, no desktop UI scale, a font scale of 1,
      * and the bottom-nav pill's measured reserve (79dp expanded) in the overlay padding, so the
      * list's end clears where the pill would be. Insets are zero here - device checks own those.
