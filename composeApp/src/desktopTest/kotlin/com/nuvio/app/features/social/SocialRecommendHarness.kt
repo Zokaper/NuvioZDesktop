@@ -8,6 +8,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -354,7 +356,11 @@ class SocialRecommendHarness {
                     CircleIcon("+")
                     CircleIcon("⋯")
                 }
-                if (variant == "A") DetailsLine(rec) else DetailsCallout(rec)
+                when (variant) {
+                    "A" -> DetailsLine(rec)
+                    "B" -> DetailsCallout(rec)
+                    else -> DetailsMiddle(rec, tinted = variant == "M2")
+                }
                 Text(
                     "After the murder of his family, Marine veteran Frank Castle becomes the vigilante known as \"The Punisher\", with only one goal in mind...",
                     color = Color.White.copy(alpha = 0.7f),
@@ -398,6 +404,119 @@ class SocialRecommendHarness {
                         Text(who.displayName, color = Color.White, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                         note?.let { Text("“$it”", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     }
+                }
+            }
+        }
+    }
+
+    // --- round 2 (2026-10-18): lighter C, and a details middle ground ---------------------------------
+
+    @Test
+    fun renderRecommendRound2() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        for (v in listOf("C", "C1", "C2", "Aplus")) {
+            renderScene("r2-shelf-$v-desktop", 1280, 420, failures) { ShelfScene2(v, phone = false) }
+            renderScene("r2-shelf-$v-411", 411, 420, failures) { ShelfScene2(v, phone = true) }
+        }
+        for (v in listOf("M1", "M2")) {
+            renderScene("r2-details-$v-411x914", 411, 914, failures) { DetailsScene(v, phone = true) }
+            renderScene("r2-details-$v-desktop", 1280, 820, failures) { DetailsScene(v, phone = false) }
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
+    @Composable
+    private fun ShelfScene2(variant: String, phone: Boolean) {
+        val pad = if (phone) 16.dp else 32.dp
+        Column(Modifier.fillMaxSize().background(Color(0xFF0B0B0D)).padding(top = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(Modifier.padding(horizontal = pad), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Recommended to you", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color.White)
+                Text("${recs.size}", style = MaterialTheme.typography.titleMedium, color = Color.White.copy(alpha = 0.5f))
+            }
+            Row(Modifier.horizontalScroll(rememberScrollState()).padding(start = pad), horizontalArrangement = Arrangement.spacedBy(if (variant == "Aplus") 12.dp else 20.dp)) {
+                recs.forEach { rec ->
+                    when (variant) {
+                        "C" -> ShelfTileC(rec, if (phone) 330.dp else 460.dp)
+                        "C1" -> ShelfTileC1(rec, if (phone) 330.dp else 440.dp, compact = false)
+                        "C2" -> ShelfTileC1(rec, if (phone) 310.dp else 400.dp, compact = true)
+                        else -> ShelfTileAplus(rec, if (phone) 260.dp else 300.dp)
+                    }
+                }
+            }
+        }
+    }
+
+    /** C without the card: rounded art, and the text straight on the page. */
+    @Composable
+    private fun ShelfTileC1(rec: Rec, width: Dp, compact: Boolean) {
+        val artWidth = if (compact) 150.dp else 176.dp
+        Row(Modifier.width(width), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+            Box(Modifier.width(artWidth).aspectRatio(16f / 10f).clip(RoundedCornerShape(12.dp))) { Art(rec.id, Modifier.matchParentSize()) }
+            Column(Modifier.weight(1f).padding(top = 2.dp), verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp)) {
+                Text(rec.title, color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(rec.meta, color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                val shown = if (compact) 1 else 2
+                rec.from.sortedBy { it.second == null }.take(shown).forEach { (who, note) ->
+                    Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        SocialAvatar(who.displayName, null, who.avatarColorHex, 16.dp)
+                        Text(
+                            note?.let { "“$it”" } ?: "${who.displayName} recommends it",
+                            color = Color.White.copy(alpha = if (note != null) 0.82f else 0.5f),
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = if (compact) 1 else 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                if (rec.from.size > shown) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        SocialFaces(rec.from.drop(shown).map { it.first }, 14.dp)
+                        Text("+${rec.from.size - shown} more", color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+        }
+    }
+
+    /** A's tile, with up to two notes and the facts line under it. */
+    @Composable
+    private fun ShelfTileAplus(rec: Rec, width: Dp) {
+        Column(Modifier.width(width), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp))) {
+                Art(rec.id, Modifier.matchParentSize())
+                Box(Modifier.align(Alignment.BottomStart).padding(8.dp)) { SocialFaces(rec.people(), 22.dp) }
+            }
+            Text(rec.title, color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(rec.meta + " · " + rec.whoLine(), color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            rec.from.filter { it.second != null }.take(2).forEach { (who, note) ->
+                Text("“$note” — ${who.displayName}", color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.bodySmall, fontStyle = FontStyle.Italic, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+
+    /** The middle ground: A's lightness, B's one line per friend. */
+    @Composable
+    private fun DetailsMiddle(rec: Rec, tinted: Boolean) {
+        Row(
+            Modifier.fillMaxWidth().height(IntrinsicSize.Min)
+                .then(if (tinted) Modifier.clip(RoundedCornerShape(12.dp)).background(Color.White.copy(alpha = 0.04f)) else Modifier),
+        ) {
+            Box(Modifier.width(2.dp).fillMaxHeight().clip(RoundedCornerShape(2.dp)).background(SocialLiveColor.copy(alpha = 0.8f)))
+            Column(Modifier.padding(start = 12.dp, top = if (tinted) 8.dp else 0.dp, bottom = if (tinted) 8.dp else 0.dp, end = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SocialFaces(rec.people(), 20.dp)
+                    Text("Recommended to you by ${socialPeopleLabel(rec.people())}", color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                rec.from.filter { it.second != null }.forEach { (who, note) ->
+                    Text(
+                        "“$note” — ${who.displayName}",
+                        color = Color.White.copy(alpha = 0.72f),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontStyle = FontStyle.Italic,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }
