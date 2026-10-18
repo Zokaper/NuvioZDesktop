@@ -113,6 +113,10 @@
     {
       "build": 104,
       "text": "Pop-ups now share their rules and card with the phone. Nothing should look different; tell me if anything pops twice or not at all."
+    },
+    {
+      "build": 105,
+      "text": "Social V2 rebuilt on the latest trunk, nothing new in it; this is the build to test Social from scratch: the Social tab, the gear for Social settings, per-friend Hide / Notify, invites and join requests, the tray, and the corner pop-ups."
     }
   ]
 }
