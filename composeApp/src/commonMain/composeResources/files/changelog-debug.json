@@ -133,6 +133,10 @@
     {
       "build": 109,
       "text": "Social stays live when Nuvio sits idle for more than an hour: pop-ups and banners used to stop until you brought the window back, because the live connection's sign-in ran out and was never renewed."
+    },
+    {
+      "build": 110,
+      "text": "Avatar initials and the Inbox count sit in the middle of their circles again, and the details page's \"Recommended to you by\" line is visible (it was black on black). New: Social settings -> In the background -> Start with Windows, which opens Nuvio straight to the tray when you sign in so pop-ups reach you."
     }
   ]
 }
