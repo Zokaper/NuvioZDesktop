@@ -137,6 +137,10 @@
     {
       "build": 110,
       "text": "Avatar initials and the Inbox count sit in the middle of their circles again, and the details page's \"Recommended to you by\" line is visible (it was black on black). New: Social settings -> In the background -> Start with Windows, which opens Nuvio straight to the tray when you sign in so pop-ups reach you."
+    },
+    {
+      "build": 111,
+      "text": "\"Recommended to you\" moved to the top of the Inbox and left the Social feed. New: Social settings -> Home -> Show recommendations on Home adds them as a shelf on Home, under Friends."
     }
   ]
 }
