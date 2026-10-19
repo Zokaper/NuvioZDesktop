@@ -503,8 +503,8 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     val openingLoadingState = PlaybackLoadingState(
         step = PlaybackProgressStep.StartingPlayback,
         stageOverride = waitingForHostToPlay,
-        attempt = args.playbackAttempt,
-        facts = args.sourceFacts,
+        attempt = activePlaybackAttempt,
+        facts = activeSourceFacts,
         contentLanguage = args.contentLanguage,
         preferredAudioLanguage = preferredAudioLanguageTargets.firstOrNull()
             ?: playerSettingsUiState.preferredAudioLanguage,
@@ -590,7 +590,6 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         showTitle = title,
         background = background,
         poster = poster,
-        startingEpisode = startingEpisode,
     )
     // The loading surface is drawn by `PlaybackLoadingHost`, above `NavDisplay`. In the automatic
     // modes the stream route already opened the session and handed it over, and this must not
@@ -609,8 +608,8 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                     artwork = openingPresentation.artwork,
                     logo = openingPresentation.logo,
                     title = openingPresentation.title,
-                    attempt = args.playbackAttempt,
-                    facts = args.sourceFacts,
+                    attempt = activePlaybackAttempt,
+                    facts = activeSourceFacts,
                     contentLanguage = args.contentLanguage,
                     reason = "player_opening_overlay",
                 )
@@ -2506,7 +2505,6 @@ private fun BoxScope.RenderPlaybackOverlays(
             showTitle = title,
             background = background,
             poster = poster,
-            startingEpisode = startingEpisode,
         )
         val playerClipboardManager = LocalClipboardManager.current
         PlayerPlaybackOverlays(
@@ -2590,8 +2588,8 @@ private fun BoxScope.RenderPlaybackOverlays(
             loadingState = PlaybackLoadingState(
                 step = PlaybackProgressStep.StartingPlayback,
                 stageOverride = waitingForHostToPlay,
-                attempt = args.playbackAttempt,
-                facts = args.sourceFacts,
+                attempt = activePlaybackAttempt,
+                facts = activeSourceFacts,
                 contentLanguage = args.contentLanguage,
                 preferredAudioLanguage = preferredAudioLanguageTargets.firstOrNull()
                     ?: playerSettingsUiState.preferredAudioLanguage,
@@ -2599,7 +2597,7 @@ private fun BoxScope.RenderPlaybackOverlays(
             formatSize = ::formatFileSize,
             onCopyErrorDetails = errorMessage?.let { message ->
                 {
-                    val label = PlaybackSourceSelector.describe(args.sourceFacts)
+                    val label = PlaybackSourceSelector.describe(activeSourceFacts)
                     playerClipboardManager.setText(
                         AnnotatedString(
                             listOf(label, args.streamTitle, message)

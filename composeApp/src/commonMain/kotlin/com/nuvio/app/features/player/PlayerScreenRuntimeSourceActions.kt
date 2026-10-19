@@ -10,6 +10,7 @@ import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.downloads.DownloadSubtitles
 import com.nuvio.app.features.downloads.DownloadsRepository
+import com.nuvio.app.features.downloads.SourceFactsExtractor
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.P2pStreamingEngine
 import com.nuvio.app.core.network.NetworkQualityRepository
@@ -126,6 +127,12 @@ internal fun StreamItem.playerSourceIdentityKey(): String? {
         ?.joinToString(separator = "|", prefix = "meta:")
 }
 
+/** A new source starts its own description and its own first attempt; see [PlayerScreenRuntime.activeSourceFacts]. */
+private fun PlayerScreenRuntime.setActiveSourceFacts(stream: StreamItem) {
+    activeSourceFacts = SourceFactsExtractor.extract(stream)
+    activePlaybackAttempt = 1
+}
+
 internal fun PlayerScreenRuntime.stopActiveP2pStream() {
     if (activeTorrentInfoHash != null || p2pResolvedSourceUrl != null) {
         P2pStreamingEngine.stopStream()
@@ -149,6 +156,7 @@ internal fun PlayerScreenRuntime.switchToP2pSourceStream(stream: StreamItem) {
     stopActiveP2pStream()
     externalSubtitles = stream.externalSubtitles
     activeSourceUrl = p2pSentinelUrl(infoHash, stream.p2pFileIdx)
+    setActiveSourceFacts(stream)
     activeSourceAudioUrl = null
     activeSourceHeaders = emptyMap()
     activeSourceResponseHeaders = emptyMap()
@@ -190,6 +198,7 @@ internal fun PlayerScreenRuntime.switchToP2pEpisodeStream(
     val resume = resolveEpisodeResume(epVideoId, episode)
     externalSubtitles = stream.externalSubtitles
     activeSourceUrl = p2pSentinelUrl(infoHash, stream.p2pFileIdx)
+    setActiveSourceFacts(stream)
     activeSourceAudioUrl = null
     activeSourceHeaders = emptyMap()
     activeSourceResponseHeaders = emptyMap()
@@ -539,6 +548,7 @@ internal fun PlayerScreenRuntime.switchToSource(stream: StreamItem) {
     stopActiveP2pStream()
     externalSubtitles = stream.externalSubtitles
     activeSourceUrl = url
+    setActiveSourceFacts(stream)
     activeSourceAudioUrl = null
     activeSourceHeaders = sanitizePlaybackHeaders(stream.behaviorHints.proxyHeaders?.request)
     activeSourceResponseHeaders = sanitizePlaybackResponseHeaders(stream.behaviorHints.proxyHeaders?.response)
@@ -593,6 +603,7 @@ internal fun PlayerScreenRuntime.switchToEpisodeStream(stream: StreamItem, episo
     val resume = resolveEpisodeResume(epVideoId, episode)
     externalSubtitles = stream.externalSubtitles
     activeSourceUrl = url
+    setActiveSourceFacts(stream)
     activeSourceAudioUrl = null
     activeSourceHeaders = sanitizePlaybackHeaders(stream.behaviorHints.proxyHeaders?.request)
     activeSourceResponseHeaders = sanitizePlaybackResponseHeaders(stream.behaviorHints.proxyHeaders?.response)
@@ -631,6 +642,8 @@ internal fun PlayerScreenRuntime.switchToDownloadedEpisode(downloadItem: Downloa
 
     externalSubtitles = DownloadSubtitles.localSubtitles(localFileUri)
     activeSourceUrl = localFileUri
+    activeSourceFacts = null
+    activePlaybackAttempt = 1
     activeSourceAudioUrl = null
     activeSourceHeaders = emptyMap()
     activeSourceResponseHeaders = emptyMap()
