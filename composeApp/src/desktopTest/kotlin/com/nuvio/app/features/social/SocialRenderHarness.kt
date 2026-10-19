@@ -272,10 +272,10 @@ class SocialRenderHarness {
         outputDir.mkdirs()
         val failures = mutableListOf<String>()
         val onBlack = renderBytes("home-contrast-ambient-black", 1280, 820, failures) {
-            CompositionLocalProvider(LocalContentColor provides Color.Black) { HomeSocialScene() }
+            CompositionLocalProvider(LocalContentColor provides Color.Black) { HomeSocialScene(recommendedToYou(recommendationEvents)) }
         }
         val onWhite = renderBytes("home-contrast-ambient-white", 1280, 820, failures) {
-            CompositionLocalProvider(LocalContentColor provides Color.White) { HomeSocialScene() }
+            CompositionLocalProvider(LocalContentColor provides Color.White) { HomeSocialScene(recommendedToYou(recommendationEvents)) }
         }
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
         if (onBlack == null || onWhite == null) fail("a contrast scene did not render")
@@ -464,52 +464,35 @@ class SocialRenderHarness {
         friends = friends.take(3),
     )
 
+    /** Recommendations waiting for the viewer: Burning from two friends (one note), Carrie from one. */
+    private val recommendationEvents = listOf(
+        Triple("tt-carrie", "Carrie", listOf(profile("debug", "debug") to "ts peak. Said the Liar Man.")),
+        Triple("tt7282468", "Burning", listOf(profile("Ana", "ana") to "slow but trust me", profile("Ben", "ben") to null)),
+    ).flatMapIndexed { i, (id, title, from) ->
+        from.mapIndexed { j, (who, note) ->
+            SocialInboxEvent(
+                id = "e-rec-$i-$j", kind = SocialInboxEvent.Recommendation, actor = who,
+                createdAt = "2026-09-15T1${i}:0$j:00Z",
+                payload = SocialInboxPayload(contentId = id, contentType = if (id == "tt-carrie") "series" else "movie", title = title, note = note),
+            )
+        }
+    }
+
     /**
-     * Where "Recommended to you" lives (2026-10-18 candidates, see [RecommendedPlacement]): the real tab,
-     * once per placement, desktop and phone. PNGs: `build/social-render/placement-*`.
+     * Where "Recommended to you" lives (picked 2026-10-19): the shelf at the top of the Inbox - with no
+     * recommendation card repeated under it - and, when Social settings -> Home asks for it, a shelf of its
+     * own on Home under Friends. PNGs: `build/social-render/recommended-*`.
      */
     @Test
-    fun renderRecommendedPlacements() {
+    fun renderRecommendedToYou() {
         outputDir.mkdirs()
         val failures = mutableListOf<String>()
-        val recs = listOf(
-            Triple("tt-carrie", "Carrie", listOf(profile("debug", "debug") to "ts peak. Said the Liar Man.")),
-            Triple("tt7282468", "Burning", listOf(profile("Ana", "ana") to "slow but trust me", profile("Ben", "ben") to null)),
-        ).flatMapIndexed { i, (id, title, from) ->
-            from.mapIndexed { j, (who, note) ->
-                SocialInboxEvent(
-                    id = "e-rec-$i-$j", kind = SocialInboxEvent.Recommendation, actor = who,
-                    createdAt = "2026-09-15T1${i}:0$j:00Z",
-                    payload = SocialInboxPayload(contentId = id, contentType = if (id == "tt-carrie") "series" else "movie", title = title, note = note),
-                )
-            }
-        }
-        val state = feedState.copy(inbox = recs + inboxEvents, watchingNow = watchingNow.take(1))
-        for (placement in RecommendedPlacement.entries) {
-            val overlay = when (placement) {
-                RecommendedPlacement.ForYou -> SocialOverlay.ForYou
-                RecommendedPlacement.Inbox -> SocialOverlay.Inbox
-                else -> null
-            }
-            val name = "placement-${placement.ordinal + 1}-${placement.name.lowercase()}"
-            render("$name-desktop", 1280, 820, failures) {
-                CompositionLocalProvider(LocalRecommendedPlacement provides placement) { SocialFeedScene(state, overlay = overlay) }
-            }
-            if (placement == RecommendedPlacement.ForYou) {
-                // The closed state too: what the pill looks like in the header.
-                render("$name-desktop-closed", 1280, 820, failures) {
-                    CompositionLocalProvider(LocalRecommendedPlacement provides placement) { SocialFeedScene(state) }
-                }
-                renderPhone("$name-phone-closed", 411, 914, failures) {
-                    CompositionLocalProvider(LocalRecommendedPlacement provides placement) { SocialFeedScene(state) }
-                }
-            }
-            renderPhone("$name-phone", 411, 914, failures) {
-                CompositionLocalProvider(LocalRecommendedPlacement provides placement) {
-                    SocialFeedScene(state, tab = if (placement == RecommendedPlacement.Rail) SocialTab.Friends else SocialTab.Activity, overlay = overlay)
-                }
-            }
-        }
+        val state = feedState.copy(inbox = recommendationEvents + inboxEvents, watchingNow = watchingNow.take(1))
+        val recommended = recommendedToYou(state.inbox)
+        render("recommended-inbox-desktop", 1280, 820, failures) { SocialFeedScene(state, overlay = SocialOverlay.Inbox) }
+        renderPhone("recommended-inbox-phone", 411, 914, failures) { SocialFeedScene(state, overlay = SocialOverlay.Inbox) }
+        render("recommended-home-desktop", 1280, 820, failures) { HomeSocialScene(recommended) }
+        renderPhone("recommended-home-phone", 411, 914, failures) { HomeSocialScene(recommended) }
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
     }
 
@@ -655,7 +638,7 @@ class SocialRenderHarness {
     }
 
     @Composable
-    private fun HomeSocialScene() {
+    private fun HomeSocialScene(recommended: List<RecommendedTitle> = emptyList()) {
         BoxWithConstraints(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             val width = maxWidth
             LazyColumn(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -668,6 +651,7 @@ class SocialRenderHarness {
                     onStartParty = {},
                     onOpenContent = { _, _, _ -> },
                 )
+                homeRecommendedSection(recommended, sectionPadding = 16.dp, availableWidth = width) { _, _, _ -> }
             }
         }
     }
