@@ -9,6 +9,26 @@ import com.nuvio.app.features.settings.SettingsGroup
 import com.nuvio.app.features.settings.SettingsGroupDivider
 import com.nuvio.app.features.settings.SettingsSection
 import com.nuvio.app.features.settings.SettingsSwitchRow
+import nuvio.composeapp.generated.resources.social_alert_friend_requests
+import nuvio.composeapp.generated.resources.social_alert_parties
+import nuvio.composeapp.generated.resources.social_alert_recs
+import nuvio.composeapp.generated.resources.social_alert_recs_desc
+import nuvio.composeapp.generated.resources.social_alert_watching
+import nuvio.composeapp.generated.resources.social_alert_watching_desc
+import nuvio.composeapp.generated.resources.social_background
+import nuvio.composeapp.generated.resources.social_close_window
+import nuvio.composeapp.generated.resources.social_hide_to_tray
+import nuvio.composeapp.generated.resources.social_popups
+import nuvio.composeapp.generated.resources.social_popups_fullscreen
+import nuvio.composeapp.generated.resources.social_popups_fullscreen_desc
+import nuvio.composeapp.generated.resources.social_quit_nuvio
+import nuvio.composeapp.generated.resources.social_show_popups
+import nuvio.composeapp.generated.resources.social_show_popups_desc
+import nuvio.composeapp.generated.resources.social_start_windows
+import nuvio.composeapp.generated.resources.social_start_windows_desc
+import nuvio.composeapp.generated.resources.social_start_windows_unavailable
+import nuvio.composeapp.generated.resources.Res
+import org.jetbrains.compose.resources.stringResource
 
 /**
  * Desktop's own Social settings: Pop-ups and In the background. Registered with
@@ -20,18 +40,18 @@ internal fun DesktopSocialSettingsSections(isTablet: Boolean) {
     val startWithWindows by DesktopStartWithWindows.enabled.collectAsState()
     LaunchedEffect(Unit) { DesktopStartWithWindows.refresh() }
 
-    SettingsSection(title = "Pop-ups", isTablet = isTablet) {
+    SettingsSection(title = stringResource(Res.string.social_popups), isTablet = isTablet) {
         SettingsGroup(isTablet = isTablet) {
             SettingsSwitchRow(
-                title = "Show pop-ups",
-                description = "Small cards in the corner of your screen, even while Nuvio is in the tray",
+                title = stringResource(Res.string.social_show_popups),
+                description = stringResource(Res.string.social_show_popups_desc),
                 checked = prefs.popupsEnabled,
                 isTablet = isTablet,
                 onCheckedChange = DesktopTrayPreferences::setPopupsEnabled,
             )
             SettingsGroupDivider(isTablet = isTablet)
             SettingsSwitchRow(
-                title = "Friend requests",
+                title = stringResource(Res.string.social_alert_friend_requests),
                 checked = prefs.popupFriendRequests,
                 enabled = prefs.popupsEnabled,
                 isTablet = isTablet,
@@ -39,7 +59,7 @@ internal fun DesktopSocialSettingsSections(isTablet: Boolean) {
             )
             SettingsGroupDivider(isTablet = isTablet)
             SettingsSwitchRow(
-                title = "Party invites and join requests",
+                title = stringResource(Res.string.social_alert_parties),
                 checked = prefs.popupParties,
                 enabled = prefs.popupsEnabled,
                 isTablet = isTablet,
@@ -47,8 +67,8 @@ internal fun DesktopSocialSettingsSections(isTablet: Boolean) {
             )
             SettingsGroupDivider(isTablet = isTablet)
             SettingsSwitchRow(
-                title = "Friends starting to watch",
-                description = "Only friends you turned on, from their profile",
+                title = stringResource(Res.string.social_alert_watching),
+                description = stringResource(Res.string.social_alert_watching_desc),
                 checked = prefs.popupFriendWatching,
                 enabled = prefs.popupsEnabled,
                 isTablet = isTablet,
@@ -56,8 +76,8 @@ internal fun DesktopSocialSettingsSections(isTablet: Boolean) {
             )
             SettingsGroupDivider(isTablet = isTablet)
             SettingsSwitchRow(
-                title = "Recommendations",
-                description = "Titles friends recommend, and when they start one you recommended",
+                title = stringResource(Res.string.social_alert_recs),
+                description = stringResource(Res.string.social_alert_recs_desc),
                 checked = prefs.popupRecommendations,
                 enabled = prefs.popupsEnabled,
                 isTablet = isTablet,
@@ -65,8 +85,8 @@ internal fun DesktopSocialSettingsSections(isTablet: Boolean) {
             )
             SettingsGroupDivider(isTablet = isTablet)
             SettingsSwitchRow(
-                title = "Over fullscreen apps and games",
-                description = "Off: they wait in your Inbox",
+                title = stringResource(Res.string.social_popups_fullscreen),
+                description = stringResource(Res.string.social_popups_fullscreen_desc),
                 checked = prefs.popupsOverFullscreen,
                 enabled = prefs.popupsEnabled,
                 isTablet = isTablet,
@@ -75,14 +95,14 @@ internal fun DesktopSocialSettingsSections(isTablet: Boolean) {
         }
     }
 
-    SettingsSection(title = "In the background", isTablet = isTablet) {
+    SettingsSection(title = stringResource(Res.string.social_background), isTablet = isTablet) {
         SettingsGroup(isTablet = isTablet) {
             // Before the first-close prompt is answered neither chip is lit: nothing has been chosen yet.
             SettingsChoiceRow(
-                title = "Closing the window",
+                title = stringResource(Res.string.social_close_window),
                 options = listOf(
-                    DesktopCloseAction.HideToTray to "Hide to tray",
-                    DesktopCloseAction.Quit to "Quit Nuvio",
+                    DesktopCloseAction.HideToTray to stringResource(Res.string.social_hide_to_tray),
+                    DesktopCloseAction.Quit to stringResource(Res.string.social_quit_nuvio),
                 ),
                 selected = prefs.closeAction,
                 isTablet = isTablet,
@@ -90,11 +110,11 @@ internal fun DesktopSocialSettingsSections(isTablet: Boolean) {
             )
             SettingsGroupDivider(isTablet = isTablet)
             SettingsSwitchRow(
-                title = "Start with Windows",
+                title = stringResource(Res.string.social_start_windows),
                 description = if (DesktopStartWithWindows.isAvailable) {
-                    "Opens in the tray when you sign in, so pop-ups reach you without opening Nuvio"
+                    stringResource(Res.string.social_start_windows_desc)
                 } else {
-                    "Available in the installed app"
+                    stringResource(Res.string.social_start_windows_unavailable)
                 },
                 checked = startWithWindows == true,
                 enabled = DesktopStartWithWindows.isAvailable && startWithWindows != null,
