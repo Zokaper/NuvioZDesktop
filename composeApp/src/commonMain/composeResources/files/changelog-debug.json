@@ -149,6 +149,10 @@
     {
       "build": 113,
       "text": "Behind the scenes: the Social screens' text now comes from the app's string files, ready for translation. Nothing should look different; tell us if any Social label reads oddly."
+    },
+    {
+      "build": 114,
+      "text": "Inviting friends to Watch Together now opens a picker - in the lobby and in the player: search, friends who are watching right now first, tick several and invite them in one go. Sent invites still have their cancel cross. Also: an invite no longer shows twice (the old bottom prompt is gone; the pop-up is the one)."
     }
   ]
 }
