@@ -61,14 +61,13 @@ import kotlin.test.Test
 import kotlin.test.fail
 
 /**
- * Candidates for `PLAN-language-and-whats-new.md` stage 1, rendered before anything is built.
+ * `PLAN-language-and-whats-new.md` stage 1, round 2 (2026-10-20), rendered before anything is built.
  *
- * - **Language page.** A: one settings page of rows, the rules as inline segmented choices. B: the
- *   same settings told as two situations, each with a still showing what you would get.
- * - **"New settings available" offer** over What's New. A: the plain dialog as specified. B: the same,
- *   naming what changed.
- * - **What's New.** A: feature cards with an illustration each, fixes folded. B: one highlight at a
- *   time on top, everything else a compact list. C: wide magazine rows (phone falls back to A).
+ * - **Language:** the Settings page as plain rows, and the wizard step with a still per group. Both
+ *   framed by title ("Titles in English" / "Titles in other languages"); subtitles a list - Off,
+ *   Forced, Full, Deaf and hard of hearing (SDH) - each with its example line.
+ * - **"New settings available" offer** over What's New. A: the plain dialog. B: the same, naming what changed.
+ * - **What's New:** option A (picked), platform tags beside every entry, no "other devices" section.
  *
  * Copy here is placeholder: release notes are the maintainer's to write.
  *
@@ -90,26 +89,38 @@ class LanguageWhatsNewDesignHarness {
     @Test
     fun renderCandidates() {
         outputDir.mkdirs()
+        outputDir.listFiles()?.forEach { it.delete() }
         val failures = mutableListOf<String>()
         for ((w, h) in listOf(1280 to 820, 420 to 900)) {
             val wide = w >= 700
-            renderScene("language-A-$w", w, if (wide) 1180 else 1560, failures) { SettingsFrame(wide) { LanguagePageA(wide) } }
-            renderScene("language-B-$w", w, if (wide) 1180 else 1900, failures) { SettingsFrame(wide) { LanguagePageB(wide) } }
+            renderScene("language-settings-$w", w, if (wide) 1450 else 1950, failures) { SettingsFrame(wide) { LanguageSettingsPage(wide) } }
+            renderScene("language-wizard-$w", w, if (wide) 1250 else 2050, failures) { WizardFrame(wide) { WizardLanguageStep(wide) } }
             renderScene("offer-A-$w", w, h, failures) { OfferScene(wide) { OfferDialogA() } }
             renderScene("offer-B-$w", w, h, failures) { OfferScene(wide) { OfferDialogB() } }
-            renderScene("whatsnew-A-$w", w, if (wide) 2250 else 2900, failures) { WhatsNewFrame(wide, maxWidth = 680) { WhatsNewA(wide) } }
-            renderScene("whatsnew-B-$w", w, if (wide) 1500 else 1900, failures) { WhatsNewFrame(wide, maxWidth = 680) { WhatsNewB(wide) } }
-            if (wide) {
-                renderScene("whatsnew-C-$w", w, 1700, failures) { WhatsNewFrame(wide, maxWidth = 980) { WhatsNewC() } }
-            }
+            renderScene("whatsnew-$w", w, if (wide) 2350 else 1950, failures) { WhatsNewFrame(wide, maxWidth = 680) { WhatsNewA(wide) } }
         }
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
     }
 
-    // --- Language page --------------------------------------------------------------------------
+    // --- Language: one model, two surfaces -----------------------------------------------------
 
+    /**
+     * The subtitle choices, in both groups, each with the line a viewer would see. Named for what they
+     * are rather than as jargon; SDH keeps its abbreviation in brackets because that is what the
+     * track lists in files and addons call it.
+     */
+    private data class SubtitleChoice(val name: String, val line: String?, val meaning: String)
+
+    private val subtitleChoices = listOf(
+        SubtitleChoice("Off", null, "No subtitles"),
+        SubtitleChoice("Forced", "Where's the money?", "Only signs and lines in another language"),
+        SubtitleChoice("Full", "I'm not here to hurt you.", "Everything that's said"),
+        SubtitleChoice("Deaf and hard of hearing (SDH)", "[door creaks] I'm not here to hurt you.", "Plus sounds and who's speaking"),
+    )
+
+    /** Settings: plain rows, no pictures (the maintainer's call, 2026-10-20). */
     @Composable
-    private fun LanguagePageA(wide: Boolean) {
+    private fun LanguageSettingsPage(wide: Boolean) {
         PageTitle("Language", "Audio and subtitles for every title.")
         SettingsSection(title = "Languages", isTablet = wide) {
             SettingsGroup(isTablet = wide) {
@@ -121,101 +132,83 @@ class LanguageWhatsNewDesignHarness {
                     isTablet = wide, onClick = {},
                 )
                 SettingsGroupDivider(isTablet = wide)
-                SettingsNavigationRow(
-                    title = "Subtitle language",
-                    description = "Same as my language (English)",
-                    isTablet = wide, onClick = {},
-                )
+                SettingsNavigationRow(title = "Subtitle language", description = "Same as my language (English)", isTablet = wide, onClick = {})
             }
         }
-        SettingsSection(title = "Audio", isTablet = wide) {
+        SettingsSection(title = "Titles in English", isTablet = wide) {
             SettingsGroup(isTablet = wide) {
-                ChoiceRow(
-                    wide = wide,
-                    title = "Titles in other languages",
-                    description = "Shows and films that weren't made in English.",
-                    options = listOf("Original audio", "English when available"),
-                    selected = 0,
-                    note = "Korean film → Korean audio. If a release has no original audio, English plays.",
-                )
+                SubtitleChoiceList(wide, selected = 1)
             }
         }
-        SettingsSection(title = "Subtitles", isTablet = wide) {
+        SettingsSection(title = "Titles in other languages", isTablet = wide) {
             SettingsGroup(isTablet = wide) {
                 ChoiceRow(
-                    wide = wide,
-                    title = "When the audio is English",
-                    options = listOf("Off", "Forced only", "Full"),
-                    selected = 1,
-                    note = "Forced only: just signs and lines spoken in another language.",
+                    wide, title = "Audio", options = listOf("Original", "English"), selected = 0,
+                    description = "Korean film → Korean audio. If there's no original audio, it plays like a title in English.",
                 )
                 SettingsGroupDivider(isTablet = wide)
-                ChoiceRow(
-                    wide = wide,
-                    title = "When the audio is another language",
-                    options = listOf("English subtitles", "Off"),
-                    selected = 0,
-                )
+                SubtitleChoiceList(wide, selected = 2)
             }
         }
         MoreSection(wide)
     }
 
+    /** The wizard step: the same choices, each group with a still showing what you would get. */
     @Composable
-    private fun LanguagePageB(wide: Boolean) {
-        PageTitle("Language", "Audio and subtitles for every title.")
-        SettingsSection(title = "Languages", isTablet = wide) {
-            SettingsGroup(isTablet = wide) {
-                SettingsNavigationRow(title = "My language", description = "English", isTablet = wide, onClick = {})
-                SettingsGroupDivider(isTablet = wide)
-                SettingsNavigationRow(title = "Fallback language", description = "None", isTablet = wide, onClick = {})
-                SettingsGroupDivider(isTablet = wide)
-                SettingsNavigationRow(title = "Subtitle language", description = "Same as my language (English)", isTablet = wide, onClick = {})
+    private fun WizardLanguageStep(wide: Boolean) {
+        val tokens = MaterialTheme.nuvio
+        Text("Step 4 of 9", style = MaterialTheme.typography.labelLarge, color = tokens.colors.textMuted)
+        Text("How do you watch?", style = MaterialTheme.typography.headlineMedium, color = tokens.colors.textPrimary, fontWeight = FontWeight.Bold)
+        Text(
+            "Pick your language, then how titles in it and in other languages should play. You can change all of this later in Settings → Language.",
+            style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            WizardValue("My language", "English")
+            WizardValue("Subtitles in", "Same as my language")
+        }
+        val cardA: @Composable (Modifier) -> Unit = { m ->
+            ScenarioCard(m, art = punisher, line = subtitleChoices[1].line, heading = "Titles in English", example = "The Punisher · English audio") {
+                Label("Subtitles")
+                SubtitleChoiceList(wide = false, selected = 1, compact = true)
             }
         }
-        SettingsSection(title = "How titles play", isTablet = wide) {
-            val cardA: @Composable (Modifier) -> Unit = { m ->
-                ScenarioCard(
-                    modifier = m,
-                    art = punisher,
-                    subtitle = "¿Dónde está el dinero?" to "Where's the money?",
-                    heading = "When the audio is English",
-                    example = "The Punisher · English audio · forced subtitles",
-                ) {
-                    Label("Subtitles")
-                    Segmented(listOf("Off", "Forced only", "Full"), 1)
-                    Hint("Forced only: just signs and lines spoken in another language.")
-                }
-            }
-            val cardB: @Composable (Modifier) -> Unit = { m ->
-                ScenarioCard(
-                    modifier = m,
-                    art = burning,
-                    subtitle = null to "Do you want to see it?",
-                    heading = "Titles in other languages",
-                    example = "Burning · Korean audio · English subtitles",
-                ) {
-                    Label("Audio")
-                    Segmented(listOf("Original", "English when available"), 0)
-                    Spacer(Modifier.height(4.dp))
-                    Label("Subtitles")
-                    Segmented(listOf("English", "Off"), 0)
-                    Hint("If a release only has English audio, the English-audio rule applies.")
-                }
-            }
-            if (wide) {
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth()) {
-                    cardA(Modifier.weight(1f))
-                    cardB(Modifier.weight(1f))
-                }
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    cardA(Modifier.fillMaxWidth())
-                    cardB(Modifier.fillMaxWidth())
-                }
+        val cardB: @Composable (Modifier) -> Unit = { m ->
+            ScenarioCard(m, art = burning, line = "Do you want to see it?", heading = "Titles in other languages", example = "Burning · Korean audio") {
+                Label("Audio")
+                Segmented(listOf("Original", "English"), 0)
+                Spacer(Modifier.height(4.dp))
+                Label("Subtitles")
+                SubtitleChoiceList(wide = false, selected = 2, compact = true)
             }
         }
-        MoreSection(wide)
+        if (wide) {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth()) {
+                cardA(Modifier.weight(1f))
+                cardB(Modifier.weight(1f))
+            }
+        } else {
+            cardA(Modifier.fillMaxWidth())
+            cardB(Modifier.fillMaxWidth())
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
+            Pill("Back", filled = false)
+            Pill("Next", filled = true)
+        }
+    }
+
+    @Composable
+    private fun WizardValue(label: String, value: String) {
+        val tokens = MaterialTheme.nuvio
+        Column(
+            Modifier.clip(RoundedCornerShape(14.dp)).background(tokens.colors.surfaceCard).padding(horizontal = 14.dp, vertical = 10.dp),
+        ) {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = tokens.colors.textMuted)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(value, style = MaterialTheme.typography.bodyLarge, color = tokens.colors.textPrimary, fontWeight = FontWeight.SemiBold)
+                Icon(Icons.Rounded.ChevronRight, null, tint = tokens.colors.textMuted, modifier = Modifier.size(18.dp))
+            }
+        }
     }
 
     @Composable
@@ -240,7 +233,13 @@ class LanguageWhatsNewDesignHarness {
     }
 
     @Composable
-    private fun ChoiceRow(wide: Boolean, title: String, options: List<String>, selected: Int, description: String? = null, note: String? = null) {
+    private fun ChoiceRow(
+        wide: Boolean,
+        title: String,
+        options: List<String>,
+        selected: Int,
+        description: String? = null,
+    ) {
         val tokens = MaterialTheme.nuvio
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = if (wide) 20.dp else 16.dp, vertical = 14.dp),
@@ -249,8 +248,69 @@ class LanguageWhatsNewDesignHarness {
             Text(title, style = MaterialTheme.typography.bodyLarge, color = tokens.colors.textPrimary, fontWeight = FontWeight.SemiBold)
             description?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = tokens.colors.textSecondary) }
             Spacer(Modifier.height(4.dp))
-            Box(Modifier.widthIn(max = 460.dp)) { Segmented(options, selected) }
-            note?.let { Hint(it) }
+            Box(Modifier.widthIn(max = 520.dp)) { Segmented(options, selected) }
+        }
+    }
+
+    /**
+     * Subtitles as a list rather than a segmented control: the honest names do not fit four across on
+     * a phone, and each row can carry its example line, drawn the way the player draws subtitles.
+     */
+    @Composable
+    private fun SubtitleChoiceList(wide: Boolean, selected: Int, compact: Boolean = false) {
+        val tokens = MaterialTheme.nuvio
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = if (compact) 0.dp else if (wide) 12.dp else 8.dp, vertical = if (compact) 0.dp else 8.dp),
+        ) {
+            if (!compact) {
+                Text(
+                    "Subtitles", style = MaterialTheme.typography.bodyLarge, color = tokens.colors.textPrimary, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                )
+            }
+            subtitleChoices.forEachIndexed { i, choice ->
+                val isSelected = i == selected
+                val sampleBesideName = wide && !compact
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        .background(if (isSelected) tokens.colors.overlaySelected else Color.Transparent)
+                        .padding(horizontal = 8.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Radio(isSelected)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(choice.name, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textPrimary, fontWeight = FontWeight.SemiBold)
+                        Text(choice.meaning, style = MaterialTheme.typography.bodySmall, color = tokens.colors.textMuted)
+                        if (!sampleBesideName && choice.line != null) SampleLine(choice.line, Modifier.padding(top = 4.dp))
+                    }
+                    if (sampleBesideName) {
+                        Box(Modifier.width(300.dp), contentAlignment = Alignment.CenterEnd) {
+                            choice.line?.let { SampleLine(it) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun SampleLine(text: String, modifier: Modifier = Modifier) {
+        Text(
+            text,
+            modifier = modifier.clip(RoundedCornerShape(6.dp)).background(Color.Black).padding(horizontal = 10.dp, vertical = 5.dp),
+            color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+        )
+    }
+
+    @Composable
+    private fun Radio(selected: Boolean) {
+        val tokens = MaterialTheme.nuvio
+        Box(
+            Modifier.size(20.dp).clip(CircleShape).border(2.dp, if (selected) tokens.colors.accent else tokens.colors.borderStrong, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (selected) Box(Modifier.size(10.dp).clip(CircleShape).background(tokens.colors.accent))
         }
     }
 
@@ -258,7 +318,7 @@ class LanguageWhatsNewDesignHarness {
     private fun ScenarioCard(
         modifier: Modifier,
         art: String,
-        subtitle: Pair<String?, String>?,
+        line: String?,
         heading: String,
         example: String,
         controls: @Composable ColumnScope.() -> Unit,
@@ -270,7 +330,7 @@ class LanguageWhatsNewDesignHarness {
             Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
                 Still(art)
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)))))
-                subtitle?.let { (_, line) -> SubtitleLine(line, Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp)) }
+                line?.let { SubtitleLine(it, Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp)) }
             }
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(heading, style = MaterialTheme.typography.titleMedium, color = tokens.colors.textPrimary, fontWeight = FontWeight.Bold)
@@ -278,6 +338,17 @@ class LanguageWhatsNewDesignHarness {
                 Spacer(Modifier.height(2.dp))
                 controls()
             }
+        }
+    }
+
+    @Composable
+    private fun WizardFrame(wide: Boolean, content: @Composable ColumnScope.() -> Unit) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+            Column(
+                Modifier.widthIn(max = 980.dp).fillMaxWidth().padding(horizontal = if (wide) 40.dp else 16.dp, vertical = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                content = content,
+            )
         }
     }
 
@@ -371,23 +442,24 @@ class LanguageWhatsNewDesignHarness {
 
     // --- What's New -----------------------------------------------------------------------------
 
-    private data class Feature(val title: String, val body: String, val visual: String)
+    private enum class P(val label: String) { Desktop("Desktop"), Android("Android"), Ios("iOS") }
+
+    private val everywhere = listOf(P.Desktop, P.Android, P.Ios)
+
+    private data class Feature(val title: String, val body: String, val visual: String, val platforms: List<P>)
 
     private val features = listOf(
-        Feature("Social, rebuilt", "See what friends are watching right now, join them in one tap, and send each other recommendations.", "social"),
-        Feature("Language and subtitles", "Original audio and full subtitles for foreign titles, your language and forced subtitles for the rest.", "language"),
-        Feature("Pop-ups and the tray", "Nuvio Z can keep running in the tray and tell you when a friend starts watching.", "popup"),
+        Feature("Social, rebuilt", "See what friends are watching right now, join them in one tap, and send each other recommendations.", "social", everywhere),
+        Feature("Language and subtitles", "Original audio and full subtitles for foreign titles, your language and forced subtitles for the rest.", "language", everywhere),
+        Feature("Pop-ups and the tray", "Nuvio Z can keep running in the tray and tell you when a friend starts watching.", "popup", listOf(P.Desktop)),
     )
+
+    /** Improvements sit in their category with tags like everything else - never a greyed "other devices" list. */
     private val improvements = listOf(
-        "Next episode's loading screen shows the right episode and a sharp backdrop",
-        "A notice when you've been signed out, with a Sign in button",
-        "Start with Windows",
-    )
-    private val fixes = listOf(
-        "Invite button said \"Invite %d\"",
-        "Notifications opened Social behind a details page",
-        "Remembered subtitles could come back in another language",
-        "Five more",
+        "Next episode's loading screen shows the right episode and a sharp backdrop" to everywhere,
+        "A notice when you've been signed out, with a Sign in button" to everywhere,
+        "Start with Windows" to listOf(P.Desktop),
+        "Keeps itself signed on iPhone" to listOf(P.Ios),
     )
 
     @Composable
@@ -402,71 +474,45 @@ class LanguageWhatsNewDesignHarness {
                 ) {
                     Box(Modifier.fillMaxWidth().aspectRatio(2f)) { Visual(f.visual) }
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(f.title, style = MaterialTheme.typography.titleMedium, color = tokens.colors.textPrimary, fontWeight = FontWeight.Bold)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(f.title, style = MaterialTheme.typography.titleMedium, color = tokens.colors.textPrimary, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            PlatformTags(f.platforms)
+                        }
                         Text(f.body, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary)
                         if (f.visual == "language") ReviewSettingsLink()
                     }
                 }
             }
             if (!compactPreview) {
-                CompactList("Improvements", improvements)
-                Folded("${fixes.size + 4} fixes")
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Improvements", style = MaterialTheme.typography.titleSmall, color = tokens.colors.textPrimary, fontWeight = FontWeight.SemiBold)
+                    improvements.forEach { (line, platforms) ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+                            Box(Modifier.padding(top = 7.dp).size(6.dp).clip(CircleShape).background(tokens.colors.accent))
+                            Text(line, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary, modifier = Modifier.weight(1f))
+                            PlatformTags(platforms)
+                        }
+                    }
+                }
+                Folded("8 fixes")
                 DoneRow()
             }
         }
     }
 
+    /** One tag per platform; all three collapse to "All platforms" so the common case stays quiet. */
     @Composable
-    private fun WhatsNewB(wide: Boolean) {
+    private fun PlatformTags(platforms: List<P>) {
         val tokens = MaterialTheme.nuvio
-        Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            WhatsNewHeader()
-            EventHeader()
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(20.dp))) {
-                    Visual(features[0].visual)
-                    Row(Modifier.align(Alignment.TopEnd).padding(14.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        features.indices.forEach { i ->
-                            Box(Modifier.size(if (i == 0) 18.dp else 7.dp, 7.dp).clip(CircleShape).background(Color.White.copy(alpha = if (i == 0) 0.95f else 0.45f)))
-                        }
-                    }
-                }
-                Text(features[0].title, style = MaterialTheme.typography.headlineSmall, color = tokens.colors.textPrimary, fontWeight = FontWeight.Bold)
-                Text(features[0].body, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary)
+        val labels = if (platforms.containsAll(everywhere)) listOf("All platforms") else platforms.map { it.label }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            labels.forEach { label ->
+                Text(
+                    label,
+                    modifier = Modifier.clip(CircleShape).border(1.dp, tokens.colors.borderDefault, CircleShape).padding(horizontal = 9.dp, vertical = 3.dp),
+                    style = MaterialTheme.typography.labelSmall, color = tokens.colors.textSecondary, maxLines = 1,
+                )
             }
-            CompactList("New", features.drop(1).map { it.title + " — " + it.body }, review = true)
-            CompactList("Improvements", improvements)
-            Folded("${fixes.size + 4} fixes")
-            DoneRow()
-        }
-    }
-
-    @Composable
-    private fun WhatsNewC() {
-        val tokens = MaterialTheme.nuvio
-        Column(Modifier.padding(28.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            WhatsNewHeader()
-            EventHeader()
-            features.forEachIndexed { i, f ->
-                Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                    val art: @Composable () -> Unit = {
-                        Box(Modifier.width(420.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(18.dp))) { Visual(f.visual) }
-                    }
-                    val text: @Composable () -> Unit = {
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(f.title, style = MaterialTheme.typography.headlineSmall, color = tokens.colors.textPrimary, fontWeight = FontWeight.Bold)
-                            Text(f.body, style = MaterialTheme.typography.bodyLarge, color = tokens.colors.textSecondary)
-                            if (f.visual == "language") ReviewSettingsLink()
-                        }
-                    }
-                    if (i % 2 == 0) { art(); text() } else { text(); art() }
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                Box(Modifier.weight(1f)) { CompactList("Improvements", improvements) }
-                Box(Modifier.weight(1f)) { Folded("${fixes.size + 4} fixes") }
-            }
-            DoneRow()
         }
     }
 
@@ -481,11 +527,7 @@ class LanguageWhatsNewDesignHarness {
 
     @Composable
     private fun EventHeader() {
-        val tokens = MaterialTheme.nuvio
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("October 2026", style = MaterialTheme.typography.titleSmall, color = tokens.colors.textPrimary, fontWeight = FontWeight.SemiBold)
-            Text("Desktop · Android · iOS", style = MaterialTheme.typography.bodySmall, color = tokens.colors.textMuted)
-        }
+        Text("October 2026", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.nuvio.colors.textPrimary, fontWeight = FontWeight.SemiBold)
     }
 
     @Composable
@@ -497,21 +539,6 @@ class LanguageWhatsNewDesignHarness {
         ) {
             Icon(Icons.Rounded.Tune, null, tint = tokens.colors.accent, modifier = Modifier.size(16.dp))
             Text("Review new settings", style = MaterialTheme.typography.labelLarge, color = tokens.colors.accent, fontWeight = FontWeight.SemiBold)
-        }
-    }
-
-    @Composable
-    private fun CompactList(title: String, lines: List<String>, review: Boolean = false) {
-        val tokens = MaterialTheme.nuvio
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, color = tokens.colors.textPrimary, fontWeight = FontWeight.SemiBold)
-            lines.forEach { line ->
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Box(Modifier.padding(top = 7.dp).size(6.dp).clip(CircleShape).background(tokens.colors.accent))
-                    Text(line, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary)
-                }
-            }
-            if (review) ReviewSettingsLink()
         }
     }
 
