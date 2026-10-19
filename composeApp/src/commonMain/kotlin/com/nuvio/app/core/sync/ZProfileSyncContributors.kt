@@ -1,6 +1,7 @@
 package com.nuvio.app.core.sync
 
 import com.nuvio.app.features.home.HomePresentationSync
+import com.nuvio.app.features.language.LanguagePreferencesSync
 import com.nuvio.app.features.social.SocialHomeSync
 
 /**
@@ -11,4 +12,5 @@ import com.nuvio.app.features.social.SocialHomeSync
 internal val zProfileSyncContributors: List<ZProfileSyncContributor> = listOf(
     HomePresentationSync,
     SocialHomeSync,
+    LanguagePreferencesSync,
 )

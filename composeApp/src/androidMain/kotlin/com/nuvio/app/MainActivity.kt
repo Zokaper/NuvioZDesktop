@@ -106,6 +106,7 @@ open class MainActivity : AppCompatActivity() {
         WatchedStorage.initialize(applicationContext)
         SocialStorage.initialize(applicationContext)
         SocialFeaturePreferencesStorage.initialize(applicationContext)
+        com.nuvio.app.features.language.LanguagePreferencesStorage.initialize(applicationContext)
         MetaScreenSettingsStorage.initialize(applicationContext)
         HomeCatalogSettingsStorage.initialize(applicationContext)
         PlayerSettingsStorage.initialize(applicationContext)
@@ -142,6 +143,7 @@ open class MainActivity : AppCompatActivity() {
         EpisodeReleaseNotificationsStorage.initialize(applicationContext)
         // Never initialized before Phase 9: the Social on/off answer was not persisted on Android.
         com.nuvio.app.features.social.SocialFeaturePreferencesStorage.initialize(applicationContext)
+        com.nuvio.app.features.language.LanguagePreferencesStorage.initialize(applicationContext)
         WatchProgressStorage.initialize(applicationContext)
         StreamBadgeSettingsStorage.initialize(applicationContext)
         BingeGroupCacheStorage.initialize(applicationContext)
