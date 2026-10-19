@@ -66,7 +66,7 @@ import kotlin.test.fail
  * - **Language:** the Settings page as plain rows, and the wizard step with a still per group. Both
  *   framed by title ("Titles in English" / "Titles in other languages"); subtitles a list - Off,
  *   Forced, Full, Deaf and hard of hearing (SDH) - each with its example line.
- * - **"New settings available" offer** over What's New. A: the plain dialog. B: the same, naming what changed.
+ * - **"New settings available" offer** over What's New: A, the plain dialog (picked).
  * - **What's New:** option A (picked), platform tags beside every entry, no "other devices" section.
  *
  * Copy here is placeholder: release notes are the maintainer's to write.
@@ -93,10 +93,9 @@ class LanguageWhatsNewDesignHarness {
         val failures = mutableListOf<String>()
         for ((w, h) in listOf(1280 to 820, 420 to 900)) {
             val wide = w >= 700
-            renderScene("language-settings-$w", w, if (wide) 1450 else 1950, failures) { SettingsFrame(wide) { LanguageSettingsPage(wide) } }
-            renderScene("language-wizard-$w", w, if (wide) 1250 else 2050, failures) { WizardFrame(wide) { WizardLanguageStep(wide) } }
-            renderScene("offer-A-$w", w, h, failures) { OfferScene(wide) { OfferDialogA() } }
-            renderScene("offer-B-$w", w, h, failures) { OfferScene(wide) { OfferDialogB() } }
+            renderScene("language-settings-$w", w, if (wide) 1750 else 2050, failures) { SettingsFrame(wide) { LanguageSettingsPage(wide) } }
+            renderScene("language-wizard-$w", w, if (wide) 1450 else 2500, failures) { WizardFrame(wide) { WizardLanguageStep(wide) } }
+            renderScene("offer-$w", w, h, failures) { OfferScene(wide) { OfferDialogA() } }
             renderScene("whatsnew-$w", w, if (wide) 2350 else 1950, failures) { WhatsNewFrame(wide, maxWidth = 680) { WhatsNewA(wide) } }
         }
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
@@ -109,13 +108,36 @@ class LanguageWhatsNewDesignHarness {
      * are rather than as jargon; SDH keeps its abbreviation in brackets because that is what the
      * track lists in files and addons call it.
      */
-    private data class SubtitleChoice(val name: String, val line: String?, val meaning: String)
+    private data class SubtitleChoice(val name: String, val meaning: String)
 
     private val subtitleChoices = listOf(
-        SubtitleChoice("Off", null, "No subtitles"),
-        SubtitleChoice("Forced", "Where's the money?", "Only signs and lines in another language"),
-        SubtitleChoice("Full", "I'm not here to hurt you.", "Everything that's said"),
-        SubtitleChoice("Deaf and hard of hearing (SDH)", "[door creaks] I'm not here to hurt you.", "Plus sounds and who's speaking"),
+        SubtitleChoice("Off", "No subtitles at all"),
+        SubtitleChoice("Forced", "Only lines in a different language from the audio, and signs"),
+        SubtitleChoice("Full", "Everything that's said"),
+        SubtitleChoice("Deaf and hard of hearing (SDH)", "Everything that's said, plus sounds and who's speaking"),
+    )
+
+    /** Two moments of one scene, as column headers, and what each choice shows for them (in [subtitleChoices] order). */
+    private class SubtitleScene(val first: String, val second: String, val lines: List<Pair<String?, String?>>)
+
+    private val englishScene = SubtitleScene(
+        "Said in English", "Said in Spanish",
+        listOf(
+            null to null,
+            null to "Where's the money?",
+            "Get in the car." to "Where's the money?",
+            "[engine starts] Get in the car." to "[in Spanish] Where's the money?",
+        ),
+    )
+
+    private val otherScene = SubtitleScene(
+        "Said in Korean", "Said in Japanese",
+        listOf(
+            null to null,
+            null to "We have to go.",
+            "Do you want to see it?" to "We have to go.",
+            "[fire crackling] Do you want to see it?" to "[in Japanese] We have to go.",
+        ),
     )
 
     /** Settings: plain rows, no pictures (the maintainer's call, 2026-10-20). */
@@ -137,17 +159,14 @@ class LanguageWhatsNewDesignHarness {
         }
         SettingsSection(title = "Titles in English", isTablet = wide) {
             SettingsGroup(isTablet = wide) {
-                SubtitleChoiceList(wide, selected = 1)
+                SubtitleChoiceList(wide, englishScene, selected = 1)
             }
         }
         SettingsSection(title = "Titles in other languages", isTablet = wide) {
             SettingsGroup(isTablet = wide) {
-                ChoiceRow(
-                    wide, title = "Audio", options = listOf("Original", "English"), selected = 0,
-                    description = "Korean film → Korean audio. If there's no original audio, it plays like a title in English.",
-                )
+                AudioChoiceList(wide, selected = 0)
                 SettingsGroupDivider(isTablet = wide)
-                SubtitleChoiceList(wide, selected = 2)
+                SubtitleChoiceList(wide, otherScene, selected = 2)
             }
         }
         MoreSection(wide)
@@ -168,18 +187,17 @@ class LanguageWhatsNewDesignHarness {
             WizardValue("Subtitles in", "Same as my language")
         }
         val cardA: @Composable (Modifier) -> Unit = { m ->
-            ScenarioCard(m, art = punisher, line = subtitleChoices[1].line, heading = "Titles in English", example = "The Punisher · English audio") {
+            ScenarioCard(m, art = punisher, line = "Where's the money?", heading = "Titles in English", example = "The Punisher · English audio") {
                 Label("Subtitles")
-                SubtitleChoiceList(wide = false, selected = 1, compact = true)
+                SubtitleChoiceList(wide = false, scene = englishScene, selected = 1, compact = true)
             }
         }
         val cardB: @Composable (Modifier) -> Unit = { m ->
             ScenarioCard(m, art = burning, line = "Do you want to see it?", heading = "Titles in other languages", example = "Burning · Korean audio") {
                 Label("Audio")
-                Segmented(listOf("Original", "English"), 0)
-                Spacer(Modifier.height(4.dp))
+                AudioChoiceList(wide = false, selected = 0, compact = true)
                 Label("Subtitles")
-                SubtitleChoiceList(wide = false, selected = 2, compact = true)
+                SubtitleChoiceList(wide = false, scene = otherScene, selected = 2, compact = true)
             }
         }
         if (wide) {
@@ -254,23 +272,38 @@ class LanguageWhatsNewDesignHarness {
 
     /**
      * Subtitles as a list rather than a segmented control: the honest names do not fit four across on
-     * a phone, and each row can carry its example line, drawn the way the player draws subtitles.
+     * a phone. Every row shows the **same two moments** of one scene - a line in the audio's language,
+     * then a line in another language - so Forced (only the second) and Full (both) differ visibly.
      */
     @Composable
-    private fun SubtitleChoiceList(wide: Boolean, selected: Int, compact: Boolean = false) {
+    private fun SubtitleChoiceList(wide: Boolean, scene: SubtitleScene, selected: Int, compact: Boolean = false) {
         val tokens = MaterialTheme.nuvio
+        val cellsBesideName = wide && !compact
         Column(
             Modifier.fillMaxWidth().padding(horizontal = if (compact) 0.dp else if (wide) 12.dp else 8.dp, vertical = if (compact) 0.dp else 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            if (!compact) {
-                Text(
-                    "Subtitles", style = MaterialTheme.typography.bodyLarge, color = tokens.colors.textPrimary, fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                )
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.Bottom) {
+                if (!compact) {
+                    Text("Subtitles", style = MaterialTheme.typography.bodyLarge, color = tokens.colors.textPrimary, fontWeight = FontWeight.SemiBold)
+                }
+                Spacer(Modifier.weight(1f))
+                if (cellsBesideName) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ColumnHeader(scene.first, Modifier.width(230.dp))
+                        ColumnHeader(scene.second, Modifier.width(230.dp))
+                    }
+                }
+            }
+            if (!cellsBesideName) {
+                Row(Modifier.fillMaxWidth().padding(start = 48.dp, end = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ColumnHeader(scene.first, Modifier.weight(1f))
+                    ColumnHeader(scene.second, Modifier.weight(1f))
+                }
             }
             subtitleChoices.forEachIndexed { i, choice ->
                 val isSelected = i == selected
-                val sampleBesideName = wide && !compact
+                val (first, second) = scene.lines[i]
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
                         .background(if (isSelected) tokens.colors.overlaySelected else Color.Transparent)
@@ -282,11 +315,17 @@ class LanguageWhatsNewDesignHarness {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(choice.name, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textPrimary, fontWeight = FontWeight.SemiBold)
                         Text(choice.meaning, style = MaterialTheme.typography.bodySmall, color = tokens.colors.textMuted)
-                        if (!sampleBesideName && choice.line != null) SampleLine(choice.line, Modifier.padding(top = 4.dp))
+                        if (!cellsBesideName) {
+                            Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                SubtitleCell(first, Modifier.weight(1f))
+                                SubtitleCell(second, Modifier.weight(1f))
+                            }
+                        }
                     }
-                    if (sampleBesideName) {
-                        Box(Modifier.width(300.dp), contentAlignment = Alignment.CenterEnd) {
-                            choice.line?.let { SampleLine(it) }
+                    if (cellsBesideName) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SubtitleCell(first, Modifier.width(230.dp))
+                            SubtitleCell(second, Modifier.width(230.dp))
                         }
                     }
                 }
@@ -295,12 +334,67 @@ class LanguageWhatsNewDesignHarness {
     }
 
     @Composable
-    private fun SampleLine(text: String, modifier: Modifier = Modifier) {
+    private fun ColumnHeader(text: String, modifier: Modifier) {
         Text(
-            text,
-            modifier = modifier.clip(RoundedCornerShape(6.dp)).background(Color.Black).padding(horizontal = 10.dp, vertical = 5.dp),
-            color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+            text, modifier = modifier, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.nuvio.colors.textMuted,
+            textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
+    }
+
+    /** One moment of the scene as the player would draw it: the subtitle, or nothing. */
+    @Composable
+    private fun SubtitleCell(line: String?, modifier: Modifier) {
+        Box(
+            modifier.height(46.dp).clip(RoundedCornerShape(8.dp)).background(Color.Black).padding(horizontal = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (line != null) {
+                Text(line, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            } else {
+                Text("no subtitle", color = Color.White.copy(alpha = 0.3f), fontSize = 11.sp)
+            }
+        }
+    }
+
+    /** Audio for titles in other languages: two plain choices, the Korean film named as an example. */
+    @Composable
+    private fun AudioChoiceList(wide: Boolean, selected: Int, compact: Boolean = false) {
+        val tokens = MaterialTheme.nuvio
+        val choices = listOf(
+            "Original language" to "The language it was made in. For example, Korean for a Korean film.",
+            "English" to "An English dub when the release has one, otherwise the original language.",
+        )
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = if (compact) 0.dp else if (wide) 12.dp else 8.dp, vertical = if (compact) 0.dp else 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            if (!compact) {
+                Text(
+                    "Audio", style = MaterialTheme.typography.bodyLarge, color = tokens.colors.textPrimary, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                )
+            }
+            choices.forEachIndexed { i, (name, meaning) ->
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        .background(if (i == selected) tokens.colors.overlaySelected else Color.Transparent)
+                        .padding(horizontal = 8.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Radio(i == selected)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(name, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textPrimary, fontWeight = FontWeight.SemiBold)
+                        Text(meaning, style = MaterialTheme.typography.bodySmall, color = tokens.colors.textMuted)
+                    }
+                }
+            }
+            Text(
+                "If a release doesn't have the original language, it plays in English and the Titles in English settings apply.",
+                style = MaterialTheme.typography.bodySmall, color = tokens.colors.textMuted,
+                modifier = Modifier.padding(start = 48.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+            )
+        }
     }
 
     @Composable
@@ -387,55 +481,6 @@ class LanguageWhatsNewDesignHarness {
                     }
                 }
                 CloseButton(Modifier.align(Alignment.TopEnd).padding(10.dp))
-            }
-        }
-    }
-
-    @Composable
-    private fun OfferDialogB() {
-        val tokens = MaterialTheme.nuvio
-        DialogSurface {
-            Box {
-                Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Box(
-                        Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(tokens.colors.accent.copy(alpha = 0.18f)),
-                        contentAlignment = Alignment.Center,
-                    ) { Icon(Icons.Rounded.Tune, null, tint = tokens.colors.accent) }
-                    Text("New settings available", style = MaterialTheme.typography.headlineSmall, color = tokens.colors.textPrimary, fontWeight = FontWeight.Bold)
-                    Text(
-                        "This update includes new or changed settings. Would you like to go through them now? It takes about a minute.",
-                        style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
-                    )
-                    Column(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(tokens.colors.surfaceCard).padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        ChangedRow(Icons.Rounded.Language, "Language", "Separate rules for titles in other languages")
-                        ChangedRow(Icons.Rounded.Subtitles, "Subtitles", "Off, forced only or full, depending on the audio")
-                    }
-                    Text(
-                        "You can review them any time from Settings → What's New.",
-                        style = MaterialTheme.typography.bodySmall, color = tokens.colors.textMuted,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
-                        Pill("No", filled = false)
-                        Pill("Yes (Recommended)", filled = true)
-                    }
-                }
-                CloseButton(Modifier.align(Alignment.TopEnd).padding(10.dp))
-            }
-        }
-    }
-
-    @Composable
-    private fun ChangedRow(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, body: String) {
-        val tokens = MaterialTheme.nuvio
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Icon(icon, null, tint = tokens.colors.textSecondary, modifier = Modifier.size(20.dp))
-            Column {
-                Text(title, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textPrimary, fontWeight = FontWeight.SemiBold)
-                Text(body, style = MaterialTheme.typography.bodySmall, color = tokens.colors.textMuted)
             }
         }
     }
