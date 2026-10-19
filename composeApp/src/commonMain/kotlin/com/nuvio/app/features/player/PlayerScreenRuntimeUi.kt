@@ -5,6 +5,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import com.nuvio.app.features.watchparty.currentEpochMs
+import com.nuvio.app.features.watchparty.partyInviteWatching
 import com.nuvio.app.features.watchparty.PartyClientPhase
 import com.nuvio.app.features.social.parseSocialTimestampMs
 import com.nuvio.app.features.social.OutgoingJoinRequestStore
@@ -339,8 +340,11 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                         cancelling = partyCancellingInviteIds,
                         nowMs = inviteNowMs,
                     ).button.wire,
+                    watching = partyInviteWatching(friend.profileId, socialUiState.watchingNow),
                 )
-            },
+            }
+            // The picker's order (watching first, then by name); `index` still names the friend for the commands.
+            .sortedWith(compareBy({ it.watching == null }, { it.name.lowercase() })),
         inviteCode = watchPartyUiState.inviteCode.orEmpty(),
         endConfirm = partyEndConfirm,
         outgoing = (outgoingJoinRequest as? OutgoingJoinRequestState.Bound)?.let { request ->

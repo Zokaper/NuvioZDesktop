@@ -35,6 +35,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.AppTheme
 import com.nuvio.app.core.ui.NuvioTheme
+import com.nuvio.app.features.player.PartyInviteButton
+import com.nuvio.app.features.watchparty.PartyInvitePicker
+import com.nuvio.app.features.watchparty.PartyInviteRow
 import org.jetbrains.skia.EncodedImageFormat
 import java.io.File
 import kotlin.test.Test
@@ -102,6 +105,33 @@ class PartyInviteListHarness {
         }
         renderScene("picker-C-desktop", 1280, 820, failures) { PickerDialog() }
         renderScene("picker-C-411x914", 411, 914, failures) { PickerSheet() }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
+    /** The shipped picker (C was picked 2026-10-19), as the lobby, the phone player and the desktop dialog open it. */
+    @Test
+    fun renderShippedPicker() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        val rows = friends.map { friend ->
+            PartyInviteRow(
+                key = friend.name,
+                name = friend.name,
+                avatarUrl = null,
+                colorHex = friend.hex,
+                watching = friend.watching,
+                button = PartyInviteButton.entries.first { it.wire == friend.state },
+            )
+        }
+        renderScene("shipped-picker-desktop", 1280, 820, failures) {
+            PartyInvitePicker(rows, slots = 7, wide = true, onDismiss = {}, onInvite = {}, onCancel = {})
+        }
+        renderScene("shipped-picker-891x411", 891, 411, failures) {
+            PartyInvitePicker(rows, slots = 7, wide = true, onDismiss = {}, onInvite = {}, onCancel = {})
+        }
+        renderScene("shipped-picker-411x914", 411, 914, failures) {
+            PartyInvitePicker(rows, slots = 7, wide = false, onDismiss = {}, onInvite = {}, onCancel = {})
+        }
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
     }
 
@@ -375,12 +405,17 @@ class PartyInviteListHarness {
                     CompositionLocalProvider(
                         LocalDensity provides Density(d.density, 1f),
                         LocalContentColor provides MaterialTheme.colorScheme.onBackground,
-                    ) { Box(Modifier.fillMaxSize()) { content() } }
+                    ) { Box(Modifier.fillMaxSize().background(Color(0xFF15110C))) { content() } }
                 }
             }
             try {
-                scene.render(0L)
-                val image = scene.render(16_000_000L)
+                // Let the dialog's fade and the sheet's slide finish: one frame caught both mid-way.
+                var nanos = 0L
+                while (nanos < 1_500_000_000L) {
+                    scene.render(nanos)
+                    nanos += 16_000_000L
+                }
+                val image = scene.render(nanos)
                 val data = image.encodeToData(EncodedImageFormat.PNG) ?: error("encodeToData returned null")
                 File(outputDir, "$name.png").writeBytes(data.bytes)
             } finally {

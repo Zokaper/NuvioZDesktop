@@ -100,6 +100,8 @@ const wtInvitePanel = document.getElementById("wtInvitePanel");
 const wtInviteList = document.getElementById("wtInviteList");
 const wtInviteCodeRow = document.getElementById("wtInviteCodeRow");
 const wtInviteCode = document.getElementById("wtInviteCode");
+const wtInviteSearch = document.getElementById("wtInviteSearch");
+const wtInviteSend = document.getElementById("wtInviteSend");
 const wtCopyInviteCodeButton = document.getElementById("wtCopyInviteCodeButton");
 const wtSettingsSection = document.getElementById("wtSettingsSection");
 const wtGuestControlSwitch = document.getElementById("wtGuestControlSwitch");
@@ -2261,6 +2263,10 @@ partyBanner.addEventListener("click", event => {
 const PARTY_STATUS_TONES = ["ready", "working", "failed", "offline", "paused", "buffering", "reconnecting", "lobby"];
 
 let wtInviteExpanded = false;
+/** Picked bridge indexes (the commands' value) and the search box, for the open invite picker. */
+let wtInvitePicked = [];
+let wtInviteQuery = "";
+const WT_MAX_PARTY = 8;
 
 const fillAvatar = (element, name, avatarUrl, colorHex) => {
   element.replaceChildren();
@@ -2292,6 +2298,100 @@ const formatClock = ms => {
  * (`WatchTogetherPanelState.kt`, `WatchTogetherBridge.kt`). This only shows and hides sections, so
  * the fixture gallery can exercise every state without a party.
  */
+// The invite picker's list. `index` is what the commands take; the bridge sends friends already in the picker's
+// order (watching now first, then by name).
+const INVITE_STATE_LABELS = { sending: "Sending…", sent: "Sent", cancelling: "Cancelling…", declined: "Declined" };
+const renderInvitePicker = (invites, memberCount) => {
+  const pickable = new Set(invites.filter(t => String(t.state || "invite") === "invite").map(t => String(Number(t.index) || 0)));
+  wtInvitePicked = wtInvitePicked.filter(index => pickable.has(index));
+  const slots = Math.max(0, WT_MAX_PARTY - memberCount);
+  wtInviteSearch.hidden = invites.length <= 8;
+  const query = wtInviteQuery.trim().toLowerCase();
+  const shown = invites.filter(t => !query || String(t.name || "").toLowerCase().includes(query));
+  const scroll = wtInviteList.scrollTop;
+  wtInviteList.replaceChildren();
+  const section = label => {
+    const title = document.createElement("div");
+    title.className = "wt-invite-section";
+    title.textContent = label;
+    wtInviteList.append(title);
+  };
+  const row = target => {
+    const index = String(Number(target.index) || 0);
+    const state = String(target.state || "invite");
+    const picked = wtInvitePicked.includes(index);
+    const element = document.createElement("div");
+    element.className = "wt-invite-row";
+    const avatar = document.createElement("span");
+    avatar.className = "party-member-avatar";
+    fillAvatar(avatar, target.name, target.avatarUrl, "");
+    const copy = document.createElement("div");
+    copy.className = "wt-invite-copy";
+    const name = document.createElement("span");
+    name.className = "wt-invite-name";
+    name.textContent = target.name || "Friend";
+    copy.append(name);
+    if (target.watching) {
+      const watching = document.createElement("span");
+      watching.className = "wt-invite-watching";
+      watching.textContent = `Watching ${target.watching}`;
+      copy.append(watching);
+    }
+    element.append(avatar, copy);
+    if (state === "invite") {
+      const full = !picked && wtInvitePicked.length >= slots;
+      element.classList.add(full ? "full" : "pickable");
+      if (!full) element.dataset.wtPick = index;
+      element.setAttribute("role", "checkbox");
+      element.setAttribute("aria-checked", picked ? "true" : "false");
+      const check = document.createElement("span");
+      check.className = `wt-invite-check${picked ? " on" : ""}`;
+      check.textContent = picked ? "✓" : "";
+      element.append(check);
+    } else {
+      element.classList.add("done");
+      const label = document.createElement("span");
+      label.className = `wt-invite-state ${state}`;
+      label.textContent = INVITE_STATE_LABELS[state] || "";
+      element.append(label);
+      // Sent with a ✕ to withdraw it while it waits.
+      if (state === "sent") {
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.className = "wt-invite-cancel";
+        cancel.textContent = "✕";
+        cancel.title = `Cancel the invite to ${target.name || "your friend"}`;
+        cancel.setAttribute("aria-label", cancel.title);
+        cancel.dataset.wtCommand = "wtCancelInvite";
+        cancel.dataset.wtValue = index;
+        element.append(cancel);
+      }
+    }
+    wtInviteList.append(element);
+  };
+  const live = shown.filter(t => t.watching);
+  const rest = shown.filter(t => !t.watching);
+  if (live.length) {
+    section("Watching now");
+    live.forEach(row);
+    if (rest.length) section("Friends");
+  }
+  rest.forEach(row);
+  wtInviteList.scrollTop = scroll;
+  const count = wtInvitePicked.length;
+  wtInviteSend.disabled = count === 0;
+  wtInviteSend.textContent = count === 0 ? "Pick friends to invite" : `Invite ${count} friend${count === 1 ? "" : "s"}`;
+  wtInviteSend.hidden = invites.length === 0;
+};
+
+const closeInvitePicker = () => {
+  wtInviteExpanded = false;
+  wtInvitePicked = [];
+  wtInviteQuery = "";
+  wtInviteSearch.value = "";
+  renderPartyPanel(false);
+};
+
 const renderPartyPanel = suppress => {
   const wt = state.watchTogether || {};
   const kind = String(wt.state || "idle");
@@ -2380,48 +2480,15 @@ const renderPartyPanel = suppress => {
       partyMemberList.append(row);
     });
   }
-  const INVITE_LABELS = { invite: "Invite", sending: "Sending…", sent: "Sent", cancelling: "Cancelling…", declined: "Declined" };
   const invites = wt.inviteTargets || [];
   const inviteCode = String(wt.inviteCode || "").trim();
   const canInvite = active && wt.isHost && (invites.length > 0 || Boolean(inviteCode));
   wtInviteToggle.hidden = !canInvite;
   wtInviteToggle.setAttribute("aria-expanded", wtInviteExpanded ? "true" : "false");
-  wtInvitePanel.hidden = !(canInvite && wtInviteExpanded);
-  wtInviteList.replaceChildren();
-  invites.forEach(target => {
-    const row = document.createElement("div");
-    row.className = "wt-invite-row";
-    const avatar = document.createElement("span");
-    avatar.className = "party-member-avatar";
-    fillAvatar(avatar, target.name, target.avatarUrl, "");
-    const name = document.createElement("span");
-    name.textContent = target.name || "Friend";
-    // Sent with a ✕ to withdraw it while it waits; Declined for the re-invite cooldown.
-    const state = String(target.state || "invite");
-    const index = String(Number(target.index) || 0);
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = INVITE_LABELS[state] || "Invite";
-    button.disabled = state !== "invite";
-    if (state === "declined") button.className = "wt-invite-declined";
-    if (state === "invite") {
-      button.dataset.wtCommand = "wtInviteFriend";
-      button.dataset.wtValue = index;
-    }
-    row.append(avatar, name, button);
-    if (state === "sent") {
-      const cancel = document.createElement("button");
-      cancel.type = "button";
-      cancel.className = "wt-invite-cancel";
-      cancel.textContent = "✕";
-      cancel.title = `Cancel the invite to ${target.name || "your friend"}`;
-      cancel.setAttribute("aria-label", cancel.title);
-      cancel.dataset.wtCommand = "wtCancelInvite";
-      cancel.dataset.wtValue = index;
-      row.append(cancel);
-    }
-    wtInviteList.append(row);
-  });
+  // The picker follows the panel: it closes with it, or when inviting stops being possible.
+  if (!(show && canInvite)) wtInviteExpanded = false;
+  wtInvitePanel.hidden = !wtInviteExpanded;
+  renderInvitePicker(invites, (wt.people || []).length);
   wtInviteCodeRow.hidden = !inviteCode;
   wtInviteCode.textContent = inviteCode;
 
@@ -2476,9 +2543,50 @@ partyPanel.addEventListener("click", event => {
     return;
   }
   if (event.target.closest("#wtInviteToggle")) {
-    wtInviteExpanded = !wtInviteExpanded;
+    wtInviteExpanded = true;
+    renderPartyPanel(false);
+    if (!wtInviteSearch.hidden) wtInviteSearch.focus();
+  }
+});
+
+// The picker sits over the video, outside the panel: its clicks and keys stay its own, so typing a name never
+// pauses or seeks, and Escape closes it instead of leaving the player.
+wtInvitePanel.addEventListener("click", event => {
+  event.stopPropagation();
+  noteChromeActivity(true);
+  if (event.target === wtInvitePanel || event.target.closest("#wtInviteClose")) {
+    closeInvitePicker();
+    return;
+  }
+  const command = event.target.closest("[data-wt-command]");
+  if (command && !command.disabled) {
+    send(command.dataset.wtCommand, Number(command.dataset.wtValue) || 0);
+    return;
+  }
+  if (event.target.closest("#wtInviteSend")) {
+    wtInvitePicked.forEach(index => send("wtInviteFriend", Number(index) || 0));
+    closeInvitePicker();
+    return;
+  }
+  const pick = event.target.closest("[data-wt-pick]");
+  if (pick) {
+    const index = pick.dataset.wtPick;
+    wtInvitePicked = wtInvitePicked.includes(index) ? wtInvitePicked.filter(i => i !== index) : [...wtInvitePicked, index];
     renderPartyPanel(false);
   }
+});
+["keydown", "keyup", "keypress"].forEach(type => wtInvitePanel.addEventListener(type, event => {
+  event.stopPropagation();
+  if (type === "keydown" && event.key === "Escape") {
+    event.preventDefault();
+    closeInvitePicker();
+  }
+}));
+["pointerdown", "pointerup", "mousedown", "mouseup", "dblclick", "wheel"].forEach(type =>
+  wtInvitePanel.addEventListener(type, event => event.stopPropagation()));
+wtInviteSearch.addEventListener("input", () => {
+  wtInviteQuery = wtInviteSearch.value;
+  renderPartyPanel(false);
 });
 
 wtCopyInviteCodeButton.addEventListener("click", () => {

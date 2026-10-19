@@ -827,11 +827,35 @@ button:disabled {
 .wt-request-actions button[hidden] { display: none; }
 
 .party-panel .wt-disclosure { margin-top: 8px; min-height: 30px; border: 0; background: transparent; color: var(--theme-accent-strong); padding: 0; font-weight: 650; }
-.wt-invite { display: grid; gap: 6px; margin-top: 6px; }
-.wt-invite-row { display: flex; align-items: center; gap: 10px; }
-.wt-invite-row .party-member-avatar { width: 28px; height: 28px; font-size: 12px; }
-.wt-invite-row .wt-invite-cancel { min-width: 0; padding: 0 9px; }
-.wt-invite-row .wt-invite-declined:disabled { color: #e8a0a0; }
+/* The invite picker: search, friends watching now first, check circles, one button for everyone picked. */
+.wt-invite-picker { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .55); }
+.wt-invite-picker[hidden] { display: none; }
+.wt-invite-card { width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 48px); display: flex; flex-direction: column; gap: 12px; padding: 22px; border-radius: 22px; background: var(--theme-surface-elevated); color: var(--theme-text-primary); box-shadow: 0 24px 64px rgba(0, 0, 0, .5); }
+.wt-invite-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.wt-invite-title { font-size: 18px; font-weight: 700; }
+.wt-invite-card button { min-height: 34px; padding: 0 12px; border: 1px solid var(--theme-border-default); border-radius: 10px; background: var(--theme-surface-card); color: var(--theme-text-primary); font: inherit; font-size: 13px; cursor: pointer; }
+.wt-invite-card .wt-invite-close { min-height: 30px; width: 30px; padding: 0; border: 0; border-radius: 50%; }
+.wt-invite-search { height: 38px; padding: 0 12px; border: 1px solid var(--theme-border-default); border-radius: 10px; background: var(--theme-surface-card); color: var(--theme-text-primary); font: inherit; font-size: 13.5px; outline: none; }
+.wt-invite-search:focus { border-color: var(--theme-accent-strong); }
+.wt-invite-list { flex: 1 1 auto; min-height: 0; max-height: 380px; overflow-y: auto; display: grid; align-content: start; gap: 2px; }
+.wt-invite-section { padding: 8px 4px 2px; color: var(--theme-text-muted); font-size: 12px; }
+.wt-invite-row { display: flex; align-items: center; gap: 12px; padding: 7px 6px; border-radius: 12px; }
+.wt-invite-row.pickable { cursor: pointer; }
+.wt-invite-row.pickable:hover { background: var(--theme-surface-card); }
+.wt-invite-row.full { opacity: .55; cursor: default; }
+.wt-invite-row .party-member-avatar { width: 36px; height: 36px; font-size: 14px; flex: none; }
+.wt-invite-copy { flex: 1; min-width: 0; display: grid; }
+.wt-invite-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wt-invite-name { font-size: 13.5px; font-weight: 650; }
+.wt-invite-row.done .wt-invite-name { color: var(--theme-text-muted); }
+.wt-invite-watching { font-size: 12px; color: #6fd08c; }
+.wt-invite-state { color: var(--theme-text-muted); font-size: 12.5px; font-weight: 650; }
+.wt-invite-state.declined { color: #e8a0a0; }
+.wt-invite-card .wt-invite-cancel { min-height: 28px; width: 28px; padding: 0; border: 0; border-radius: 50%; }
+.wt-invite-check { width: 22px; height: 22px; flex: none; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .4); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800; color: #000; }
+.wt-invite-check.on { border-color: #fff; background: #fff; }
+.wt-invite-card .wt-invite-send { min-height: 44px; border: 0; border-radius: 999px; background: #fff; color: #000; font-weight: 700; font-size: 14px; }
+.wt-invite-card .wt-invite-send:disabled { opacity: .45; cursor: default; }
 .wt-request-actions .wt-request-dismiss { min-width: 0; padding: 0 9px; }
 .wt-invite-row span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .wt-invite-code { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--theme-text-muted); font-size: 12.5px; }

@@ -2166,7 +2166,8 @@ private fun StringBuilder.appendWatchTogetherInviteJson(item: WatchTogetherBridg
     appendJsonField("index", item.index); append(',')
     appendJsonField("name", item.name); append(',')
     appendJsonField("avatarUrl", item.avatarUrl); append(',')
-    appendJsonField("state", item.state)
+    appendJsonField("state", item.state); append(',')
+    appendJsonField("watching", item.watching.orEmpty())
     append('}')
 }
 

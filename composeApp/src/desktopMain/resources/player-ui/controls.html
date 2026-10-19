@@ -239,13 +239,6 @@
             <div class="wt-section-title">People</div>
             <div class="party-member-list" id="partyMemberList"></div>
             <button type="button" class="wt-disclosure" id="wtInviteToggle" aria-expanded="false">+ Invite friends</button>
-            <div class="wt-invite" id="wtInvitePanel" hidden>
-              <div id="wtInviteList"></div>
-              <div class="wt-invite-code" id="wtInviteCodeRow" hidden>
-                <span>Code <strong id="wtInviteCode"></strong></span>
-                <button type="button" id="wtCopyInviteCodeButton" data-command="wtCopyInviteCode">Copy</button>
-              </div>
-            </div>
           </section>
 
           <section class="wt-section" id="wtSettingsSection">
@@ -297,6 +290,22 @@
           </div>
         </div>
       </aside>
+      <!-- The invite picker (2026-10-19): "+ Invite friends" opens it over the video. -->
+      <div class="wt-invite-picker" id="wtInvitePanel" hidden role="dialog" aria-modal="true" aria-labelledby="wtInviteTitle">
+        <div class="wt-invite-card">
+          <div class="wt-invite-head">
+            <div class="wt-invite-title" id="wtInviteTitle">Invite to Watch Together</div>
+            <button type="button" class="wt-invite-close" id="wtInviteClose" aria-label="Close">✕</button>
+          </div>
+          <input type="search" class="wt-invite-search" id="wtInviteSearch" placeholder="Search friends" autocomplete="off" spellcheck="false">
+          <div class="wt-invite-list" id="wtInviteList"></div>
+          <button type="button" class="wt-invite-send" id="wtInviteSend" disabled>Pick friends to invite</button>
+          <div class="wt-invite-code" id="wtInviteCodeRow" hidden>
+            <span>Code <strong id="wtInviteCode"></strong></span>
+            <button type="button" id="wtCopyInviteCodeButton" data-command="wtCopyInviteCode">Copy</button>
+          </div>
+        </div>
+      </div>
 
       <aside class="social-notification" id="socialNotification" aria-live="polite" aria-hidden="true">
         <button class="social-notification-dismiss" type="button" data-command="socialNotificationDismiss" aria-label="Dismiss">&times;</button>
