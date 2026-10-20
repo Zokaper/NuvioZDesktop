@@ -257,6 +257,8 @@ fun DetailActions(
     onWatchedClick: () -> Unit,
     onSaveClick: () -> Unit,
     onSaveLongClick: (() -> Unit)?,
+    prefixActions: List<DetailSecondaryAction> = emptyList(),
+    suffixActions: List<DetailSecondaryAction> = emptyList(),
 ) {
     val shuffleAction = onShuffleClick?.let { onClick ->
         DetailSecondaryAction(
@@ -271,6 +273,7 @@ fun DetailActions(
         playEnabled = playEnabled,
         pinnedAction = shuffleAction?.takeIf { shuffleEnabled },
         secondaryActions = buildList {
+            addAll(prefixActions)
             if (!shuffleEnabled) shuffleAction?.let(::add)
             add(
                 DetailSecondaryAction(
@@ -289,6 +292,7 @@ fun DetailActions(
                     onLongClick = onSaveLongClick,
                 ),
             )
+            addAll(suffixActions)
         },
         isTablet = isTablet,
         onPlayClick = onPlayClick,

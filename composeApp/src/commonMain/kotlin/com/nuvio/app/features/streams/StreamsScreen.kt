@@ -1348,6 +1348,7 @@ private fun StreamSectionHeader(
     isLoading: Boolean,
     modifier: Modifier = Modifier,
     error: String? = null,
+    fetchingText: String = stringResource(Res.string.streams_fetching),
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
     Row(
@@ -1877,7 +1878,7 @@ private fun FooterLoadingBlock(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = checkingMoreAddonsText,
+            text = stringResource(Res.string.streams_checking_more_addons),
             modifier = Modifier.shimmer(),
             style = MaterialTheme.typography.bodySmall.copy(
                 fontSize = 12.sp,

@@ -1,6 +1,7 @@
 package com.nuvio.app.features.shuffle
 
 import com.nuvio.app.features.profiles.ProfileRepository
+import com.nuvio.app.isDesktop
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
@@ -37,10 +38,11 @@ internal object EpisodeShuffleRepository {
 
     fun readProfile(profileId: Int): EpisodeShuffleProfile = runCatching {
         EpisodeShuffleStorage.load(profileId)?.let { json.decodeFromString<EpisodeShuffleProfile>(it) }
-    }.getOrNull() ?: EpisodeShuffleProfile()
+    }.getOrNull()?.let { if (isDesktop) it.copy(available = false) else it } ?: EpisodeShuffleProfile()
 
     fun setAvailable(available: Boolean): Boolean {
         ensureLoaded()
+        if (isDesktop) return false
         return persist(state.value.copy(available = available), ProfileRepository.activeProfileId)
     }
 

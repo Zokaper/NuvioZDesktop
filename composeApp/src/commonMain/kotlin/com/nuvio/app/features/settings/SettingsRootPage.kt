@@ -108,6 +108,7 @@ internal fun LazyListScope.settingsRootContent(
     onDownloadsClick: () -> Unit,
     onAccountClick: () -> Unit,
     onSwitchProfileClick: (() -> Unit)? = null,
+    showDownloadsEntry: Boolean = true,
     showNotificationsEntry: Boolean = true,
     onWatchPartyClick: (() -> Unit)? = null,
     showAccountSection: Boolean = true,

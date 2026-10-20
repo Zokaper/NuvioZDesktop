@@ -1026,6 +1026,11 @@ internal fun MainAppContent(
                     }
 
                     is AppDeepLink.Party -> {
+                        if (!com.nuvio.app.core.build.UPSTREAM_PARTY_UI_ENABLED) {
+                            NuvioToastController.show(getString(Res.string.party_unavailable))
+                            AppDeepLinkRepository.markConsumed(deepLink)
+                            return@collectLatest
+                        }
                         appGateController?.appReady?.first { it }
                         navController.navigate(PartyRoute(code = deepLink.code, title = watchPartyTitle)) {
                             launchSingleTop = true
@@ -1376,6 +1381,7 @@ internal fun MainAppContent(
                 episodeTitle = media.episodeTitle,
                 episodeThumbnail = null,
                 pauseDescription = null,
+                runtimeMinutes = null,
                 resumePositionMs = resumePositionMs,
                 resumeProgressFraction = null,
                 manualSelection = true,
@@ -1777,6 +1783,7 @@ internal fun MainAppContent(
                                     }
                                 },
                                 onDownloadsClick = { navController.navigate(DownloadsRoute(downloadsTitle)) },
+                                onDownloadsSettingsClick = { navController.navigate(DownloadsSettingsRoute(downloadsTitle)) },
                                 onContinueWatchingClick = onContinueWatchingClick,
                                 onContinueWatchingDetails = onContinueWatchingDetails,
                                 onContinueWatchingLongPress = onContinueWatchingLongPress,
@@ -2132,6 +2139,10 @@ internal fun MainAppContent(
                     }
                 }
                 entry<PartyRoute> { route ->
+                    if (!com.nuvio.app.core.build.UPSTREAM_PARTY_UI_ENABLED) {
+                        LaunchedEffect(route) { navController.popBackStack() }
+                        return@entry
+                    }
                     SettingsDestination(route, navController) { onBack ->
                         PartyScreen(
                             initialCode = route.code,

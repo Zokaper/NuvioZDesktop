@@ -1,3 +1,18 @@
+## Upstream 0.1.31-alpha integration (2026-10-20; verification running)
+
+Named tag `e808a584e` merged as `74415dd0b` on `claude/social-v2-design` after
+Advanced Setup Language commit `4d2eea093` (111 focused checks and reviewed renders).
+Shared mobile adapters cherry-picked as `3d30d57d7`. Full desktop suite is running.
+Keep Z Watch Together and mobile-only shuffle policy; inherit media servers, new
+native Nuvio engine, stream metadata/controls, window insets and upstream fixes.
+Canonical decision record: mobile `Docs/UPSTREAM-SYNC-2026-10-20.md`.
+CI now installs GStreamer runtime base plugins and checks playbin/appsink to address
+the earlier frame_copy_test construction failure; CI confirmation is pending.
+Local Gradle warns that the cached native bridge DLL is older than source, so local
+Kotlin suites do not prove the new C++ bridge. A clean Windows CI/debug build is due.
+Maintainer reports no additional installed-build testing. Stable release copy/artwork
+and device acceptance remain pending. Earlier entries below are historical.
+
 ## Social V2 release inventory (2026-10-20)
 
 The [canonical inventory and artwork choices](https://github.com/Zokaper/nuvio-z/blob/main/Docs/SOCIAL-V2-RELEASE-INVENTORY.md)

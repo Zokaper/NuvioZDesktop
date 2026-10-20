@@ -4,6 +4,7 @@ import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamBehaviorHints
 import com.nuvio.app.features.streams.StreamProxyHeaders
 import kotlinx.atomicfu.locks.synchronized
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 
@@ -153,7 +154,10 @@ object DownloadsRepository {
      */
     fun onProfileChanged() {
         ensureLoaded()
-        synchronized(DownloadStore.lock) { DownloadStore.refreshViewsLocked() }
+        synchronized(DownloadStore.lock) {
+            _hasUnseenCompleted.value = false
+            DownloadStore.refreshViewsLocked()
+        }
         DownloadDiagnostics.note(
             "profile_view",
             "viewing=${DownloadStore.activeOwner()} visible=${DownloadStore.view.value.items.size} " +

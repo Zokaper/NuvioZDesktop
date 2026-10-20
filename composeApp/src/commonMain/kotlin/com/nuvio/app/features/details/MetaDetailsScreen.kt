@@ -115,7 +115,7 @@ import com.nuvio.app.features.details.components.DetailActionButtons
 import com.nuvio.app.features.details.components.isSeriesLikeTitle
 import com.nuvio.app.features.details.components.titleDownloadSecondaryAction
 import com.nuvio.app.features.details.components.DetailSecondaryAction
-import com.nuvio.app.features.details.components.DetailActions
+import com.nuvio.app.features.details.components.ZDetailActions
 import com.nuvio.app.features.details.components.CommentDetailSheet
 import com.nuvio.app.features.details.components.DetailAdditionalInfoSection
 import com.nuvio.app.features.details.components.DetailCastSection
@@ -1092,7 +1092,7 @@ fun MetaDetailsScreen(
                         onStartFromBeginning = { video ->
                             onPlay?.invoke(meta.type, video.id, meta.id, meta.type, meta.name, meta.logo,
                                 meta.poster, meta.background, video.season, video.episode, video.title,
-                                video.thumbnail, video.overview, 0L)
+                                video.thumbnail, video.overview, video.runtime, 0L)
                         },
                     )
                 }
@@ -1616,12 +1616,18 @@ fun MetaDetailsScreen(
                                             onHeightChanged = { heroHeightPx.intValue = it },
                                             actions = if (isSectionEnabled(MetaScreenSectionKey.ACTIONS)) {
                                                 {
-                                                    DetailActions(
+                                                    ZDetailActions(
                                                         playLabel = playButtonLabel,
                                                         playEnabled = isPrimaryPlayEnabled,
                                                         isSaved = isSaved,
                                                         isWatched = isWatched,
                                                         isTablet = true,
+                                                        contentType = meta.type,
+                                                        hasEpisodes = hasEpisodes,
+                                                        titleDownloadState = titleDownloadState,
+                                                        onDownloadClick = { presetDownloadScope = if (isSeriesLikeTitle(meta.type, hasEpisodes)) DownloadScope.SelectedSeasons(emptySet()) else DownloadScope.Movie },
+                                                        onDownloadedItemManage = { item -> manageDownloadTarget = ManageDownloadTarget(title = item.episodeTitle?.takeIf { it.isNotBlank() } ?: item.title, subtitle = localizedSeasonEpisodeCode(seasonNumber = item.seasonNumber, episodeNumber = item.episodeNumber), state = titleDownloadState.byLogicalKey[item.logicalContentKey] ?: ContentDownloadState.None) },
+                                                        onWatchTogetherClick = onWatchTogether?.takeIf { socialEnabled }?.let { callback -> { callback(watchPartyContent) } },
                                                         shuffleEnabled = shuffleSettings.enabled,
                                                         onPlayClick = onPrimaryPlayClick,
                                                         onPlayLongClick = if (showManualPlayOption) onPrimaryPlayLongClick else null,

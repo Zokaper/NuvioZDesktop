@@ -25,18 +25,3 @@ internal fun DownloadsDestination(
         },
     )
 }
-
-@Composable
-internal fun DownloadShowDestination(
-    route: DownloadShowRoute,
-    navController: NuvioNavigator,
-    onOpenDownload: (DownloadItem) -> Unit,
-) {
-    val onBack = rememberGuardedPopBackStack(navController, route)
-    DownloadsScreen(
-        onBack = onBack,
-        onOpenDownload = onOpenDownload,
-        initialShowId = route.showId,
-        onBackFromShow = onBack,
-    )
-}

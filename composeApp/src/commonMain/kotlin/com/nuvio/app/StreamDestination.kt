@@ -189,6 +189,8 @@ internal fun buildP2pPlayerLaunch(
     torrentInfoHash = infoHash,
     torrentFileIdx = stream.p2pFileIdx,
     torrentFilename = stream.behaviorHints.filename,
+    sourceFilename = stream.behaviorHints.filename,
+    stream = stream,
     torrentTrackers = stream.p2pTrackers,
     initialPositionMs = resolvedResumePositionMs ?: 0L,
     initialProgressFraction = resolvedResumeProgressFraction,
@@ -1267,7 +1269,7 @@ internal fun StreamDestination(
                 .onFailure { if (it is CancellationException) throw it }
                 .getOrElse { error ->
                     if (!StreamsRepository.skipAutoPlayStream(selectedStream)) {
-                        NuvioToastController.show(error.serverPlaybackMessage())
+                        giveUpToSourceList(error.serverPlaybackMessage(), path = "manual_server_preparation_failed")
                     }
                     return@LaunchedEffect
                 }
@@ -1530,7 +1532,7 @@ internal fun StreamDestination(
                     .onFailure { if (it is CancellationException) throw it }
                     .getOrElse { error ->
                         preparingServerStream = false
-                        NuvioToastController.show(error.serverPlaybackMessage())
+                        giveUpToSourceList(error.serverPlaybackMessage(), path = "manual_server_preparation_failed")
                         return@launch
                     }
                 val serverResumeMs = serverResumePositionMs(prepared)
@@ -1541,6 +1543,7 @@ internal fun StreamDestination(
                     resolvedResumeProgressFraction = resolvedResumeProgressFraction.takeIf { serverResumeMs == null },
                     forceExternal = false,
                     forceInternal = true,
+                    safePartySource = retainedPartySource,
                 )
             }
             return
@@ -1613,7 +1616,6 @@ internal fun StreamDestination(
                     forceExternal = forceExternal,
                     forceInternal = forceInternal,
                     // The resolved URL expires after a few hours, so it isn't kept for reuse.
-                    saveForReuse = false,
                 )
             }
             return

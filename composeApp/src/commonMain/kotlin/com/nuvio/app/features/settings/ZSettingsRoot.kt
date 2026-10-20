@@ -119,6 +119,8 @@ internal fun zSettingsSectionFor(page: SettingsPage): ZSettingsSection = when (p
     SettingsPage.Navigation,
     -> ZSettingsSection.LookAndFeel
     SettingsPage.ContentDiscovery,
+    SettingsPage.MediaServers,
+    SettingsPage.MediaServer,
     SettingsPage.Addons,
     SettingsPage.Plugins,
     SettingsPage.Integrations,

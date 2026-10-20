@@ -767,7 +767,7 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
 
     BindPlayerUiVisibilityEffects()
     BindPlayerMetadataAndSkipEffects()
-    BindPartyEffects()
+    if (com.nuvio.app.core.build.UPSTREAM_PARTY_UI_ENABLED) BindPartyEffects()
 
     DisposableEffect(activeSourceUrl) {
         val effectSourceUrl = activeSourceUrl
@@ -1064,7 +1064,6 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
                 val notification = current.autoSkipNotificationMessage(seekPositionMs)
                 if (!controller.trySeekTo(seekPositionMs)) return@LaunchedEffect
                 autoSkippedIntervalKeys.add(intervalKey)
-                autoSkippedIntervals.add(current)
                 scheduleProgressSyncAfterSeek()
                 publishPartyPlayback(positionMs = seekPositionMs)
                 skipIntervalDismissed = true
@@ -1149,11 +1148,11 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
     }
 
     LaunchedEffect(playbackSnapshot.isEnded) {
-        if (playbackSnapshot.isEnded && nextEpisodeCardDismissed &&
+        if (playbackSnapshot.isEnded && nextEpisodeDismissedForVideoId == activeVideoId &&
             playerSettingsUiState.streamAutoPlayNextEpisodeEnabled &&
             nextEpisodeInfo?.hasAired == true
         ) {
-            nextEpisodeCardDismissed = false
+            nextEpisodeDismissedForVideoId = null
         }
     }
 

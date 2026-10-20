@@ -653,7 +653,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         else -> ""
     }
     val openingNamer = rememberLanguageNamer(openingLoadingState.facts, openingLoadingState.contentLanguage)
-    val partyControls = if (isDesktop) rememberPartyControlsState() else PlayerControlPartyState()
+    val partyControls = if (isDesktop && com.nuvio.app.core.build.UPSTREAM_PARTY_UI_ENABLED) rememberPartyControlsState() else PlayerControlPartyState()
     val playerControlsState = PlayerControlsState(
         title = title,
         episodeText = episodeText,
@@ -1119,7 +1119,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         RenderPlaybackDiagnosticsHud()
         RenderPlayerModals(displayedPositionMs = displayedPositionMs)
         if (!isDesktop) {
-            RenderParty(runtime = runtime)
+            if (com.nuvio.app.core.build.UPSTREAM_PARTY_UI_ENABLED) RenderParty(runtime = runtime)
         }
     }
 }
@@ -1185,7 +1185,7 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
                 if (playerControlsLocked) unlockPlayerControls() else lockPlayerControls()
             },
             onBack = { requestBack() },
-            onPartyClick = if (PartyRepository.available.collectAsStateWithLifecycle().value) {
+            onPartyClick = if (com.nuvio.app.core.build.UPSTREAM_PARTY_UI_ENABLED && PartyRepository.available.collectAsStateWithLifecycle().value) {
                 {
                     showPartyPanel = true
                     controlsVisible = false

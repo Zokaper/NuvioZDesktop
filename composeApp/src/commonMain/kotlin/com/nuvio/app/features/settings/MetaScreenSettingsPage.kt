@@ -183,21 +183,6 @@ internal fun LazyListScope.metaScreenSettingsContent(
                 SettingsGroupDivider(isTablet = isTablet)
                 RatingsSettings(isTablet = isTablet, uiState = uiState)
                 SettingsGroupDivider(isTablet = isTablet)
-                val shuffleProfile by remember {
-                    EpisodeShuffleRepository.ensureLoaded()
-                    EpisodeShuffleRepository.uiState
-                }.collectAsStateWithLifecycle()
-                val shuffleSaveFailed = stringResource(Res.string.shuffle_save_failed)
-                SettingsSwitchRow(
-                    title = stringResource(Res.string.random_episode_title),
-                    description = stringResource(Res.string.layout_random_episode_sub),
-                    checked = shuffleProfile.available,
-                    isTablet = isTablet,
-                    onCheckedChange = {
-                        if (!EpisodeShuffleRepository.setAvailable(it)) NuvioToastController.show(shuffleSaveFailed)
-                    },
-                )
-                SettingsGroupDivider(isTablet = isTablet)
                 MetaEpisodeCardStyleSelector(
                     isTablet = isTablet,
                     selectedStyle = uiState.episodeCardStyle,

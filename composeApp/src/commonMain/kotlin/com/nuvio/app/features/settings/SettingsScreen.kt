@@ -123,6 +123,7 @@ private val SettingsTabletContentMaxWidth = 960.dp
 private val SettingsTabletMinimumGutter = 40.dp
 @Composable
 private fun watchPartyRow(onClick: () -> Unit): (() -> Unit)? {
+    if (!com.nuvio.app.core.build.UPSTREAM_PARTY_UI_ENABLED) return null
     val available by PartyRepository.available.collectAsStateWithLifecycle()
     return onClick.takeIf { available }
 }
@@ -150,6 +151,7 @@ fun SettingsScreen(
     onContinueWatchingClick: () -> Unit = {},
     onAddonsClick: () -> Unit = {},
     onPluginsClick: () -> Unit = {},
+    onDownloadsClick: () -> Unit = {},
     onAccountClick: () -> Unit = {},
     onSupportersContributorsClick: () -> Unit = {},
     onLicensesAttributionsClick: () -> Unit = {},
@@ -314,8 +316,8 @@ fun SettingsScreen(
         }
 
         PlatformBackHandler(
-            enabled = screenActive && previousPage != null && rootActionsEnabled,
-            onBack = ::navigateBack,
+            enabled = previousPage != null && rootActionsEnabled,
+            onBack = { previousPage?.let { currentPage = it.name } },
         )
 
         CompositionLocalProvider(
@@ -552,6 +554,7 @@ private fun MobileSettingsScreen(
     onContinueWatchingClick: () -> Unit = {},
     onAddonsClick: () -> Unit = {},
     onPluginsClick: () -> Unit = {},
+    onDownloadsClick: () -> Unit = {},
     onAccountClick: () -> Unit = {},
     onSupportersContributorsClick: () -> Unit = {},
     onLicensesAttributionsClick: () -> Unit = {},
@@ -814,7 +817,7 @@ private fun MobileSettingsScreen(
                 )
                 SettingsPage.MediaServer -> mediaServerSettingsContent(
                     isTablet = false,
-                    onBack = onNavigateBack,
+                    onBack = { onPageChange(SettingsPage.MediaServers) },
                 )
                 SettingsPage.Plugins -> if (AppFeaturePolicy.pluginsEnabled) pluginsSettingsContent() else addonsSettingsContent()
                 SettingsPage.Homescreen -> homescreenSettingsContent(
@@ -972,6 +975,7 @@ private fun TabletSettingsScreen(
     metaScreenSettingsUiState: MetaScreenSettingsUiState,
     continueWatchingPreferencesUiState: ContinueWatchingPreferencesUiState,
     posterCardStyleUiState: PosterCardStyleUiState,
+    onDownloadsClick: () -> Unit = {},
     onSwitchProfile: (() -> Unit)? = null,
     onSupportersContributorsClick: () -> Unit = {},
     onLicensesAttributionsClick: () -> Unit = {},
@@ -1291,7 +1295,10 @@ private fun TabletSettingsScreen(
                             showPluginsEntry = AppFeaturePolicy.pluginsEnabled,
                             onAddonsClick = { openInlinePage(SettingsPage.Addons) },
                             onPluginsClick = { openInlinePage(SettingsPage.Plugins) },
+                            onMediaServersClick = { openInlinePage(SettingsPage.MediaServers) },
                         )
+                        SettingsPage.MediaServers -> mediaServersSettingsContent(isTablet = true, onServerClick = { openInlinePage(SettingsPage.MediaServer) })
+                        SettingsPage.MediaServer -> mediaServerSettingsContent(isTablet = true, onBack = { onPageChange(SettingsPage.MediaServers) })
                         SettingsPage.Addons -> addonsSettingsContent()
                         SettingsPage.Plugins -> if (AppFeaturePolicy.pluginsEnabled) pluginsSettingsContent() else addonsSettingsContent()
                         SettingsPage.Homescreen -> homescreenSettingsContent(
@@ -1341,6 +1348,7 @@ private fun TabletSettingsScreen(
                             simklUiState = simklAuthUiState,
                             settingsUiState = trackingSettingsUiState,
                             commentsEnabled = traktCommentsEnabled,
+                            mdbListConnected = mdbListConnected,
                             onCommentsEnabledChange = TraktCommentsSettings::setEnabled,
                         )
                     }

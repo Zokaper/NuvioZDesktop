@@ -63,6 +63,7 @@ import org.jetbrains.compose.resources.stringResource
 
 internal sealed class SettingsSearchTarget {
     data class Page(val page: SettingsPage) : SettingsSearchTarget()
+    object Downloads : SettingsSearchTarget()
     object Collections : SettingsSearchTarget()
     object SwitchProfile : SettingsSearchTarget()
     object CheckForUpdates : SettingsSearchTarget()
@@ -95,6 +96,7 @@ internal data class SettingsSearchEntry(
 internal fun settingsSearchEntries(
     isTablet: Boolean,
     pluginsEnabled: Boolean,
+    downloadsEnabled: Boolean,
     notificationsEnabled: Boolean,
     externalPlayerSupported: Boolean,
     supportersContributorsPageEnabled: Boolean,
@@ -1014,7 +1016,6 @@ internal fun settingsSearchEntries(
             ).joinToString(" "),
         ),
         PlaybackSearchRow("meta-episode-cards", stringResource(Res.string.settings_meta_episode_cards), stringResource(Res.string.settings_meta_episode_cards_description)),
-        PlaybackSearchRow("meta-shuffle", stringResource(Res.string.random_episode_title), stringResource(Res.string.layout_random_episode_sub)),
         PlaybackSearchRow("meta-blur-episodes", stringResource(Res.string.settings_meta_blur_unwatched_episodes), stringResource(Res.string.settings_meta_blur_unwatched_episodes_description)),
     ).forEach { row ->
         addRow(
