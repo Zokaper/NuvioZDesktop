@@ -205,8 +205,22 @@ class AdvancedSetupRenderHarness {
         }
     }
 
-    private fun renderPanels(label: String, facts: AdvancedSetupFacts, w: Int, h: Int, failures: MutableList<String>) {
-        for (category in advancedSetupCategories(facts)) {
+    @Test
+    fun renderLanguagePanels() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        for ((w, h) in listOf(360 to 740, 420 to 900, 1280 to 820)) {
+            val facts = if (w < 1000) androidFacts else desktopFacts
+            renderPanels("language", facts, w, h, failures, listOf(AdvancedSetupCategory.Language))
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
+    private fun renderPanels(
+        label: String, facts: AdvancedSetupFacts, w: Int, h: Int, failures: MutableList<String>,
+        categories: List<AdvancedSetupCategory> = advancedSetupCategories(facts),
+    ) {
+        for (category in categories) {
             val panels = advancedSetupPanels(category, facts)
             panels.forEachIndexed { index, panel ->
                 render("panel-$label-${w}x$h-${category.name}-${panel.name}", w, h, AppTheme.WHITE, failures) { windowWidth ->
