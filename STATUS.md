@@ -1,3 +1,12 @@
+## Social V2 release inventory (2026-10-20)
+
+The [canonical inventory and artwork choices](https://github.com/Zokaper/nuvio-z/blob/main/Docs/SOCIAL-V2-RELEASE-INVENTORY.md)
+compares the Social V2 branches against mobile 0.5.4-z3+129 and desktop 0.1.26-alpha-z2+133.
+It separates implemented features, the agreed but unported language/What's New package, smaller
+fixes, render candidates and unfinished/deferred work. Current source was checked where old plans
+promised controls not present in the UI. Maintainer writes final notes and selects the cards.
+No product code changed in this inventory audit; existing CI/acceptance blockers remain recorded below.
+
 ## New-settings offer width follow-up (2026-10-20)
 
 Maintainer approved the revised What's New layout and requested the offer stay centered like the
