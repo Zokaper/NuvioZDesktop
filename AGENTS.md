@@ -16,13 +16,13 @@ what that means are canonical in `nuvio-z` and cover this repository too:
 - `Docs/UPSTREAM.md`: https://github.com/Zokaper/nuvio-z/blob/main/Docs/UPSTREAM.md
   (the patch-surface rules, the versioning scheme, and the sync procedure)
 - `Docs/PATCH-SURFACE.md`: https://github.com/Zokaper/nuvio-z/blob/main/Docs/PATCH-SURFACE.md
-  (every upstream-owned file we modify - **135 of them here**, against 8 in `NuvioZWeb`)
+  (every upstream-owned file we modify - **281 of them here**, against 8 in `NuvioZWeb`)
 
 **Upstream for this repository is a different repository from mobile's.** Upstream retired
 `NuvioMedia/NuvioMobile` branch `desktopweb` and moved desktop development to
 `NuvioMedia/NuvioDesktop` branch `Dev`, which is where our current named base
 `0.1.31-alpha` (`e808a584e`) lives (merged into Social V2 on 2026-10-20).
-Debug version files retain the `0.1.23-alpha-z6` line until the final stable metadata bump.
+Debug version files retain the `0.1.26-alpha-z2` line until the final stable metadata bump.
 `NuvioMobile:cmp-rewrite` still carries a `desktopMain`, but it is vestigial -- 4 files against our
 278 -- so merging desktop work from it would be wrong.
 

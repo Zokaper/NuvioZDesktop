@@ -279,6 +279,7 @@ class AdvancedSetupRenderHarness {
                 scene.close()
             }
         }.onFailure { error ->
+            error.printStackTrace()
             failures += "$name: ${error::class.simpleName}: ${error.message}"
         }
     }

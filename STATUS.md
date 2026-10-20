@@ -1,17 +1,27 @@
-## Upstream 0.1.31-alpha integration (2026-10-20; verification running)
+## Upstream 0.1.31-alpha integration (2026-10-20; final verification running)
 
-Named tag `e808a584e` merged as `74415dd0b` on `claude/social-v2-design` after
-Advanced Setup Language commit `4d2eea093` (111 focused checks and reviewed renders).
-Shared mobile adapters cherry-picked as `3d30d57d7`. Full desktop suite is running.
-Keep Z Watch Together and mobile-only shuffle policy; inherit media servers, new
-native Nuvio engine, stream metadata/controls, window insets and upstream fixes.
-Canonical decision record: mobile `Docs/UPSTREAM-SYNC-2026-10-20.md`.
-CI now installs GStreamer runtime base plugins and checks playbin/appsink to address
-the earlier frame_copy_test construction failure; CI confirmation is pending.
-Local Gradle warns that the cached native bridge DLL is older than source, so local
-Kotlin suites do not prove the new C++ bridge. A clean Windows CI/debug build is due.
-Maintainer reports no additional installed-build testing. Stable release copy/artwork
-and device acceptance remain pending. Earlier entries below are historical.
+Active branch `claude/social-v2-design` merges named upstream `e808a584e` as
+`74415dd0b`; language/What's New and Advanced Setup Language are complete.
+Full local desktop run reached 3,872 tests, with seven failures and two skips before
+its existing 20-minute timeout in FeatureReelRenderHarness (promotional capture).
+Six failures are corrected: Windows cached-JAR handles (V7, standalone 2/2), registry
+classification (shared pure boundary checks 17/17), short-placeholder threshold guard,
+missing native openingSpinner lookup, and two old short-duration test fixtures.
+A Home/HomeHero Advanced Setup render reported a nested-measure exception once;
+its next run will log the full stack. Player/storage focused rerun is running;
+then repeat the full suite using existing promo capture filters, retaining real UI renders.
+All nine pure desktop groups pass 1,080 checks; mobile passes 1,090 plus 3,828 host checks.
+
+Clean Windows MSI CI passed at `4b9f855b9` (run 39432369389), including the new native
+C++ bridge. Mobile iOS framework/Xcode and Swift lifecycle/cache CI pass (39429780115).
+Keep Z Watch Together and mobile-only shuffle policy. Inherit media servers, new
+Nuvio engine, metadata, native controls/insets, PiP and platform-supported AutoSync.
+Linux CI now installs both GStreamer runtime plugins and the newly required
+mpv/WebKit/GTK/X11 development libraries. Final complete Linux test result is pending.
+Debug counter 116 is prepared, not yet dispatched; mobile debug 108 is building.
+Maintainer reports no additional installed-build testing; release copy/artwork and
+hardware acceptance remain open. Canonical details: mobile Docs/UPSTREAM-SYNC-2026-10-20.md.
+Earlier entries below are historical.
 
 ## Social V2 release inventory (2026-10-20)
 
