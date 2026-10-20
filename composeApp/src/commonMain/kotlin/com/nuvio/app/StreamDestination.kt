@@ -1606,7 +1606,7 @@ internal fun StreamDestination(
                 val resolved = YouTubeStreamResolver.Default.resolve(stream)
                 resolvingYouTubeStream = false
                 if (resolved == null) {
-                    NuvioToastController.show(getString(Res.string.youtube_resolution_failed))
+                    giveUpToSourceList(getString(Res.string.youtube_resolution_failed), path = "manual_youtube_resolution_failed")
                     return@launch
                 }
                 openSelectedStream(
@@ -1615,7 +1615,7 @@ internal fun StreamDestination(
                     resolvedResumeProgressFraction = resolvedResumeProgressFraction,
                     forceExternal = forceExternal,
                     forceInternal = forceInternal,
-                    // The resolved URL expires after a few hours, so it isn't kept for reuse.
+                    safePartySource = retainedPartySource,
                 )
             }
             return

@@ -1616,6 +1616,7 @@ fun MetaDetailsScreen(
                                             onHeightChanged = { heroHeightPx.intValue = it },
                                             actions = if (isSectionEnabled(MetaScreenSectionKey.ACTIONS)) {
                                                 {
+                                                    Column {
                                                     ZDetailActions(
                                                         playLabel = playButtonLabel,
                                                         playEnabled = isPrimaryPlayEnabled,
@@ -1636,6 +1637,8 @@ fun MetaDetailsScreen(
                                                         onSaveClick = toggleSaved,
                                                         onSaveLongClick = openLibraryListPicker,
                                                     )
+                                                    SocialRecommendedByLine(meta.id, Modifier.padding(top = 14.dp))
+                                                    }
                                                 }
                                             } else {
                                                 null

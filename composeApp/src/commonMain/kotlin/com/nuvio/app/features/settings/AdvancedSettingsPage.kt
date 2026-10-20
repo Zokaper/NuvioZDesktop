@@ -553,6 +553,7 @@ private fun AdvancedPlaybackSections(isTablet: Boolean) {
                         isTablet = isTablet,
                         onCheckedChange = PlayerSettingsRepository::setTunnelingEnabled,
                     )
+                    PlaybackBufferSettingsRows(autoPlayPlayerSettings, isTablet, exoOptionsEnabled)
                     }
                 }
             }
