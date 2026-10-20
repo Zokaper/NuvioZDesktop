@@ -604,6 +604,12 @@ class LanguageWhatsNewDesignHarness {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { Pill("Done", filled = true) }
     }
 
+    /** Test-only illustrations shared with the production-layout render harness. */
+    @Composable
+    internal fun PreviewImage(key: String) {
+        Box(Modifier.fillMaxWidth().aspectRatio(2f)) { Visual(key) }
+    }
+
     /** The illustration for an entry, drawn rather than shipped as an image. */
     @Composable
     private fun BoxScope.Visual(key: String) {

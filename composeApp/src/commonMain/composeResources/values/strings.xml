@@ -3679,5 +3679,6 @@
     <string name="zoffer_close">Back to What's New</string>
     <string name="zwhatsnew_action_review_settings">Review new settings</string>
     <string name="zwhatsnew_all_platforms">All platforms</string>
+    <string name="zwhatsnew_bug_fixes_count">Bug fixes (%1$d)</string>
     <!-- /Nuvio Z: language settings. -->
 </resources>

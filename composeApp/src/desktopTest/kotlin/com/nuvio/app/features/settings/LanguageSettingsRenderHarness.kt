@@ -26,7 +26,7 @@ import com.nuvio.app.features.whatsnew.NewSettingsOffer
 import com.nuvio.app.features.whatsnew.WhatsNewCategory
 import com.nuvio.app.features.whatsnew.WhatsNewEventUi
 import com.nuvio.app.features.whatsnew.WhatsNewItem
-import com.nuvio.app.features.whatsnew.WhatsNewScreen
+import com.nuvio.app.features.whatsnew.WhatsNewContent
 import com.nuvio.app.features.whatsnew.WhatsNewSection
 import com.nuvio.app.features.whatsnew.WhatsNewVersion
 import org.jetbrains.skia.EncodedImageFormat
@@ -50,6 +50,8 @@ class LanguageSettingsRenderHarness {
 
     private val outputDir = File("build/language-settings-render")
 
+    private val illustrations = LanguageWhatsNewDesignHarness()
+
     private val all = listOf(ChangelogPlatform.DESKTOP, ChangelogPlatform.ANDROID, ChangelogPlatform.IOS)
 
     private val event = WhatsNewEventUi(
@@ -64,13 +66,20 @@ class LanguageSettingsRenderHarness {
             WhatsNewSection(
                 WhatsNewCategory.NewFeatures,
                 listOf(
-                    WhatsNewItem("Language and subtitles", "Placeholder copy.", ChangelogAction.REVIEW_SETTINGS, all, image = "missing.webp"),
-                    WhatsNewItem("Pop-ups and the tray", "Placeholder copy.", platforms = listOf(ChangelogPlatform.DESKTOP)),
+                    WhatsNewItem("Social, rebuilt", "See what friends are watching right now, join them in one tap, and send each other recommendations.", platforms = all, image = "social"),
+                    WhatsNewItem("Language and subtitles", "Original audio and full subtitles for foreign titles, your language and forced subtitles for the rest.", ChangelogAction.REVIEW_SETTINGS, all, image = "language"),
                 ),
             ),
             WhatsNewSection(
                 WhatsNewCategory.Improvements,
-                listOf(WhatsNewItem("Keeps itself signed on iPhone", "", platforms = listOf(ChangelogPlatform.IOS))),
+                listOf(
+                    // An illustrated improvement belongs with the picture cards too.
+                    WhatsNewItem("Pop-ups and the tray", "Nuvio Z can keep running in the tray and tell you when a friend starts watching.", platforms = listOf(ChangelogPlatform.DESKTOP), image = "popup"),
+                    WhatsNewItem("Next episode's loading screen shows the right episode and a sharp backdrop", "", platforms = all),
+                    WhatsNewItem("A notice when you've been signed out, with a Sign in button", "", platforms = all),
+                    WhatsNewItem("Start with Windows", "", platforms = listOf(ChangelogPlatform.DESKTOP)),
+                    WhatsNewItem("Keeps itself signed on iPhone", "", platforms = listOf(ChangelogPlatform.IOS)),
+                ),
             ),
             WhatsNewSection(
                 WhatsNewCategory.BugFixes,
@@ -99,11 +108,36 @@ class LanguageSettingsRenderHarness {
         }
         for ((w, h) in listOf(1280 to 820, 420 to 900)) {
             render("offer-$w", w, h, failures) { NewSettingsOffer(onYes = {}, onNo = {}, onBackToWhatsNew = {}) }
-            render("whatsnew-$w", w, if (w >= 700) 1000 else 1400, failures) {
-                WhatsNewScreen(versionName = "0.1.27-alpha-z1", events = listOf(event), onContinue = {}, showHistory = false, onAction = {})
+            render("whatsnew-$w", w, h, failures) {
+                ShippedWhatsNew()
+            }
+        }
+        for ((w, h) in listOf(1280 to 2350, 420 to 1950)) {
+            render("whatsnew-full-$w", w, h, failures) { ShippedWhatsNew(topAligned = true) }
+        }
+        // Check the real resource loader's graceful fallback without preview illustrations.
+        render("whatsnew-missing-image", 420, 900, failures) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                WhatsNewContent(
+                    versionName = "Preview", onContinue = {}, showHistory = false,
+                    events = listOf(event.copy(sections = listOf(WhatsNewSection(
+                        WhatsNewCategory.NewFeatures,
+                        listOf(WhatsNewItem("Missing artwork", "The entry remains readable.", platforms = all, image = "missing.webp")),
+                    )))),
+                )
             }
         }
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
+    @Composable
+    private fun ShippedWhatsNew(topAligned: Boolean = false) {
+        Box(Modifier.fillMaxSize(), contentAlignment = if (topAligned) Alignment.TopCenter else Alignment.Center) {
+            WhatsNewContent(
+                versionName = "0.1.27-alpha-z1", events = listOf(event), onContinue = {},
+                showHistory = false, onAction = {}, imageContent = { illustrations.PreviewImage(it) },
+            )
+        }
     }
 
     private fun render(name: String, widthDp: Int, heightDp: Int, failures: MutableList<String>, content: @Composable () -> Unit) {

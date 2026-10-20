@@ -1,3 +1,29 @@
+## What's New layout correction (2026-10-20, desktop Social V2 branch)
+
+Maintainer prefers the initial `language-whatsnew-design/whatsnew-{1280,420}.png` renders.
+`WhatsNewScreen` now leads with one stream of picture cards for features **and** improvements,
+followed by smaller changes as text bullets, without category headings. Platform tags stay beside
+all entries; fixes use a neutral expandable count row. The dialog width is capped before filling
+available space, and its scroll area uses the available height. Review settings is a compact pill.
+
+Production-layout renders now share the original test-only illustrations and representative copy,
+instead of a missing image and placeholder text. `whatsnew-full-*` shows the whole layout;
+`whatsnew-*` shows a constrained viewport; `whatsnew-missing-image` exercises resource fallback.
+These are preview fixtures, not maintainer-authored release notes or shipped artwork.
+
+Verified on the final source: **580/580 tests, 68 suites, zero failures/errors/skips**, fresh XML,
+Gradle exit 0 (`build/whatsnew-layout-final-verification.log`). This is the handoff's focused
+player/setup/What's New/language/sync selection plus the production render harness, not the full
+repository suite. An earlier run had one known NativePlayerControllerTeardownTest timing failure;
+the final full selection passed it. Reviewed desktop/phone full and viewport PNGs plus missing-image
+fallback; the language render correctly names English.
+
+Live Hot Reload preview: 680 dp dialog cap, scrolling, fixes expand/collapse, 420x900 resize,
+Review settings and Done callbacks verified; no runtime UI exception. Preview used isolated APPDATA;
+temporary launcher/source/artwork were removed and the final source rebuilt/tested. Evidence:
+`build/whatsnew-live-verification.md`. Mobile port, Advanced Setup language panel, debug builds and
+maintainer acceptance in installed builds remain pending.
+
 ## Mobile 0.5.4-z3 and Installer 3 released (2026-10-18; desktop product unchanged)
 
 Mirrored mobile's global changelog event seq 4 (0.5.4-z3, serial 129), including
