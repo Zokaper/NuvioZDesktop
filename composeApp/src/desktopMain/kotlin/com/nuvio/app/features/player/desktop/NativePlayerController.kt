@@ -85,6 +85,8 @@ internal class NativePlayerController(
     private val createWaitTimeoutMs: Long = 5_000L,
     private val releaseTimeoutMs: Long = 10_000L,
     private val onCreateWaitCompleted: () -> Unit = {},
+    // Lifecycle adapters may supply synthetic handles and own native configuration themselves.
+    private val configureCreatedPlayer: (() -> Unit) -> Unit = { configure -> configure() },
 ) : PlayerEngineController {
     private companion object {
         /**
@@ -460,13 +462,15 @@ internal class NativePlayerController(
                             "attach created handle=$created source=${resolvedSource.toPlaybackLogKey()} " +
                                 "initialPositionMs=${pending.initialPositionMs}"
                         }
-                        applyRememberedVolume()
-                        updateControls(controlsState)
-                        setResizeMode(rememberedResizeMode)
-                        if (currentNowPlayingTitle.isNotEmpty() || currentArtworkUrl.isNotEmpty()) {
-                            setNowPlayingMetadata(currentNowPlayingTitle, currentNowPlayingSubtitle, currentArtworkUrl)
+                        configureCreatedPlayer {
+                            applyRememberedVolume()
+                            updateControls(controlsState)
+                            setResizeMode(rememberedResizeMode)
+                            if (currentNowPlayingTitle.isNotEmpty() || currentArtworkUrl.isNotEmpty()) {
+                                setNowPlayingMetadata(currentNowPlayingTitle, currentNowPlayingSubtitle, currentArtworkUrl)
+                            }
+                            applyPendingSubtitleSettings()
                         }
-                        applyPendingSubtitleSettings()
                     }
                 }.onFailure { error ->
                     log.w(error) { "attach failed source=${pending.sourceUrl.toPlaybackLogKey()}" }

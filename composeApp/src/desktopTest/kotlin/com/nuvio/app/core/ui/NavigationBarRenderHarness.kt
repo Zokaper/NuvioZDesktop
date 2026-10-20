@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.features.settings.NavBarStyle
+import com.nuvio.app.promo.VirtualClockDispatcher
 import org.jetbrains.skia.EncodedImageFormat
 import java.io.File
 import kotlin.test.Test
@@ -247,7 +248,8 @@ class NavigationBarRenderHarness {
         val heightState = NuvioNavBarHeightState()
         val scrollState = NuvioNavBarScrollState()
         runCatching {
-            val scene = ImageComposeScene(width = 411, height = 140, density = Density(1f)) {
+            val dispatcher = VirtualClockDispatcher()
+            val scene = ImageComposeScene(width = 411, height = 140, density = Density(1f), coroutineContext = dispatcher) {
                 NuvioTheme(darkTheme = true, appTheme = AppTheme.WHITE, amoled = false) {
                     NavBarScene(
                         style = NavBarStyle.ADAPTIVE,
@@ -262,7 +264,9 @@ class NavigationBarRenderHarness {
                 fun run(millis: Long) {
                     val end = clock + millis
                     while (clock < end) {
+                        dispatcher.advanceTo(clock)
                         scene.render(clock * 1_000_000L)
+                        dispatcher.pump()
                         clock += 16
                     }
                 }
@@ -340,22 +344,24 @@ class NavigationBarRenderHarness {
         content: @Composable () -> Unit,
     ) {
         runCatching {
+            val clock = VirtualClockDispatcher()
             val scene = ImageComposeScene(
                 width = widthDp,
                 height = heightDp,
                 density = Density(1f),
+                coroutineContext = clock,
             ) {
                 NuvioTheme(darkTheme = true, appTheme = AppTheme.WHITE, amoled = false) { content() }
             }
             try {
-                // WARN **Render twice and keep the second frame.**
-                //
-                // The auto-demote reports overflow from `onTextLayout`, i.e. during layout, and the
-                // recomposition that answers it lands on the *next* frame. A single `render(0L)`
-                // therefore photographs the bar mid-decision and can never show a demoted label -
-                // the harness would report the feature missing when it is merely one frame away.
-                scene.render(0L)
-                val image = scene.render(16L)
+                // Pump layout callbacks on the render thread and settle the real animation clock.
+                // The old second frame was 16 nanoseconds after the first.
+                repeat(60) { frame ->
+                    clock.advanceTo(frame * 16L)
+                    scene.render(frame * 16_000_000L)
+                    clock.pump()
+                }
+                val image = scene.render(1_000_000_000L)
                 val data = image.encodeToData(EncodedImageFormat.PNG) ?: error("encodeToData was null")
                 File(outputDir, "$name.png").writeBytes(data.bytes)
             } finally {
