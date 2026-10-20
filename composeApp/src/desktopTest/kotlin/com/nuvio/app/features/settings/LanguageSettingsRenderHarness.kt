@@ -22,7 +22,7 @@ import com.nuvio.app.core.ui.AppTheme
 import com.nuvio.app.core.ui.NuvioTheme
 import com.nuvio.app.features.whatsnew.ChangelogAction
 import com.nuvio.app.features.whatsnew.ChangelogPlatform
-import com.nuvio.app.features.whatsnew.NewSettingsOffer
+import com.nuvio.app.features.whatsnew.NewSettingsOfferContent
 import com.nuvio.app.features.whatsnew.WhatsNewCategory
 import com.nuvio.app.features.whatsnew.WhatsNewEventUi
 import com.nuvio.app.features.whatsnew.WhatsNewItem
@@ -31,6 +31,8 @@ import com.nuvio.app.features.whatsnew.WhatsNewSection
 import com.nuvio.app.features.whatsnew.WhatsNewVersion
 import org.jetbrains.skia.EncodedImageFormat
 import java.io.File
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import kotlin.test.Test
 import kotlin.test.fail
 
@@ -40,7 +42,7 @@ import kotlin.test.fail
  *
  * ```
  * ./gradlew :composeApp:desktopTest --tests "*LanguageSettingsRenderHarness" --rerun
- * # PNGs land in composeApp/build/language-settings-render/
+ * # PNGs land in timestamped subfolders of composeApp/build/language-settings-render/
  * ```
  *
  * The language sections read the active profile's stored preferences, so on a fresh test machine
@@ -48,7 +50,11 @@ import kotlin.test.fail
  */
 class LanguageSettingsRenderHarness {
 
-    private val outputDir = File("build/language-settings-render")
+    // Open previews may be memory-mapped by Windows. A fresh folder avoids overwriting those files.
+    private val outputDir = File(
+        "build/language-settings-render",
+        LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS")),
+    )
 
     private val illustrations = LanguageWhatsNewDesignHarness()
 
@@ -107,7 +113,11 @@ class LanguageSettingsRenderHarness {
             }
         }
         for ((w, h) in listOf(1280 to 820, 420 to 900)) {
-            render("offer-$w", w, h, failures) { NewSettingsOffer(onYes = {}, onNo = {}, onBackToWhatsNew = {}) }
+            render("offer-$w", w, h, failures) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    NewSettingsOfferContent(onYes = {}, onNo = {}, onBackToWhatsNew = {})
+                }
+            }
             render("whatsnew-$w", w, h, failures) {
                 ShippedWhatsNew()
             }

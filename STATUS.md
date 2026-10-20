@@ -1,3 +1,30 @@
+## New-settings offer width follow-up (2026-10-20)
+
+Maintainer approved the revised What's New layout and requested the offer stay centered like the
+initial renders. The offer now caps width at 460 dp before filling its available space; the render
+harness draws the same production surface in a centered frame.
+
+Verified on final source: **131/131 focused tests, six suites, zero failures/errors/skips**, Gradle
+exit 0 (`build/offer-final-verification-rerun.log`): LanguageSettingsRenderHarness, SetupWizardStepsTest,
+and all What's New tests. This is a focused follow-up to the prior 580-test run, not another full
+selection. An initial render attempt could not overwrite three PNGs open in a Windows image viewer;
+the harness now writes timestamped run folders. Reviewed `build/language-settings-render/20261020-101206-535/offer-{1280,420}.png`.
+Live actual Dialog: 460 dp cap and horizontal/vertical centering verified; 420x900 resize and Yes/No/X
+callbacks passed, no UI exception. Temporary launcher/source removed before final build/tests.
+Evidence: `build/offer-live-verification.md`.
+
+Wizard/wiring audit: desktop Initial/Upgrade Language page uses LanguageSettingsSections; wizard
+revision 11 offers Language after revision 10; AppGate's Yes and REVIEW_SETTINGS routes open the
+Upgrade wizard. Advanced Setup Language panel and mobile port remain pending. The real bundled
+changelog still ends at seq 4: no upcoming Social V2 event or review_settings entry yet. The action
+in the approved render is a fixture; actual release notes and artwork await the maintainer.
+
+Separate CI blocker discovered during audit: run [39378675211](https://github.com/Zokaper/NuvioZDesktop/actions/runs/39378675211)
+at fd8080610 failed before Kotlin tests in `:composeMediaPlayer:buildNativeLinux`: CTest
+`frame_copy_test.c:36`, `player != NULL`. Native/player/workflow files were untouched by that UI
+commit series. Root cause not diagnosed or fixed in this sizing follow-up; local Windows checks
+above pass. Do not treat this branch as fully CI-green for release.
+
 ## What's New layout correction (2026-10-20, desktop Social V2 branch)
 
 Maintainer prefers the initial `language-whatsnew-design/whatsnew-{1280,420}.png` renders.
