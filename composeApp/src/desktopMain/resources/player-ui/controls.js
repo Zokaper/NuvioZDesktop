@@ -55,8 +55,8 @@ const openingLogoBase = document.getElementById("openingLogoBase");
 const openingLogoFillClip = document.getElementById("openingLogoFillClip");
 const openingLogoFill = document.getElementById("openingLogoFill");
 const openingTitle = document.getElementById("openingTitle");
-const openingSpinner = document.getElementById("openingSpinner");
-const openingLoadingIndicator = openingSpinner ? window.createLoadingIndicator(openingSpinner) : { setActive() {} };
+// Z uses the opening facts band; only buffering has an animated canvas.
+const openingLoadingIndicator = { setActive() {} };
 const bufferingLoadingIndicator = window.createLoadingIndicator(bufferingStatus.querySelector("canvas"));
 const openingStatus = document.getElementById("openingStatus");
 const openingMessage = document.getElementById("openingMessage");

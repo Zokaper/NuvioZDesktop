@@ -17,6 +17,7 @@ internal object DesktopCache {
         return directory
     }
 
+    // drop-at-next-sync (V7): uncached connections must close their JAR handles on Windows.
     fun installVersionedResources(namespace: String, resources: Map<String, URL>): Path {
         require(resources.isNotEmpty())
         val directory = versionedDirectory(
@@ -26,7 +27,7 @@ internal object DesktopCache {
         resources.forEach { (relativePath, url) ->
             val target = resolveTarget(directory, relativePath)
             if (!Files.exists(target)) {
-                url.openStream().use { input ->
+                url.openConnection().apply { useCaches = false }.getInputStream().use { input ->
                     writeAtomically(target) { pending -> Files.copy(input, pending, StandardCopyOption.REPLACE_EXISTING) }
                 }
             }
@@ -55,8 +56,10 @@ internal object DesktopCache {
     }
 
     private fun resourceStamp(url: URL): String =
-        when (val connection = url.openConnection()) {
-            is JarURLConnection -> connection.jarEntry.let { entry -> "${entry.size}:${entry.crc}" }
+        when (val connection = url.openConnection().apply { useCaches = false }) {
+            is JarURLConnection -> connection.jarFile.use {
+                connection.jarEntry.let { entry -> "${entry.size}:${entry.crc}" }
+            }
             else -> "${connection.contentLengthLong}:${connection.lastModified}"
         }
 

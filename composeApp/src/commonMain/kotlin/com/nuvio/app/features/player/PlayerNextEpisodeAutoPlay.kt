@@ -39,7 +39,8 @@ internal fun PlayerScreenRuntime.isNextEpisodeSnapshotSettled(): Boolean =
         !playbackSnapshot.isLoading &&
         initialSeekApplied &&
         !isScrubbingTimeline &&
-        errorMessage == null
+        errorMessage == null &&
+        !isShortPlaceholderDuration(playbackSnapshot.durationMs)
 
 internal fun PlayerScreenRuntime.isAtNextEpisodeThreshold(): Boolean {
     if (!isNextEpisodeSnapshotSettled()) return false
