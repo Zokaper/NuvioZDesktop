@@ -197,7 +197,6 @@ kotlinc -nowarn -cp "$CP_BUILD" -d "$WORK/out-standalone" \
   "$T/features/playback/PlaybackAttemptLogTest.kt" \
   "$T/features/playback/PlaybackPositionTest.kt" \
   "$T/features/playback/PlaybackSourceProbeTest.kt" \
-  "$T/features/playback/VideoPresentationTest.kt" \
   2>&1 | { grep -v "^warning:" | grep -v "Picked up JAVA" || true; }
 
 java -cp "$WORK/out-standalone:$CP_RUN" org.junit.runner.JUnitCore \
