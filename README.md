@@ -18,6 +18,8 @@
     <i>Looking for Android or iPhone? See <a href="https://github.com/Zokaper/nuvio-z">Nuvio Z Mobile</a>.</i>
   </p>
 
+  [Website](https://nuvio.tv) · [GitHub releases](https://github.com/NuvioMedia/NuvioDesktop/releases/latest) · [Support Nuvio](https://nuvio.tv/support)
+
 </div>
 
 ## What is Nuvio Z?
@@ -126,7 +128,7 @@ Nuvio Z is one product on two codebases, released separately.
 Social and Watch Together work across mobile and desktop, so a party can mix a phone and a
 computer.
 
-## Development
+## Build from source
 
 ```bash
 git clone https://github.com/Zokaper/NuvioZDesktop.git

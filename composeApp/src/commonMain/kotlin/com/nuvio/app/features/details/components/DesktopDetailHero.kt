@@ -17,8 +17,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
@@ -31,6 +33,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CheckCircleOutline
 import androidx.compose.material.icons.rounded.People
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -77,6 +80,9 @@ import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.detail_logo_content_description
 import nuvio.composeapp.generated.resources.hero_add_to_library
 import nuvio.composeapp.generated.resources.hero_mark_unwatched
+import nuvio.composeapp.generated.resources.playback_unavailable
+import nuvio.composeapp.generated.resources.random_episode_title
+import nuvio.composeapp.generated.resources.shuffle_stop
 import nuvio.composeapp.generated.resources.hero_mark_watched
 import nuvio.composeapp.generated.resources.hero_remove_from_library
 import nuvio.composeapp.generated.resources.watch_party_title
@@ -200,6 +206,7 @@ fun DesktopDetailHero(
     showOverallRatings: Boolean,
     isMdbListActive: Boolean,
     playButtonLabel: String,
+    isPrimaryPlayEnabled: Boolean,
     isSaved: Boolean,
     isWatched: Boolean,
     onHeightChanged: (Int) -> Unit,
@@ -209,6 +216,8 @@ fun DesktopDetailHero(
     onHeroTrailerMuteToggle: () -> Unit,
     onPlayClick: () -> Unit,
     onPlayLongClick: (() -> Unit)?,
+    onShuffleClick: (() -> Unit)?,
+    shuffleEnabled: Boolean,
     onWatchedClick: () -> Unit,
     onSaveClick: () -> Unit,
     onSaveLongClick: (() -> Unit)?,
@@ -229,7 +238,7 @@ fun DesktopDetailHero(
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .height(660.dp)
+            .heightIn(min = 660.dp)
             .onSizeChanged { onHeightChanged(it.height) },
     ) {
         val actionHorizontalInset = fullscreenActionHorizontalInsetForWidth(maxWidth.value)
@@ -295,24 +304,35 @@ fun DesktopDetailHero(
             }
             meta.description?.takeIf { it.isNotBlank() }?.let { synopsis ->
                 Spacer(modifier = Modifier.height(space.s16))
-                Text(
+                ExpandableDescription(
                     text = synopsis,
+                    collapsedMaxLines = 4,
                     style = MaterialTheme.typography.bodyLarge.copy(
                         fontSize = NuvioTokens.Type.bodyLg,
                         lineHeight = NuvioTokens.LineHeight.bodyLg,
                         letterSpacing = NuvioTokens.LetterSpacing.none,
                     ),
                     color = colorScheme.onSurface,
-                    maxLines = 4,
-                    overflow = TextOverflow.Ellipsis,
                 )
             }
             Spacer(modifier = Modifier.height(space.s28))
+            val shuffleAction = onShuffleClick?.let { onClick ->
+                DetailSecondaryAction(
+                    label = stringResource(if (shuffleEnabled) Res.string.shuffle_stop else Res.string.random_episode_title),
+                    icon = Icons.Default.Shuffle,
+                    isActive = shuffleEnabled,
+                    onClick = onClick,
+                )
+            }
             DetailActionButtons(
                 modifier = Modifier.widthIn(max = 520.dp),
-                playLabel = playButtonLabel,
-                secondaryActions = listOfNotNull(titleDownloadAction) + listOf(
-                    DetailSecondaryAction(
+                playLabel = if (isPrimaryPlayEnabled) playButtonLabel else stringResource(Res.string.playback_unavailable),
+                playEnabled = isPrimaryPlayEnabled,
+                pinnedAction = shuffleAction?.takeIf { shuffleEnabled },
+                secondaryActions = buildList {
+                    titleDownloadAction?.let(::add)
+                    if (!shuffleEnabled) shuffleAction?.let(::add)
+                    add(DetailSecondaryAction(
                         label = if (isWatched) {
                             stringResource(Res.string.hero_mark_unwatched)
                         } else {
@@ -325,8 +345,8 @@ fun DesktopDetailHero(
                         },
                         isActive = isWatched,
                         onClick = onWatchedClick,
-                    ),
-                    DetailSecondaryAction(
+                    ))
+                    add(DetailSecondaryAction(
                         label = if (isSaved) {
                             stringResource(Res.string.hero_remove_from_library)
                         } else {
@@ -340,17 +360,12 @@ fun DesktopDetailHero(
                         isActive = isSaved,
                         onClick = onSaveClick,
                         onLongClick = onSaveLongClick,
-                    ),
-                ) + listOfNotNull(
+                    ))
                     onWatchTogetherClick?.let { action ->
-                        DetailSecondaryAction(
-                            label = stringResource(Res.string.watch_party_title),
-                            icon = Icons.Rounded.People,
-                            onClick = action,
-                        )
-                    },
-                    socialRecommendAction(),
-                ),
+                        add(DetailSecondaryAction(label = stringResource(Res.string.watch_party_title), icon = Icons.Rounded.People, onClick = action))
+                    }
+                    socialRecommendAction()?.let(::add)
+                },
                 isTablet = true,
                 onPlayClick = onPlayClick,
                 onPlayLongClick = onPlayLongClick,
@@ -364,6 +379,7 @@ fun DesktopDetailHero(
                 enabled = heroTrailerReady,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
+                    .statusBarsPadding()
                     .padding(
                         top = space.s32,
                         end = actionHorizontalInset + if (isFullscreenActionSupported) 60.dp else 0.dp,
@@ -395,6 +411,7 @@ fun DesktopDetailHero(
             FullscreenActionButton(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
+                    .statusBarsPadding()
                     .padding(top = space.s32, end = actionHorizontalInset),
                 buttonSize = 48.dp,
                 iconSize = 24.dp,
@@ -476,26 +493,3 @@ private fun DesktopHeroMetaRow(meta: MetaDetails, showOverallRatings: Boolean) {
         }
     }
 }
-
-@Composable
-private fun ImdbRatingSourceLabel(
-    storeTextStyle: TextStyle,
-    storeTextColor: Color,
-) {
-    if (AppFeaturePolicy.imdbRatingLogoEnabled) {
-        Image(
-            painter = painterResource(Res.drawable.rating_imdb),
-            contentDescription = stringResource(Res.string.source_imdb),
-            modifier = Modifier.size(width = 30.dp, height = 16.dp),
-        )
-    } else {
-        Text(
-            text = stringResource(Res.string.source_imdb),
-            style = storeTextStyle,
-            color = storeTextColor,
-            maxLines = 1,
-        )
-    }
-}
-
-private val ImdbYellow = Color(0xFFF5C518)

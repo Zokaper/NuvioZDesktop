@@ -3,6 +3,7 @@ package com.nuvio.app.features.player
 import androidx.compose.ui.Modifier
 import com.nuvio.app.features.watchparty.PartyContent
 import com.nuvio.app.features.watchparty.PartySourceDescriptorV2
+import com.nuvio.app.features.party.PartyMedia
 
 internal typealias PlayerReleaseBeforeBack = (
     onReleased: () -> Unit,
@@ -76,4 +77,8 @@ internal data class PlayerScreenArgs(
      * Gates "Prefer built-in subtitles", which must leave a hand-picked source alone.
      */
     val automaticSourceSelection: Boolean = false,
+    val launchId: Long? = null,
+    val sourceFilename: String? = null,
+    val onOpenPartyMedia: (PartyMedia) -> Unit = {},
+    val stream: com.nuvio.app.features.streams.StreamItem? = null,
 )

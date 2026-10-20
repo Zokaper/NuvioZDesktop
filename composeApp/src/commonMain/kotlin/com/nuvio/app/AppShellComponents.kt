@@ -194,6 +194,7 @@ internal data class AppTabActions(
     val onLibrarySubDestinationChanged: ((LibrarySubDestination) -> Unit)? = null,
     val onCloudFilePlay: ((CloudLibraryItem, CloudLibraryFile) -> Unit)? = null,
     val onConnectCloudClick: (() -> Unit)? = null,
+    val onDownloadsClick: () -> Unit = {},
     val onContinueWatchingClick: ((ContinueWatchingItem) -> Unit)? = null,
     val onContinueWatchingDetails: ((ContinueWatchingItem) -> Unit)? = null,
     val onContinueWatchingLongPress: ((ContinueWatchingItem) -> Unit)? = null,
@@ -211,7 +212,6 @@ internal data class AppTabActions(
     val onHomescreenSettingsClick: () -> Unit = {},
     val onMetaScreenSettingsClick: () -> Unit = {},
     val onContinueWatchingSettingsClick: () -> Unit = {},
-    val onDownloadsSettingsClick: () -> Unit = {},
     val onAddonsSettingsClick: () -> Unit = {},
     val onPluginsSettingsClick: () -> Unit = {},
     val onAccountSettingsClick: () -> Unit = {},
@@ -223,6 +223,7 @@ internal data class AppTabActions(
     val onRunSetupAgainClick: (() -> Unit)? = null,
     val onTestUpdateBannerClick: (() -> Unit)? = null,
     val onCollectionsSettingsClick: () -> Unit = {},
+    val onWatchPartySettingsClick: () -> Unit = {},
     val onFolderClick: ((collectionId: String, folderId: String) -> Unit)? = null,
     val onRequestedSettingsPageConsumed: () -> Unit = {},
     val onInitialHomeContentRendered: () -> Unit = {},
@@ -368,6 +369,9 @@ internal fun AppTabHost(
                                     onSectionViewAllClick = actions.onLibrarySectionViewAllClick,
                                     onCloudFilePlay = actions.onCloudFilePlay,
                                     onConnectCloudClick = actions.onConnectCloudClick,
+                                    onCatalogClick = actions.onCatalogClick,
+                                    onPreviewClick = actions.onPosterClick,
+                                    onPreviewLongClick = actions.onPosterLongClick,
                                     disintegrationRequest = state.libraryDisintegrationRequest,
                                     topSwitcher = if (librarySwitcher) {
                                         {
@@ -857,7 +861,7 @@ internal fun AppLoadingContent(
                     .height(44.dp),
             )
             Spacer(modifier = Modifier.height(tokens.spacing.sectionGap))
-            NuvioLoadingIndicator(color = tokens.colors.accent)
+            NuvioLoadingIndicator()
         }
     }
 }

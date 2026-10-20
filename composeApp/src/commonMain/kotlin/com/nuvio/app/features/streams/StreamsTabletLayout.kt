@@ -53,6 +53,7 @@ import com.nuvio.app.core.ui.dominantBackdropBlendColor
 import com.nuvio.app.core.ui.nuvioDesktopDragScroll
 import com.kmpalette.extensions.painter.rememberPainterDominantColorState
 import com.nuvio.app.core.ui.platformPhysicalTopInset
+import com.nuvio.app.core.ui.shimmer
 import com.nuvio.app.isIos
 import com.nuvio.app.isDesktop
 import dev.chrisbanes.haze.HazeInputScale
@@ -167,7 +168,7 @@ internal fun TabletStreamsLayout(
                     model = tabletBackdrop,
                     contentDescription = null,
                     modifier = artworkModifier,
-                    alignment = BiasAlignment(0f, DesktopBackdropVerticalBias),
+                    alignment = BiasAlignment(-0.05f, DesktopBackdropVerticalBias),
                     contentScale = if (useWideArtworkFrame && !cropWideArtwork) ContentScale.Fit else ContentScale.Crop,
                     onSuccess = { state -> dominantBackdropPainter = state.painter },
                 )
@@ -635,6 +636,7 @@ private fun ActiveScrapersStatusBlock(
                 ) {
                     Text(
                         text = addonName,
+                        modifier = Modifier.shimmer(),
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Normal,

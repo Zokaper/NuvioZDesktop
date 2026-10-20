@@ -32,6 +32,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -49,10 +50,20 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.nuvio.app.core.ui.secondaryClickAt
 import com.nuvio.app.core.ui.nuvioDesktopDragScroll
+import com.nuvio.app.core.ui.SkeletonBlock
 import com.nuvio.app.features.debrid.DebridProviders
 import com.nuvio.app.isDesktop
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
+
+internal val LocalStreamHighlight = staticCompositionLocalOf<(StreamItem) -> String?> { { null } }
+
+internal data class SharedStream(
+    val label: String,
+    val stream: StreamItem,
+)
+
+internal val LocalSharedStream = staticCompositionLocalOf<SharedStream?> { null }
 
 @Composable
 internal fun StreamCard(
@@ -71,6 +82,9 @@ internal fun StreamCard(
     /** Why this row cannot be chosen here, shown under its name ("Not cached on your debrid service"). */
     disabledNote: String? = null,
 ) {
+    val highlightLabel = if (isCurrent) null else LocalStreamHighlight.current(stream)
+    val marked = isCurrent || highlightLabel != null
+    val markedLabel = if (isCurrent) currentLabel else highlightLabel
     val cardShape = RoundedCornerShape(12.dp)
     val badgeImages = stream.badges.filter { it.imageURL.isNotBlank() }
     val hasBadges = badgeImages.isNotEmpty() || (showFileSizeBadges && stream.behaviorHints.videoSize != null)
@@ -87,14 +101,14 @@ internal fun StreamCard(
             )
             .clip(cardShape)
             .background(
-                if (isCurrent) {
+                if (marked) {
                     MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
                 } else {
                     Color.White.copy(alpha = 0.05f)
                 },
             )
             .then(
-                if (isCurrent) {
+                if (marked) {
                     Modifier.border(
                         width = 1.dp,
                         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.52f),
@@ -143,9 +157,9 @@ internal fun StreamCard(
                 stream = stream,
                 appendInstantServiceToDefaultName = appendInstantServiceToDefaultName,
             ) {
-                if (isCurrent && !currentLabel.isNullOrBlank()) {
+                if (marked && !markedLabel.isNullOrBlank()) {
                     Spacer(modifier = Modifier.width(8.dp))
-                    CurrentStreamBadge(label = currentLabel)
+                    CurrentStreamBadge(label = markedLabel)
                 }
             }
 
@@ -206,6 +220,22 @@ internal fun StreamCard(
                 )
             }
         }
+    }
+}
+
+@Composable
+internal fun StreamCardSkeleton(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 68.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White.copy(alpha = 0.05f))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
+    ) {
+        SkeletonBlock(modifier = Modifier.fillMaxWidth(0.55f), height = 14.dp, cornerRadius = 4.dp)
+        SkeletonBlock(modifier = Modifier.fillMaxWidth(0.85f), height = 10.dp, cornerRadius = 4.dp)
     }
 }
 

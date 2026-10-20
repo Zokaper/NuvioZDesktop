@@ -65,6 +65,9 @@ object DownloadsRepository {
             SourceRealizer.resolvePlayableStream = value
         }
 
+    private val _hasUnseenCompleted = DownloadCompletionBadge.unseen
+    val hasUnseenCompleted: StateFlow<Boolean> = _hasUnseenCompleted.asStateFlow()
+
     private var nextDownloadOrdinal = 0L
 
     fun ensureLoaded() {
@@ -158,8 +161,13 @@ object DownloadsRepository {
         )
     }
 
+    fun markCompletedSeen() {
+        _hasUnseenCompleted.value = false
+    }
+
     fun clearLocalState() {
         synchronized(DownloadStore.lock) {
+            _hasUnseenCompleted.value = false
             DownloadScheduler.resetLocked()
             DownloadStore.clearLocked()
         }

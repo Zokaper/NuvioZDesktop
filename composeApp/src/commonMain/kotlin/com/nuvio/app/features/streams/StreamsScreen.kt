@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.border
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -111,6 +112,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.rememberModalBottomSheetState
 import com.nuvio.app.core.ui.NuvioAsyncImage as AsyncImage
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
+import com.nuvio.app.core.ui.shimmer
 import com.nuvio.app.features.debrid.DebridSettingsRepository
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
 import com.nuvio.app.features.debrid.DirectDebridPlayableResult
@@ -1045,6 +1047,11 @@ internal fun StreamList(
     }
     val torrentNotSupportedText = stringResource(Res.string.streams_torrent_not_supported)
     val listState = rememberLazyListState()
+    val fetchingText = stringResource(Res.string.streams_fetching)
+    val findingStreamsText = stringResource(Res.string.streams_finding_streams)
+    val checkingMoreAddonsText = stringResource(Res.string.streams_checking_more_addons)
+    val formatStreamSize = rememberStreamSizeLabelFormat()
+    val sharedStream = LocalSharedStream.current
     val streamBadgeSettings by remember {
         StreamBadgeSettingsRepository.ensureLoaded()
         StreamBadgeSettingsRepository.uiState
@@ -1060,6 +1067,28 @@ internal fun StreamList(
             ),
             verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
+            sharedStream?.let { shared ->
+                item(key = "shared_stream") {
+                    Column {
+                        StreamSectionHeader(
+                            addonName = shared.label,
+                            isLoading = false,
+                            fetchingText = fetchingText,
+                        )
+                        StreamCard(
+                            stream = shared.stream,
+                            enabled = true,
+                            appendInstantServiceToDefaultName = false,
+                            showFileSizeBadges = streamBadgeSettings.showFileSizeBadges,
+                            showAddonLogo = streamBadgeSettings.showAddonLogo,
+                            badgePlacement = streamBadgeSettings.badgePlacement,
+                            onClick = { onStreamSelected(shared.stream, resumePositionMs, resumeProgressFraction) },
+                            isCurrent = true,
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+                }
+            }
             when {
                 hasGroups && anyLoading && !hasAnyStreams -> {
                     item(
@@ -1337,9 +1366,8 @@ private fun StreamSectionHeader(
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.9f),
         )
         AnimatedVisibility(visible = isLoading, enter = fadeIn(), exit = fadeOut()) {
-            // Upstream 49d933265: the per-addon "Fetching" label shimmers instead of spinning.
             Text(
-                text = stringResource(Res.string.streams_fetching),
+                text = fetchingText,
                 modifier = Modifier.shimmer(),
                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
                 color = MaterialTheme.colorScheme.primary,
@@ -1673,7 +1701,6 @@ private fun StreamActionsSheet(
                 },
             )
             if (externalPlayerSupported) {
-                NuvioBottomSheetDivider()
                 NuvioBottomSheetActionRow(
                     icon = Icons.AutoMirrored.Rounded.OpenInNew,
                     title = stringResource(
@@ -1692,7 +1719,6 @@ private fun StreamActionsSheet(
                 )
             }
             if (showDownloadAction) {
-                NuvioBottomSheetDivider()
                 NuvioBottomSheetActionRow(
                     icon = Icons.Rounded.Download,
                     title = stringResource(Res.string.streams_download_file),
@@ -1850,13 +1876,8 @@ private fun FooterLoadingBlock(modifier: Modifier = Modifier) {
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        NuvioLoadingIndicator(
-            modifier = Modifier.size(14.dp),
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Spacer(modifier = Modifier.width(8.dp))
         Text(
-            text = stringResource(Res.string.streams_checking_more_addons),
+            text = checkingMoreAddonsText,
             modifier = Modifier.shimmer(),
             style = MaterialTheme.typography.bodySmall.copy(
                 fontSize = 12.sp,

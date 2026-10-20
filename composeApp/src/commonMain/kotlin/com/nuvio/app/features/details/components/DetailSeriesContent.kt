@@ -200,7 +200,7 @@ fun DetailSeriesContent(
         val containerWidthDp = maxWidth.value
 
         Column(
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(if (isDesktop) 12.dp else 16.dp),
         ) {
             SeriesSeasonSelector(
                 meta = meta,
@@ -429,7 +429,7 @@ internal fun DetailSeriesListHeader(
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         val sizing = seriesContentSizing(maxWidth.value)
-        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(if (isDesktop) 12.dp else 16.dp)) {
             SeriesSeasonSelector(
                 meta = meta,
                 seasons = seasons,
@@ -657,7 +657,8 @@ private fun SeasonTextChipScrollRow(
         modifier = Modifier
             .nuvioHorizontalScrollBleed(horizontalScrollPadding)
             .fillMaxWidth()
-            .nuvioDesktopDragScroll(seasonListState),
+            .nuvioDesktopDragScroll(seasonListState)
+            .let { if (isDesktop) it.padding(bottom = 4.dp) else it },
         contentPadding = PaddingValues(horizontal = horizontalScrollPadding),
         horizontalArrangement = Arrangement.spacedBy(sizing.seasonChipGap),
     ) {
@@ -733,7 +734,8 @@ private fun SeasonPosterScrollRow(
         modifier = Modifier
             .nuvioHorizontalScrollBleed(horizontalScrollPadding)
             .fillMaxWidth()
-            .nuvioDesktopDragScroll(seasonListState),
+            .nuvioDesktopDragScroll(seasonListState)
+            .let { if (isDesktop) it.padding(bottom = 4.dp) else it },
         contentPadding = PaddingValues(horizontal = horizontalScrollPadding),
         horizontalArrangement = Arrangement.spacedBy(sizing.seasonChipGap),
     ) {

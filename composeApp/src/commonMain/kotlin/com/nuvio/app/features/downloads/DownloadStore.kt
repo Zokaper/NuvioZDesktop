@@ -130,6 +130,7 @@ internal object DownloadStore {
     }
 
     fun publishLocked(items: List<DownloadItem>, immediate: Boolean) {
+        DownloadCompletionBadge.onPublished(all.value.filter(::isInActiveView), items.filter(::isInActiveView))
         all.value = items
         batches.value = reconcileBatches(batches.value, items)
         notifyLiveStatusPlatform()

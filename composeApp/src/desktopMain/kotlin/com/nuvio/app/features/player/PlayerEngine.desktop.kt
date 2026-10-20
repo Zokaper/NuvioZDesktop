@@ -33,6 +33,9 @@ import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.ui.LocalNuvioPlatformDensity
 import com.nuvio.app.features.playback.PlaybackHandover
+import com.nuvio.app.core.ui.AppPresenceState
+import com.nuvio.app.core.ui.LocalNuvioPlatformDensity
+import com.nuvio.app.core.ui.PresenceSnapshot
 import com.nuvio.app.features.player.desktop.DesktopHostOs
 import com.nuvio.app.features.player.desktop.DesktopPlayerPictureInPicture
 import com.nuvio.app.features.player.desktop.NativePlayerController
@@ -62,6 +65,7 @@ actual fun PlatformPlayerSurface(
     initialPositionMs: Long?,
     initialPositionRequestKey: String?,
     resizeMode: PlayerResizeMode,
+    playbackEngine: com.nuvio.app.features.player.AndroidPlaybackEngine?,
     useNativeController: Boolean,
     playerControlsState: PlayerControlsState,
     onPlayerControlsAction: (PlayerControlsAction) -> Boolean,
@@ -237,6 +241,13 @@ private fun NativePlayerSurface(
     }
 
     LaunchedEffect(controller) {
+        AppPresenceState.current.collect { snapshot ->
+            val player = snapshot as? PresenceSnapshot.Player
+            controller.setNowPlayingMetadata(player?.title, player?.episodeLabel, player?.posterUrl)
+        }
+    }
+
+    LaunchedEffect(controller) {
         desktopFullscreenChanges.drop(1).collect {
             controller.onDesktopFullscreenChanged()
         }
@@ -252,6 +263,13 @@ private fun NativePlayerSurface(
         onDispose {
             controller.onSurfacePromotedChanged = null
             DesktopSocialPopups.setPlayerOnScreen(false)
+        }
+    }
+
+    LaunchedEffect(controller) {
+        while (true) {
+            if (!controller.isReleasing) onSnapshot(controller.snapshot())
+            delay(250L)
         }
     }
 

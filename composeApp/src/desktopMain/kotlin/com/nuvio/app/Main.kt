@@ -28,6 +28,7 @@ import com.nuvio.app.core.diagnostics.SentryInitializer
 import com.nuvio.app.core.ui.DesktopWheelSmoothing
 import com.nuvio.app.core.ui.NuvioTheme
 import com.nuvio.app.core.ui.ProvideDesktopPrefetchScheduler
+import com.nuvio.app.core.ui.ProvideDesktopWindowInsets
 import com.nuvio.app.features.discordrpc.DiscordPresenceManager
 import com.nuvio.app.features.p2p.P2pStreamingEngine
 import com.nuvio.app.features.p2p.preloadP2pStreamingEngineAsync
@@ -382,7 +383,9 @@ fun main(args: Array<String>) {
             if (smokePlayerUrl == null) {
                 DesktopWheelSmoothing.FrameDriver()
                 ProvideDesktopPrefetchScheduler {
-                    App()
+                    ProvideDesktopWindowInsets(isFullscreen = windowState.placement == WindowPlacement.Fullscreen) {
+                        App()
+                    }
                 }
                 SelfTestOverlay()
                 DesktopClosePromptHost(onQuit = ::quitApp)
