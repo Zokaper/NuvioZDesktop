@@ -16,7 +16,7 @@ what that means are canonical in `nuvio-z` and cover this repository too:
 - `Docs/UPSTREAM.md`: https://github.com/Zokaper/nuvio-z/blob/main/Docs/UPSTREAM.md
   (the patch-surface rules, the versioning scheme, and the sync procedure)
 - `Docs/PATCH-SURFACE.md`: https://github.com/Zokaper/nuvio-z/blob/main/Docs/PATCH-SURFACE.md
-  (every upstream-owned file we modify - **281 of them here**, against 8 in `NuvioZWeb`)
+  (every upstream-owned file we modify - **282 of them here**, against 8 in `NuvioZWeb`)
 
 **Upstream for this repository is a different repository from mobile's.** Upstream retired
 `NuvioMedia/NuvioMobile` branch `desktopweb` and moved desktop development to

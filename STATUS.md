@@ -1,4 +1,34 @@
-## Upstream 0.1.31-alpha integration (2026-10-20; final verification running)
+## Upstream integration follow-up (2026-10-21)
+
+Active branch `claude/social-v2-design` is synced to named upstream 0.1.31-alpha
+(`e808a584e`, merge `74415dd0b`); both Kotlin repos are zero behind their named tags.
+Mobile language/What's New port and Advanced Setup Language are complete.
+
+Local full desktop suite: **3,874 tests**, zero failures, one existing ignored test
+(`build/upstream-desktop-final-full.log`, promotional frame generation filtered out).
+All nine pure groups pass **1,080 checks**. Final phone-navigation/native-lifecycle
+follow-up passes **28/28**, zero failures/errors/skips (`build/upstream-final-nav-native.log`);
+411 dp labels fit and 360 dp labels demote in inspected PNGs.
+
+Linux native libraries and synthetic-handle JNI isolation are fixed. Last Linux run
+39440410030 had two phone navigation fitting failures, then a hosted-runner shutdown;
+Windows MSI/changelog jobs passed. The phone harness now overrides desktop's 1.08 font
+scale to phone scale 1, retaining the real fitting/collapse assertions. Routine CI
+skips only promotional frame captures via the existing REEL_ONLY/PROMO_ONLY/SHOTS_ONLY
+filters; setup/language/Social/navigation renders and the real download harness remain.
+Fresh full CI: 39598087116 (a2bb9db54), running.
+
+Debug 116 uncovered an obsolete macOS TorrServer requirement. Its workflow now verifies
+the inherited Nuvio engine source and packaged external resource, arm64 support and
+dependency paths instead. YAML and all ten Bash steps parse. Corrected debug run:
+39599213572 (c94dc316c, arm64 slices verified with lipo), running;
+debug 115 remains the last published desktop build.
+Mobile debug 108 and Android/iOS CI are published/green. No stable release or backend
+deployment is performed by this sync. Maintainer confirms no new device testing.
+Social V2 final notes/artwork, actual changelog event and hardware acceptance remain open;
+canonical inventory: mobile Docs/SOCIAL-V2-RELEASE-INVENTORY.md.
+
+## Historical checkpoint: upstream 0.1.31-alpha integration (2026-10-20)
 
 Active branch `claude/social-v2-design` merges named upstream `e808a584e` as
 `74415dd0b`; language/What's New and Advanced Setup Language are complete.
