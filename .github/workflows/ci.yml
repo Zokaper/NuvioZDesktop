@@ -118,6 +118,12 @@ jobs:
       # --stacktrace is deliberately omitted: on a Kotlin compilation failure it
       # emits ~150 lines of Gradle internals that bury the actual 'e:' errors.
       - name: Run desktop tests
+        env:
+          # Promotional frame captures are opt-in production work, not regression tests.
+          # Keep all setup, navigation, language and Social render checks enabled.
+          REEL_ONLY: none
+          PROMO_ONLY: none
+          SHOTS_ONLY: none
         run: |
           set -o pipefail
           ./gradlew :composeApp:desktopTest --console=plain 2>&1 | tee build.log || {

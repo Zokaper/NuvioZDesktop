@@ -11,10 +11,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -250,7 +252,7 @@ class NavigationBarRenderHarness {
         runCatching {
             val dispatcher = VirtualClockDispatcher()
             val scene = ImageComposeScene(width = 411, height = 140, density = Density(1f), coroutineContext = dispatcher) {
-                NuvioTheme(darkTheme = true, appTheme = AppTheme.WHITE, amoled = false) {
+                PhoneTheme {
                     NavBarScene(
                         style = NavBarStyle.ADAPTIVE,
                         selectedIndex = 4,
@@ -351,7 +353,7 @@ class NavigationBarRenderHarness {
                 density = Density(1f),
                 coroutineContext = clock,
             ) {
-                NuvioTheme(darkTheme = true, appTheme = AppTheme.WHITE, amoled = false) { content() }
+                PhoneTheme(content)
             }
             try {
                 // Pump layout callbacks on the render thread and settle the real animation clock.
@@ -369,6 +371,18 @@ class NavigationBarRenderHarness {
             }
         }.onFailure { error ->
             failures += "$name: ${error::class.simpleName}: ${error.message}"
+        }
+    }
+
+    @Composable
+    private fun PhoneTheme(content: @Composable () -> Unit) {
+        NuvioTheme(darkTheme = true, appTheme = AppTheme.WHITE, amoled = false) {
+            // These scenes model phones. Desktop's 1.08 font scale can demote labels
+            // at a width where the shipped phone typography fits.
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, 1f)) {
+                content()
+            }
         }
     }
 }
