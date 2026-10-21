@@ -1,4 +1,23 @@
-## Upstream integration follow-up (2026-10-21)
+## Upstream sync complete (2026-10-21)
+
+Final CI [39609270820](https://github.com/Zokaper/NuvioZDesktop/actions/runs/39609270820)
+at `cd4bf21ed` is **green**: **3,871 passed, 0 failed, 3 existing headless GUI skips**
+(3,874 total); test execution finished in 16m52s. Linux native compilation/frame-copy,
+clean Windows MSI and global changelog jobs pass. Evidence: `build/upstream-linux-final-green.log`.
+The three skips are the real-window wheel/touchpad and window-insets tests. Only promotional
+captures are filtered; production UI renders and the real download-fault harness remain enabled.
+The fixes below resolve the prior assertion/threading/runner-shutdown blockers.
+
+Debug **117** is published with Windows x64 MSI and macOS arm64 DMG:
+https://github.com/Zokaper/NuvioZDesktop/releases/tag/debug-v0.1.26-alpha-z2.117
+All application changes are in that build; later changes are tests/CI/docs only.
+Mobile debug **108** is published and Android/iOS CI are green. Both named upstream syncs
+(mobile 0.6.2-beta, desktop 0.1.31-alpha) are complete. No stable release or backend deployment
+is performed here. Maintainer reports no new device testing; installed acceptance, especially
+iOS Watch Together lifecycle, final release copy/artwork and the real Social V2 changelog event
+remain open. See canonical `Docs/SOCIAL-V2-RELEASE-INVENTORY.md` on mobile's active branch.
+
+## Historical diagnostic follow-up (2026-10-21)
 
 Run 39605019493 passed 2,768 tests with no assertions failing, then its Ubuntu 26 runner
 shut down (143) while entering the large Social render suite, matching the earlier shutdown
@@ -6,7 +25,7 @@ point. Social's PNG Image/Data buffers now close explicitly. CI uses stable Ubun
 and forks a fresh test JVM every 25 classes to bound accumulated native allocations;
 all test/render assertions remain enabled. Focused Social rendering passes **7/7**, zero
 failures/errors/skips. The exact CI init script reports forkEvery=25 and passes all 17
-startup/install checks (Gradle exit 0). Full CI 39609270820 at cd4bf21ed is running.
+startup/install checks (Gradle exit 0). Final CI 39609270820 at cd4bf21ed passes, as recorded above.
 
 The full Linux run 39601058782 completes **3,874 tests**, with three failures and
 three existing skips. All navigation/native/setup/Advanced Setup renders pass. The
@@ -15,7 +34,7 @@ on Linux (startup basename, custom install parent and filesystem root). Those fi
 now construct real host-native File paths, preserving quoting and root/parent assertions.
 Focused Windows follow-up passes **17/17**, zero failures/errors/skips, including the
 real private-key registry round trip (`build/upstream-final-path-fixtures.log`, Gradle exit 0).
-Final full CI 39605019493 at 19ef03c94 is running. Shipped code is unchanged.
+Full CI 39605019493 at 19ef03c94 then hits the runner shutdown described above. Shipped code is unchanged.
 
 Linux follow-up: run 39598087116 passes all four navigation checks and native lifecycle
 tests, but SetupWizardRenderHarness exposes SnapshotStateObserver access from a worker
