@@ -1,12 +1,23 @@
 ## Upstream integration follow-up (2026-10-21)
 
+The full Linux run 39601058782 completes **3,874 tests**, with three failures and
+three existing skips. All navigation/native/setup/Advanced Setup renders pass. The
+remaining failures are test fixtures treating Windows backslashes as host separators
+on Linux (startup basename, custom install parent and filesystem root). Those fixtures
+now construct real host-native File paths, preserving quoting and root/parent assertions.
+Focused Windows follow-up passes **17/17**, zero failures/errors/skips, including the
+real private-key registry round trip (`build/upstream-final-path-fixtures.log`, Gradle exit 0).
+Final full CI 39605019493 at 19ef03c94 is running. Shipped code is unchanged.
+
 Linux follow-up: run 39598087116 passes all four navigation checks and native lifecycle
 tests, but SetupWizardRenderHarness exposes SnapshotStateObserver access from a worker
 thread and the hosted runner later shuts down (143). Setup and Advanced Setup scenes
 now run effects/layout callbacks through the render-thread virtual dispatcher and close
 native image buffers. CI compiles with an in-process compiler in a separate no-daemon
 invocation before running the full suite, releasing compiler memory before Skia renders.
-Final local/CI verification of this follow-up is running; assertions remain unchanged.
+Final local follow-up passes **3/3**, zero failures/errors/skips
+(`build/upstream-final-setup-threading-final.log`); Welcome and Home Hero PNGs inspected.
+Full CI 39601058782 at ba091b759 confirms these render checks pass; assertions remain unchanged.
 
 Active branch `claude/social-v2-design` is synced to named upstream 0.1.31-alpha
 (`e808a584e`, merge `74415dd0b`); both Kotlin repos are zero behind their named tags.
@@ -24,13 +35,17 @@ Windows MSI/changelog jobs passed. The phone harness now overrides desktop's 1.0
 scale to phone scale 1, retaining the real fitting/collapse assertions. Routine CI
 skips only promotional frame captures via the existing REEL_ONLY/PROMO_ONLY/SHOTS_ONLY
 filters; setup/language/Social/navigation renders and the real download harness remain.
-Fresh full CI: 39598087116 (a2bb9db54), running.
+The later full CI 39601058782 includes the setup-render/threading follow-up above.
 
 Debug 116 uncovered an obsolete macOS TorrServer requirement. Its workflow now verifies
 the inherited Nuvio engine source and packaged external resource, arm64 support and
-dependency paths instead. YAML and all ten Bash steps parse. Corrected debug run:
-39599213572 (c94dc316c, arm64 slices verified with lipo), running;
-debug 115 remains the last published desktop build.
+dependency paths instead. YAML and all ten Bash steps parse. Debug 116 run 39599213572
+passes both packages and mounted Mac architecture/dependency/launch checks, but publication
+gets 403: an Actions token cannot explicitly target workflow changes relative to Dev.
+The publisher now verifies a pre-created tag against its build SHA and omits target_commitish
+when using that tag. Debug **117 at b758afaf8 is published** (39602019489) with Windows x64
+MSI and macOS arm64 DMG, both nonempty and carrying GitHub SHA-256 digests. 116 remains an
+unpublished tag at its verified source. Default agent guides record the exact-tag procedure.
 Mobile debug 108 and Android/iOS CI are published/green. No stable release or backend
 deployment is performed by this sync. Maintainer confirms no new device testing.
 Social V2 final notes/artwork, actual changelog event and hardware acceptance remain open;
