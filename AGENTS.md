@@ -95,6 +95,10 @@ we edit, not the files we ignore.
   unless the user explicitly requests a release. Do not replace or bypass the existing MSI/DMG
   GitHub Actions release workflow.
 
+After a workflow-changing sync, follow the canonical guide's desktop debug pre-tag procedure:
+the tag must identify the exact build SHA; the existing workflow verifies it and publishes the
+packages. Never move an existing debug tag to another commit; bump the debug counter instead.
+
 Active feature plan, also canonical in `nuvio-z` and covering both repositories:
 
 - `PLAYBACK_MODES_PLAN.md`: https://github.com/Zokaper/nuvio-z/blob/main/PLAYBACK_MODES_PLAN.md
