@@ -242,16 +242,16 @@ jobs:
           fi
           tar -xzf "${archive}"
           runtime="composeApp/src/desktopMain/native/macos/runtime/${MACOS_ARCH}/libmpv.2.dylib"
-          torrserver="composeApp/src/desktopMain/torrserver/macos-arm64/TorrServer"
+          engine="composeApp/src/desktopMain/native/macos/engine/libnuvio_engine.dylib"
           if [[ ! -f "${runtime}" ]] || (( $(wc -c < "${runtime}") < 1000000 )); then
             echo "The arm64 macOS libmpv runtime was not materialized from Git LFS." >&2
             exit 1
           fi
-          if [[ ! -f "${torrserver}" ]] || (( $(wc -c < "${torrserver}") < 1000000 )); then
-            echo "The arm64 macOS TorrServer executable is missing." >&2
+          if [[ ! -f "${engine}" ]] || (( $(wc -c < "${engine}") < 1000000 )); then
+            echo "The macOS Nuvio engine library is missing." >&2
             exit 1
           fi
-          file "${runtime}" "${torrserver}" | tee macos-source-architectures.txt
+          file "${runtime}" "${engine}" | tee macos-source-architectures.txt
           if grep -v 'arm64' macos-source-architectures.txt; then
             echo "A required macOS runtime binary is not arm64." >&2
             exit 1
@@ -355,30 +355,20 @@ jobs:
           fi
           bridge="$(find "${app}" -type f -name libplayer_bridge.dylib -print -quit)"
           libmpv="$(find "${app}" -type f -name libmpv.2.dylib -print -quit)"
-          if [[ -z "${bridge}" || -z "${libmpv}" ]]; then
-            echo "The packaged native player bridge or libmpv runtime is missing." >&2
+          engine="${app}/Contents/app/resources/native/macos/libnuvio_engine.dylib"
+          if [[ -z "${bridge}" || -z "${libmpv}" || ! -f "${engine}" ]]; then
+            echo "The packaged native player bridge, libmpv runtime or Nuvio engine is missing." >&2
             find "${app}/Contents" -type f -name '*.dylib' -print || true
             exit 1
           fi
-          file "${bridge}" "${libmpv}" | tee -a macos-package-architectures.txt
+          file "${bridge}" "${libmpv}" "${engine}" | tee -a macos-package-architectures.txt
           if grep -v 'arm64' macos-package-architectures.txt; then
             echo "A packaged native player binary is not arm64." >&2
             exit 1
           fi
-          otool -L "${bridge}" | tee macos-player-dependencies.txt
+          otool -L "${bridge}" "${engine}" | tee macos-player-dependencies.txt
           if grep -E '^[[:space:]]+/(opt/homebrew|usr/local|Users|private/var)/' macos-player-dependencies.txt; then
             echo "The player bridge contains a build-machine-only library path." >&2
-            exit 1
-          fi
-          torrserver_found=false
-          while IFS= read -r -d '' jar_path; do
-            if jar tf "${jar_path}" | grep -Fx 'torrserver/macos-arm64/TorrServer' >/dev/null; then
-              torrserver_found=true
-              break
-            fi
-          done < <(find "${app}/Contents/app" -type f -name '*.jar' -print0)
-          if [[ "${torrserver_found}" != true ]]; then
-            echo "The packaged app does not contain the arm64 TorrServer resource." >&2
             exit 1
           fi
           shasum -a 256 "${dmg}" | tee macos-dmg-sha256.txt
