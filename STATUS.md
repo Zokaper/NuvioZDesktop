@@ -13,7 +13,9 @@ https://github.com/Zokaper/NuvioZDesktop/releases/tag/debug-v0.1.26-alpha-z2.117
 All application changes are in that build; later changes are tests/CI/docs only.
 Mobile debug **108** is published and Android/iOS CI are green. Both named upstream syncs
 (mobile 0.6.2-beta, desktop 0.1.31-alpha) are complete. No stable release or backend deployment
-is performed here. Maintainer reports no new device testing; installed acceptance, especially
+is performed here. Maintainer confirms retaining Z Watch Together for its Social integration;
+upstream Party UI remains gated and exposing both is not planned. No new device testing is reported;
+installed acceptance, especially
 iOS Watch Together lifecycle, final release copy/artwork and the real Social V2 changelog event
 remain open. See canonical `Docs/SOCIAL-V2-RELEASE-INVENTORY.md` on mobile's active branch.
 
