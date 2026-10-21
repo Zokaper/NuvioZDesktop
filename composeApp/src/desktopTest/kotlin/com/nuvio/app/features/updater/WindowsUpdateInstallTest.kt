@@ -51,7 +51,9 @@ class WindowsUpdateInstallTest {
 
     @Test
     fun `custom install folder is kept on upgrade`() {
-        assertEquals("D:\\Games\\Nuvio Z", windowsInstallDirFor("D:\\Games\\Nuvio Z\\Nuvio Z.exe"))
+        val installDir = File(File.listRoots().first(), "Games/Nuvio Z")
+        val installedLauncher = File(installDir, "Nuvio Z.exe")
+        assertEquals(installDir.absolutePath, windowsInstallDirFor(installedLauncher.absolutePath))
     }
 
     @Test
@@ -62,7 +64,8 @@ class WindowsUpdateInstallTest {
 
     @Test
     fun `drive root install folder is left to the msi`() {
-        assertNull(windowsInstallDirFor("D:\\Nuvio Z.exe"))
+        val rootLauncher = File(File.listRoots().first(), "Nuvio Z.exe")
+        assertNull(windowsInstallDirFor(rootLauncher.absolutePath))
     }
 
     @Test

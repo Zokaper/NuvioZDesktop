@@ -46,7 +46,7 @@ class DesktopStartWithWindowsTest {
     }
 
     @Test fun theCommandQuotesTheLauncher() {
-        val exe = File("""C:\Program Files\Nuvio Z Debug\Nuvio Z Debug.exe""")
+        val exe = File(File.listRoots().first(), "Program Files/Nuvio Z Debug/Nuvio Z Debug.exe")
         assertEquals("Nuvio Z Debug", DesktopStartWithWindows.valueName(exe))
         assertEquals("\"${exe.absolutePath}\" --background", DesktopStartWithWindows.command(exe))
     }
