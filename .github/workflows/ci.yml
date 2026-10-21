@@ -13,7 +13,8 @@ concurrency:
 jobs:
   desktop-tests:
     name: Desktop tests
-    runs-on: ubuntu-latest
+    # Native/Skia verification uses the stable image rather than the rolling OS label.
+    runs-on: ubuntu-24.04
     env:
       LOCAL_PROPERTIES_BASE64: ${{ secrets.NUVIO_DESKTOP_LOCAL_PROPERTIES_BASE64 }}
 
@@ -135,7 +136,18 @@ jobs:
           SHOTS_ONLY: none
         run: |
           set -o pipefail
+          # Skia owns native allocations beyond the JVM heap. Bound their lifetime
+          # across the full matrix, retaining every test and render assertion.
+          cat > "${RUNNER_TEMP}/nuvio-test-forks.gradle" <<'GRADLE'
+          allprojects {
+            tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+              forkEvery = 25
+            }
+          }
+          GRADLE
+          free -m
           ./gradlew :composeApp:desktopTest \
+            --init-script "${RUNNER_TEMP}/nuvio-test-forks.gradle" \
             -Pkotlin.compiler.execution.strategy=in-process \
             --no-daemon --max-workers=2 --console=plain 2>&1 | tee build.log || {
             echo "::error::Desktop compilation or tests failed"

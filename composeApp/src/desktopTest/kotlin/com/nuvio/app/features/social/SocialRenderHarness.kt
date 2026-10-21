@@ -701,11 +701,13 @@ class SocialRenderHarness {
                 ) { content() }
             }
             try {
-                val image = scene.render(0L)
-                val data = image.encodeToData(EncodedImageFormat.PNG) ?: error("encodeToData returned null")
-                val bytes = data.bytes
-                File(outputDir, "$name.png").writeBytes(bytes)
-                bytes
+                scene.render(0L).use { image ->
+                    image.encodeToData(EncodedImageFormat.PNG).use { data ->
+                        val bytes = data?.bytes ?: error("encodeToData returned null")
+                        File(outputDir, "$name.png").writeBytes(bytes)
+                        bytes
+                    }
+                }
             } finally {
                 scene.close()
             }

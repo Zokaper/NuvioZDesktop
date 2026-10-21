@@ -1,5 +1,11 @@
 ## Upstream integration follow-up (2026-10-21)
 
+Run 39605019493 passed 2,768 tests with no assertions failing, then its Ubuntu 26 runner
+shut down (143) while entering the large Social render suite, matching the earlier shutdown
+point. Social's PNG Image/Data buffers now close explicitly. CI uses stable Ubuntu 24.04
+and forks a fresh test JVM every 25 classes to bound accumulated native allocations;
+all test/render assertions remain enabled. Focused Social rendering and full CI are running.
+
 The full Linux run 39601058782 completes **3,874 tests**, with three failures and
 three existing skips. All navigation/native/setup/Advanced Setup renders pass. The
 remaining failures are test fixtures treating Windows backslashes as host separators
