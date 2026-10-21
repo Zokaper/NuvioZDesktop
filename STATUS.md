@@ -1,5 +1,13 @@
 ## Upstream integration follow-up (2026-10-21)
 
+Linux follow-up: run 39598087116 passes all four navigation checks and native lifecycle
+tests, but SetupWizardRenderHarness exposes SnapshotStateObserver access from a worker
+thread and the hosted runner later shuts down (143). Setup and Advanced Setup scenes
+now run effects/layout callbacks through the render-thread virtual dispatcher and close
+native image buffers. CI compiles with an in-process compiler in a separate no-daemon
+invocation before running the full suite, releasing compiler memory before Skia renders.
+Final local/CI verification of this follow-up is running; assertions remain unchanged.
+
 Active branch `claude/social-v2-design` is synced to named upstream 0.1.31-alpha
 (`e808a584e`, merge `74415dd0b`); both Kotlin repos are zero behind their named tags.
 Mobile language/What's New port and Advanced Setup Language are complete.

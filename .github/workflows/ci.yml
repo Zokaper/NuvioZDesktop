@@ -117,6 +117,15 @@ jobs:
       # live, so it is the full test suite for shared code on this platform.
       # --stacktrace is deliberately omitted: on a Kotlin compilation failure it
       # emits ~150 lines of Gradle internals that bury the actual 'e:' errors.
+      # Exit the compiler JVM before the native-image-heavy test process starts,
+      # so its retained heap does not compete with Skia on the hosted runner.
+      - name: Compile desktop tests
+        run: |
+          set -o pipefail
+          ./gradlew :composeApp:desktopTestClasses \
+            -Pkotlin.compiler.execution.strategy=in-process \
+            --no-daemon --max-workers=2 --console=plain 2>&1 | tee compile.log
+
       - name: Run desktop tests
         env:
           # Promotional frame captures are opt-in production work, not regression tests.
@@ -126,7 +135,9 @@ jobs:
           SHOTS_ONLY: none
         run: |
           set -o pipefail
-          ./gradlew :composeApp:desktopTest --console=plain 2>&1 | tee build.log || {
+          ./gradlew :composeApp:desktopTest \
+            -Pkotlin.compiler.execution.strategy=in-process \
+            --no-daemon --max-workers=2 --console=plain 2>&1 | tee build.log || {
             echo "::error::Desktop compilation or tests failed"
             grep -E '^e: ' build.log | head -60
             exit 1

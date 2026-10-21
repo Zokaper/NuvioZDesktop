@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.ImageComposeScene
+import com.nuvio.app.promo.VirtualClockDispatcher
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -256,10 +257,12 @@ class AdvancedSetupRenderHarness {
     ) {
         val density = Density(platformDensityFor(widthDp))
         runCatching {
+            val clock = VirtualClockDispatcher()
             val scene = ImageComposeScene(
                 width = (widthDp * density.density).toInt(),
                 height = (heightDp * density.density).toInt(),
                 density = density,
+                coroutineContext = clock,
             ) {
                 NuvioTheme(
                     darkTheme = true,
@@ -271,10 +274,15 @@ class AdvancedSetupRenderHarness {
                 }
             }
             try {
-                scene.render(0)
-                val image = scene.render(1_000_000_000L)
-                val data = image.encodeToData(EncodedImageFormat.PNG) ?: error("encodeToData returned null")
-                File(outputDir, "$name.png").writeBytes(data.bytes)
+                scene.render(0).close()
+                clock.advanceTo(1_000L)
+                scene.render(1_000_000_000L).use { image ->
+                    image.encodeToData(EncodedImageFormat.PNG).use { data ->
+                        File(outputDir, "$name.png").writeBytes(
+                            data?.bytes ?: error("encodeToData returned null"),
+                        )
+                    }
+                }
             } finally {
                 scene.close()
             }

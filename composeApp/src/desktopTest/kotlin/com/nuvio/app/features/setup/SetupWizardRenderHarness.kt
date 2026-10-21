@@ -30,6 +30,7 @@ import com.nuvio.app.features.downloads.DynamicRangePolicy
 import com.nuvio.app.features.playback.LanguageStrictness
 import com.nuvio.app.features.playback.PlaybackMode
 import com.nuvio.app.features.watchprogress.ContinueWatchingSectionStyle
+import com.nuvio.app.promo.VirtualClockDispatcher
 import org.jetbrains.skia.EncodedImageFormat
 import java.io.File
 import kotlin.test.Test
@@ -656,10 +657,12 @@ class SetupWizardRenderHarness {
     ) {
         val density = Density(platformDensity)
         runCatching {
+            val clock = VirtualClockDispatcher()
             val scene = ImageComposeScene(
                 width = (widthDp * density.density).toInt(),
                 height = (heightDp * density.density).toInt(),
                 density = density,
+                coroutineContext = clock,
             ) {
                 // ⚠ **Passing this is what makes the render honest, and its absence is why the
                 // first desktop pass shipped looking wrong.** `NuvioTheme` multiplies the ambient
@@ -681,15 +684,24 @@ class SetupWizardRenderHarness {
                 }
             }
             try {
-                repeat(frames - 1) { scene.render(nanoTime) }
-                val image = scene.render(nanoTime)
-                val data = image.encodeToData(EncodedImageFormat.PNG)
-                    ?: error("encodeToData returned null")
-                File(outputDir, "$name.png").writeBytes(data.bytes)
+                // Layout callbacks and effects must share the rendering thread.
+                clock.advanceTo(nanoTime / 1_000_000L)
+                repeat(frames) {
+                    scene.render(nanoTime).close()
+                    clock.pump()
+                }
+                scene.render(nanoTime).use { image ->
+                    image.encodeToData(EncodedImageFormat.PNG).use { data ->
+                        File(outputDir, "$name.png").writeBytes(
+                            data?.bytes ?: error("encodeToData returned null"),
+                        )
+                    }
+                }
             } finally {
                 scene.close()
             }
         }.onFailure { error ->
+            error.printStackTrace()
             failures += "$name: ${error::class.simpleName}: ${error.message}"
         }
     }
