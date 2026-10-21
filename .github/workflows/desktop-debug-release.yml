@@ -252,10 +252,10 @@ jobs:
             exit 1
           fi
           file "${runtime}" "${engine}" | tee macos-source-architectures.txt
-          if grep -v 'arm64' macos-source-architectures.txt; then
-            echo "A required macOS runtime binary is not arm64." >&2
-            exit 1
-          fi
+          # The inherited engine is universal (arm64 + x86_64). Verify its arm64
+          # slice directly; file prints extra per-slice lines for universal binaries.
+          lipo -verify_arch arm64 "${runtime}"
+          lipo -verify_arch arm64 "${engine}"
       - name: Set up Java
         uses: actions/setup-java@v5
         with:
@@ -349,10 +349,7 @@ jobs:
             exit 1
           fi
           file "${app}/Contents/MacOS/${executable}" | tee macos-package-architectures.txt
-          if ! grep -q 'arm64' macos-package-architectures.txt; then
-            echo "The packaged launcher is not arm64." >&2
-            exit 1
-          fi
+          lipo -verify_arch arm64 "${app}/Contents/MacOS/${executable}"
           bridge="$(find "${app}" -type f -name libplayer_bridge.dylib -print -quit)"
           libmpv="$(find "${app}" -type f -name libmpv.2.dylib -print -quit)"
           engine="${app}/Contents/app/resources/native/macos/libnuvio_engine.dylib"
@@ -362,10 +359,9 @@ jobs:
             exit 1
           fi
           file "${bridge}" "${libmpv}" "${engine}" | tee -a macos-package-architectures.txt
-          if grep -v 'arm64' macos-package-architectures.txt; then
-            echo "A packaged native player binary is not arm64." >&2
-            exit 1
-          fi
+          for binary in "${bridge}" "${libmpv}" "${engine}"; do
+            lipo -verify_arch arm64 "${binary}"
+          done
           otool -L "${bridge}" "${engine}" | tee macos-player-dependencies.txt
           if grep -E '^[[:space:]]+/(opt/homebrew|usr/local|Users|private/var)/' macos-player-dependencies.txt; then
             echo "The player bridge contains a build-machine-only library path." >&2
