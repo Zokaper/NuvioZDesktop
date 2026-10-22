@@ -232,6 +232,7 @@ class SetupWizardRenderHarness {
                 val specimen = when (step) {
                     SetupStep.Look -> SetupSpecimen.Cards
                     SetupStep.Theme -> SetupSpecimen.Theme
+                    SetupStep.Language, SetupStep.LanguageOwnTitles, SetupStep.LanguageOtherTitles -> SetupSpecimen.Language
                     else -> SetupSpecimen.Diagram
                 }
                 val name = "desktop-${run.label}-${step.name.lowercase()}-${widthDp}x$heightDp"
@@ -269,6 +270,8 @@ class SetupWizardRenderHarness {
                         onBack = {},
                         onAdvance = {},
                         modifier = Modifier.fillMaxSize(),
+                        // As `SetupWizardScreen` passes it: the Language steps draw Advanced Setup's previews.
+                        customSpecimen = step.languagePanel?.let { panel -> { AdvancedLanguagePreview(panel = panel, desktop = true) } },
                     ) {
                         SetupStepBody(
                             step = step,

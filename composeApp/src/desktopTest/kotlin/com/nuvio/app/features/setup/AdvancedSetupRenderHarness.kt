@@ -218,6 +218,21 @@ class AdvancedSetupRenderHarness {
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
     }
 
+    /** Windows' Startup & tray area (2026-10-22), with the desktop app's own registration. */
+    @Test
+    fun renderStartupPanel() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        val previous = AdvancedSetupExtensions.startupAndTray
+        AdvancedSetupExtensions.startupAndTray = com.nuvio.app.features.tray.DesktopStartupAdvancedSetup
+        try {
+            renderPanels("startup", desktopFacts.copy(startupAvailable = true), 1280, 820, failures, listOf(AdvancedSetupCategory.Startup))
+        } finally {
+            AdvancedSetupExtensions.startupAndTray = previous
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString(", "))
+    }
+
     private fun renderPanels(
         label: String, facts: AdvancedSetupFacts, w: Int, h: Int, failures: MutableList<String>,
         categories: List<AdvancedSetupCategory> = advancedSetupCategories(facts),

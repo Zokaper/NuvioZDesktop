@@ -172,7 +172,7 @@ internal fun DesktopClosePromptCard(
  * picture is about people they know; a neutral card otherwise.
  */
 @Composable
-private fun ClosePromptPicture() {
+internal fun ClosePromptPicture(modifier: Modifier = Modifier.fillMaxWidth().height(150.dp)) {
     val state by SocialRepository.uiState.collectAsState()
     val live = state.watchingNow.firstOrNull()
     val friend = live?.profile ?: state.friends.firstOrNull()
@@ -196,7 +196,7 @@ private fun ClosePromptPicture() {
         target = SocialNavigationTarget.Inbox,
     )
     Box(
-        Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(16.dp))
+        modifier.clip(RoundedCornerShape(16.dp))
             .background(Brush.linearGradient(listOf(Color(0xFF243B55), Color(0xFF141E30), Color(0xFF3A1C4A)))),
     ) {
         SocialPopupCard(

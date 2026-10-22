@@ -60,6 +60,10 @@ import com.nuvio.app.features.tray.DesktopCloseAction
 import com.nuvio.app.features.tray.DesktopSocialPopupWindow
 import com.nuvio.app.features.tray.DesktopSocialPopups
 import com.nuvio.app.features.tray.DesktopSocialSettingsSections
+import com.nuvio.app.features.tray.DesktopStartupAdvancedSetup
+import com.nuvio.app.features.tray.DesktopStartupSettingsRows
+import com.nuvio.app.features.setup.AdvancedSetupExtensions
+import com.nuvio.app.features.settings.PlatformSettingsExtensions
 import com.nuvio.app.features.tray.DesktopSingleInstance
 import com.nuvio.app.features.tray.DesktopStartWithWindows
 import com.nuvio.app.features.tray.DesktopTrayController
@@ -131,6 +135,12 @@ fun main(args: Array<String>) {
     // Social V2 tray mode: the window can close while the process (and Social) carries on.
     AppGateResume.enabled = true
     SocialSettingsExtensions.platformSections = { isTablet -> DesktopSocialSettingsSections(isTablet) }
+    // Closing the window and Start with Windows: Settings → Advanced → Startup, and Advanced Setup's
+    // Startup & tray area. Windows only, like the Run key behind the second of them.
+    if (DesktopHostOs.current == DesktopHostOs.WINDOWS) {
+        PlatformSettingsExtensions.startupRows = { isTablet -> DesktopStartupSettingsRows(isTablet) }
+        AdvancedSetupExtensions.startupAndTray = DesktopStartupAdvancedSetup
+    }
     DesktopSocialPopups.start()
     if (startInTray) DesktopBackgroundStart.start()
     DesktopStartWithWindows.refresh()
