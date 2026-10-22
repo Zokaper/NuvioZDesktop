@@ -1,3 +1,10 @@
+## Watch Together lobby / leftover party, language fallback (2026-10-22 to 10-23)
+
+Lobby location published after the departing player detaches (`lobbyLocationWaitsForPlayer`); host stall
+watch skips lobby guests; leftover parties are left on launch; unknown title origin plays my language
+(maintainer's call). Local MSI 125 (`077542740`, `f93de7775`, `1d716972c`; earlier `cf5a74edd`).
+Local builds have no `TMDB_API_KEY`, so TMDB 401s on them. Full record: `nuvio-z/STATUS.md`.
+
 ## Social V2 QA pass (2026-10-22)
 
 From the maintainer's debug 117 test: capped Recommend / Watch Together pickers, a Recommended
