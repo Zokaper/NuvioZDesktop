@@ -185,6 +185,14 @@
     {
       "build": 123,
       "text": "Watch Together: a guest who goes back to the lobby no longer makes the host wait for them to buffer. A party you never left is left when the app starts, instead of reopening."
+    },
+    {
+      "build": 124,
+      "text": "Watch Together: a guest who backs out to the lobby now shows as In lobby for everyone, instead of Playing or Ready."
+    },
+    {
+      "build": 125,
+      "text": "Language: when a title's original language can't be looked up, audio now plays in your language (then your fallback) instead of the file's default track."
     }
   ]
 }
