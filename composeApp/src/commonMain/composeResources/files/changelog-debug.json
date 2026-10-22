@@ -165,6 +165,10 @@
     {
       "build": 118,
       "text": "Social V2 QA fixes: Recommend and Watch Together pickers keep their button on screen; Recommended to you is its own page behind a button in the Social header; Language setup pages get previews and the first-run setup uses them; Review new settings opens Advanced Setup; new Startup & tray area, and closing the window for the first time offers Start with Windows."
+    },
+    {
+      "build": 119,
+      "text": "Watch Together: friends you invited show in the lobby as dashed Invited tiles; fixed the host's player sometimes staying on the loading screen while the film played underneath. Language setup page 1 asks clearer questions. Startup & tray settings also appear on Mac."
     }
   ]
 }
