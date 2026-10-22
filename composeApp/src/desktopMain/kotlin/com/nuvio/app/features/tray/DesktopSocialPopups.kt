@@ -121,8 +121,9 @@ internal object DesktopSocialPopups {
 
     fun onClick(popup: SocialPopup) {
         dismiss(popup.key)
-        if (_playerOnScreen.value) return
-        SocialNavigation.open(popup.target)
+        // During playback a click still raises the window - Nuvio may be behind another app with
+        // the film paused - but leaves the player where it is rather than navigating out of it.
+        if (!_playerOnScreen.value) SocialNavigation.open(popup.target)
         DesktopTrayController.show()
         DesktopTrayController.bringToFront()
     }
