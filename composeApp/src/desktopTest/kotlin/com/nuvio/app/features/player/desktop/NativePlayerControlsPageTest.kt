@@ -43,6 +43,44 @@ class NativePlayerControlsPageTest {
         assertEquals(emptySet(), scriptConstants.duplicates(), "controls.js redeclares top-level constants")
     }
 
+    /**
+     * Every `<script>` in controls.html shares one global scope, so a top-level name declared by two of
+     * them is a SyntaxError that stops the later file outright. Upstream's party.js arrived with the
+     * 0.1.31-alpha sync declaring `partyPanel`, which controls.js already declared: debug 117-119 sat on
+     * the opening overlay over a playing video with nothing clickable. The test above only ever looked
+     * inside controls.js.
+     */
+    @Test
+    fun scriptsSharingThePageDeclareDistinctTopLevelNames() {
+        val html = resourceText("/player-ui/controls.html")
+        val scripts = Regex("""<script\s+src=["']([^"']+)["']""").findAll(html).map { it.groupValues[1] }.toList()
+        assertTrue(scripts.size >= 2, "expected controls.html to load several scripts, found $scripts")
+        val declaredBy = scripts.flatMap { name ->
+            Regex("""(?m)^(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)""")
+                .findAll(resourceText("/player-ui/$name"))
+                .map { it.groupValues[1] to name }
+                .toList()
+        }
+        val clashes = declaredBy.groupBy({ it.first }, { it.second })
+            .filterValues { files -> files.distinct().size > 1 }
+        assertEquals(emptyMap(), clashes, "top-level names declared by more than one script on the page")
+    }
+
+    /**
+     * Z stubs the opening spinner (it uses the facts band instead). Upstream's `applyTheme` gained a
+     * `setColors` call on it in 0.1.31-alpha and the stub had only `setActive`: the TypeError came in the
+     * first render, before `controlsReady`, with the same stuck overlay as the name clash above.
+     */
+    @Test
+    fun theOpeningIndicatorStubHasEveryMethodTheScriptCalls() {
+        val script = resourceText("/player-ui/controls.js")
+        val stub = Regex("""(?m)^const openingLoadingIndicator = \{(.*)\};$""").find(script)?.groupValues?.get(1)
+            ?: return // A real indicator again: nothing stubbed to check.
+        val defined = Regex("""(\w+)\(\)""").findAll(stub).map { it.groupValues[1] }.toSet()
+        val called = Regex("""openingLoadingIndicator\.(\w+)\(""").findAll(script).map { it.groupValues[1] }.toSet()
+        assertEquals(emptySet(), called - defined, "controls.js calls methods its opening-indicator stub lacks")
+    }
+
     @Test
     fun nativeOpeningSurfaceCarriesThePhaseTwoLoadingBandWithoutLegacyMotion() {
         val html = resourceText("/player-ui/controls.html")

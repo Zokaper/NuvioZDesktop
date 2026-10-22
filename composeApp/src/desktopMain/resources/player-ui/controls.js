@@ -56,7 +56,9 @@ const openingLogoFillClip = document.getElementById("openingLogoFillClip");
 const openingLogoFill = document.getElementById("openingLogoFill");
 const openingTitle = document.getElementById("openingTitle");
 // Z uses the opening facts band; only buffering has an animated canvas.
-const openingLoadingIndicator = { setActive() {} };
+// Both methods: upstream's `applyTheme` (0.1.31-alpha) also calls `setColors` on it, and a missing one threw
+// during the first render, before the page could report ready.
+const openingLoadingIndicator = { setActive() {}, setColors() {} };
 const bufferingLoadingIndicator = window.createLoadingIndicator(bufferingStatus.querySelector("canvas"));
 const openingStatus = document.getElementById("openingStatus");
 const openingMessage = document.getElementById("openingMessage");
@@ -70,7 +72,10 @@ const partyBannerDetail = document.getElementById("partyBannerDetail");
 const partyBannerAvatars = document.getElementById("partyBannerAvatars");
 const partyBannerAction = document.getElementById("partyBannerAction");
 const partyBannerSecondary = document.getElementById("partyBannerSecondary");
-const partyPanel = document.getElementById("partyPanel");
+// `watchPartyPanel`, not `partyPanel`: upstream's party.js shares this page's global scope and declares
+// that name, and a duplicate `const` is a SyntaxError that stops this whole file (debug 117-119: the
+// player sat on its opening overlay with nothing clickable).
+const watchPartyPanel = document.getElementById("partyPanel");
 const partyMemberList = document.getElementById("partyMemberList");
 const wtConnectionChip = document.getElementById("wtConnectionChip");
 const wtError = document.getElementById("wtError");
@@ -2571,9 +2576,9 @@ const renderPartyPanel = suppress => {
   const wt = state.watchTogether || {};
   const kind = String(wt.state || "idle");
   const show = Boolean(!suppress && wt.open);
-  partyPanel.classList.toggle("visible", show);
-  partyPanel.setAttribute("aria-hidden", show ? "false" : "true");
-  partyPanel.dataset.state = kind;
+  watchPartyPanel.classList.toggle("visible", show);
+  watchPartyPanel.setAttribute("aria-hidden", show ? "false" : "true");
+  watchPartyPanel.dataset.state = kind;
   const active = kind === "active";
 
   wtConnectionChip.hidden = !active;
@@ -2709,7 +2714,7 @@ const renderWatchTogetherButton = () => {
 
 // Buttons drawn per state carry `data-wt-command` and a value; they are delegated here rather than
 // wired one by one, because the panel redraws them on every update.
-partyPanel.addEventListener("click", event => {
+watchPartyPanel.addEventListener("click", event => {
   event.stopPropagation();
   const target = event.target.closest("[data-wt-command]");
   if (target && !target.disabled) {
