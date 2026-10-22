@@ -173,6 +173,10 @@
     {
       "build": 120,
       "text": "Fixed: the player stayed on its loading screen with nothing clickable while the video played underneath (since build 117)."
+    },
+    {
+      "build": 121,
+      "text": "Watch Together panel in the player: status chips fit their text again, and + Invite friends no longer shows a clipped grey highlight."
     }
   ]
 }
