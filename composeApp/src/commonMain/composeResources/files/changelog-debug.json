@@ -177,6 +177,14 @@
     {
       "build": 121,
       "text": "Watch Together panel in the player: status chips fit their text again, and + Invite friends no longer shows a clipped grey highlight."
+    },
+    {
+      "build": 122,
+      "text": "Watch Together: a guest who rejoins a playing party now waits for its player to be ready before resuming, and learns how long that takes, so it lands in sync instead of catching up slowly. Guests who go back to the lobby now show In lobby."
+    },
+    {
+      "build": 123,
+      "text": "Watch Together: a guest who goes back to the lobby no longer makes the host wait for them to buffer. A party you never left is left when the app starts, instead of reopening."
     }
   ]
 }
