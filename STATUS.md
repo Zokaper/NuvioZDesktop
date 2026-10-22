@@ -3,7 +3,10 @@
 Lobby location published after the departing player detaches (`lobbyLocationWaitsForPlayer`); host stall
 watch skips lobby guests; leftover parties are left on launch; unknown title origin plays my language
 (maintainer's call). Local MSI 125 (`077542740`, `f93de7775`, `1d716972c`; earlier `cf5a74edd`).
-Local builds have no `TMDB_API_KEY`, so TMDB 401s on them. Full record: `nuvio-z/STATUS.md`.
+Local builds have no `TMDB_API_KEY`, so TMDB 401s on them. Then: closing/reopening leaves the party
+(shared coordinator part, `f0a4af8b9`), pop-up click raises the window (`7c1c3dd67`), and friends
+starting to watch notify by default (`7a52d34d4`; backend migration not yet deployed). Local MSI 126.
+Full record: `nuvio-z/STATUS.md`.
 
 ## Social V2 QA pass (2026-10-22)
 
