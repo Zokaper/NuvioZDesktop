@@ -161,6 +161,10 @@
     {
       "build": 116,
       "text": "Social V2 verification: new language settings and Advanced Setup Language; updated to upstream Desktop 0.1.31-alpha."
+    },
+    {
+      "build": 118,
+      "text": "Social V2 QA fixes: Recommend and Watch Together pickers keep their button on screen; Recommended to you is its own page behind a button in the Social header; Language setup pages get previews and the first-run setup uses them; Review new settings opens Advanced Setup; new Startup & tray area, and closing the window for the first time offers Start with Windows."
     }
   ]
 }
