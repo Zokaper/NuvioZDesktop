@@ -1,3 +1,13 @@
+## Social V2 QA pass (2026-10-22)
+
+From the maintainer's debug 117 test: capped Recommend / Watch Together pickers, a Recommended
+to you page behind a header button, Language panels with previews (and the first-run wizard
+using them), What's New / "New settings available" opening Advanced Setup on the changed areas,
+the first-close prompt offering Start with Windows, and a Windows-only THIS PC -> Startup & tray
+area (close action and Start with Windows moved from Social settings to Settings -> Advanced ->
+Startup). Commits `ddc31c078`, `ca7f07e53`; debug 118 dispatched at `2efeaa5a7`. Focused desktop
+packages pass 919/919; the full suite was not rerun. Full record: `nuvio-z/STATUS.md`.
+
 ## Upstream sync complete (2026-10-21)
 
 Final CI [39609270820](https://github.com/Zokaper/NuvioZDesktop/actions/runs/39609270820)
