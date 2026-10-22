@@ -101,8 +101,15 @@ internal object DesktopTrayController {
         val window = mainWindow ?: return
         SwingUtilities.invokeLater {
             if (window.extendedState and Frame.ICONIFIED != 0) window.extendedState = window.extendedState and Frame.ICONIFIED.inv()
+            // Over another app `toFront()` is refused (see DesktopWindowForeground); a moment of
+            // always-on-top lifts the window regardless, and the Win32 call hands it the focus.
+            if (!window.isAlwaysOnTop) {
+                window.isAlwaysOnTop = true
+                window.isAlwaysOnTop = false
+            }
             window.toFront()
             window.requestFocus()
+            DesktopWindowForeground.request(window)
         }
     }
 
