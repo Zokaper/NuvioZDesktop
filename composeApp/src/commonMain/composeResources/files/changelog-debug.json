@@ -169,6 +169,10 @@
     {
       "build": 119,
       "text": "Watch Together: friends you invited show in the lobby as dashed Invited tiles; fixed the host's player sometimes staying on the loading screen while the film played underneath. Language setup page 1 asks clearer questions. Startup & tray settings also appear on Mac."
+    },
+    {
+      "build": 120,
+      "text": "Fixed: the player stayed on its loading screen with nothing clickable while the video played underneath (since build 117)."
     }
   ]
 }
