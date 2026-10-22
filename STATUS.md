@@ -7,6 +7,8 @@ the first-close prompt offering Start with Windows, and a Windows-only THIS PC -
 area (close action and Start with Windows moved from Social settings to Settings -> Advanced ->
 Startup). Commits `ddc31c078`, `ca7f07e53`; debug 118 dispatched at `2efeaa5a7`. Focused desktop
 packages pass 919/919; the full suite was not rerun. Full record: `nuvio-z/STATUS.md`.
+Round 2 (`b9fde9821`, debug 119): invited lobby tiles, Language questions, player-page overlay
+guard + `PlayerPage` error logging (WT host overlay-over-video report), Startup & tray on macOS too.
 
 ## Upstream sync complete (2026-10-21)
 
