@@ -193,6 +193,10 @@
     {
       "build": 125,
       "text": "Language: when a title's original language can't be looked up, audio now plays in your language (then your fallback) instead of the file's default track."
+    },
+    {
+      "build": 126,
+      "text": "Clicking a Social pop-up brings Nuvio Z to the front when it is behind another app."
     }
   ]
 }
