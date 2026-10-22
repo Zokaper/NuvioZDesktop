@@ -303,6 +303,30 @@ class SocialSettingsTrayHarness {
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
     }
 
+    /** The shipped close prompt with the Start with Windows offer (2026-10-22), ticked and not. */
+    @Test
+    fun renderShippedClosePrompt() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        for (ticked in listOf(true, false)) {
+            renderScene("close-prompt-shipped-${if (ticked) "ticked" else "unticked"}-1280x820", 1280, 820, failures) {
+                Box(Modifier.fillMaxSize()) {
+                    DashboardBackground()
+                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)))
+                    com.nuvio.app.features.tray.DesktopClosePromptCard(
+                        offerStartWithWindows = true,
+                        startWithWindows = ticked,
+                        onStartWithWindowsChange = {},
+                        onQuit = {},
+                        onHide = {},
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                }
+            }
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
     // --- settings prototypes -----------------------------------------------------------------
 
     @Composable

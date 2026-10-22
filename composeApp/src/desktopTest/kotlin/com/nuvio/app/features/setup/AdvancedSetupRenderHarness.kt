@@ -212,7 +212,8 @@ class AdvancedSetupRenderHarness {
         val failures = mutableListOf<String>()
         for ((w, h) in listOf(360 to 740, 420 to 900, 1280 to 820)) {
             val facts = if (w < 1000) androidFacts else desktopFacts
-            renderPanels("language", facts, w, h, failures, listOf(AdvancedSetupCategory.Language))
+            // The Language stills are network images nothing else here has cached: give them real time.
+            renderPanels("language", facts, w, h, failures, listOf(AdvancedSetupCategory.Language), imageWaitMs = 4_000L)
         }
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
     }
@@ -220,11 +221,12 @@ class AdvancedSetupRenderHarness {
     private fun renderPanels(
         label: String, facts: AdvancedSetupFacts, w: Int, h: Int, failures: MutableList<String>,
         categories: List<AdvancedSetupCategory> = advancedSetupCategories(facts),
+        imageWaitMs: Long = 0L,
     ) {
         for (category in categories) {
             val panels = advancedSetupPanels(category, facts)
             panels.forEachIndexed { index, panel ->
-                render("panel-$label-${w}x$h-${category.name}-${panel.name}", w, h, AppTheme.WHITE, failures) { windowWidth ->
+                render("panel-$label-${w}x$h-${category.name}-${panel.name}", w, h, AppTheme.WHITE, failures, imageWaitMs) { windowWidth ->
                     BoxWithConstraints(Modifier.fillMaxSize()) {
                         AdvancedSetupPanelFrame(
                             panel = panel,
@@ -253,6 +255,8 @@ class AdvancedSetupRenderHarness {
         heightDp: Int,
         theme: AppTheme,
         failures: MutableList<String>,
+        /** Wall-clock time for network images to arrive before the frame that is kept. */
+        imageWaitMs: Long = 0L,
         content: @Composable (windowWidth: androidx.compose.ui.unit.Dp) -> Unit,
     ) {
         val density = Density(platformDensityFor(widthDp))
@@ -275,6 +279,10 @@ class AdvancedSetupRenderHarness {
             }
             try {
                 scene.render(0).close()
+                if (imageWaitMs > 0) {
+                    Thread.sleep(imageWaitMs)
+                    scene.render(500_000_000L).close()
+                }
                 clock.advanceTo(1_000L)
                 scene.render(1_000_000_000L).use { image ->
                     image.encodeToData(EncodedImageFormat.PNG).use { data ->

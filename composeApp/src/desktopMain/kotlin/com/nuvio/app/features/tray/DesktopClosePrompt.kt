@@ -16,15 +16,19 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,6 +39,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -42,22 +47,34 @@ import com.nuvio.app.core.ui.NuvioTheme
 import com.nuvio.app.features.social.SocialArtRef
 import com.nuvio.app.features.social.SocialLiveColor
 import com.nuvio.app.features.social.SocialNavigationTarget
+import com.nuvio.app.features.social.SocialPillButton
 import com.nuvio.app.features.social.SocialPopup
 import com.nuvio.app.features.social.SocialPopupCard
 import com.nuvio.app.features.social.SocialPopupKind
 import com.nuvio.app.features.social.SocialProfileSummary
-import com.nuvio.app.features.social.SocialPillButton
 import com.nuvio.app.features.social.SocialRepository
 
 /**
- * The first press of the window's close button: "Keep Nuvio in the tray?" (maintainer's pick B, with a
+ * The first press of the window's close button: "Keep Nuvio Z in the tray?" (maintainer's pick B, with a
  * picture of what hiding is for). Hide to tray is the default answer; either answer becomes the
  * "Closing the window" setting. Escape or a click outside dismisses it without answering.
+ *
+ * It is also where Start with Windows is first offered (2026-10-22): someone choosing to keep Nuvio
+ * running is the person it is for. Ticked by default where it can apply, marked Recommended, and
+ * applied with either answer - quitting now and starting in the tray at sign-in is a coherent pair.
  */
 @Composable
 internal fun DesktopClosePromptHost(onQuit: () -> Unit) {
     val visible by DesktopTrayController.closePromptVisible.collectAsState()
     if (!visible) return
+    val startEnabled by DesktopStartWithWindows.enabled.collectAsState()
+    LaunchedEffect(Unit) { DesktopStartWithWindows.refresh() }
+    var startWithWindows by remember { mutableStateOf(true) }
+    val offerStart = DesktopStartWithWindows.isAvailable && startEnabled == false
+    val answer: (Boolean) -> Unit = { hide ->
+        if (offerStart && startWithWindows) DesktopStartWithWindows.setEnabled(true)
+        DesktopTrayController.answerClosePrompt(hideToTray = hide, quit = onQuit)
+    }
     NuvioTheme {
         Box(
             Modifier.fillMaxSize()
@@ -75,36 +92,74 @@ internal fun DesktopClosePromptHost(onQuit: () -> Unit) {
                 },
             contentAlignment = Alignment.Center,
         ) {
-            Surface(
-                Modifier.width(440.dp)
-                    // Swallow clicks on the card itself so they do not reach the scrim.
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
-                shape = RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.surface,
-            ) {
-                CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
-                    Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        ClosePromptPicture()
-                        Text("Keep Nuvio in the tray?", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                        Text(
-                            "Closing the window hides Nuvio next to the clock, so friends' pop-ups can still reach you. " +
-                                "While hidden it uses about as much memory as a browser tab.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            "You can change this any time in Social settings.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                        )
-                        Row(
-                            Modifier.fillMaxWidth().padding(top = 6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
-                        ) {
-                            SocialPillButton("Quit Nuvio", { DesktopTrayController.answerClosePrompt(hideToTray = false, quit = onQuit) }, compact = false)
-                            SocialPillButton("Hide to tray", { DesktopTrayController.answerClosePrompt(hideToTray = true, quit = onQuit) }, primary = true, compact = false)
+            DesktopClosePromptCard(
+                offerStartWithWindows = offerStart,
+                startWithWindows = startWithWindows,
+                onStartWithWindowsChange = { startWithWindows = it },
+                onQuit = { answer(false) },
+                onHide = { answer(true) },
+                // Swallow clicks on the card itself so they do not reach the scrim.
+                modifier = Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
+            )
+        }
+    }
+}
+
+/** The card itself, stateless, so the render harness draws exactly what the window shows. */
+@Composable
+internal fun DesktopClosePromptCard(
+    offerStartWithWindows: Boolean,
+    startWithWindows: Boolean,
+    onStartWithWindowsChange: (Boolean) -> Unit,
+    onQuit: () -> Unit,
+    onHide: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier.width(460.dp),
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                ClosePromptPicture()
+                Text("Keep Nuvio Z in the tray?", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text(
+                    "Closing the window sends Nuvio Z to the tray. It stays on standby, so you still get notifications " +
+                        "from friends and it opens again much faster. While in the tray it uses about as much memory as a browser tab.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (offerStartWithWindows) {
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+                            .clickable(role = Role.Checkbox) { onStartWithWindowsChange(!startWithWindows) }
+                            .padding(start = 4.dp, end = 14.dp, top = 6.dp, bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(checked = startWithWindows, onCheckedChange = onStartWithWindowsChange)
+                        Column(Modifier.weight(1f)) {
+                            Text("Start Nuvio Z with Windows (Recommended)", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "Straight to the tray when you sign in, ready the moment you open it.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
+                }
+                Text(
+                    "You can change this any time in Settings.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                )
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
+                ) {
+                    SocialPillButton("Quit Nuvio Z", onQuit, compact = false)
+                    SocialPillButton("Hide to tray", onHide, primary = true, compact = false)
                 }
             }
         }

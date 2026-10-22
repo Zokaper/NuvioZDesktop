@@ -497,6 +497,76 @@ class SocialRenderHarness {
     }
 
     /**
+     * "Recommended to you" as its own page (2026-10-22): the header button with its count and new-dot,
+     * and the page it opens. Three titles, one from two friends, one long note.
+     * PNGs: `build/social-render/recommended-page-*` and `recommended-button-*`.
+     */
+    @Test
+    fun renderRecommendedPage() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        val art = mapOf(
+            "tt7282468" to com.nuvio.app.features.setup.SetupSampleTitle.backgroundUrl("tt7282468"),
+            "tt1475582" to com.nuvio.app.features.setup.SetupSampleTitle.backgroundUrl("tt1475582"),
+            "tt0903747" to com.nuvio.app.features.setup.SetupSampleTitle.backgroundUrl("tt0903747"),
+        )
+        val recs = listOf(
+            Triple("tt0903747", "Breaking Bad", listOf(profile("debug", "debug") to "it's peak. Said the Liar Man. Start from season one and don't skip anything, it pays off.")),
+            Triple("tt7282468", "Burning", listOf(profile("Ana", "ana") to "slow but trust me", profile("Ben", "ben") to null)),
+            Triple("tt1475582", "Sherlock", listOf(profile("Seraph", "seraph") to null)),
+        ).flatMapIndexed { i, (id, title, from) ->
+            from.mapIndexed { j, (who, note) ->
+                SocialInboxEvent(
+                    id = "e-rec-$i-$j", kind = SocialInboxEvent.Recommendation, actor = who,
+                    createdAt = "2026-09-15T1${i}:0$j:00Z",
+                    payload = SocialInboxPayload(contentId = id, contentType = if (id == "tt7282468") "movie" else "series", title = title, note = note, background = art[id]),
+                )
+            }
+        }
+        val state = feedState.copy(inbox = recs + inboxEvents, watchingNow = watchingNow.take(1))
+        render("recommended-button-1280x820", 1280, 820, failures) { SocialFeedScene(state) }
+        renderPhone("recommended-button-411x914", 411, 914, failures) { SocialFeedScene(state) }
+        render("recommended-page-1280x820", 1280, 820, failures) { SocialFeedScene(state, overlay = SocialOverlay.Recommended) }
+        renderPhone("recommended-page-411x914", 411, 914, failures) { SocialFeedScene(state, overlay = SocialOverlay.Recommended) }
+        render("recommended-inbox-without-shelf-1280x820", 1280, 820, failures) { SocialFeedScene(state, overlay = SocialOverlay.Inbox) }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
+    /**
+     * The two friend pickers with fourteen friends (2026-10-22): the list scrolls inside a cap, the
+     * button stays on screen, and the dialog keeps clear of a short window's edges.
+     */
+    @Test
+    fun renderFriendPickers() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        val many = listOf("debug", "faisal", "finalguy", "jeremy renner", "main debug", "new guy", "Seraph", "tvamet", "VeyronV1",
+            "Ana", "Ben", "Big Z", "Rayo", "Zokaper").map { name -> profile(name, name.lowercase().replace(" ", "")) }
+        val content = SocialRecommendContent(contentType = "series", contentId = "tt1475582", title = "Sherlock", poster = null,
+            background = com.nuvio.app.features.setup.SetupSampleTitle.backgroundUrl("tt1475582"))
+        val rows = many.mapIndexed { i, p ->
+            com.nuvio.app.features.watchparty.PartyInviteRow(
+                key = p.profileId, name = p.displayName, avatarUrl = null, colorHex = "#1E88E5",
+                watching = if (i < 2) "The Punisher · S1 E2" else null,
+                button = com.nuvio.app.features.player.PartyInviteButton.Invite,
+            )
+        }
+        for ((w, h) in listOf(1280 to 820, 1280 to 600, 1920 to 1080)) {
+            render("picker-recommend-${w}x$h", w, h, failures, settled = true) {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                    SocialRecommendSheetContent(content, many, wide = true, onDismiss = {})
+                }
+            }
+            render("picker-invite-${w}x$h", w, h, failures, settled = true) {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                    com.nuvio.app.features.watchparty.PartyInvitePicker(rows, slots = 8, wide = true, onDismiss = {}, onInvite = {}, onCancel = {})
+                }
+            }
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
+    /**
      * The phone scenes, at a phone's own scale: density 2, no desktop UI scale, a font scale of 1,
      * and the bottom-nav pill's measured reserve (79dp expanded) in the overlay padding, so the
      * list's end clears where the pill would be. Insets are zero here - device checks own those.
@@ -672,9 +742,11 @@ class SocialRenderHarness {
         widthDp: Int,
         heightDp: Int,
         failures: MutableList<String>,
+        /** Draw a second frame a second later, so a dialog's fade-in has finished. */
+        settled: Boolean = false,
         content: @Composable () -> Unit,
     ) {
-        renderBytes(name, widthDp, heightDp, failures, content)
+        renderBytes(name, widthDp, heightDp, failures, settled, content)
     }
 
     private fun renderBytes(
@@ -682,6 +754,7 @@ class SocialRenderHarness {
         widthDp: Int,
         heightDp: Int,
         failures: MutableList<String>,
+        settled: Boolean = false,
         content: @Composable () -> Unit,
     ): ByteArray? {
         val density = Density(platformDensityFor(widthDp))
@@ -701,7 +774,8 @@ class SocialRenderHarness {
                 ) { content() }
             }
             try {
-                scene.render(0L).use { image ->
+                if (settled) scene.render(0L).close()
+                scene.render(if (settled) 1_000_000_000L else 0L).use { image ->
                     image.encodeToData(EncodedImageFormat.PNG).use { data ->
                         val bytes = data?.bytes ?: error("encodeToData returned null")
                         File(outputDir, "$name.png").writeBytes(bytes)
