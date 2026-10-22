@@ -833,6 +833,9 @@ button:disabled {
 .wt-request-actions button[hidden] { display: none; }
 
 .party-panel .wt-disclosure { margin-top: 8px; min-height: 30px; border: 0; background: transparent; color: var(--theme-accent-strong); padding: 0; font-weight: 650; }
+/* A text link, so it answers hover like one: `.party-panel button:hover` filled it, and with no padding
+   the fill hugged the letters as a clipped grey pill (2026-10-22). */
+.party-panel .wt-disclosure:hover:not(:disabled) { background: transparent; text-decoration: underline; text-underline-offset: 3px; }
 /* The invite picker: search, friends watching now first, check circles, one button for everyone picked. */
 .wt-invite-picker { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .55); }
 .wt-invite-picker[hidden] { display: none; }
@@ -1006,6 +1009,10 @@ button:disabled {
   letter-spacing: .06em;
   text-transform: uppercase;
   white-space: nowrap;
+  /* Its own width: upstream's party.css (0.1.31-alpha) makes `.party-member-copy` a column flex box,
+     whose children stretch to the full row by default. */
+  align-self: flex-start;
+  max-width: 100%;
 }
 
 .party-member-status::before {
