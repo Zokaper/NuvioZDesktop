@@ -103,6 +103,9 @@ internal class NativePlayerController(
         val mpvLog = Logger.withTag("mpv")
 
         const val MPV_LOG_EVENT_PREFIX = "mpvLog:"
+        /** An error inside the controls page (`reportPageError` in controls.js), 2026-10-22. */
+        const val PAGE_ERROR_EVENT_PREFIX = "pageError:"
+        val pageLog = Logger.withTag("PlayerPage")
         const val MPV_END_FILE_EVENT_PREFIX = "mpvEndFile:"
 
         /** Cap on waiting for the previous player's teardown so a hung one cannot block playback. */
@@ -706,6 +709,10 @@ internal class NativePlayerController(
     private fun handlePlayerEvent(type: String, value: Double) {
         if (type.startsWith(MPV_LOG_EVENT_PREFIX)) {
             mpvLog.w { "handle=$handle ${type.removePrefix(MPV_LOG_EVENT_PREFIX).redactUrls()}" }
+            return
+        }
+        if (type.startsWith(PAGE_ERROR_EVENT_PREFIX)) {
+            pageLog.e { "handle=$handle ${type.removePrefix(PAGE_ERROR_EVENT_PREFIX).redactUrls()}" }
             return
         }
         if (type.startsWith(MPV_END_FILE_EVENT_PREFIX)) {

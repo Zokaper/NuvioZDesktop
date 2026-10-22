@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import com.nuvio.app.features.player.desktop.DesktopHostOs
 import com.nuvio.app.features.settings.SettingsChoiceRow
 import com.nuvio.app.features.settings.SettingsGroup
 import com.nuvio.app.features.settings.SettingsGroupDivider
@@ -116,6 +117,8 @@ internal fun DesktopStartupSettingsRows(isTablet: Boolean) {
         isTablet = isTablet,
         onSelect = DesktopTrayPreferences::setCloseAction,
     )
+    // The Run key is Windows'; elsewhere there is nothing to switch.
+    if (DesktopHostOs.current != DesktopHostOs.WINDOWS) return
     SettingsGroupDivider(isTablet = isTablet)
     SettingsSwitchRow(
         title = stringResource(Res.string.social_start_windows),

@@ -125,6 +125,7 @@ class WatchPartyLobbyRenderHarness {
         staged: Boolean = false,
         invitable: List<SocialProfileSummary> = friends,
         canRejoin: Boolean = false,
+        inviteRows: List<PartyInviteRow> = emptyList(),
     ): PartyLobbyModel {
         val sync = WatchPartySyncState(clockLocked = true, bestRttMs = 362)
         val presentation = PartyPresentationProjector.project(
@@ -151,6 +152,8 @@ class WatchPartyLobbyRenderHarness {
             waitForEveryone = true,
             pauseForAwayUsers = false,
             invitableFriends = invitable,
+            inviteRows = inviteRows,
+            inviteSlots = 7,
         )
     }
 
@@ -170,6 +173,18 @@ class WatchPartyLobbyRenderHarness {
             "guest" to model(party(listOf(host, you)), viewer = "you", inviteCode = null, addonNotice = addonNotice),
             // Alone, with friends to invite.
             "solo" to model(party(listOf(host)), viewer = "host"),
+            // Invites out (2026-10-22): two waiting, one still sending, one never invited - only the
+            // first three are tiles, dashed and INVITED.
+            "invited" to model(
+                party(listOf(host)),
+                viewer = "host",
+                inviteRows = listOf(
+                    PartyInviteRow("f1", "faisal", null, "#8E24AA", null, com.nuvio.app.features.player.PartyInviteButton.Sent),
+                    PartyInviteRow("f2", longName, null, "#43A047", null, com.nuvio.app.features.player.PartyInviteButton.Sent),
+                    PartyInviteRow("f3", "Seraph", null, "#1E88E5", null, com.nuvio.app.features.player.PartyInviteButton.Sending),
+                    PartyInviteRow("f4", "VeyronV1", null, "#FB8C00", null, com.nuvio.app.features.player.PartyInviteButton.Invite),
+                ),
+            ),
             // A source is staged, people are resolving, one failed, a long name, an episode.
             "staged" to model(
                 party(
@@ -241,7 +256,7 @@ class WatchPartyLobbyRenderHarness {
         val failures = mutableListOf<String>()
         for ((name, model) in scenes) {
             for ((w, h) in phoneSizes) render("$name-${w}x$h", w, h, phone = true, model, failures)
-            if (name == "host" || name == "staged" || name == "rejoin") {
+            if (name == "host" || name == "staged" || name == "rejoin" || name == "invited") {
                 for ((w, h) in desktopSizes) render("desktop-$name-${w}x$h", w, h, phone = false, model, failures)
             }
         }

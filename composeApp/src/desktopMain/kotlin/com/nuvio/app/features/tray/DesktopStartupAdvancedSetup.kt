@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.NuvioSegment
+import com.nuvio.app.features.player.desktop.DesktopHostOs
 import com.nuvio.app.core.ui.NuvioSegmentedChoice
 import com.nuvio.app.features.setup.AdvancedSetupPlatformArea
 import com.nuvio.app.features.setup.SetupQuestion
@@ -74,7 +75,8 @@ private fun DesktopStartupControls() {
                 onSelected = DesktopTrayPreferences::setCloseAction,
             )
         }
-        SetupToggleRow(
+        // The Run key is Windows'; elsewhere there is nothing to switch.
+        if (DesktopHostOs.current == DesktopHostOs.WINDOWS) SetupToggleRow(
             title = stringResource(Res.string.social_start_windows),
             description = if (DesktopStartWithWindows.isAvailable) {
                 stringResource(Res.string.social_start_windows_desc)

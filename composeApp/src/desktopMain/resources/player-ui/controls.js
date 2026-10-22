@@ -585,6 +585,20 @@ const send = (type, value = 0) => {
   if (webViewBridge) webViewBridge.postMessage({ type, value });
 };
 
+// Z (2026-10-22): an error in this page used to be invisible - the bridges pass unknown message types
+// on as player events, so a "pageError:" one lands in the app log (`PlayerPage`). Found because a
+// Watch Together host's opening overlay stayed up over playing video with nothing in the log.
+const reportPageError = (where, error) => {
+  try {
+    const detail = error && (error.stack || error.message) ? (error.stack || error.message) : String(error);
+    send(`pageError:${where}: ${String(detail).slice(0, 600)}`, 0);
+  } catch (_) {
+    // Reporting must never be the second failure.
+  }
+};
+window.addEventListener("error", event => reportPageError("uncaught", event.error || event.message));
+window.addEventListener("unhandledrejection", event => reportPageError("rejection", event.reason));
+
 const syncFullscreenButtons = () => {
   const isFullscreen = Boolean(state.isFullscreen);
   const icon = isFullscreen ? "#icon-fullscreen-exit" : "#icon-fullscreen";
@@ -3930,7 +3944,15 @@ window.playerControls = nextState => {
   if (notificationToken !== previousNotificationToken) {
     showPlayerToast(state.notificationMessage);
   }
-  if (!replayingParty) applyPartyControls(previousParty);
+  // Each step isolated: a throw here used to skip `render()`, and with it the opening overlay's
+  // update, so the overlay could stay up over a playing video for the rest of the session.
+  if (!replayingParty) {
+    try {
+      applyPartyControls(previousParty);
+    } catch (error) {
+      reportPageError("party", error);
+    }
+  }
   if (state.showP2pConsent && activeModal !== "p2pConsent") {
     openPlayerModal("p2pConsent");
   } else if (!state.showP2pConsent && activeModal === "p2pConsent") {
@@ -3946,7 +3968,17 @@ window.playerControls = nextState => {
     resetSubtitleSelectionState();
   }
   const preventModalAutoScrolling = activeModal === "sources" || activeModal === "episodes";
-  render(preventModalAutoScrolling);
+  try {
+    render(preventModalAutoScrolling);
+  } catch (error) {
+    reportPageError("render", error);
+    // Whatever else failed, the opening overlay must follow the app's answer.
+    try {
+      renderOpeningOverlay(false);
+    } catch (overlayError) {
+      reportPageError("opening", overlayError);
+    }
+  }
   if (pendingSettingToastCommand === "resize" && (state.resizeModeLabel || "") !== previousResizeLabel) {
     pendingSettingToastCommand = "";
     showPlayerToast(settingToastLabel("resize"), { icon: "icon-aspect" });
