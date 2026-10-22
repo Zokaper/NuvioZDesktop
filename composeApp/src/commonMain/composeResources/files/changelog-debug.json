@@ -197,6 +197,10 @@
     {
       "build": 126,
       "text": "Clicking a Social pop-up brings Nuvio Z to the front when it is behind another app."
+    },
+    {
+      "build": 127,
+      "text": "Watch Together: when the host drops, guests see that the host lost connection instead of Reconnecting. Clicking a Social pop-up during playback brings the window forward without leaving the player."
     }
   ]
 }
