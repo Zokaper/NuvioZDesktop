@@ -2,7 +2,8 @@
 
 Event-level `"image"`, category headings back, no versions under the date (`bb93aba5a`, `522fbe957`).
 Hero is the top of the dialog; shipped as `files/whatsnew/social-v2-hero.jpg`. Ported to mobile (`e7e931782`).
-Renders: `promo/WhatsNewArtHarness`. Next: the real Social V2 event with the maintainer's text. Full record: `nuvio-z/STATUS.md`.
+Renders: `promo/WhatsNewArtHarness`. The real Social V2 event is in (`changelog.json` seq 5, `2db631116`, unreleased,
+`0.1.31-alpha-z1` serial 134). Debug 130 dispatched for the final check. Full record: `nuvio-z/STATUS.md`.
 
 ## Watch Together lobby / leftover party, language fallback (2026-10-22 to 10-23)
 
