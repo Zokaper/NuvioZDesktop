@@ -794,7 +794,7 @@ class PromoRenderHarness {
 
     // --- Social -------------------------------------------------------------------------------
 
-    private val watchingNow: List<WatchingNowItem> = listOf(
+    internal val watchingNow: List<WatchingNowItem> = listOf(
         WatchingNowItem(
             profile = PromoPeople.theo, contentId = PromoCatalog.metropolis.id, contentType = "movie",
             videoId = PromoCatalog.metropolis.id, title = PromoCatalog.metropolis.name,
