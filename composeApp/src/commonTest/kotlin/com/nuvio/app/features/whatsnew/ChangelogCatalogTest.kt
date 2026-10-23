@@ -31,14 +31,14 @@ class ChangelogCatalogTest {
     @Test
     fun anEventCarriesItsHeroPictureButNeverAPath() {
         val events = ChangelogCatalog.parse(
-            """{"events":[{"seq":5,"image":"social-v2-hero.jpg","ships":{"ios":{"version":"v","serial":1,"date":"2026-10-25"}},
+            """{"events":[{"seq":5,"image":"social-v2-hero.jpg","ships":{"ios":{"version":"v","serial":1,"date":"unreleased"}},
               "entries":[{"category":"feature","platforms":["ios"],"title":"x"}]},
               {"seq":4,"image":"../hero.jpg","ships":{"ios":{"version":"v","serial":1,"date":"2026-10-20"}},
               "entries":[{"category":"feature","platforms":["ios"],"title":"y"}]}]}""",
         )
         assertEquals("social-v2-hero.jpg", events[0].image)
         assertNull(events[1].image)
-        assertEquals("social-v2-hero.jpg", whatsNewEventsUi(events, ChangelogPlatform.IOS).first().image)
+        assertEquals("social-v2-hero.jpg", whatsNewEventsUi(events.take(1), ChangelogPlatform.IOS).single().image)
     }
 
     @Test
