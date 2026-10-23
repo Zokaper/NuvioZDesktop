@@ -209,6 +209,10 @@
     {
       "build": 129,
       "text": "Watch Together: a guest who takes over as host keeps the party at normal speed. Social: invites and requests sent while the connection was briefly down now show up as soon as it is back."
+    },
+    {
+      "build": 130,
+      "text": "Social V2 final check: everything from the local builds 121-129 in one published build. Pop-ups raise the window over other apps; friends starting to watch notify you by default; Watch Together host-drop, lobby and rejoin fixes."
     }
   ]
 }
