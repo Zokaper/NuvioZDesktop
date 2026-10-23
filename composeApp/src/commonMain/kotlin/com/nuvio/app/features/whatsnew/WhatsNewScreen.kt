@@ -36,6 +36,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -136,31 +138,22 @@ internal fun WhatsNewContent(
         color = tokens.colors.surfaceDialog,
         shape = tokens.shapes.dialog,
     ) {
-        Column(
-            modifier = Modifier.padding(tokens.spacing.dialogPadding),
-        ) {
-            Text(
-                text = stringResource(Res.string.whats_new_title),
-                style = MaterialTheme.typography.headlineMedium,
-                color = tokens.colors.textPrimary,
-                fontWeight = FontWeight.Bold,
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = stringResource(Res.string.whats_new_version, versionName),
-                style = MaterialTheme.typography.bodyMedium,
-                color = tokens.colors.textMuted,
-            )
-            Spacer(modifier = Modifier.height(20.dp))
-
+        // Z (2026-10-23): the newest update's hero is the top of the panel itself - edge to edge, fading
+        // into the dialog - with the title centred under it. Without a hero, the plain header as before.
+        val hero = events.firstOrNull()?.image
+        val padding = tokens.spacing.dialogPadding
+        Column {
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f, fill = false),
                 verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
+                item(key = "header") { WhatsNewHeader(versionName, hero, imageContent) }
                 debugSection?.let { section ->
-                    item(key = "debug") { WhatsNewSectionContent(section, onAction = null) }
+                    item(key = "debug") {
+                        Box(Modifier.padding(horizontal = padding)) { WhatsNewSectionContent(section, onAction = null) }
+                    }
                 }
                 if (events.isEmpty() && debugSection == null) {
                     item(key = "empty") {
@@ -168,28 +161,77 @@ internal fun WhatsNewContent(
                             text = stringResource(Res.string.whats_new_no_notes),
                             style = MaterialTheme.typography.bodyMedium,
                             color = tokens.colors.textMuted,
+                            modifier = Modifier.padding(horizontal = padding),
                         )
                     }
                 }
-                items(events, key = { "event-${it.seq}" }) { event ->
-                    WhatsNewEventContent(event, onAction, imageContent)
+                itemsIndexed(events, key = { _, event -> "event-${event.seq}" }) { index, event ->
+                    Box(Modifier.padding(horizontal = padding)) {
+                        // The header already shows the newest update's hero.
+                        WhatsNewEventContent(event, onAction, imageContent, showImage = index > 0)
+                    }
                 }
                 if (showHistory) {
                     item(key = "history") {
-                        PreviousVersions(history = history)
+                        Box(Modifier.padding(horizontal = padding)) { PreviousVersions(history = history) }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
             Button(
                 onClick = onContinue,
-                modifier = Modifier.align(Alignment.End),
+                modifier = Modifier
+                    .align(Alignment.End)
+                    .padding(start = padding, end = padding, top = 20.dp, bottom = padding),
                 shape = tokens.shapes.button,
             ) {
                 Text(stringResource(Res.string.action_done))
             }
         }
+    }
+}
+
+/** The dialog's top: the hero bleeding to the panel's edges with the title centred under it, or the plain title. */
+@Composable
+private fun WhatsNewHeader(versionName: String, hero: String?, imageContent: @Composable (String) -> Unit) {
+    val tokens = MaterialTheme.nuvio
+    val padding = tokens.spacing.dialogPadding
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = if (hero != null) Alignment.CenterHorizontally else Alignment.Start,
+    ) {
+        if (hero != null) {
+            Box(Modifier.fillMaxWidth()) {
+                imageContent(hero)
+                // Fade the picture's lower edge into the panel so the title sits on the same surface.
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.verticalGradient(
+                                0.55f to Color.Transparent,
+                                1f to tokens.colors.surfaceDialog,
+                            ),
+                        ),
+                )
+            }
+        } else {
+            Spacer(Modifier.height(padding))
+        }
+        Text(
+            text = stringResource(Res.string.whats_new_title),
+            style = MaterialTheme.typography.headlineMedium,
+            color = tokens.colors.textPrimary,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = padding),
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = stringResource(Res.string.whats_new_version, versionName),
+            style = MaterialTheme.typography.bodyMedium,
+            color = tokens.colors.textMuted,
+            modifier = Modifier.padding(horizontal = padding),
+        )
     }
 }
 
@@ -207,12 +249,13 @@ private fun WhatsNewEventContent(
     event: WhatsNewEventUi,
     onAction: ((ChangelogAction) -> Unit)?,
     imageContent: @Composable (String) -> Unit,
+    showImage: Boolean = true,
 ) {
     val tokens = MaterialTheme.nuvio
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         HorizontalDivider(color = tokens.colors.borderSubtle)
         // Z (2026-10-23): one hero picture per update; the details go in the announcement's trailer.
-        event.image?.let { image ->
+        event.image?.takeIf { showImage }?.let { image ->
             Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))) { imageContent(image) }
         }
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
