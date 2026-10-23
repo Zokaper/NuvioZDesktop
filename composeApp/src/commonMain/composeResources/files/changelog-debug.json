@@ -205,6 +205,10 @@
     {
       "build": 128,
       "text": "Watch Together: when everyone else in a party has dropped, the Watch Together panel and the new host no longer say Reconnecting."
+    },
+    {
+      "build": 129,
+      "text": "Watch Together: a guest who takes over as host keeps the party at normal speed. Social: invites and requests sent while the connection was briefly down now show up as soon as it is back."
     }
   ]
 }
