@@ -360,19 +360,20 @@ class SocialV2PromoHarness {
             seedSocial(state(people.theo, theoFriends, emptyList()))
             seedGodfather()
             val theo = Take(
-                name = "theo", frames = 330, start = Offset(1900f, 1250f),
+                name = "theo", frames = 660, start = Offset(1900f, 1250f),
+                // Unhurried (2026-10-23 review: draft 2 "really fast"): every move glides, then rests.
                 steps = listOf(
-                    Move(10, described("More actions"), 40),
-                    Click(56),
-                    Move(80, described("Recommend"), 30),
-                    Click(116),
-                    Move(150, text("Maya"), 34),
-                    Click(190),
-                    Move(206, text("Add a message (optional)"), 26),
-                    Click(236),
-                    Type(250, note, 5),
-                    Move(312, textStarting("Recommend to"), 12),
-                    Click(326, release = false),
+                    Move(30, described("More actions"), 50),
+                    Click(92),
+                    Move(140, described("Recommend"), 45),
+                    Click(196),
+                    Move(270, text("Maya"), 50),
+                    Click(332),
+                    Move(380, text("Add a message (optional)"), 40),
+                    Click(432),
+                    Type(450, note, 8),
+                    Move(590, textStarting("Recommend to"), 35),
+                    Click(640, release = false),
                 ),
             )
             record(theo, 1440, 810, 2f, failures) { Details() }
@@ -393,11 +394,11 @@ class SocialV2PromoHarness {
         seedSocial(maya)
         if (wants("maya-social")) {
             val take = Take(
-                name = "maya-social", frames = 150, start = Offset(2200f, 900f),
+                name = "maya-social", frames = 240, start = Offset(2200f, 900f),
                 steps = listOf(
-                    Move(6, textStarting("3 recommended"), 30),
-                    Click(40),
-                    Move(80, text("The Godfather"), 40),
+                    Move(10, textStarting("3 recommended"), 45),
+                    Click(60),
+                    Move(130, text("The Godfather"), 60),
                 ),
             )
             record(take, 1440, 810, 2f, failures) { MayaSocial(maya) }
