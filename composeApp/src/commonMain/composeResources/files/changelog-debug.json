@@ -201,6 +201,10 @@
     {
       "build": 127,
       "text": "Watch Together: when the host drops, guests see that the host lost connection instead of Reconnecting. Clicking a Social pop-up during playback brings the window forward without leaving the player."
+    },
+    {
+      "build": 128,
+      "text": "Watch Together: when everyone else in a party has dropped, the Watch Together panel and the new host no longer say Reconnecting."
     }
   ]
 }
