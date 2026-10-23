@@ -2,6 +2,8 @@ package com.nuvio.app.features.whatsnew
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -45,10 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -57,8 +56,10 @@ import com.nuvio.app.features.updater.AppReleaseNotes
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.action_done
 import nuvio.composeapp.generated.resources.whats_new_action_advanced_setup
-import nuvio.composeapp.generated.resources.zwhatsnew_bug_fixes_count
 import nuvio.composeapp.generated.resources.whats_new_debug_build
+import nuvio.composeapp.generated.resources.whats_new_bug_fixes
+import nuvio.composeapp.generated.resources.whats_new_improvements
+import nuvio.composeapp.generated.resources.whats_new_new_features
 import nuvio.composeapp.generated.resources.whats_new_no_notes
 import nuvio.composeapp.generated.resources.whats_new_platform_android
 import nuvio.composeapp.generated.resources.whats_new_platform_desktop
@@ -221,23 +222,8 @@ private fun WhatsNewEventContent(
                 color = tokens.colors.textPrimary,
                 fontWeight = FontWeight.Bold,
             )
-            if (event.versions.isNotEmpty()) {
-                val labels = event.versions.map { platformLabel(it.platform) }
-                Text(
-                    text = buildAnnotatedString {
-                        event.versions.forEachIndexed { index, version ->
-                            if (index > 0) append("  ·  ")
-                            val style = if (version.isViewer) {
-                                SpanStyle(color = tokens.colors.textPrimary, fontWeight = FontWeight.SemiBold)
-                            } else {
-                                SpanStyle(color = tokens.colors.textMuted)
-                            }
-                            withStyle(style) { append("${labels[index]} ${version.version}") }
-                        }
-                    },
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            }
+            // Z (2026-10-23): no per-platform version line under the date - the dialog's subtitle
+            // already names this build's version, and three versions beside a date read as clutter.
             event.summary?.let { summary ->
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
@@ -247,67 +233,63 @@ private fun WhatsNewEventContent(
                 )
             }
         }
-        // Picture-led changes share one place, whether authored as features or improvements.
-        val changes = event.sections.filter {
-            it.category == WhatsNewCategory.NewFeatures || it.category == WhatsNewCategory.Improvements
-        }.flatMap { it.items }
-        changes.filter { it.image != null }.forEach { item ->
-            WhatsNewPictureCard(item, onAction, imageContent)
-        }
-        val smallerChanges = changes.filter { it.image == null }
-        if (smallerChanges.isNotEmpty()) {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                smallerChanges.forEach { item -> WhatsNewLine(item, onAction) }
-            }
-        }
-        event.sections.filter {
-            it.category == WhatsNewCategory.BugFixes || it.category == WhatsNewCategory.DebugBuild
-        }.forEach { section -> WhatsNewSectionContent(section, onAction) }
+        // Z (2026-10-23): the New features / Improvements / Bug fixes headings are back (maintainer).
+        event.sections.forEach { section -> WhatsNewSectionContent(section, onAction, imageContent) }
     }
 }
 
 @Composable
-private fun WhatsNewSectionContent(section: WhatsNewSection, onAction: ((ChangelogAction) -> Unit)?) {
+private fun WhatsNewSectionContent(
+    section: WhatsNewSection,
+    onAction: ((ChangelogAction) -> Unit)?,
+    imageContent: @Composable (String) -> Unit = { WhatsNewImage(it) },
+) {
     val tokens = MaterialTheme.nuvio
+    // Fixes fold away behind their count; everything else is open.
     val foldable = section.category == WhatsNewCategory.BugFixes
     var expanded by remember(section) { mutableStateOf(!foldable) }
+    val accent = when (section.category) {
+        WhatsNewCategory.NewFeatures -> tokens.colors.accent
+        WhatsNewCategory.Improvements -> Color(0xFF49B6FF)
+        WhatsNewCategory.BugFixes -> Color(0xFF66C98D)
+        WhatsNewCategory.DebugBuild -> tokens.colors.textSecondary
+    }
+    val label = when (section.category) {
+        WhatsNewCategory.NewFeatures -> stringResource(Res.string.whats_new_new_features)
+        WhatsNewCategory.Improvements -> stringResource(Res.string.whats_new_improvements)
+        WhatsNewCategory.BugFixes -> stringResource(Res.string.whats_new_bug_fixes)
+        WhatsNewCategory.DebugBuild -> stringResource(Res.string.whats_new_debug_build)
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (foldable) {
-            Surface(
-                onClick = { expanded = !expanded },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                color = tokens.colors.surfaceCard,
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = stringResource(Res.string.zwhatsnew_bug_fixes_count, section.items.size),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = tokens.colors.textPrimary,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Icon(
-                        imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ChevronRight,
-                        contentDescription = null,
-                        tint = tokens.colors.textMuted,
-                    )
-                }
-            }
-        } else if (section.category == WhatsNewCategory.DebugBuild) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .then(if (foldable) Modifier.clickable { expanded = !expanded } else Modifier),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(8.dp).background(accent, CircleShape))
+            Spacer(Modifier.width(8.dp))
             Text(
-                text = stringResource(Res.string.whats_new_debug_build),
+                text = if (foldable) "$label (${section.items.size})" else label,
                 style = MaterialTheme.typography.labelLarge,
-                color = tokens.colors.textSecondary,
+                color = accent,
                 fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
             )
+            if (foldable) {
+                Icon(
+                    imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ChevronRight,
+                    contentDescription = null,
+                    tint = tokens.colors.textMuted,
+                )
+            }
         }
         if (expanded) {
-            section.items.forEach { item -> WhatsNewLine(item, onAction) }
+            section.items.forEach { item ->
+                if (item.image != null) WhatsNewPictureCard(item, onAction, imageContent) else WhatsNewLine(item, onAction)
+            }
         }
     }
 }

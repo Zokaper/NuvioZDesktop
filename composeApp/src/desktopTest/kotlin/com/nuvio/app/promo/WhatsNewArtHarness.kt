@@ -397,6 +397,10 @@ class WhatsNewArtHarness {
             promo.render("whatsnew/example-phone", 411, 914, PromoRenderHarness.Kind.Phone, 3f, failures) {
                 WhatsNewExample(heroBitmap)
             }
+            // Tall enough for the whole update, so every heading can be reviewed in one picture.
+            promo.render("whatsnew/example-phone-full", 411, 1700, PromoRenderHarness.Kind.Phone, 2f, failures) {
+                WhatsNewExample(heroBitmap)
+            }
         }
         println("WhatsNewArtHarness: ${dir.absolutePath}")
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
