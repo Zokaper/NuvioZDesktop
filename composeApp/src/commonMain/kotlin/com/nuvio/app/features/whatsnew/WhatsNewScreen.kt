@@ -210,6 +210,10 @@ private fun WhatsNewEventContent(
     val tokens = MaterialTheme.nuvio
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         HorizontalDivider(color = tokens.colors.borderSubtle)
+        // Z (2026-10-23): one hero picture per update; the details go in the announcement's trailer.
+        event.image?.let { image ->
+            Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))) { imageContent(image) }
+        }
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
                 text = event.date ?: stringResource(Res.string.whats_new_unreleased),
