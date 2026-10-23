@@ -249,7 +249,8 @@ private fun WhatsNewSectionContent(
     val foldable = section.category == WhatsNewCategory.BugFixes
     var expanded by remember(section) { mutableStateOf(!foldable) }
     val accent = when (section.category) {
-        WhatsNewCategory.NewFeatures -> tokens.colors.accent
+        // Its own colour: the theme accent is white in the default theme, the same as the text.
+        WhatsNewCategory.NewFeatures -> Color(0xFFFFB547)
         WhatsNewCategory.Improvements -> Color(0xFF49B6FF)
         WhatsNewCategory.BugFixes -> Color(0xFF66C98D)
         WhatsNewCategory.DebugBuild -> tokens.colors.textSecondary

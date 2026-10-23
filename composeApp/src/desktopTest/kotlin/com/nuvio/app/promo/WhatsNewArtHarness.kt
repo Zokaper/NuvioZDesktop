@@ -333,7 +333,7 @@ class WhatsNewArtHarness {
                     WhatsNewCategory.Improvements,
                     listOf(
                         WhatsNewItem("A better Social tab", "Friends who are watching show as big cards, and each friend has a profile.", platforms = all),
-                        WhatsNewItem("Language and subtitles", "Subtitles can follow different rules for titles in your language and in other languages.", ChangelogAction.REVIEW_SETTINGS, all),
+                        WhatsNewItem("Language and subtitles", "Automatic audio and subtitle picks now get it right, and language settings are simpler.", ChangelogAction.REVIEW_SETTINGS, all),
                         WhatsNewItem("Social UI improvements", "Invite several friends at once, and see who's invited or waiting in the lobby.", platforms = all),
                         WhatsNewItem("Updated to Nuvio 0.6.2 / 0.1.31", "Jellyfin and Emby libraries, MDBList, and more.", platforms = all),
                     ),
