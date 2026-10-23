@@ -149,6 +149,26 @@ class SocialFriendProfileHarness {
         Seen("tt0423176", "The World", "Movie", "4w ago", "27", "SEP"),
     )
 
+    /** A longer history (2026-10-24 history round): three months, series binges and movies, to judge scaling. */
+    private val history = listOf(
+        Seen("tt0121955", "South Park", "S2 E6 · 4 episodes", "Yesterday", "23", "OCT"),
+        Seen("tt7282468", "Burning", "Movie", "3d ago", "21", "OCT", withYou = true),
+        Seen("tt0068361", "The Discreet Charm of the Bourgeoisie", "Movie", "5d ago", "19", "OCT"),
+        Seen("tt0149460", "Futurama", "S7 E1 · 6 episodes", "1w ago", "17", "OCT"),
+        Seen("tt0071406", "Pastoral: To Die in the Country", "Movie", "1w ago", "16", "OCT"),
+        Seen("tt0071141", "Ali: Fear Eats the Soul", "Movie", "2w ago", "10", "OCT"),
+        Seen("tt0329938", "Transformers: Armada", "S1 E5 · 5 episodes", "2w ago", "08", "OCT"),
+        Seen("tt0073198", "Jeanne Dielman, 23, quai du Commerce, 1080 Bruxelles", "Movie", "3w ago", "03", "OCT"),
+        Seen("tt1191111", "Enter the Void", "Movie", "4w ago", "28", "SEP"),
+        Seen("tt0423176", "The World", "Movie", "4w ago", "27", "SEP"),
+        Seen("tt2278388", "The Grand Budapest Hotel", "Movie", "5w ago", "20", "SEP"),
+        Seen("tt0430651", "Survive Style 5+", "Movie", "6w ago", "14", "SEP"),
+        Seen("tt0914798", "The Boy in the Striped Pajamas", "Movie", "6w ago", "09", "SEP", withYou = true),
+        Seen("tt37287335", "Obsession", "Movie", "8w ago", "30", "AUG", withYou = true),
+    )
+
+    private val monthNames = mapOf("OCT" to "October", "SEP" to "September", "AUG" to "August")
+
     private val together = listOf(
         Together("tt7282468", "Burning", 2),
         Together("tt0914798", "The Boy in the Striped Pajamas", 1),
@@ -175,6 +195,24 @@ class SocialFriendProfileHarness {
         renderScene("D-tabs-together-phone", 411, 914, failures) { TabbedPanel(tab = 1, wide = false) }
         renderScene("E-diary-desktop", 1440, 1500, failures) { DesktopShell { DiaryPage(wide = true) } }
         renderScene("E-diary-phone", 411, 2300, failures) { DiaryPage(wide = false) }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
+    /** The diary page minus the diary (maintainer, 2026-10-24): candidate histories that scale. */
+    @Test
+    fun renderDiaryHistoryCandidates() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        val candidates: List<Pair<String, @Composable (Boolean) -> Unit>> = listOf(
+            "H1-month-grid" to { wide -> MonthGrid(wide) },
+            "H2-month-shelves" to { wide -> MonthShelves(wide) },
+            "H3-month-mosaic" to { wide -> MonthMosaic(wide) },
+            "H4-filtered-grid" to { wide -> FilteredGrid(wide) },
+        )
+        for ((name, body) in candidates) {
+            renderScene("$name-desktop", 1440, 2000, failures) { DesktopShell { DiaryPage(wide = true, historyBody = body) } }
+            renderScene("$name-phone", 411, 3200, failures) { DiaryPage(wide = false, historyBody = body) }
+        }
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
     }
 
@@ -534,7 +572,7 @@ class SocialFriendProfileHarness {
     // --- E: diary page --------------------------------------------------------------------------
 
     @Composable
-    private fun DiaryPage(wide: Boolean) {
+    private fun DiaryPage(wide: Boolean, historyBody: @Composable (Boolean) -> Unit = { Diary(it) }) {
         val bg = MaterialTheme.colorScheme.background
         Column(Modifier.fillMaxSize().background(bg).verticalScroll(rememberScrollState())) {
             Box(Modifier.fillMaxWidth().height(if (wide) 250.dp else 230.dp)) {
@@ -559,7 +597,7 @@ class SocialFriendProfileHarness {
                 Row(Modifier.padding(horizontal = 48.dp, vertical = 24.dp), horizontalArrangement = Arrangement.spacedBy(40.dp)) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         DiaryNow(wide = true)
-                        Diary(wide = true)
+                        historyBody(true)
                     }
                     Column(Modifier.width(380.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) { YouTwo() }
                 }
@@ -567,7 +605,7 @@ class SocialFriendProfileHarness {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     DiaryNow(wide = false)
                     YouTwo()
-                    Diary(wide = false)
+                    historyBody(false)
                 }
             }
         }
@@ -617,6 +655,168 @@ class SocialFriendProfileHarness {
                     }
                 }
             }
+        }
+    }
+
+    // --- history candidates (H1-H4) -------------------------------------------------------------
+
+    private fun Seen.date(): String = "${day.trimStart('0')} ${month.lowercase().replaceFirstChar { it.uppercase() }}"
+
+    @Composable
+    private fun MonthHeader(month: String, count: Int, action: String? = null) {
+        Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(monthNames.getValue(month), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(if (count == 1) "1 title" else "$count titles", style = MaterialTheme.typography.bodyMedium, color = muted(), modifier = Modifier.padding(bottom = 2.dp).weight(1f))
+            if (action != null) {
+                Text(action, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                Icon(Icons.Rounded.ChevronRight, null, Modifier.size(18.dp))
+            }
+        }
+    }
+
+    /** The art tile H1, H2 and H4 share: the date on the art, title and what under it. */
+    @Composable
+    private fun HistoryTile(item: Seen, modifier: Modifier) {
+        Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(14.dp))) {
+                Art(item.id, Modifier.matchParentSize())
+                SocialGlassChip(Modifier.align(Alignment.TopStart).padding(8.dp)) {
+                    Text(item.date(), color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                }
+                if (item.withYou) WithYouChip(Modifier.align(Alignment.TopEnd).padding(8.dp))
+            }
+            Text(item.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(item.line, style = MaterialTheme.typography.bodySmall, color = muted(), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+
+    @Composable
+    private fun TileGrid(items: List<Seen>, columns: Int) {
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            items.chunked(columns).forEach { rowItems ->
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    rowItems.forEach { HistoryTile(it, Modifier.weight(1f)) }
+                    repeat(columns - rowItems.size) { Spacer(Modifier.weight(1f)) }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun ShowEarlier(label: String) {
+        Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.Center) {
+            SocialPillButton(label, {}, compact = false)
+        }
+    }
+
+    /** H1: a grid per month, newest first; older months load on demand. */
+    @Composable
+    private fun MonthGrid(wide: Boolean) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            history.filter { it.month != "AUG" }.groupBy { it.month }.forEach { (month, items) ->
+                MonthHeader(month, items.size)
+                TileGrid(items, if (wide) 3 else 2)
+            }
+            ShowEarlier("Show August")
+        }
+    }
+
+    /** H2: one Home-style shelf per month, scrolling sideways; the page only grows by months. */
+    @Composable
+    private fun MonthShelves(wide: Boolean) {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            history.groupBy { it.month }.forEach { (month, items) ->
+                MonthHeader(month, items.size, action = "See all")
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items.forEach { HistoryTile(it, Modifier.width(if (wide) 250.dp else 200.dp)) }
+                }
+            }
+        }
+    }
+
+    /** H3: each month opens on its latest title, large, then the rest small with their titles on the art. */
+    @Composable
+    private fun MonthMosaic(wide: Boolean) {
+        val gap = 10.dp
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            history.filter { it.month != "AUG" }.groupBy { it.month }.forEach { (month, items) ->
+                MonthHeader(month, items.size)
+                androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    val columns = if (wide) 3 else 2
+                    val small = (maxWidth - gap * (columns - 1)) / columns
+                    Column(verticalArrangement = Arrangement.spacedBy(gap)) {
+                        if (wide) {
+                            val bigWidth = small * 2 + gap
+                            val bigHeight = bigWidth * 9f / 16f
+                            Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                                MosaicTile(items[0], Modifier.width(bigWidth).height(bigHeight), big = true)
+                                Column(verticalArrangement = Arrangement.spacedBy(gap)) {
+                                    items.drop(1).take(2).forEach { MosaicTile(it, Modifier.width(small).height((bigHeight - gap) / 2)) }
+                                }
+                            }
+                            items.drop(3).chunked(3).forEach { rowItems ->
+                                Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                                    rowItems.forEach { MosaicTile(it, Modifier.width(small).height(small * 9f / 16f)) }
+                                }
+                            }
+                        } else {
+                            MosaicTile(items[0], Modifier.fillMaxWidth().aspectRatio(16f / 9f), big = true)
+                            items.drop(1).chunked(2).forEach { rowItems ->
+                                Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                                    rowItems.forEach { MosaicTile(it, Modifier.width(small).height(small * 9f / 16f)) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            ShowEarlier("Show August")
+        }
+    }
+
+    @Composable
+    private fun MosaicTile(item: Seen, modifier: Modifier, big: Boolean = false) {
+        Box(modifier.clip(RoundedCornerShape(if (big) 18.dp else 12.dp))) {
+            Art(item.id, Modifier.matchParentSize())
+            Box(Modifier.matchParentSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.85f))))
+            if (item.withYou) WithYouChip(Modifier.align(Alignment.TopEnd).padding(8.dp))
+            Column(Modifier.align(Alignment.BottomStart).padding(if (big) 16.dp else 10.dp)) {
+                Text(
+                    item.title,
+                    color = Color.White,
+                    style = if (big) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "${item.date()} · ${item.line}",
+                    color = Color.White.copy(alpha = 0.75f),
+                    style = if (big) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+
+    /** H4: no months; filter chips, one grid, dates on the art, more on scroll. */
+    @Composable
+    private fun FilteredGrid(wide: Boolean) {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text("History", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp))
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("All · 14", "Shows · 3", "Movies · 11", "With you · 3").forEachIndexed { index, label ->
+                    val selected = index == 0
+                    Box(
+                        Modifier.clip(RoundedCornerShape(999.dp))
+                            .background(if (selected) Color.White else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                    ) {
+                        Text(label, color = if (selected) Color.Black else MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+            TileGrid(history.take(if (wide) 12 else 10), if (wide) 3 else 2)
         }
     }
 
