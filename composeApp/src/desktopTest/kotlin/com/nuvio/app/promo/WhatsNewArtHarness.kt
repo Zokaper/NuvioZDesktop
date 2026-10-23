@@ -314,7 +314,7 @@ class WhatsNewArtHarness {
         val event = WhatsNewEventUi(
             seq = 5,
             date = "Oct 25, 2026",
-            summary = "Social got better: recommend titles to friends, one Inbox for everything, and notifications that reach you even when the app is closed.",
+            summary = "Social got better: recommend titles to friends, one Inbox for requests and invites, and notifications as they arrive.",
             versions = listOf(
                 WhatsNewVersion(ChangelogPlatform.DESKTOP, "0.1.31-alpha-z1", isViewer = true),
                 WhatsNewVersion(ChangelogPlatform.ANDROID, "0.6.2-z1", isViewer = false),
@@ -324,8 +324,8 @@ class WhatsNewArtHarness {
                 WhatsNewSection(
                     WhatsNewCategory.NewFeatures,
                     listOf(
-                        WhatsNewItem("Recommend to friends", "You can now send a movie or show to friends with a note, and you'll know when they start watching it.", platforms = all),
-                        WhatsNewItem("Inbox and notifications", "Friend requests, invites and recommendations land in one Inbox, and a notification tells you as they arrive.", platforms = all),
+                        WhatsNewItem("Recommend to friends", "You can now send a movie or show to friends with a note. It shows up on their Recommended to you page, and you'll know when they start watching it.", platforms = all),
+                        WhatsNewItem("Inbox and notifications", "Friend requests, party invites and join requests land in one Inbox, and a banner tells you as they arrive. On Android, notifications reach you even when the app is closed.", platforms = all),
                         WhatsNewItem("Runs in the tray", "Nuvio Z can now run in the tray, so notifications reach you even when the app is closed.", platforms = windows),
                     ),
                 ),
@@ -333,7 +333,7 @@ class WhatsNewArtHarness {
                     WhatsNewCategory.Improvements,
                     listOf(
                         WhatsNewItem("A better Social tab", "Friends who are watching show as big cards, and each friend has a profile.", platforms = all),
-                        WhatsNewItem("Language and subtitles", "Automatic audio and subtitle picks now get it right, and language settings are simpler.", ChangelogAction.REVIEW_SETTINGS, all),
+                        WhatsNewItem("Language and subtitles", "Audio and subtitles are now picked by whether a title is in your language, and language settings are simpler.", ChangelogAction.REVIEW_SETTINGS, all),
                         WhatsNewItem("Social UI improvements", "Invite several friends at once, and see who's invited or waiting in the lobby.", platforms = all),
                         WhatsNewItem("Updated to Nuvio 0.6.2 / 0.1.31", "Jellyfin and Emby libraries, MDBList, and more.", platforms = all),
                     ),
