@@ -1,3 +1,8 @@
+## What's New: one hero picture per update (2026-10-23)
+
+Event-level `"image"`, category headings back, no versions under the date (`bb93aba5a`, `522fbe957`).
+Hero + example renders: `promo/WhatsNewArtHarness`. Mobile port pending approval. Full record: `nuvio-z/STATUS.md`.
+
 ## Watch Together lobby / leftover party, language fallback (2026-10-22 to 10-23)
 
 Lobby location published after the departing player detaches (`lobbyLocationWaitsForPlayer`); host stall
