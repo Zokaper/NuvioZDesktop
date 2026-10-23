@@ -1,7 +1,8 @@
 ## What's New: one hero picture per update (2026-10-23)
 
 Event-level `"image"`, category headings back, no versions under the date (`bb93aba5a`, `522fbe957`).
-Hero + example renders: `promo/WhatsNewArtHarness`. Mobile port pending approval. Full record: `nuvio-z/STATUS.md`.
+Hero is the top of the dialog; shipped as `files/whatsnew/social-v2-hero.jpg`. Ported to mobile (`e7e931782`).
+Renders: `promo/WhatsNewArtHarness`. Next: the real Social V2 event with the maintainer's text. Full record: `nuvio-z/STATUS.md`.
 
 ## Watch Together lobby / leftover party, language fallback (2026-10-22 to 10-23)
 
