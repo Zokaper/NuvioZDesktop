@@ -301,13 +301,15 @@ private fun WhatsNewLine(item: WhatsNewItem, onAction: ((ChangelogAction) -> Uni
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
         Box(Modifier.padding(top = 7.dp).size(6.dp).background(tokens.colors.textSecondary, CircleShape))
         Column(Modifier.weight(1f)) {
-            WhatsNewTitleRow(item, MaterialTheme.typography.bodyMedium, emphasized = false)
+            // Z (2026-10-23): every entry is a line now (the hero carries the pictures), so lines are
+            // no longer the quiet tier under picture cards: full-strength titles, secondary bodies.
+            WhatsNewTitleRow(item, MaterialTheme.typography.bodyLarge)
             if (item.description.isNotBlank()) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = item.description,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = tokens.colors.textMuted,
+                    color = tokens.colors.textSecondary,
                 )
             }
             WhatsNewActionButton(item, onAction)
