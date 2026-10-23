@@ -6,7 +6,8 @@ watch skips lobby guests; leftover parties are left on launch; unknown title ori
 Local builds have no `TMDB_API_KEY`, so TMDB 401s on them. Then: closing/reopening leaves the party
 (shared coordinator part, `f0a4af8b9`), pop-up click raises the window (`7c1c3dd67`), and friends
 starting to watch notify by default (`7a52d34d4`; backend deployed 2026-10-23), a dropped host
-reads as theirs (`967275320`), and a pop-up raises the window during playback too (`b10cac316`). Local MSI 127.
+reads as theirs (`967275320`), and a pop-up raises the window during playback too (`b10cac316`). Local MSI 127:
+the maintainer's retest (lobby swipe-away, dropped host, pop-up during playback) **passes**.
 Full record: `nuvio-z/STATUS.md`.
 
 ## Social V2 QA pass (2026-10-22)
