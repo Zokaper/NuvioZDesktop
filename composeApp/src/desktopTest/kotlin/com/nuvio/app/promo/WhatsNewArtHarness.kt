@@ -308,7 +308,7 @@ class WhatsNewArtHarness {
 
     /** The What's New dialog as the release would show it: the hero, then every entry as a line. */
     @Composable
-    private fun WhatsNewExample(hero: ImageBitmap) {
+    private fun WhatsNewExample(hero: ImageBitmap?) {
         val all = listOf(ChangelogPlatform.DESKTOP, ChangelogPlatform.ANDROID, ChangelogPlatform.IOS)
         val windows = listOf(ChangelogPlatform.DESKTOP)
         val event = WhatsNewEventUi(
@@ -348,19 +348,24 @@ class WhatsNewArtHarness {
                 ),
             ),
             otherDevices = emptyList(),
-            image = "hero.jpg",
+            image = "social-v2-hero.jpg",
         )
         Box(Modifier.fillMaxSize().background(Color(0xFF050506)), contentAlignment = Alignment.Center) {
-            WhatsNewContent(
-                versionName = "0.1.31-alpha-z1",
-                events = listOf(event),
-                onContinue = {},
-                showHistory = false,
-                onAction = {},
-                imageContent = {
-                    Image(hero, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().aspectRatio(2f))
-                },
-            )
+            if (hero == null) {
+                // The production loader: the shipped `files/whatsnew/social-v2-hero.jpg` from the app's resources.
+                WhatsNewContent(versionName = "0.1.31-alpha-z1", events = listOf(event), onContinue = {}, showHistory = false, onAction = {})
+            } else {
+                WhatsNewContent(
+                    versionName = "0.1.31-alpha-z1",
+                    events = listOf(event),
+                    onContinue = {},
+                    showHistory = false,
+                    onAction = {},
+                    imageContent = {
+                        Image(hero, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().aspectRatio(2f))
+                    },
+                )
+            }
         }
     }
 
@@ -400,6 +405,9 @@ class WhatsNewArtHarness {
             // Tall enough for the whole update, so every heading can be reviewed in one picture.
             promo.render("whatsnew/example-phone-full", 411, 1700, PromoRenderHarness.Kind.Phone, 2f, failures) {
                 WhatsNewExample(heroBitmap)
+            }
+            promo.render("whatsnew/example-shipped", 411, 914, PromoRenderHarness.Kind.Phone, 3f, failures, settleMs = 3000) {
+                WhatsNewExample(hero = null)
             }
         }
         println("WhatsNewArtHarness: ${dir.absolutePath}")
