@@ -120,7 +120,7 @@ class SocialV2PromoHarness {
 
     private val mayaInbox = listOf(
         theosPick,
-        recommendation("r-parasite", people.priya, real.parasite, "trust me on this one", 300, read = true),
+        recommendation("r-parasite", people.priya, real.parasite, "qualityslop", 300, read = true),
         recommendation("r-whiplash", people.ines, real.whiplash, "watch it tonight, thank me later", 1500, read = true),
     )
 
