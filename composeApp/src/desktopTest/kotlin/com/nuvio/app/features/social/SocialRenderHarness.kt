@@ -589,33 +589,37 @@ class SocialRenderHarness {
                     SocialJoinSheetContent(item, affordanceFor(item), wide = false, onJoin = {}, onCancelRequest = {}, onDetails = {})
                 }
             }
-            renderPhone("phone-sheet-profile-${w}x$h", w, h, failures) {
-                SheetFrame {
-                    val seraph = profile()
-                    val groups = groupFriendActivity(activityRuns).filter { g -> g.friends.any { it.profileId == seraph.profileId } }
-                    val live = watchingNow.first { it.profile.profileId == seraph.profileId }
-                    SocialProfileContent(
-                        friend = seraph,
-                        prefs = SocialFriendPrefs(seraph.profileId, hideActivity = false, notifyWhenWatching = true),
-                        stats = SocialTogetherStats(
-                            seconds = 50_400, parties = 6,
-                            titles = listOf(
-                                SocialTogetherTitle("Burning", "tt7282468", "movie", parties = 3),
-                                SocialTogetherTitle("Andor", "tt-andor", "series", parties = 2),
-                                SocialTogetherTitle("Daredevil", "tt-dd", "series", parties = 1),
-                            ),
+            renderPhone("phone-page-profile-${w}x$h", w, h, failures) {
+                val seraph = profile()
+                val live = watchingNow.first { it.profile.profileId == seraph.profileId }
+                SocialFriendProfilePage(
+                    friend = seraph,
+                    friends = listOf(seraph),
+                    audiences = SocialAudiences(),
+                    watching = live,
+                    affordance = affordanceFor(live),
+                    wide = false,
+                    topInset = 0.dp,
+                    utcOffsetMs = 0L,
+                    onBack = {},
+                    onJoin = {},
+                    onCancelRequest = {},
+                    onWatchingDetails = {},
+                    onOpenContent = { _, _, _ -> },
+                    onSetAudienceMember = { _, _, _ -> },
+                    onRemove = {},
+                    loadStats = { null },
+                    loadHistory = { _, _ -> Result.success(FriendHistoryPage(emptyList(), null)) },
+                    initialHistory = FriendHistoryPage(activityRuns.filter { it.profile.profileId == seraph.profileId }, null),
+                    initialStats = SocialTogetherStats(
+                        seconds = 50_400, parties = 6,
+                        titles = listOf(
+                            SocialTogetherTitle("Burning", "tt7282468", "movie", parties = 3),
+                            SocialTogetherTitle("Andor", "tt-andor", "series", parties = 2),
+                            SocialTogetherTitle("Daredevil", "tt-dd", "series", parties = 1),
                         ),
-                        onSetPrefs = { _, _ -> },
-                        watching = live,
-                        affordance = affordanceFor(live),
-                        groups = groups,
-                        nowMs = renderNowMs,
-                        onOpenWatching = {},
-                        onWatchingDetails = {},
-                        onOpenContent = { _, _, _ -> },
-                        onRemove = {},
-                    )
-                }
+                    ),
+                )
             }
         }
         renderPhone("phone-social-empty-411x914", 411, 914, failures) {
