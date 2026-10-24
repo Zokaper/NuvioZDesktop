@@ -208,6 +208,9 @@ class SocialFriendProfileHarness {
             "H2-month-shelves" to { wide -> MonthShelves(wide) },
             "H3-month-mosaic" to { wide -> MonthMosaic(wide) },
             "H4-filtered-grid" to { wide -> FilteredGrid(wide) },
+            "H2a-captioned" to { wide -> ShelvesCaptioned(wide) },
+            "H2b-end-card" to { wide -> ShelvesEndCard(wide) },
+            "H2c-lead-tile" to { wide -> ShelvesLeadTile(wide) },
         )
         for ((name, body) in candidates) {
             renderScene("$name-desktop", 1440, 2000, failures) { DesktopShell { DiaryPage(wide = true, historyBody = body) } }
@@ -817,6 +820,100 @@ class SocialFriendProfileHarness {
                 }
             }
             TileGrid(history.take(if (wide) 12 else 10), if (wide) 3 else 2)
+        }
+    }
+
+    // --- H2 variations (2026-10-24: H2 picked, three takes on it) ---------------------------------
+
+    private val Seen.isSeries: Boolean get() = line.startsWith("S")
+
+    /** H2a: the shelf of H2 with the title and date on the art, tiles a size up. */
+    @Composable
+    private fun ShelvesCaptioned(wide: Boolean) {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            history.groupBy { it.month }.forEach { (month, items) ->
+                MonthHeader(month, items.size, action = "See all")
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items.forEach { item ->
+                        MosaicTile(item, Modifier.width(if (wide) 290.dp else 230.dp).aspectRatio(16f / 9f))
+                    }
+                }
+            }
+        }
+    }
+
+    /** H2b: H2's tiles; series drawn as a stack; each shelf ends in a "See all" card instead of a header link. */
+    @Composable
+    private fun ShelvesEndCard(wide: Boolean) {
+        val tileWidth = if (wide) 250.dp else 200.dp
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            history.groupBy { it.month }.forEach { (month, items) ->
+                MonthHeader(month, items.size)
+                // September is drawn scrolled to its end so the render shows the end card.
+                Row(Modifier.horizontalScroll(rememberScrollState(if (month == "SEP") Int.MAX_VALUE else 0)), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items.forEach { item -> StackedTile(item, Modifier.width(tileWidth)) }
+                    if (items.size > 1) {
+                        Box(
+                            Modifier.width(tileWidth * 0.6f).padding(top = 6.dp).aspectRatio(0.6f * 16f / 9f / 0.6f)
+                                .clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Box(Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Rounded.ChevronRight, null)
+                                }
+                                Text("See all ${items.size}", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** A series reads as several episodes: two thin cards peek out above its tile. */
+    @Composable
+    private fun StackedTile(item: Seen, modifier: Modifier) {
+        Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Box(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                if (item.isSeries) {
+                    Box(
+                        Modifier.align(Alignment.TopCenter).offset(y = (-6).dp).fillMaxWidth(0.84f).height(12.dp)
+                            .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)),
+                    )
+                    Box(
+                        Modifier.align(Alignment.TopCenter).offset(y = (-3).dp).fillMaxWidth(0.92f).height(12.dp)
+                            .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.22f)),
+                    )
+                }
+                Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(14.dp))) {
+                    Art(item.id, Modifier.matchParentSize())
+                    SocialGlassChip(Modifier.align(Alignment.TopStart).padding(8.dp)) {
+                        Text(item.date(), color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    }
+                    if (item.withYou) WithYouChip(Modifier.align(Alignment.TopEnd).padding(8.dp))
+                }
+            }
+            Text(item.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(item.line, style = MaterialTheme.typography.bodySmall, color = muted(), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+
+    /** H2c: each month's latest title leads its shelf at double width, title on the art; the rest as in H2. */
+    @Composable
+    private fun ShelvesLeadTile(wide: Boolean) {
+        val tileWidth = if (wide) 250.dp else 200.dp
+        val tileHeight = tileWidth * 9f / 16f
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            history.groupBy { it.month }.forEach { (month, items) ->
+                MonthHeader(month, items.size, action = "See all")
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    val leadWidth = if (wide) tileWidth * 2 else tileWidth * 1.6f
+                    // The lead's height matches a regular tile plus its two text lines, so the row stays level.
+                    MosaicTile(items[0], Modifier.width(leadWidth).height(tileHeight + 48.dp), big = true)
+                    items.drop(1).forEach { HistoryTile(it, Modifier.width(tileWidth)) }
+                }
+            }
         }
     }
 
