@@ -1,3 +1,16 @@
+## Friend profile and audience privacy continuation (2026-10-24)
+
+Resumed `078bffea5`. `c9d340ff4` connects the three audience pages and the banner dialog to Social
+settings, with save errors and duplicate-submit prevention; audience saves are serialized and fenced
+to their profile activation, and the cached payload restores audiences. History failures offer Retry.
+`44a74ca04` keeps Now-card titles readable in narrow desktop columns. Shared production code and the
+Social V2 strings match mobile (mobile ports `d06bb8e03`, `352e64257`, `6b6826b54`; strings `d41da3433`).
+Desktop compilation passes (`build/profile-audience-compile.log`, Gradle exit 0); all nine pure groups
+pass 1,088 checks (`build/profile-pure-suites.log`). Focused Social tests and production-page renders
+are running; Android Social tests/APK are running. No new debug build dispatched yet.
+Backend deployment `8164eaf` / migration `202610240001` was completed by the previous session; no
+backend changes or redeployment in this continuation. Installed-device acceptance remains open.
+
 ## What's New: one hero picture per update (2026-10-23)
 
 Event-level `"image"`, category headings back, no versions under the date (`bb93aba5a`, `522fbe957`).
@@ -4642,7 +4655,7 @@ The in-progress d21029e39/5298df9a0 local matrix was stopped only at its owned l
 shared daemons, Hot Reload and performance worktrees were preserved. New final-head matrix
 is mandatory. No debug/stable publication or counter/feed change.
 
-## IN PROGRESS 2026-10-24: friend profile page + audience privacy (handoff)
+## Historical initial handoff: friend profile + audience privacy (2026-10-24; superseded above)
 
 Backend `202610240001_social_audiences.sql` is **deployed** to pzbpghmmordvzcfbayoh (maintainer approved;
 backend `8164eaf`, pgTAP 551/551). Client WIP commit on `claude/social-v2-design` is **not compiled yet**.

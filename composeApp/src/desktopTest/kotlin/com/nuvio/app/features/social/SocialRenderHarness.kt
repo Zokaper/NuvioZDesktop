@@ -638,7 +638,7 @@ class SocialRenderHarness {
             watchingNow = SocialAudience(SocialAudienceMode.Except, except = listOf(seraph.profileId)),
             recent = SocialAudience(SocialAudienceMode.Only, only = listOf(seraph.profileId)),
         )
-        for ((w, h) in listOf(320 to 600, 360 to 780, 411 to 914, 891 to 411, 1280 to 820, 1920 to 1080)) {
+        for ((w, h) in listOf(320 to 600, 360 to 780, 411 to 914, 891 to 411, 1140 to 820, 1280 to 820, 1920 to 1080)) {
             val wide = w >= 1000
             fun capture(name: String, content: @Composable () -> Unit) {
                 if (wide) render("$name-${w}x$h", w, h, failures, content = content)
@@ -740,6 +740,7 @@ class SocialRenderHarness {
                     val d = LocalDensity.current
                     CompositionLocalProvider(
                         LocalDensity provides Density(d.density, 1f),
+                        LocalContentColor provides MaterialTheme.colorScheme.onSurface,
                         LocalNuvioBottomNavigationOverlayPadding provides 79.dp,
                     ) { content() }
                 }
@@ -821,7 +822,9 @@ class SocialRenderHarness {
                     appTheme = AppTheme.WHITE,
                     amoled = false,
                     desktopUiScale = desktopUiScaleForWindow(widthDp.toFloat(), heightDp.toFloat()),
-                ) { content() }
+                ) {
+                    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) { content() }
+                }
             }
             try {
                 if (settled) scene.render(0L).close()
