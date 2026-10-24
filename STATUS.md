@@ -1,3 +1,32 @@
+## Device Setup redesign (2026-10-24, debug 133 / 114)
+
+Maintainer request after debug 132/113: Device Setup becomes a setup type of its own - a **fixed** set of
+steps per platform family, once per profile per device, offered by a "First time on this device" pop-up
+(*Set up (recommended)* / *Not now*). Plan and as-built notes: `Nuvio Z/PLAN-device-setup.md`; ledger W13.
+- **Steps** (each an Advanced Setup panel narrowed by `deviceSetupControls`, no page of its own - the
+  maintainer's "routes, not pages" rule): mobile picture (+ metered cap in Instant), downloads (mobile data,
+  at once), navigation, player touch, notifications (episode alerts + the phone's Social alerts); desktop
+  picture, navigation, notifications (pop-ups), **This computer** (close, Start with Windows, Discord,
+  interface size). Machine-wide questions only while the machine revision (now **11**, both platforms) is owed.
+- **Order:** What's New -> device pop-up -> (next launch) "New settings available". Initial Setup ends with
+  the device steps; an arrival is still a gating Device run opening on Welcome back. Settings -> Setup &
+  About -> *Set up this device / computer* runs it on demand; leaving it early counts as "Not now".
+- **Per device:** once set up for a profile, pulls skip its navigation, quality/HDR/metered cap, player touch
+  and episode alerts (`core/sync/DeviceOwnedSettings.kt`); pushes continue and seed new devices.
+- **Seeding:** first launch marks an installation that predates this (revision 1-10, or none with cached
+  profiles) as legacy - every profile counts as set up. A fresh install writes revision 0.
+- The download step's old "alerts on this phone" row is gone (the notifications step covers it).
+Commits: desktop shared `12a0f27ca` + desktop-only `d5f9b1309`; mobile cherry-pick `f0257b590` + mobile-only
+(phone alerts area, Settings row, strings, docs). All 15 shared files byte-identical (CRLF-stripped).
+Verified: desktop setup / sync / storage / What's New tests + renders **328** with 2 failures fixed and
+rerun green (116/116 for the two model suites + sync filter); mobile host tests (setup, sync, storage,
+social, What's New) **457/457**; `:androidApp:compileFullDebugKotlin` exit 0. Renders inspected: the
+pop-up (420/1280), desktop Notifications and This computer, phone Notifications and Instant picture.
+**Not device-tested.** Phone checklist: fresh install (Initial Setup ends with device steps, no pop-up);
+update over 113 (no pop-up, nothing re-asked); second profile (pop-up; no machine questions); "Not now";
+Settings row; change quality on one device and confirm another device of the same family keeps its own.
+A low-memory reap killed one test run mid-way (no failure); leftover daemons were stopped before rerunning.
+
 ## Debug 132/113 feedback: banner, Discord in New settings, debug re-offer (2026-10-24)
 
 Maintainer results on desktop 132 / mobile 113: items 1-10 of the test list passed, including iOS
