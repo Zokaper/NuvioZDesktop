@@ -27,6 +27,8 @@ update over 113 (no pop-up, nothing re-asked); second profile (pop-up; no machin
 Settings row; change quality on one device and confirm another device of the same family keeps its own.
 A low-memory reap killed one test run mid-way (no failure); leftover daemons were stopped before rerunning.
 
+Published: desktop [133](https://github.com/Zokaper/NuvioZDesktop/releases/tag/debug-v0.1.26-alpha-z2.133) (run 40099445746, tag at `18b057faf`; MSI + arm64 DMG) and mobile [114](https://github.com/Zokaper/nuvio-z/releases/tag/debug-v0.5.4-z3.114) (run 40099447644; APK + unsigned IPA + checksums + SideStore feed). Every job succeeded.
+
 ## Debug 132/113 feedback: banner, Discord in New settings, debug re-offer (2026-10-24)
 
 Maintainer results on desktop 132 / mobile 113: items 1-10 of the test list passed, including iOS
