@@ -9,8 +9,10 @@ Desktop compilation passes (`build/profile-audience-compile.log`, Gradle exit 0)
 pass 1,088 checks (`build/profile-pure-suites.log`). Final focused desktop Social tests and production-page renders pass **184/184**, zero failures,
 errors or skips (`build/profile-audience-final.log`, Gradle exit 0); Android Social tests **179/179**
 and debug APK pass. Both phone tabs and audience pages inspected, plus the final narrow-desktop
-Now card. Debug **132** / mobile **113** are reserved; existing debug workflows are being dispatched.
-Live desktop smoke check in progress.
+Now card. Debug **132** / mobile **113** are reserved; existing debug workflows are running.
+Hot Reload semantic smoke passes: gear -> audience page -> friend picker (select/cancel,
+summary unchanged); banner open/cancel; live profile history/stats; phone-width You two tab, no UI
+exception. MCP screenshot capture was black; visual QA used the production harness PNGs.
 Backend deployment `8164eaf` / migration `202610240001` was completed by the previous session; no
 backend changes or redeployment in this continuation. Installed-device acceptance remains open.
 
