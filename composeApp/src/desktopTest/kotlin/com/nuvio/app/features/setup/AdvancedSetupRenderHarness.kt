@@ -233,6 +233,34 @@ class AdvancedSetupRenderHarness {
         if (failures.isNotEmpty()) fail(failures.joinToString(", "))
     }
 
+    /**
+     * Device Setup's This device areas (2026-10-24): desktop with its pop-ups and This computer
+     * registered, a phone's episode alerts, and Instant's picture with the metered cap.
+     */
+    @Test
+    fun renderThisDevicePanels() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        val previousStartup = AdvancedSetupExtensions.startupAndTray
+        val previousAlerts = AdvancedSetupExtensions.alerts
+        AdvancedSetupExtensions.startupAndTray = com.nuvio.app.features.tray.DesktopStartupAdvancedSetup
+        AdvancedSetupExtensions.alerts = com.nuvio.app.features.tray.DesktopPopupsAdvancedSetup
+        try {
+            val computer = desktopFacts.copy(startupAvailable = true, alertsAvailable = true)
+            for ((w, h) in listOf(1280 to 820, 1920 to 1080)) {
+                renderPanels("this-device", computer, w, h, failures, listOf(AdvancedSetupCategory.Notifications, AdvancedSetupCategory.Startup))
+            }
+        } finally {
+            AdvancedSetupExtensions.startupAndTray = previousStartup
+            AdvancedSetupExtensions.alerts = previousAlerts
+        }
+        val instantPhone = androidFacts.copy(playbackModeName = PlaybackMode.INSTANT.name)
+        for ((w, h) in listOf(360 to 740, 420 to 900)) {
+            renderPanels("this-device-android", instantPhone, w, h, failures, listOf(AdvancedSetupCategory.Notifications, AdvancedSetupCategory.PlaybackMode))
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString(", "))
+    }
+
     private fun renderPanels(
         label: String, facts: AdvancedSetupFacts, w: Int, h: Int, failures: MutableList<String>,
         categories: List<AdvancedSetupCategory> = advancedSetupCategories(facts),

@@ -23,6 +23,7 @@ import com.nuvio.app.core.ui.NuvioTheme
 import com.nuvio.app.features.whatsnew.ChangelogAction
 import com.nuvio.app.features.whatsnew.ChangelogPlatform
 import com.nuvio.app.features.whatsnew.NewSettingsOfferContent
+import com.nuvio.app.features.whatsnew.DeviceSetupOfferContent
 import com.nuvio.app.features.whatsnew.WhatsNewCategory
 import com.nuvio.app.features.whatsnew.WhatsNewEventUi
 import com.nuvio.app.features.whatsnew.WhatsNewItem
@@ -116,6 +117,12 @@ class LanguageSettingsRenderHarness {
             render("offer-$w", w, h, failures) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     NewSettingsOfferContent(onYes = {}, onNo = {}, onBackToWhatsNew = {})
+                }
+            }
+            // Device Setup redesign (2026-10-24): the other offer, through the same dialog.
+            render("device-offer-$w", w, h, failures) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    DeviceSetupOfferContent(onYes = {}, onNo = {})
                 }
             }
             render("whatsnew-$w", w, h, failures) {

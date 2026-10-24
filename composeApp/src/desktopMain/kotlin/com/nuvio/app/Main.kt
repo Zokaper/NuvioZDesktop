@@ -61,6 +61,7 @@ import com.nuvio.app.features.tray.DesktopSocialPopupWindow
 import com.nuvio.app.features.tray.DesktopSocialPopups
 import com.nuvio.app.features.tray.DesktopSocialSettingsSections
 import com.nuvio.app.features.tray.DesktopStartupAdvancedSetup
+import com.nuvio.app.features.tray.DesktopPopupsAdvancedSetup
 import com.nuvio.app.features.tray.DesktopStartupSettingsRows
 import com.nuvio.app.features.setup.AdvancedSetupExtensions
 import com.nuvio.app.features.settings.PlatformSettingsExtensions
@@ -139,6 +140,8 @@ fun main(args: Array<String>) {
     // Windows: Settings → Advanced → Startup, and Advanced Setup's Startup & tray area.
     PlatformSettingsExtensions.startupRows = { isTablet -> DesktopStartupSettingsRows(isTablet) }
     AdvancedSetupExtensions.startupAndTray = DesktopStartupAdvancedSetup
+    // Pop-ups in Advanced Setup's Notifications area, and Device Setup's notifications step (2026-10-24).
+    AdvancedSetupExtensions.alerts = DesktopPopupsAdvancedSetup
     DesktopSocialPopups.start()
     if (startInTray) DesktopBackgroundStart.start()
     DesktopStartWithWindows.refresh()
