@@ -120,7 +120,7 @@ class SocialV2PromoHarness {
 
     private val mayaInbox = listOf(
         theosPick,
-        recommendation("r-parasite", people.priya, real.parasite, "qualityslop", 300, read = true),
+        recommendation("r-parasite", people.priya, real.parasite, "pure qualityslop, insists upon itself", 300, read = true),
         recommendation("r-whiplash", people.ines, real.whiplash, "watch it tonight, thank me later", 1500, read = true),
     )
 
@@ -173,6 +173,11 @@ class SocialV2PromoHarness {
         watchingNow = watchingNow,
         activity = activity,
         inbox = inbox,
+        // So Theo's profile page shows the three privacy rows, each summarised a different way.
+        audiences = com.nuvio.app.features.social.SocialAudiences(
+            recent = com.nuvio.app.features.social.SocialAudience(com.nuvio.app.features.social.SocialAudienceMode.Except, except = listOf(people.sam.profileId)),
+            notify = com.nuvio.app.features.social.SocialAudience(com.nuvio.app.features.social.SocialAudienceMode.Only, only = listOf(people.theo.profileId, people.priya.profileId)),
+        ),
     )
 
     /** What `SocialRepository` answers the details page with: Recommend needs friends and the V2 backend. */
