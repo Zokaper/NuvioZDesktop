@@ -198,6 +198,35 @@ class SocialFriendProfileHarness {
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
     }
 
+    /**
+     * H2a picked (2026-10-24). The final page at real window sizes, and three phone placements of
+     * "You two" (the stacked one put it above the history): screens at 411x914, top and scrolled.
+     */
+    @Test
+    fun renderProfilePageAtRealSizes() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        val history: @Composable (Boolean) -> Unit = { wide -> ShelvesCaptioned(wide) }
+        renderScene("F-desktop-1920x1080", 1920, 1080, failures) { DesktopShell { DiaryPage(wide = true, historyBody = history) } }
+        renderScene("F-desktop-1440x900", 1440, 900, failures) { DesktopShell { DiaryPage(wide = true, historyBody = history) } }
+        renderScene("F-desktop-1440x900-scrolled", 1440, 900, failures) { DesktopShell { DiaryPage(wide = true, historyBody = history, scrollPx = Int.MAX_VALUE) } }
+        renderScene("F-tablet-1280x800", 1280, 800, failures) { DiaryPage(wide = true, historyBody = history) }
+        for ((name, layout) in listOf("M1-bottom" to "bottom", "M2-strip" to "strip", "M3-tabs" to "tabs")) {
+            renderScene("$name-phone-1-top", 411, 914, failures) { DiaryPage(wide = false, historyBody = history, phone = layout) }
+            renderScene("$name-phone-2-scrolled", 411, 914, failures) { DiaryPage(wide = false, historyBody = history, phone = layout, scrollPx = 1200) }
+        }
+        renderScene("M1-bottom-phone-3-end", 411, 914, failures) { DiaryPage(wide = false, historyBody = history, phone = "bottom", scrollPx = Int.MAX_VALUE) }
+        renderScene("M2-strip-phone-3-sheet", 411, 914, failures) {
+            Box(Modifier.fillMaxSize()) {
+                DiaryPage(wide = false, historyBody = history, phone = "strip")
+                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)))
+                BetweenSheet(Modifier.align(Alignment.BottomCenter).fillMaxWidth())
+            }
+        }
+        renderScene("M3-tabs-phone-3-you-two", 411, 914, failures) { DiaryPage(wide = false, historyBody = history, phone = "tabs", phoneTab = 1, scrollPx = 520) }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
     /** The diary page minus the diary (maintainer, 2026-10-24): candidate histories that scale. */
     @Test
     fun renderDiaryHistoryCandidates() {
@@ -575,9 +604,16 @@ class SocialFriendProfileHarness {
     // --- E: diary page --------------------------------------------------------------------------
 
     @Composable
-    private fun DiaryPage(wide: Boolean, historyBody: @Composable (Boolean) -> Unit = { Diary(it) }) {
+    private fun DiaryPage(
+        wide: Boolean,
+        historyBody: @Composable (Boolean) -> Unit = { Diary(it) },
+        /** Where the phone puts "You two": stack (above history), bottom, strip (stats + sheet), tabs. */
+        phone: String = "stack",
+        phoneTab: Int = 0,
+        scrollPx: Int = 0,
+    ) {
         val bg = MaterialTheme.colorScheme.background
-        Column(Modifier.fillMaxSize().background(bg).verticalScroll(rememberScrollState())) {
+        Column(Modifier.fillMaxSize().background(bg).verticalScroll(rememberScrollState(scrollPx))) {
             Box(Modifier.fillMaxWidth().height(if (wide) 250.dp else 230.dp)) {
                 Row(Modifier.matchParentSize()) {
                     seen.take(if (wide) 5 else 3).forEach { Art(it.id, Modifier.weight(1f).fillMaxHeight()) }
@@ -607,8 +643,32 @@ class SocialFriendProfileHarness {
             } else {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     DiaryNow(wide = false)
-                    YouTwo()
-                    historyBody(false)
+                    when (phone) {
+                        "bottom" -> {
+                            historyBody(false)
+                            Spacer(Modifier.height(4.dp))
+                            YouTwo()
+                        }
+                        "strip" -> {
+                            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                StatPill("14 h", "together")
+                                StatPill("4", "parties")
+                                StatPill("6", "in common")
+                            }
+                            BetweenRow()
+                            TogetherShelf()
+                            historyBody(false)
+                        }
+                        "tabs" -> {
+                            PhoneTabs(phoneTab)
+                            if (phoneTab == 0) historyBody(false) else YouTwo()
+                        }
+                        else -> {
+                            YouTwo()
+                            historyBody(false)
+                        }
+                    }
+                    Spacer(Modifier.height(24.dp))
                 }
             }
         }
@@ -912,6 +972,79 @@ class SocialFriendProfileHarness {
                     // The lead's height matches a regular tile plus its two text lines, so the row stays level.
                     MosaicTile(items[0], Modifier.width(leadWidth).height(tileHeight + 48.dp), big = true)
                     items.drop(1).forEach { HistoryTile(it, Modifier.width(tileWidth)) }
+                }
+            }
+        }
+    }
+
+    // --- phone placements of "You two" (2026-10-24) ----------------------------------------------
+
+    /** One row standing in for the per-friend switches; opens [BetweenSheet]. */
+    @Composable
+    private fun BetweenRow() {
+        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Icon(Icons.Rounded.Visibility, null, Modifier.size(22.dp), tint = muted())
+                Column(Modifier.weight(1f)) {
+                    Text("Between you two", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                    Text("Sees Now · history hidden · notifying you", style = MaterialTheme.typography.bodySmall, color = muted(), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Icon(Icons.Rounded.ChevronRight, null, tint = muted())
+            }
+        }
+    }
+
+    @Composable
+    private fun BetweenSheet(modifier: Modifier) {
+        Surface(modifier, shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp), color = MaterialTheme.colorScheme.surface) {
+            Column(Modifier.padding(horizontal = 22.dp).padding(top = 12.dp, bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(Modifier.align(Alignment.CenterHorizontally).size(width = 36.dp, height = 4.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.5f)))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SocialAvatar(faisal.displayName, null, faisal.avatarColorHex, 40.dp)
+                    Text("You and faisal", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                }
+                BetweenYouTwo(card = false)
+                HairLine()
+                Text("Remove friend", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+
+    /** Watched together as the first shelf, in H2a's style. */
+    @Composable
+    private fun TogetherShelf() {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Watched together", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("3 titles", style = MaterialTheme.typography.bodyMedium, color = muted(), modifier = Modifier.padding(bottom = 2.dp))
+            }
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                together.forEach { item ->
+                    Box(Modifier.width(230.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp))) {
+                        Art(item.id, Modifier.matchParentSize())
+                        Box(Modifier.matchParentSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.85f))))
+                        Column(Modifier.align(Alignment.BottomStart).padding(10.dp)) {
+                            Text(item.title, color = Color.White, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(if (item.parties == 1) "1 party" else "${item.parties} parties", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun PhoneTabs(selected: Int) {
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(999.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f)).padding(4.dp),
+        ) {
+            listOf("History", "You two").forEachIndexed { index, label ->
+                val on = index == selected
+                Box(
+                    Modifier.weight(1f).clip(RoundedCornerShape(999.dp)).background(if (on) Color.White else Color.Transparent).padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(label, color = if (on) Color.Black else MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
