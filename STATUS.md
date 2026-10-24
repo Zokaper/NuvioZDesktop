@@ -4641,3 +4641,14 @@ Pre-fix red evidence is retained under .rc-investigation/auth-sdk-boundary-deskt
 The in-progress d21029e39/5298df9a0 local matrix was stopped only at its owned launcher trees;
 shared daemons, Hot Reload and performance worktrees were preserved. New final-head matrix
 is mandatory. No debug/stable publication or counter/feed change.
+
+## IN PROGRESS 2026-10-24: friend profile page + audience privacy (handoff)
+
+Backend `202610240001_social_audiences.sql` is **deployed** to pzbpghmmordvzcfbayoh (maintainer approved;
+backend `8164eaf`, pgTAP 551/551). Client WIP commit on `claude/social-v2-design` is **not compiled yet**.
+Left to do: (1) wire `SocialAudiencePage` / `SocialBannerDialog` into `features/settings/SocialSettingsPage.kt`
+(three audience rows replace the two share switches + "Hidden from" row; banner row under You);
+(2) `:composeApp:desktopTest` compile + run `SocialAudienceAndHistoryTest`, render the real page via
+`SocialRenderHarness`; (3) cherry-pick the code commit to mobile `claude/social-v2` (strings.xml there is
+already updated, identical block - exclude it from the cherry-pick); (4) debug builds. Design picks are in
+`Nuvio Z/PLAN-social-v2.md` ("Friend profile + audience privacy").
