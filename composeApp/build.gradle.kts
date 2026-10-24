@@ -1129,8 +1129,8 @@ val prepareWindowsAppResources = tasks.register<Sync>("prepareWindowsAppResource
     from(windowsPlayerRuntimeOutput) {
         into("native/windows")
     }
-    from(layout.projectDirectory.file("src/desktopMain/resources/torrserver/windows-amd64/TorrServer.exe")) {
-        into("torrserver/windows-amd64")
+    from(layout.projectDirectory.file("src/desktopMain/native/windows/engine/nuvio_engine.dll")) {
+        into("native/windows")
     }
     into(desktopAppResourcesRoot.map { it.dir("windows") })
 }
