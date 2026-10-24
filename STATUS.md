@@ -10,7 +10,7 @@ pass 1,088 checks (`build/profile-pure-suites.log`). Final focused desktop Socia
 errors or skips (`build/profile-audience-final.log`, Gradle exit 0); Android Social tests **179/179**
 and debug APK pass. Both phone tabs and audience pages inspected, plus the final narrow-desktop
 Now card. Debug **132** is published (Windows MSI + macOS arm64 DMG, verified nonempty/digested);
-mobile **113** has built its APK and is waiting for iOS.
+mobile **113** is published too (APK + unsigned IPA + checksums + debug update feed).
 https://github.com/Zokaper/NuvioZDesktop/releases/tag/debug-v0.1.26-alpha-z2.132
 Hot Reload semantic smoke passes: gear -> audience page -> friend picker (select/cancel,
 summary unchanged); banner open/cancel; live profile history/stats; phone-width You two tab, no UI
