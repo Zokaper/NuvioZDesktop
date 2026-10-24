@@ -628,6 +628,50 @@ class SocialRenderHarness {
         if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
     }
 
+    @Test
+    fun renderFriendProfileAndAudiencePages() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        val seraph = profile()
+        val friends = listOf(seraph, profile("Big Z", "bigz"), profile("A Friend With A Very Long Display Name", "longname"))
+        val audiences = SocialAudiences(
+            watchingNow = SocialAudience(SocialAudienceMode.Except, except = listOf(seraph.profileId)),
+            recent = SocialAudience(SocialAudienceMode.Only, only = listOf(seraph.profileId)),
+        )
+        for ((w, h) in listOf(320 to 600, 360 to 780, 411 to 914, 891 to 411, 1280 to 820, 1920 to 1080)) {
+            val wide = w >= 1000
+            fun capture(name: String, content: @Composable () -> Unit) {
+                if (wide) render("$name-${w}x$h", w, h, failures, content = content)
+                else renderPhone("$name-${w}x$h", w, h, failures, content)
+            }
+            for (tab in if (wide) listOf(0) else listOf(0, 1)) {
+                capture("profile-real-tab$tab") {
+                    SocialFriendProfilePage(
+                        friend = seraph, friends = friends, audiences = audiences,
+                        watching = watchingNow.first { it.profile.profileId == seraph.profileId },
+                        affordance = WatchingNowJoinAffordance.AskToJoin, wide = wide, topInset = 0.dp, utcOffsetMs = 0L,
+                        onBack = {}, onJoin = {}, onCancelRequest = {}, onWatchingDetails = {},
+                        onOpenContent = { _, _, _ -> }, onSetAudienceMember = { _, _, _ -> }, onRemove = {},
+                        loadStats = { null }, loadHistory = { _, _ -> Result.success(FriendHistoryPage(emptyList(), null)) },
+                        initialHistory = FriendHistoryPage(activityRuns.filter { it.profile.profileId == seraph.profileId }, null),
+                        initialStats = SocialTogetherStats(seconds = 50_400, parties = 6,
+                            titles = listOf(SocialTogetherTitle("Burning", "tt7282468", "movie", parties = 3))),
+                        initialPhoneTab = tab,
+                    )
+                }
+            }
+            for (setting in SocialAudienceSetting.entries) {
+                capture("audience-real-${setting.wire}") {
+                    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+                        .verticalScroll(rememberScrollState()).padding(16.dp)) {
+                        SocialAudiencePage(setting, audiences[setting], friends, wide, onBack = {}, onSet = { _, _ -> })
+                    }
+                }
+            }
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
     private fun popupFixtures(): List<SocialPopup> {
         val seraph = profile()
         val long = profile(name = "A Friend With A Very Long Display Name", handle = "longname")
@@ -701,10 +745,12 @@ class SocialRenderHarness {
                 }
             }
             try {
-                scene.render(0L)
-                val image = scene.render(16_000_000L)
-                val data = image.encodeToData(EncodedImageFormat.PNG) ?: error("encodeToData returned null")
-                File(outputDir, "$name.png").writeBytes(data.bytes)
+                scene.render(0L).close()
+                scene.render(16_000_000L).use { image ->
+                    image.encodeToData(EncodedImageFormat.PNG).use { data ->
+                        File(outputDir, "$name.png").writeBytes(data?.bytes ?: error("encodeToData returned null"))
+                    }
+                }
             } finally {
                 scene.close()
             }

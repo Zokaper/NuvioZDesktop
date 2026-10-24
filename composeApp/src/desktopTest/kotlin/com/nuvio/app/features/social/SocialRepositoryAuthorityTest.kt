@@ -51,6 +51,8 @@ class SocialRepositoryAuthorityTest {
         val retries = AtomicInteger()
         val requests = AtomicInteger()
         var sessionGate: Gate? = null
+        var rejectAudience = false
+        var savedAudiences = SocialAudiences()
         val access = object : SocialSessionAccess {
             override suspend fun ensure(profileId: String): Boolean {
                 sessionGate?.also { sessionGate = null }?.let {
@@ -78,6 +80,10 @@ class SocialRepositoryAuthorityTest {
                 val body = when (path) {
                     "get_social_capabilities" -> """{"social_enabled":true,"watch_party_enabled":false}"""
                     "social_get_state" -> Json.encodeToString(payload(requireNotNull(profile), capturedStamp))
+                    "social_set_audience", "social_set_audience_member" -> {
+                        if (rejectAudience) return@MockEngine respond("""{"message":"synthetic refused audience"}""", HttpStatusCode.BadRequest, headersOf(HttpHeaders.ContentType, "application/json"))
+                        Json.encodeToString(savedAudiences)
+                    }
                     "social_set_privacy", "social_publish_presence", "social_clear_presence", "social_send_friend_request" -> "{}"
                     else -> error("Unexpected synthetic RPC: $path")
                 }
@@ -94,6 +100,7 @@ class SocialRepositoryAuthorityTest {
             val friend = SocialProfileSummary("$profile-friend", version, version)
             return SocialStatePayload(
                 me = me, friends = listOf(friend),
+                audiences = if (profile == a) savedAudiences else SocialAudiences(notify = SocialAudience(SocialAudienceMode.Nobody)),
                 requests = listOf(FriendRequest("$profile-$version-request", friend, "2026-10-03")),
                 partyInvites = listOf(SocialInboxItem("$profile-$version-invite", "party", friend, PartyContent("movie", "movie", "movie", "Movie"), "2026-10-03")),
                 watchingNow = listOf(WatchingNowItem(friend, "movie", "movie", "movie", version, positionMs = 1, durationMs = 100, state = SocialPlaybackState.playing, heartbeatAt = "2026-10-03")),
@@ -189,6 +196,35 @@ class SocialRepositoryAuthorityTest {
         assertTrue(old.await().isFailure)
         assertTrue(SocialRepository.uiState.value.me!!.shareWatchingNow)
     }
+    @Test fun staleAudienceCompletionCannotOverwriteNextProfile() = fixture {
+        val hold = hold("social_set_audience")
+        val old = async(Dispatchers.Default) {
+            runCatching { SocialRepository.setAudience(SocialAudienceSetting.Notify, SocialAudienceMode.Nobody) }
+        }
+        withTimeout(10_000) { hold.entered.await() }
+        activate(b)
+        val expected = SocialRepository.uiState.value
+        hold.release.complete(Unit)
+        assertTrue(old.await().isFailure)
+        assertEquals(expected, SocialRepository.uiState.value)
+    }
+
+    @Test fun rejectedAudienceRollsBackTheOptimisticChange() = fixture {
+        rejectAudience = true
+        val before = SocialRepository.uiState.value.audiences
+        val result = SocialRepository.setAudienceMember(SocialAudienceSetting.Notify, "friend", false)
+        assertTrue(result.isFailure)
+        assertEquals(before, SocialRepository.uiState.value.audiences)
+    }
+
+    @Test fun audienceResponseKeepsBothRememberedLists() = fixture {
+        savedAudiences = SocialAudiences(notify = SocialAudience(
+            SocialAudienceMode.Only, except = listOf("kept-out"), only = listOf("let-in"),
+        ))
+        assertTrue(SocialRepository.setAudience(SocialAudienceSetting.Notify, SocialAudienceMode.Only).isSuccess)
+        assertEquals(savedAudiences, SocialRepository.uiState.value.audiences)
+    }
+
     @Test fun staleThrownSessionFailureCannotReachNewScreen() = fixture {
         val hold = Gate("session", failure = true).also { sessionGate = it }
         val old = async(Dispatchers.Default) { runCatching { SocialRepository.setPrivacy(false, false) } }
