@@ -549,6 +549,9 @@ class SocialV2PromoHarness {
         still("social") { MayaSocial(maya) }
         still("recommended") { MayaSocial(maya, com.nuvio.app.features.social.SocialOverlay.Recommended) }
         still("profile") { MayaSocial(maya, com.nuvio.app.features.social.SocialOverlay.Profile(theo.profileId)) }
+        // Without a banner of his own: the strip of his recent titles the page builds instead.
+        val noBanner = maya.copy(friends = people.friends)
+        still("profile-auto") { MayaSocial(noBanner, com.nuvio.app.features.social.SocialOverlay.Profile(theo.profileId)) }
         fun card(name: String, popup: com.nuvio.app.features.social.SocialPopup) =
             promo.render("social-v2-promo-d5/stills/$name", 380, 132, PromoRenderHarness.Kind.Desktop, 4f, failures) {
                 CompositionLocalProvider(LocalSocialTitleArtSource provides TitleArt()) { SocialPopupCard(popup) }
