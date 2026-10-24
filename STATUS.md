@@ -6,8 +6,11 @@ to their profile activation, and the cached payload restores audiences. History 
 `44a74ca04` keeps Now-card titles readable in narrow desktop columns. Shared production code and the
 Social V2 strings match mobile (mobile ports `d06bb8e03`, `352e64257`, `6b6826b54`; strings `d41da3433`).
 Desktop compilation passes (`build/profile-audience-compile.log`, Gradle exit 0); all nine pure groups
-pass 1,088 checks (`build/profile-pure-suites.log`). Focused Social tests and production-page renders
-are running; Android Social tests/APK are running. No new debug build dispatched yet.
+pass 1,088 checks (`build/profile-pure-suites.log`). Final focused desktop Social tests and production-page renders pass **184/184**, zero failures,
+errors or skips (`build/profile-audience-final.log`, Gradle exit 0); Android Social tests **179/179**
+and debug APK pass. Both phone tabs and audience pages inspected, plus the final narrow-desktop
+Now card. Debug **132** / mobile **113** are reserved; existing debug workflows are being dispatched.
+Live desktop smoke check in progress.
 Backend deployment `8164eaf` / migration `202610240001` was completed by the previous session; no
 backend changes or redeployment in this continuation. Installed-device acceptance remains open.
 
