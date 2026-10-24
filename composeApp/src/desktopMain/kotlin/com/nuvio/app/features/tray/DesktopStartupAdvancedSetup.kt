@@ -12,19 +12,24 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.NuvioSegment
 import com.nuvio.app.features.player.desktop.DesktopHostOs
 import com.nuvio.app.core.ui.NuvioSegmentedChoice
+import com.nuvio.app.features.settings.DiscordRichPresenceRepository
 import com.nuvio.app.features.setup.AdvancedSetupPlatformArea
 import com.nuvio.app.features.setup.SetupQuestion
 import com.nuvio.app.features.setup.SetupToggleRow
 import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.advanced_setup_startup_summary_discord
 import nuvio.composeapp.generated.resources.advanced_setup_startup_summary_quit
 import nuvio.composeapp.generated.resources.advanced_setup_startup_summary_starts
 import nuvio.composeapp.generated.resources.advanced_setup_startup_summary_tray
+import nuvio.composeapp.generated.resources.settings_advanced_discord_rich_presence
+import nuvio.composeapp.generated.resources.settings_advanced_discord_rich_presence_description
 import nuvio.composeapp.generated.resources.social_close_window
 import nuvio.composeapp.generated.resources.social_hide_to_tray
 import nuvio.composeapp.generated.resources.social_quit_nuvio
@@ -34,13 +39,16 @@ import nuvio.composeapp.generated.resources.social_start_windows_unavailable
 import org.jetbrains.compose.resources.stringResource
 
 /**
- * Advanced Setup's Startup & tray area (2026-10-22), registered through `AdvancedSetupExtensions`:
- * the same two answers as Settings → Advanced → Startup, over the close prompt's own picture.
+ * Advanced Setup's This computer area (2026-10-22, was Startup & tray), registered through
+ * `AdvancedSetupExtensions`: the same answers as Settings → Advanced → Startup, plus Discord Rich
+ * Presence (2026-10-24: inherited from upstream, new to Nuvio Z users, so "New settings" offers it),
+ * over the close prompt's own picture.
  */
 internal val DesktopStartupAdvancedSetup = AdvancedSetupPlatformArea(
     summary = {
         val prefs by DesktopTrayPreferences.state.collectAsState()
         val starts by DesktopStartWithWindows.enabled.collectAsState()
+        val discord by remember { DiscordRichPresenceRepository.ensureLoaded(); DiscordRichPresenceRepository.enabled }.collectAsState()
         listOfNotNull(
             when (prefs.closeAction) {
                 DesktopCloseAction.HideToTray -> stringResource(Res.string.advanced_setup_startup_summary_tray)
@@ -48,6 +56,7 @@ internal val DesktopStartupAdvancedSetup = AdvancedSetupPlatformArea(
                 DesktopCloseAction.Ask -> null
             },
             if (starts == true) stringResource(Res.string.advanced_setup_startup_summary_starts) else null,
+            if (discord && DiscordRichPresenceRepository.isSupported) stringResource(Res.string.advanced_setup_startup_summary_discord) else null,
         ).joinToString(" · ")
     },
     controls = { DesktopStartupControls() },
@@ -62,6 +71,7 @@ internal val DesktopStartupAdvancedSetup = AdvancedSetupPlatformArea(
 private fun DesktopStartupControls() {
     val prefs by DesktopTrayPreferences.state.collectAsState()
     val startWithWindows by DesktopStartWithWindows.enabled.collectAsState()
+    val discordEnabled by remember { DiscordRichPresenceRepository.ensureLoaded(); DiscordRichPresenceRepository.enabled }.collectAsState()
     LaunchedEffect(Unit) { DesktopStartWithWindows.refresh() }
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         SetupQuestion(title = stringResource(Res.string.social_close_window), detail = null) {
@@ -85,6 +95,12 @@ private fun DesktopStartupControls() {
             },
             checked = startWithWindows == true,
             onCheckedChange = { if (DesktopStartWithWindows.isAvailable) DesktopStartWithWindows.setEnabled(it) },
+        )
+        if (DiscordRichPresenceRepository.isSupported) SetupToggleRow(
+            title = stringResource(Res.string.settings_advanced_discord_rich_presence),
+            description = stringResource(Res.string.settings_advanced_discord_rich_presence_description),
+            checked = discordEnabled,
+            onCheckedChange = DiscordRichPresenceRepository::setEnabled,
         )
     }
 }
