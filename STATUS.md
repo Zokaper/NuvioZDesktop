@@ -1,3 +1,18 @@
+## Social V2 shipped (2026-10-24)
+
+Published on the maintainer's word, from the release branches above (both now contained in `main` / `Dev`):
+- **Mobile `0.6.2-z1+130`** (GitHub Latest, 22:41 UTC): four Android APKs, the unsigned iOS IPA, checksums and
+  the setup scripts. The release bot then committed the direct-install entry (`056ac8668`) and the sideload
+  `source.json` (`01e7e7f15`) to `main`, so iPhone users are offered the update.
+- **Desktop `0.1.31-alpha-z1+134`** (GitHub Latest, 20:58 UTC): Windows MSI and both unsigned macOS DMGs, with
+  checksums. The release needed one fix found at the verifier, `ced373783` (ship `nuvio_engine.dll` in the
+  Windows app-resources, drop the dead TorrServer copy); recorded in `nuvio-z/Docs/PATCH-SURFACE.md`.
+- Both release pages carry the text generated from What's New; the maintainer may swap in their own wording.
+- The promo still's harness is on desktop branch `claude/social-v2-promo-d5` (pushed; not for `Dev`).
+
+Social V2 is closed. The next work is **Phase 10, the TV / web port** (`Nuvio Z/PLAN-phase-10-tv-web-port.md`,
+repo `nuviozweb`).
+
 ## Social V2 stable release (2026-10-24): mobile 0.6.2-z1 / desktop 0.1.31-alpha-z1
 
 Maintainer go-ahead after the 134/115 retest and a confirmed update over 132/113 (no device pop-up).
