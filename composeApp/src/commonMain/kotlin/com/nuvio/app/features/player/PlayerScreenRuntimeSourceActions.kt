@@ -379,6 +379,7 @@ internal fun PlayerScreenRuntime.switchToUserSelectedSource(stream: StreamItem) 
         )
         return
     }
+    recordLocalPartySourceChoice(stream)
     publishPartySourceChange(stream)
     switchToSource(stream)
 }
@@ -429,6 +430,7 @@ internal fun PlayerScreenRuntime.userSelectedSourceAwaitsP2pConsent(stream: Stre
  */
 internal fun PlayerScreenRuntime.switchToUserSelectedSourceAfterP2pConsent(stream: StreamItem) {
     markSourceUserSelected()
+    recordLocalPartySourceChoice(stream)
     publishPartySourceChange(stream)
     switchToP2pSourceStream(stream)
 }
@@ -457,6 +459,9 @@ private fun PlayerScreenRuntime.publishPartySourceChange(stream: StreamItem) {
     val party = WatchPartyRepository.uiState.value.party
         ?.takeIf { it.matchesPlayback(parentMetaId, playbackSession.videoId) }
         ?: return
+    // The host chooses the party's timeline. A guest's source picker chooses only their own copy,
+    // including in collaborative mode (whose shared transport controls remain collaborative).
+    if (party.hostProfileId != WatchPartyRepository.uiState.value.activeProfileId) return
     val picked = stream.toPartySourceDescriptor() ?: return
     if (
         !shouldPublishPartySourceChange(
@@ -489,6 +494,15 @@ private fun PlayerScreenRuntime.publishPartySourceChange(stream: StreamItem) {
             partyHandledSourceGeneration = null
         }
     }
+}
+
+private fun PlayerScreenRuntime.recordLocalPartySourceChoice(stream: StreamItem) {
+    partyPositionUnreachable = false
+    partyLocalSourceChoice = com.nuvio.app.features.watchparty.partyLocalSourceChoiceForLaunch(
+        WatchPartyRepository.uiState.value.party,
+        parentMetaId, playbackSession.videoId, stream.toPartySourceDescriptor(),
+        userSelectedSource = true,
+    )
 }
 
 /** The same tag the party effect logs under, so a realignment reads in sequence with the gate. */
@@ -546,8 +560,8 @@ internal fun PlayerScreenRuntime.publishHostPartySourceRealignment(
 }
 
 internal fun PlayerScreenRuntime.switchToSource(stream: StreamItem) {
-    if (prepareServerForPlayer(stream) { switchToSource(it) }) return
-    if (resolveYouTubeForPlayer(stream) { switchToSource(it) }) return
+    if (prepareServerForPlayer(stream) { switchToResolvedSource(stream, it) }) return
+    if (resolveYouTubeForPlayer(stream) { switchToResolvedSource(stream, it) }) return
     // A real source change, so the next URL change is not a re-mint however it got here. Belt
     // and braces - the flag is set immediately before the assignment it excuses - but the cost of
     // it being wrong is a swap that silently keeps the previous source's subtitles and never
@@ -558,7 +572,7 @@ internal fun PlayerScreenRuntime.switchToSource(stream: StreamItem) {
             stream = stream,
             season = activeSeasonNumber,
             episode = activeEpisodeNumber,
-            onResolved = { switchToSource(it) },
+            onResolved = { switchToResolvedSource(stream, it) },
             onStale = {
                 val vid = activeVideoId
                 if (vid != null) {

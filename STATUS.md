@@ -1,3 +1,30 @@
+## Watch Together guest source recovery (2026-10-28)
+
+Branch `codex/watch-together-guest-sources`, based on released `Dev`. The maintainer reported
+desktop guests entering the player after a manual pick while remaining Resolving source, with
+a persistent no-match/short-version banner, plus a possible host hold while picking.
+
+Actual filenames now precede AIO's parsed title when building a party release fingerprint.
+Explicit local guest choices are scoped to the party/content/source authority and survive local
+link preparation; they complete realization and publish ready/alternate without changing the
+host's source, including collaborative parties. In-place source/episode handoffs retain the
+current launch, and a manual source-list escape stops automatic matching. Readiness and timing
+checks require the current source's player snapshot. Timing differences use one transient native
+player notice per source instead of a permanent status banner. The stall watch excludes members
+outside the player (including matching/loading), preserving holds for actual buffering players.
+
+Read-only Z server investigation: retained Punisher sessions on 2026-10-25 contain S1E6 and S1E7,
+not the remembered episode 8. Between 14:50 and 18:30 UTC, all 68 party_set_ready calls and the
+source selection/change-content calls succeeded. One party_snapshot 403/party_membership_required
+occurred immediately after the party ended. Addon IDs differed, but release matching already works
+across origins. Request bodies/guest catalogues are not logged, so the historical matching failure
+cannot be proven from server logs alone. The parsed-title/filename failure is reproduced in a
+regression fixture; no private addon URLs, credentials or member identifiers are recorded here.
+
+First local desktop compile passed. Final focused tests, mobile integration and debug delivery are
+in progress; no new two-client acceptance or stable release is claimed. Canonical cross-platform
+handoff and patch-surface notes will be updated in `nuvio-z` on the matching work branch.
+
 ## Social V2 shipped (2026-10-24)
 
 Published on the maintainer's word, from the release branches above (both now contained in `main` / `Dev`):

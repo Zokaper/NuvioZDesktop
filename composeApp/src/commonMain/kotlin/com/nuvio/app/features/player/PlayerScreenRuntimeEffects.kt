@@ -1414,6 +1414,7 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
         activeStreamSubtitle = stream.streamSubtitle
         activeProviderName = stream.addonName
         activeProviderAddonId = stream.addonId
+        continuePartySourceChoice(activePartySourceDescriptor, stream.toPartySourceDescriptor())
         activePartySourceDescriptor = stream.toPartySourceDescriptor()
         activeStream = stream
         currentStreamBingeGroup = stream.behaviorHints.bingeGroup
