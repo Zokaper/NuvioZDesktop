@@ -197,13 +197,7 @@ internal class PlayerScreenRuntime(
     var activeProviderName by mutableStateOf(providerName)
     var activeProviderAddonId by mutableStateOf(providerAddonId)
     var activePartySourceDescriptor by mutableStateOf(args.partySourceDescriptor)
-    var partyLocalSourceChoice by mutableStateOf(
-        com.nuvio.app.features.watchparty.partyLocalSourceChoiceForLaunch(
-            com.nuvio.app.features.watchparty.WatchPartyRepository.uiState.value.party,
-            args.parentMetaId, args.videoId, args.partySourceDescriptor,
-            userSelectedSource = !args.automaticSourceSelection,
-        ),
-    )
+    var partyLocalSourceChoice by mutableStateOf(initialPartySourceChoice(args))
     var activeStream by mutableStateOf(args.stream)
     var currentStreamBingeGroup by mutableStateOf(initialBingeGroup)
     var activeSeasonNumber by mutableStateOf(seasonNumber)

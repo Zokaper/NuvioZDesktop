@@ -496,15 +496,6 @@ private fun PlayerScreenRuntime.publishPartySourceChange(stream: StreamItem) {
     }
 }
 
-private fun PlayerScreenRuntime.recordLocalPartySourceChoice(stream: StreamItem) {
-    partyPositionUnreachable = false
-    partyLocalSourceChoice = com.nuvio.app.features.watchparty.partyLocalSourceChoiceForLaunch(
-        WatchPartyRepository.uiState.value.party,
-        parentMetaId, playbackSession.videoId, stream.toPartySourceDescriptor(),
-        userSelectedSource = true,
-    )
-}
-
 /** The same tag the party effect logs under, so a realignment reads in sequence with the gate. */
 private val sourceActionsPartyLog = Logger.withTag("WatchPartyPlayer")
 
