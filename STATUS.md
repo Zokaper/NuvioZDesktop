@@ -21,9 +21,13 @@ across origins. Request bodies/guest catalogues are not logged, so the historica
 cannot be proven from server logs alone. The parsed-title/filename failure is reproduced in a
 regression fixture; no private addon URLs, credentials or member identifiers are recorded here.
 
-First local desktop compile passed. Final focused tests, mobile integration and debug delivery are
-in progress; no new two-client acceptance or stable release is claimed. Canonical cross-platform
-handoff and patch-surface notes will be updated in `nuvio-z` on the matching work branch.
+Final focused desktop tests pass: **461 tests, 46 suites, zero failures/errors/skips**, including
+the production runtime's retained episode/source regression and the lobby render harness
+(`build/wt-guest-final-tests.log`). Mobile integration is committed through the scoped shared
+merges `5fb6f8ea1` and `aef37c47b`; Android tests/compiler are running in the isolated mobile tree.
+Desktop debug **136** is prepared through the existing workflow; delivery is in progress.
+No new two-client acceptance or stable release is claimed. Canonical handoff and patch-surface
+notes are in `nuvio-z`'s matching work branch, not the unrelated TV documentation checkout.
 
 ## Social V2 shipped (2026-10-24)
 
