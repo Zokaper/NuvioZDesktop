@@ -22,6 +22,18 @@ import kotlin.test.fail
  */
 class PlayerSourcePickRoutingTest {
 
+    @Test fun bothEpisodeSourceListsAndConsentContinuationsKeepTheManualChoice() {
+        val ui = sourceFile("PlayerScreenRuntimeUi.kt")
+        val native = ui.substringAfter("\"selectEpisodeStream\" -> {").substringBefore("\"backToEpisodes\"")
+        assertTrue(native.contains("switchToUserSelectedEpisodeSource(stream, episode)"))
+        assertTrue(ui.contains("onEpisodeStreamSelected = { stream, episode -> switchToUserSelectedEpisodeSource(stream, episode) }"))
+        assertTrue(ui.contains("switchToUserSelectedEpisodeSourceAfterP2pConsent(pending.stream, episode)"))
+        assertTrue(ui.contains("if (userSelected) switchToUserSelectedEpisodeSourceAfterP2pConsent(stream, episode)"))
+        assertTrue(sourceFile("PlayerScreenModalHosts.kt").contains(
+            "onP2pEpisodeStreamSelected(pending.stream, episode, pending.isAutoPlay, pending.userSelected)",
+        ))
+    }
+
     private fun sourceFile(name: String): String {
         var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
         val suffix = "src/commonMain/kotlin/com/nuvio/app/features/player/$name"

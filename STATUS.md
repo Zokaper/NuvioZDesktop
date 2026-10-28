@@ -29,6 +29,15 @@ Desktop debug **136** is prepared through the existing workflow; delivery is in 
 No new two-client acceptance or stable release is claimed. Canonical handoff and patch-surface
 notes are in `nuvio-z`'s matching work branch, not the unrelated TV documentation checkout.
 
+Next-episode follow-up: the no-match action opened the still-playing previous episode's source
+list. Guest recovery now opens the party's new episode, preserves its canonical video ID, and
+records the manual episode-source choice through direct/debrid/server and P2P-consent paths.
+Native and Compose manual episode rows use the same helper; quality-sheet automatic chains keep
+their existing routing. Unknown descriptor changes also clear a previous timeline verdict.
+The initial mobile focus/compile passed, but final verification must be repeated for this addition.
+Debug 136's packaging run `40606695079` was cancelled before publication; its tag remains immutable.
+The corrected desktop candidate is **137**; mobile remains **117** (not dispatched yet).
+
 ## Social V2 shipped (2026-10-24)
 
 Published on the maintainer's word, from the release branches above (both now contained in `main` / `Dev`):
