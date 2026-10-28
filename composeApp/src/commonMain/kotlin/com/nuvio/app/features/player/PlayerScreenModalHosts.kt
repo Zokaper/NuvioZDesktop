@@ -14,11 +14,9 @@ import com.nuvio.app.features.watchprogress.WatchProgressEntry
 internal fun PlayerScreenModalHosts(
     pendingP2pSwitch: PendingPlayerP2pSwitch?,
     onPendingP2pSwitchChanged: (PendingPlayerP2pSwitch?) -> Unit,
-    onP2pEpisodeStreamSelected: (StreamItem, MetaVideo, Boolean) -> Unit,
-    onP2pSourceStreamSelected: (StreamItem) -> Unit,
-    onNextEpisodeAutoPlaySearchingChanged: (Boolean) -> Unit,
-    onNextEpisodeAutoPlayCountdownChanged: (Int?) -> Unit,
-    onNextEpisodeAutoPlaySourceNameChanged: (String?) -> Unit,
+    onP2pEpisodeStreamSelected: (StreamItem, MetaVideo, Boolean, Boolean) -> Unit,
+    onP2pSourceStreamSelected: (StreamItem, Boolean) -> Unit,
+    onNextEpisodeAutoPlayCancelled: () -> Unit,
     showAudioModal: Boolean,
     audioTracks: List<AudioTrack>,
     selectedAudioIndex: Int,
@@ -98,16 +96,14 @@ internal fun PlayerScreenModalHosts(
                 P2pSettingsRepository.setP2pEnabled(true)
                 val episode = pending.episode
                 if (episode != null) {
-                    onP2pEpisodeStreamSelected(pending.stream, episode, pending.isAutoPlay)
+                    onP2pEpisodeStreamSelected(pending.stream, episode, pending.isAutoPlay, pending.userSelected)
                 } else {
-                    onP2pSourceStreamSelected(pending.stream)
+                    onP2pSourceStreamSelected(pending.stream, pending.userSelected)
                 }
             },
             onDismiss = {
-                if (pendingP2pSwitch.isAutoPlay) {
-                    onNextEpisodeAutoPlaySearchingChanged(false)
-                    onNextEpisodeAutoPlayCountdownChanged(null)
-                    onNextEpisodeAutoPlaySourceNameChanged(null)
+                if (pendingP2pSwitch.episode != null) {
+                    onNextEpisodeAutoPlayCancelled()
                 }
                 onPendingP2pSwitchChanged(null)
             },
