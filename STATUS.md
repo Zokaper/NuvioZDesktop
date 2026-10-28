@@ -24,7 +24,8 @@ regression fixture; no private addon URLs, credentials or member identifiers are
 Final focused desktop tests pass: **464 tests, 47 suites, zero failures/errors/skips**, including
 the production runtime's retained episode/source regression and the lobby render harness
 (`build/wt-guest-episode-final-tests.log`, Gradle exit 0). Mobile integration is committed through the scoped shared
-merges `5fb6f8ea1` and `aef37c47b`; Android tests/compiler are running in the isolated mobile tree.
+merges `5fb6f8ea1`, `aef37c47b` and `4dfea378a`; final Android tests pass **475** (48 suites, zero
+failures/errors/skips, Gradle exit 0) plus app compilation in the isolated mobile tree.
 Desktop debug **137** is prepared through the existing workflow; delivery is in progress.
 No new two-client acceptance or stable release is claimed. Canonical handoff and patch-surface
 notes are in `nuvio-z`'s matching work branch, not the unrelated TV documentation checkout.
@@ -34,9 +35,18 @@ list. Guest recovery now opens the party's new episode, preserves its canonical 
 records the manual episode-source choice through direct/debrid/server and P2P-consent paths.
 Native and Compose manual episode rows use the same helper; quality-sheet automatic chains keep
 their existing routing. Unknown descriptor changes also clear a previous timeline verdict.
-The initial mobile focus/compile passed **473** tests; final Android verification is running for this addition.
+The final Android verification includes this addition (`build/wt-guest-mobile-episode-final-tests.log`).
 Debug 136's packaging run `40606695079` was cancelled before publication; its tag remains immutable.
 The corrected desktop candidate is **137**; mobile remains **117** (not dispatched yet).
+
+Both final debug workflows are dispatched: desktop run
+[40608684225](https://github.com/Zokaper/NuvioZDesktop/actions/runs/40608684225), tag
+`debug-v0.1.31-alpha-z1.137` at `b4fc3944a`; mobile run
+[40608701290](https://github.com/Zokaper/nuvio-z/actions/runs/40608701290), tag
+`debug-v0.6.2-z1.117` at `16fea2eb5`. Package verification/publication is still running.
+The production lobby render was inspected; no layout change or new two-client/device acceptance
+is claimed. Retest joining mid-playback, manual alternate/brief timing notice, next-episode picker
+identity and the host's buffering hold with both peers updated.
 
 ## Social V2 shipped (2026-10-24)
 
