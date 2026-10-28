@@ -21,11 +21,11 @@ across origins. Request bodies/guest catalogues are not logged, so the historica
 cannot be proven from server logs alone. The parsed-title/filename failure is reproduced in a
 regression fixture; no private addon URLs, credentials or member identifiers are recorded here.
 
-Final focused desktop tests pass: **461 tests, 46 suites, zero failures/errors/skips**, including
+Final focused desktop tests pass: **464 tests, 47 suites, zero failures/errors/skips**, including
 the production runtime's retained episode/source regression and the lobby render harness
-(`build/wt-guest-final-tests.log`). Mobile integration is committed through the scoped shared
+(`build/wt-guest-episode-final-tests.log`, Gradle exit 0). Mobile integration is committed through the scoped shared
 merges `5fb6f8ea1` and `aef37c47b`; Android tests/compiler are running in the isolated mobile tree.
-Desktop debug **136** is prepared through the existing workflow; delivery is in progress.
+Desktop debug **137** is prepared through the existing workflow; delivery is in progress.
 No new two-client acceptance or stable release is claimed. Canonical handoff and patch-surface
 notes are in `nuvio-z`'s matching work branch, not the unrelated TV documentation checkout.
 
@@ -34,7 +34,7 @@ list. Guest recovery now opens the party's new episode, preserves its canonical 
 records the manual episode-source choice through direct/debrid/server and P2P-consent paths.
 Native and Compose manual episode rows use the same helper; quality-sheet automatic chains keep
 their existing routing. Unknown descriptor changes also clear a previous timeline verdict.
-The initial mobile focus/compile passed, but final verification must be repeated for this addition.
+The initial mobile focus/compile passed **473** tests; final Android verification is running for this addition.
 Debug 136's packaging run `40606695079` was cancelled before publication; its tag remains immutable.
 The corrected desktop candidate is **137**; mobile remains **117** (not dispatched yet).
 
