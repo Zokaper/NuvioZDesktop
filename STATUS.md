@@ -26,7 +26,8 @@ the production runtime's retained episode/source regression and the lobby render
 (`build/wt-guest-episode-final-tests.log`, Gradle exit 0). Mobile integration is committed through the scoped shared
 merges `5fb6f8ea1`, `aef37c47b` and `4dfea378a`; final Android tests pass **475** (48 suites, zero
 failures/errors/skips, Gradle exit 0) plus app compilation in the isolated mobile tree.
-Desktop debug **137** is prepared through the existing workflow; delivery is in progress.
+Desktop debug **137 is published** through the existing workflow; Windows MSI and macOS arm64 DMG
+packaging, verification and publication all succeeded (run `40608684225`).
 No new two-client acceptance or stable release is claimed. Canonical handoff and patch-surface
 notes are in `nuvio-z`'s matching work branch, not the unrelated TV documentation checkout.
 
@@ -37,16 +38,27 @@ Native and Compose manual episode rows use the same helper; quality-sheet automa
 their existing routing. Unknown descriptor changes also clear a previous timeline verdict.
 The final Android verification includes this addition (`build/wt-guest-mobile-episode-final-tests.log`).
 Debug 136's packaging run `40606695079` was cancelled before publication; its tag remains immutable.
-The corrected desktop candidate is **137**; mobile remains **117** (not dispatched yet).
+The corrected desktop build is **137**; mobile **117** is dispatched and still building iOS.
 
 Both final debug workflows are dispatched: desktop run
 [40608684225](https://github.com/Zokaper/NuvioZDesktop/actions/runs/40608684225), tag
 `debug-v0.1.31-alpha-z1.137` at `b4fc3944a`; mobile run
 [40608701290](https://github.com/Zokaper/nuvio-z/actions/runs/40608701290), tag
-`debug-v0.6.2-z1.117` at `16fea2eb5`. Package verification/publication is still running.
+`debug-v0.6.2-z1.117` at `16fea2eb5`. Mobile's Android package job passed; its iOS job and publication
+are still running. Follow that run for the final mobile release result.
 The production lobby render was inspected; no layout change or new two-client/device acceptance
 is claimed. Retest joining mid-playback, manual alternate/brief timing notice, next-episode picker
 identity and the host's buffering hold with both peers updated.
+
+Desktop delivery: [Debug 137](https://github.com/Zokaper/NuvioZDesktop/releases/tag/debug-v0.1.31-alpha-z1.137)
+is a non-draft prerelease pinned to source `b4fc3944a`. Published assets checked via GitHub API:
+Windows x64 MSI 278,916,901 bytes, SHA-256
+`8be490d1efc08aceab76c9e532ae293c1dab7b007d615b453eca348f41e29325`;
+macOS arm64 DMG 194,566,656 bytes, SHA-256
+`395aaa797a5a8dc257dd586453b084623cde4a80f9acfb47f295f87bf528bbcb` (also matches the
+macOS packaging job's mounted-app verification log). Binaries were not installed over user apps.
+The separate full CI desktop test job remains running; the 464 count above is the focused local
+suite, not a full-suite claim. No stable release or backend mutation.
 
 ## Social V2 shipped (2026-10-24)
 
