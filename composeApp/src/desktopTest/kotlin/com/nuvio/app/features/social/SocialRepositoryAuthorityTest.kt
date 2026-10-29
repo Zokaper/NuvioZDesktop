@@ -19,8 +19,13 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -52,6 +57,7 @@ class SocialRepositoryAuthorityTest {
         val requests = AtomicInteger()
         var sessionGate: Gate? = null
         var rejectAudience = false
+        var failCapabilities = false
         var savedAudiences = SocialAudiences()
         val access = object : SocialSessionAccess {
             override suspend fun ensure(profileId: String): Boolean {
@@ -68,6 +74,9 @@ class SocialRepositoryAuthorityTest {
             httpEngine = MockEngine { request ->
                 requests.incrementAndGet()
                 val path = request.url.encodedPath.substringAfterLast('/')
+                if (path == "get_social_capabilities" && failCapabilities) {
+                    throw java.net.ConnectException("synthetic connection timeout")
+                }
                 val profile = runCatching { Json.parseToJsonElement(request.body.toByteArray().decodeToString()).jsonObject["p_profile_id"]?.jsonPrimitive?.content }.getOrNull()
                 val capturedStamp = stamp
                 val held = gate?.takeIf { it.path == path && (it.profile == null || it.profile == profile) }
@@ -266,6 +275,34 @@ class SocialRepositoryAuthorityTest {
         hold.release.complete(Unit); old.await()
         assertEquals(expected, SocialRepository.uiState.value)
         assertEquals("new-session", SocialRepository.uiState.value.me?.handle)
+    }
+
+    @Test fun failedCapabilitiesRemainRetryableAndRecoverWithoutAnAccountOrNetworkChange() = fixture {
+        activate(null)
+        failCapabilities = true
+        SocialRepository.activate(a)
+        withTimeout(10_000) { (field(SocialRepository::class.java, "activation").get(null) as Job).join() }
+        val failed = SocialRepository.uiState.value
+        assertFalse(failed.isLoading)
+        assertFalse(failed.capabilities.socialEnabled)
+        assertTrue(failed.errorMessage?.contains("connect to Social") == true)
+        assertTrue(socialNeedsRecovery(failed, capabilitiesLoaded = false, realtimeOpen = false))
+        // Run the production timer with virtual time: no screen reopening, account emission,
+        // connectivity transition or manual retry may be needed to recover this state.
+        failCapabilities = false
+        runTest {
+            backgroundScope.launch { SocialRepository.retryStaleRecovery() }
+            runCurrent()
+            advanceTimeBy(SocialRecoveryRetryMs)
+            runCurrent()
+            withContext(Dispatchers.Default) {
+                withTimeout(10_000) { (field(SocialRepository::class.java, "recovery").get(null) as Job).join() }
+            }
+        }
+        val recovered = SocialRepository.uiState.value
+        assertTrue(recovered.capabilities.socialEnabled)
+        assertNull(recovered.errorMessage)
+        assertEquals(a, recovered.me?.profileId)
     }
 
     @Test fun delayedOldActivationCannotPublishCapabilitiesOrCache() = fixture {

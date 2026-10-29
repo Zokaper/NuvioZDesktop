@@ -1,3 +1,27 @@
+## Watch Together EOF / connection outage investigation (2026-10-29)
+
+Two distinct clients on stable: repeated guest EOF on entry, and a Z RPC connect timeout
+followed by app-wide loading failures. The latter later recovered; speedtest.net also failed
+to resolve, supporting an external reachability/DNS fault. No client logs, so no claim that
+this establishes the historical EOF trigger or the exact network cause.
+
+Shared merge `a7d3e3d8a` (`0eaafcb9d` shared; mobile `92a3a1428`) defers guest native start
+positions to duration-checked party synchronization. The native surface and ordinary bookmark
+effect also skip guest resume offsets, including in-place source switches. Hosts retain their
+start positions. Failed Social capability checks show a retryable connection error rather than
+Disabled; stale activation retries every 30 seconds without needing an account/network event.
+Trace found no party write to the official server configuration/login or global proxy; addon
+HTTP remains independent. No backend/schema/configuration mutation.
+
+Desktop focused verification: **500 tests / 52 suites**, zero failures/errors/skips, Gradle
+exit 0 (`build/wt-eof-social-final.log`); includes actual repository/MockEngine timeout then
+production-timer recovery, player runtime regressions and all Watch Together suites. Phone and
+desktop error-screen renders inspected. `python scripts/test-watchparty-native-start.py` uses
+the shipped Windows mpv DLL: a synthetic 2 s WAV with `start=5` loads then reaches EOF; parked
+load without a start offset stays open. No user media/account/network needed. Mobile verification
+is running. No physical two-client acceptance or stable publication claimed. Canonical trace:
+mobile `Docs/WATCH-TOGETHER-EOF-OUTAGE-2026-10-29.md`.
+
 ## Watch Together guest source recovery (2026-10-28)
 
 Branch `codex/watch-together-guest-sources`, based on released `Dev`. The maintainer reported

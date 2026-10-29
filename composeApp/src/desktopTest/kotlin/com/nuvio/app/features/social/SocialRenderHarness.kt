@@ -572,6 +572,23 @@ class SocialRenderHarness {
      * list's end clears where the pill would be. Insets are zero here - device checks own those.
      */
     @Test
+    fun renderConnectionFailure() {
+        outputDir.mkdirs()
+        val failures = mutableListOf<String>()
+        val disconnected = SocialUiState(
+            activeProfileId = "synthetic-profile",
+            errorMessage = "Could not connect to Social. Retrying automatically.",
+        )
+        renderPhone("social-connection-failure-phone", 411, 914, failures) {
+            SocialFeedScene(disconnected)
+        }
+        render("social-connection-failure-desktop", 1280, 820, failures) {
+            SocialFeedScene(disconnected)
+        }
+        if (failures.isNotEmpty()) fail(failures.joinToString("\n"))
+    }
+
+    @Test
     fun renderTheSocialTabAtPhoneSizes() {
         outputDir.mkdirs()
         val failures = mutableListOf<String>()

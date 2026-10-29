@@ -33,6 +33,7 @@ PERFORMANCE_FINDINGS.md
 torbox-download-fixture.json
 scripts/*
 !scripts/sign-ios-device-app.py
+!scripts/test-watchparty-native-start.py
 iosApp/Configuration/DeviceSigning.local.json
 
 # Local MPVKit iOS build environment (sparse APFS image, see MPVKit docs)
