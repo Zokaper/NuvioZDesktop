@@ -128,7 +128,6 @@ class PlayerUiGallery {
     /** One page per status row (§5), each projected by the real priority table. */
     private val statusFixtures: List<Pair<String, PartyPlaybackStatusInputs>> = listOf(
         "status-source-not-found" to guest.copy(realization = PartyRealizationPhase.FallbackRequired, handoffEpisodeLabel = "S1E3"),
-        "status-too-short" to guest.copy(positionUnreachable = true),
         "status-switching-episode" to guest.copy(realization = PartyRealizationPhase.Matching, realizationChangesEpisode = true),
         "status-host-choosing" to guest.copy(waitingForHostSource = true),
         "status-waiting-sources" to host.copy(
