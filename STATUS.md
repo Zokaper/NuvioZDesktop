@@ -1,3 +1,12 @@
+## Release CI gallery correction (2026-10-29)
+
+Full desktop CI on release candidate `f3ea60388` ran 3,937 tests: 3,933 passed, three
+skipped, and only `PlayerUiGallery.writeGallery` failed. Its obsolete `status-too-short`
+fixture required the permanent banner deliberately removed by the guest-source fixes.
+Remove that fixture; `PartyPlaybackStatusTest` already asserts that unreachable timing
+does not pin a status banner. This is test-only, with no application changes. Keep the
+release candidate frozen on Dev; land this correction there after stable publication.
+
 ## Watch Together hotfix release authorized (2026-10-29)
 
 Maintainer explicitly requested bundling the current EOF / outage repairs with all Debug 137/117
