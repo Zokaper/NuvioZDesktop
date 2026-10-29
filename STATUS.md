@@ -1,3 +1,17 @@
+## RELEASED 2026-10-29: Desktop 0.1.31-alpha-z2+135 (and Mobile 0.6.2-z2+131)
+
+- Desktop publish run `40937715006`, tag `0.1.31-alpha-z2+135` at `58dac1b84`, GitHub Latest:
+  MSI + arm64 and x86_64 DMGs (unsigned, `acknowledge_unsigned_macos=true`) + `SHA256SUMS.txt`.
+  The passing dry run `40900675456` was at `f3ea60388`; `58dac1b84` has the identical tree.
+- `524d45ccf` (arm64 packaging on `macos-26`) was reverted by `58dac1b84` before publishing. The
+  cancelled publish (`macos-15`) and failed dry run (`macos-26`) never acquired a hosted arm64
+  runner at all - capacity, not configuration - and `macos-26` was never exercised. The publish
+  got a `macos-15` runner within minutes.
+- Gallery fixture correction `e55ae3a4d` (section below) merged into Dev after the tag, `889537fec`.
+- Mobile `0.6.2-z2+131`: publish run `40939122944`; see `nuvio-z/STATUS.md`.
+- Mobile Debug 118 was never published (Debug release runs `40899233166` failed, `40899390114`
+  cancelled), despite the note below saying it was dispatched. Desktop Debug 138 did publish.
+
 ## Release CI gallery correction (2026-10-29)
 
 Full desktop CI on release candidate `f3ea60388` ran 3,937 tests: 3,933 passed, three
