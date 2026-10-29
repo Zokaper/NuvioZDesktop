@@ -17,7 +17,7 @@ Desktop focused verification: **500 tests / 52 suites**, zero failures/errors/sk
 exit 0 (`build/wt-eof-social-final.log`); includes actual repository/MockEngine timeout then
 production-timer recovery, player runtime regressions and all Watch Together suites. Phone and
 desktop error-screen renders inspected. `python scripts/test-watchparty-native-start.py` uses
-the shipped Windows mpv DLL: a synthetic 2 s WAV with `start=5` loads then reaches EOF; parked
+the shipped Windows mpv DLL: a synthetic 2 s Y4M video with `start=5` loads then reaches EOF; parked
 load without a start offset stays open. No user media/account/network needed. Mobile verification
 is running. No physical two-client acceptance or stable publication claimed. Canonical trace:
 mobile `Docs/WATCH-TOGETHER-EOF-OUTAGE-2026-10-29.md`.
