@@ -12,6 +12,10 @@ class Event(c.Structure):
                 ("reply_userdata", c.c_ulonglong), ("data", c.c_void_p)]
 
 
+class EndFile(c.Structure):
+    _fields_ = [("reason", c.c_int), ("error", c.c_int)]
+
+
 def main():
     runtime = Path(__file__).resolve().parents[1] / "composeApp/src/desktopMain/native/windows/runtime"
     with os.add_dll_directory(str(runtime)):
@@ -48,6 +52,8 @@ def main():
                 loaded |= event.event_id == 8  # MPV_EVENT_FILE_LOADED
                 ended |= event.event_id == 7  # MPV_EVENT_END_FILE
                 if ended:
+                    result = c.cast(event.data, c.POINTER(EndFile)).contents
+                    assert result.reason == 0 and result.error == 0, "end-file must be genuine EOF, not a load error"
                     break
             assert loaded, "synthetic local media did not load"
             assert ended == unsafe, f"unsafe={unsafe}, unexpected EOF={ended}"
