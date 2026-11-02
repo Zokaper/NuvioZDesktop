@@ -18,6 +18,7 @@ import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import androidx.compose.ui.unit.dp
+import com.nuvio.app.core.network.DesktopLinkMonitor
 import com.nuvio.app.core.debug.DesktopDebugLog
 import com.nuvio.app.core.debug.EdtStallWatchdog
 import com.nuvio.app.core.debug.SelfTestHooks
@@ -133,6 +134,8 @@ fun main(args: Array<String>) {
     ProfileRepository.loadCachedProfiles()
     AppIconRepository.ensureLoaded()
     DiscordPresenceManager.start()
+    // Pushes link up/down into PlatformLink; see DesktopLinkMonitor.
+    DesktopLinkMonitor.start()
     // Social V2 tray mode: the window can close while the process (and Social) carries on.
     AppGateResume.enabled = true
     SocialSettingsExtensions.platformSections = { isTablet -> DesktopSocialSettingsSections(isTablet) }
