@@ -1,3 +1,24 @@
+## IN PROGRESS 2026-11-02: Unhappy paths - `claude/unhappy-paths` (Debug 139)
+
+Canonical record: `nuvio-z/STATUS.md`; plan `Nuvio Z/PLAN-unhappy-paths.md`; device checks
+`Nuvio Z/CHECKLIST-unhappy-paths.md`. Shared commits arrive by `cherry-pick -x` from mobile's
+`claude/unhappy-paths` (a full `git merge mobile/main` conflicts in 116 files and is a separate
+convergence job). Note: the `mobile` remote is the relative path `..
+uvio-z`, which does not
+resolve from a worktree; fetch by absolute path there.
+
+Desktop-only so far:
+- `DesktopLinkMonitor` (3 s interface poll) feeds `PlatformLink`, so a pulled cable reads offline at once.
+- W1 recovery port: desktop's party transport, recovery, health, rules and diagnostics files are
+  identical to mobile `main`; a reconnect no longer clears the stall-hold watch.
+- `DesktopPartyLifecycle`: waking from sleep (wall-clock gap >10 s between 2 s ticks) bumps
+  `resumeRevision` and refreshes the durable party. Log tag `WatchPartyLifecycle`, `wake gapMs=`.
+- The Compose diagnostics HUD cannot show over the native controls layer, so desktop's stall
+  evidence is the `PlaybackStall` log tag; the full CSV trace is logged on every shadow verdict.
+
+Verified: desktopTest watchparty + core.network + player `*Party*` 580/580 (73 classes, fresh
+results dir). Not yet run on hardware.
+
 ## RELEASED 2026-10-29: Desktop 0.1.31-alpha-z2+135 (and Mobile 0.6.2-z2+131)
 
 - Desktop publish run `40937715006`, tag `0.1.31-alpha-z2+135` at `58dac1b84`, GitHub Latest:
