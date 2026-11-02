@@ -225,6 +225,10 @@
     {
       "build": 138,
       "text": "Watch Together: guests no longer open a shorter source at its end; party alignment waits for the local duration. Social reports connection failures accurately and retries automatically when a temporary outage ends."
+    },
+    {
+      "build": 139,
+      "text": "Unhappy paths, first round. Watch Together now recovers dropped connections the way mobile does, keeps waiting for a buffering guest after a reconnect, re-syncs as soon as the laptop wakes from sleep, and says \"Reconnected · back in sync\". A source that fails mid-episode continues where you were; a pulled cable or lost Wi-Fi reads as offline within seconds. Debug HUD: buffering verdicts (shadow only, nothing switches yet) and Dump trace."
     }
   ]
 }
