@@ -26,6 +26,7 @@ import com.nuvio.app.core.debug.selftest.SelfTestOverlay
 import com.nuvio.app.core.deeplink.handleAppUrl
 import com.nuvio.app.core.diagnostics.SentryInitializer
 import com.nuvio.app.core.ui.DesktopWheelSmoothing
+import com.nuvio.app.core.ui.configureAppImageLoader
 import com.nuvio.app.core.ui.NuvioTheme
 import com.nuvio.app.core.ui.ProvideDesktopPrefetchScheduler
 import com.nuvio.app.core.ui.ProvideDesktopWindowInsets
@@ -127,6 +128,8 @@ fun main(args: Array<String>) {
         // source is chosen. See the note on the function.
         preloadP2pStreamingEngineAsync()
     }
+    // A hidden launch can clear the image cache before the first composition.
+    configureAppImageLoader()
     if (startInTray) DesktopTrayController.startHidden(onFirstShow = warmUpPlayer) else warmUpPlayer()
     // Load cached profile data synchronously so the profile color is available
     // on the very first Compose frame (matching Android's SharedPreferences behavior).
